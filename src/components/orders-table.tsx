@@ -13,30 +13,33 @@ const orders = [
 
 export function OrdersTable() {
   return (
-    <Card className="bg-white border-2 border-[#D4C4A8] rounded-3xl p-6">
+    <Card className="bg-white rounded-2xl p-6 shadow-md border-0">
       <Table>
         <TableHeader>
-          <TableRow className="border-[#D4C4A8]">
-            <TableHead className="text-[#4A1C1C] font-semibold">Order ID ↓</TableHead>
-            <TableHead className="text-[#4A1C1C] font-semibold">Date ↓</TableHead>
-            <TableHead className="text-[#4A1C1C] font-semibold">Order Type</TableHead>
-            <TableHead className="text-[#4A1C1C] font-semibold">Status</TableHead>
-            <TableHead className="text-[#4A1C1C] font-semibold">Payment</TableHead>
-            <TableHead className="text-[#4A1C1C] font-semibold">Amount ↓</TableHead>
+          <TableRow className="border-gray-200 hover:bg-transparent">
+            <TableHead className="text-gray-700 font-semibold">Order ID</TableHead>
+            <TableHead className="text-gray-700 font-semibold">Date</TableHead>
+            <TableHead className="text-gray-700 font-semibold">Order Type</TableHead>
+            <TableHead className="text-gray-700 font-semibold">Status</TableHead>
+            <TableHead className="text-gray-700 font-semibold">Payment</TableHead>
+            <TableHead className="text-gray-700 font-semibold text-right">Amount</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {orders.map((order) => (
-            <TableRow key={order.id} className="border-[#D4C4A8]">
-              <TableCell className="font-medium text-[#4A1C1C]">{order.id}</TableCell>
-              <TableCell className="text-[#4A1C1C]">{order.date}</TableCell>
+            <TableRow 
+              key={order.id} 
+              className="border-gray-100 hover:bg-gray-50 transition-colors"
+            >
+              <TableCell className="font-medium text-gray-900">{order.id}</TableCell>
+              <TableCell className="text-gray-600">{order.date}</TableCell>
               <TableCell>
                 <Badge
                   variant="secondary"
                   className={
                     order.type === "Complete"
-                      ? "bg-green-100 text-green-700 hover:bg-green-100 rounded-full"
-                      : "bg-yellow-100 text-yellow-700 hover:bg-yellow-100 rounded-full"
+                      ? "bg-green-50 text-green-700 hover:bg-green-50 rounded-lg font-medium border-0"
+                      : "bg-yellow-50 text-yellow-700 hover:bg-yellow-50 rounded-lg font-medium border-0"
                   }
                 >
                   {order.type}
@@ -47,15 +50,15 @@ export function OrdersTable() {
                   variant="secondary"
                   className={
                     order.status === "Complete"
-                      ? "bg-green-100 text-green-700 hover:bg-green-100 rounded-full"
-                      : "bg-yellow-100 text-yellow-700 hover:bg-yellow-100 rounded-full"
+                      ? "bg-green-50 text-green-700 hover:bg-green-50 rounded-lg font-medium border-0"
+                      : "bg-yellow-50 text-yellow-700 hover:bg-yellow-50 rounded-lg font-medium border-0"
                   }
                 >
                   {order.status}
                 </Badge>
               </TableCell>
               <TableCell className="text-blue-600 font-medium">{order.payment}</TableCell>
-              <TableCell className="font-medium text-[#4A1C1C]">{order.amount}</TableCell>
+              <TableCell className="font-semibold text-gray-900 text-right">{order.amount}</TableCell>
             </TableRow>
           ))}
         </TableBody>

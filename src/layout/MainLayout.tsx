@@ -1,11 +1,11 @@
 import { Outlet } from "react-router-dom"
-import {Sidebar} from "@/components/Sidebar"
+import { Sidebar } from "@/components/ui/sidebar"
 
-export default function MainLayout() {
+export function MainLayout() {
   return (
     <div className="flex min-h-screen">
       <Sidebar />
-      <main className="flex-1 p-6 bg-muted/40">
+      <main className="flex-1">
         <Outlet />
       </main>
     </div>

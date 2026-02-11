@@ -1,4 +1,5 @@
 import { InventoryClient } from "@/components/ui/inventoryClient"
+import { Sidebar } from "@/components/Sidebar"
 
 const inventoryItems = [
   {
@@ -77,17 +78,18 @@ const inventoryItems = [
 
 export default function InventoryPage() {
   return (
-    <div className="flex min-h-screen bg-[#292929]">
-      <main className="flex-1 p-4">
-        <div className="mb-3 text-xs text-[#999] uppercase tracking-wider">ADMINISTRATOR VIEW</div>
-
-        <div className="bg-[#F5EFE0] rounded-3xl p-6 min-h-[calc(100vh-5rem)]">
+    <div className="flex min-h-screen bg-gray-50 font-['Poppins',sans-serif]">
+      <Sidebar />
+      
+      <main className="flex-1 p-8 pl-24">
+        <div className="bg-white rounded-3xl p-8 min-h-[calc(100vh-5rem)] shadow-lg">
           {/* Header */}
-          <div className="mb-6">
-            <h1 className="text-3xl font-bold text-[#4A1C1C]">INVENTORY</h1>
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold text-gray-800">Inventory</h1>
+            <p className="text-sm text-gray-500 mt-1">Manage your products and stock levels</p>
           </div>
 
-          {/* Client-side interactive component */}
+          {/* Inventory Client */}
           <InventoryClient items={inventoryItems} />
         </div>
       </main>

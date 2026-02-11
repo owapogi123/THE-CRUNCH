@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Clock, Menu } from "lucide-react"
 
 interface OrderItem {
@@ -25,6 +25,7 @@ interface OrderStats {
 }
 
 export default function Order() {
+  const [currentTime, setCurrentTime] = useState(new Date())
   const [orders, setOrders] = useState<OrderCard[]>([
     {
       id: "1",
@@ -124,6 +125,31 @@ export default function Order() {
     },
   ])
 
+  // Update time every second
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date())
+    }, 1000)
+
+    return () => clearInterval(timer)
+  }, [])
+
+  // Format date and time
+  const formatDateTime = (date: Date) => {
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+    const dayName = days[date.getDay()]
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    const year = String(date.getFullYear()).slice(-2)
+    
+    let hours = date.getHours()
+    const minutes = String(date.getMinutes()).padStart(2, '0')
+    const ampm = hours >= 12 ? 'PM' : 'AM'
+    hours = hours % 12 || 12
+    
+    return `${dayName}, ${month}/${day}/${year} ${hours}:${minutes} ${ampm}`
+  }
+
   const stats: OrderStats = {
     new: 10,
     ready: 5,
@@ -149,13 +175,18 @@ export default function Order() {
 
   const toggleFinishOrder = (id: string) => {
     setOrders(orders.map((order) => (order.id === id ? { ...order, isPreparing: false, isFinished: true } : order)))
+    
+    // Remove the order after 500ms animation delay
+    setTimeout(() => {
+      setOrders(prevOrders => prevOrders.filter(order => order.id !== id))
+    }, 500)
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 p-6">
+    <div className="min-h-screen bg-white p-6 font-['Poppins',sans-serif]">
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-sm font-semibold text-gray-400 tracking-wider mb-6">PENDING ORDERS</h1>
+        <h1 className="text-sm font-semibold text-gray-700 tracking-wider mb-6">ORDERS</h1>
 
         {/* Top Status Section */}
         <div className="flex gap-6 items-start mb-8">
@@ -169,14 +200,13 @@ export default function Order() {
               <div>
                 <p className="text-xs text-gray-600 flex items-center gap-1 mb-2">
                   <Clock className="w-3 h-3" />
-                  Friday, 11/28/25 10:54 AM
+                  {formatDateTime(currentTime)}
                 </p>
                 <p className="text-sm font-bold text-gray-900">Hi, COOK!</p>
               </div>
-              <div className="text-2xl">👨‍🍳</div>
             </div>
           </div>
-
+ 
           {/* Status Boxes */}
           <div className="flex gap-4 flex-1">
             {/* New Orders */}
@@ -206,14 +236,18 @@ export default function Order() {
         </div>
 
         {/* Orders Grid */}
-        <div className="bg-yellow-50 rounded-2xl p-6">
+        <div className="bg-gray-50 rounded-2xl p-6">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             {orders.map((order) => (
-              <div key={order.id} className="bg-white rounded-2xl p-5 shadow-md hover:shadow-lg transition-shadow">
+              <div 
+                key={order.id} 
+                className={`bg-white rounded-2xl p-5 shadow-md hover:shadow-lg transition-all duration-500 ${
+                  order.isFinished ? 'opacity-0 scale-95' : 'opacity-100 scale-100'
+                }`}
+              >
                 {/* Order Header */}
                 <div className="flex justify-between items-start mb-4">
                   <div className="flex items-center gap-2">
-                    <div className="text-lg">🪑</div>
                     <span className="text-sm font-bold text-gray-900">TABLE {order.tableNumber}</span>
                   </div>
                   <span className={`${getStatusColor(order.status)} text-xs font-bold px-3 py-1 rounded-full`}>
@@ -236,10 +270,10 @@ export default function Order() {
                   <button
                     onClick={() => toggleStartOrder(order.id)}
                     disabled={order.isPreparing || order.isFinished}
-                    className={`flex-1 py-2 px-3 rounded-full font-bold text-xs transition-all ${
+                    className={`flex-1 py-2 px-3 rounded-lg font-bold text-xs transition-all duration-300 ${
                       order.isPreparing || order.isFinished
-                        ? "bg-gray-900 text-white opacity-50"
-                        : "bg-gray-900 text-white hover:bg-gray-800"
+                        ? "bg-white text-gray-400 shadow-md opacity-50 cursor-not-allowed"
+                        : "bg-white text-gray-900 shadow-md hover:shadow-lg hover:scale-105 active:scale-95"
                     }`}
                   >
                     START
@@ -247,10 +281,10 @@ export default function Order() {
                   <button
                     onClick={() => toggleFinishOrder(order.id)}
                     disabled={!order.isPreparing}
-                    className={`flex-1 py-2 px-3 rounded-full font-bold text-xs transition-all ${
+                    className={`flex-1 py-2 px-3 rounded-lg font-bold text-xs transition-all duration-300 ${
                       order.isPreparing
-                        ? "bg-green-600 text-white hover:bg-green-700"
-                        : "bg-green-600 text-white opacity-50"
+                        ? "bg-green-600 text-white hover:bg-green-700 hover:shadow-lg hover:scale-105 active:scale-95"
+                        : "bg-green-600 text-white opacity-50 cursor-not-allowed"
                     }`}
                   >
                     FINISHED

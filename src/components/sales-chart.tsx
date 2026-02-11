@@ -12,13 +12,15 @@ const data = [
 
 export function SalesChart() {
   return (
-    <ResponsiveContainer width="100%" height={300}>
-      <LineChart data={data}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#E5D5B8" />
-        <XAxis dataKey="day" stroke="#8B3A3A" tick={{ fill: "#4A1C1C" }} />
-        <YAxis stroke="#8B3A3A" tick={{ fill: "#4A1C1C" }} tickFormatter={(value) => `${value / 1000}k`} />
-        <Line type="linear" dataKey="value" stroke="#8B3A3A" strokeWidth={2} dot={{ fill: "#8B3A3A", r: 4 }} />
-      </LineChart>
-    </ResponsiveContainer>
+    <div className="bg-white rounded-3xl p-6">
+      <ResponsiveContainer width="100%" height={300}>
+        <LineChart data={data}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+          <XAxis dataKey="day" stroke="#6B7280" tick={{ fill: "#4A1C1C" }} />
+          <YAxis stroke="#806b6b" tick={{ fill: "#4A1C1C" }} tickFormatter={(value) => `${value / 1000}k`} />
+          <Line type="linear" dataKey="value" stroke="#8B3A3A" strokeWidth={2} dot={{ fill: "#8B3A3A", r: 4 }} />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
   )
 }
