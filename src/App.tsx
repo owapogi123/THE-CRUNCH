@@ -1,24 +1,72 @@
-import { Routes, Route } from "react-router-dom"
-import AdminDashboard from "./pages/index"
+import { Routes, Route, Navigate } from "react-router-dom";
+import { MainLayout } from "./layout/MainLayout";
 
+import Home from "@/pages/index";
+import Inventory from "@/pages/inventory";
+import Login from "@/pages/login";
+import Menu from "@/pages/menu";
+import OrderPage from "@/pages/Order";
+import Products from "@/pages/products";
+import Users from "@/pages/useraccounts";
 
-import Order from "./pages/Order"
-import Inventory from "./pages/inventory"
-import Login from "./pages/login"
-import Menu from "./pages/menu"
-import Products from "./pages/products"
-import UserAccounts from "./pages/useraccounts"
+function RequireAuth({ children }: { children: JSX.Element }) {
+  const isAuth = localStorage.getItem("isAuthenticated") === "true";
+  return isAuth ? children : <Navigate to="/login" replace />;
+}
 
 export default function App() {
   return (
     <Routes>
-        <Route path="/" element={<AdminDashboard />} />
-        <Route path="/orders" element={<Order />} />
-         <Route path="/inventory" element={<Inventory/>} />
-         <Route path="/login" element={<Login/>} />
-         <Route path="/Menu" element={<Menu/>} />
-          <Route path="/products" element={<Products/>} />
-          <Route path="/users" element={<UserAccounts/>} />
-    </Routes>  
-  )
+      <Route path="/login" element={<Login />} />
+
+      {/* Public product pages */}
+      <Route path="/" element={<Products />} />
+      <Route path="/products" element={<Products />} />
+
+      <Route element={<MainLayout />}>
+        <Route
+          path="/inventory"
+          element={
+            <RequireAuth>
+              <Inventory />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/menu"
+          element={
+            <RequireAuth>
+              <Menu />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/order"
+          element={
+            <RequireAuth>
+              <OrderPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/home"
+          element={
+            <RequireAuth>
+              <Home />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/users"
+          element={
+            <RequireAuth>
+              <Users />
+            </RequireAuth>
+          }
+        />
+      </Route>
+
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
 }

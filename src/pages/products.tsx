@@ -1,10 +1,14 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ShoppingBag, Truck, Award, Utensils } from 'lucide-react';
 
 export default function TheCrunch() {
   const [activeMenu, setActiveMenu] = useState('main');
   const [cartCount, setCartCount] = useState(0);
-  const [isSignedIn, setIsSignedIn] = useState(false);
+  const navigate = useNavigate();
+  const [isSignedIn, setIsSignedIn] = useState(() => {
+    return localStorage.getItem('isAuthenticated') === 'true';
+  });
 
   // Get current day
   const getCurrentDay = () => {
@@ -22,7 +26,47 @@ export default function TheCrunch() {
   };
 
   const handleSignIn = () => {
-    setIsSignedIn(!isSignedIn);
+    if (!isSignedIn) {
+      navigate('/login');
+      return;
+    }
+
+    // Sign out
+    localStorage.removeItem('isAuthenticated');
+    setIsSignedIn(false);
+    navigate('/');
+  };
+
+  // Add product form state & submit
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newProduct, setNewProduct] = useState({ product_name: '', price: '', stock: '', promo: '' });
+  const [addStatus, setAddStatus] = useState<string | null>(null);
+
+  const submitNewProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAddStatus('Adding...');
+    try {
+      const res = await fetch('/api/products', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          product_name: newProduct.product_name,
+          price: parseFloat(newProduct.price) || 0,
+          stock: parseInt(newProduct.stock || '0', 10) || 0,
+          promo: newProduct.promo || null,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setAddStatus('Product added');
+        setNewProduct({ product_name: '', price: '', stock: '', promo: '' });
+      } else {
+        setAddStatus(`Error: ${data.message || data.error || res.statusText}`);
+      }
+    } catch (err: any) {
+      setAddStatus(`Error: ${err.message}`);
+    }
+    setTimeout(() => setAddStatus(null), 3000);
   };
 
   return (
@@ -199,6 +243,27 @@ export default function TheCrunch() {
                 </div>
               </button>
             </div>
+            {/* Admin add product panel */}
+            {isSignedIn && (
+              <div className="mt-6 p-4 bg-white rounded-2xl shadow-md">
+                <div className="flex items-center justify-between mb-4">
+                  <h4 className="text-lg font-semibold">Admin: Add Product</h4>
+                  <button onClick={() => setShowAddForm(s => !s)} className="text-sm text-orange-500">{showAddForm ? 'Close' : 'Add'}</button>
+                </div>
+                {showAddForm && (
+                  <form onSubmit={submitNewProduct} className="space-y-3">
+                    <input required value={newProduct.product_name} onChange={e => setNewProduct({...newProduct, product_name: e.target.value})} placeholder="Product name" className="w-full input px-3 py-2 border rounded-md" />
+                    <input value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} placeholder="Price" className="w-full input px-3 py-2 border rounded-md" />
+                    <input value={newProduct.stock} onChange={e => setNewProduct({...newProduct, stock: e.target.value})} placeholder="Stock" className="w-full input px-3 py-2 border rounded-md" />
+                    <input value={newProduct.promo} onChange={e => setNewProduct({...newProduct, promo: e.target.value})} placeholder="Promo (optional)" className="w-full input px-3 py-2 border rounded-md" />
+                    <div className="flex items-center gap-2">
+                      <button type="submit" className="px-4 py-2 bg-orange-400 text-white rounded-md">Save</button>
+                      {addStatus && <span className="text-sm text-gray-600">{addStatus}</span>}
+                    </div>
+                  </form>
+                )}
+              </div>
+            )}
 
             <div className="flex gap-2 mt-6 justify-end">
               <div className="w-8 h-8 bg-orange-100 rounded-full shadow-sm"></div>

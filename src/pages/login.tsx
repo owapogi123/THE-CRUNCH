@@ -6,6 +6,8 @@ export default function Login() {
   const navigate = useNavigate();
   const [isLogin, setIsLogin] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
   const [formData, setFormData] = useState({
     email: "",
     password: "",
@@ -13,35 +15,89 @@ export default function Login() {
     name: "",
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (isLogin) {
-   
-      localStorage.setItem("isAuthenticated", "true");
-      navigate("/");
-    } else {
-      
-      if (formData.password !== formData.confirmPassword) {
-        alert("Passwords don't match!");
-        return;
-      }
-      
-     
-      localStorage.setItem("userEmail", formData.email);
-      localStorage.setItem("userName", formData.name);
-      
+    setError("");
+    setIsLoading(true);
 
-      alert("Account created successfully! Please log in.");
-      
-      setFormData({
-        email: formData.email, 
-        password: "",
-        confirmPassword: "",
-        name: "",
-      });
-      setIsLogin(true);
+    try {
+      if (isLogin) {
+        // LOGIN - POST to /api/auth/login
+        const response = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            username: formData.email,
+            password: formData.password,
+          }),
+        });
+
+        // Safely parse response body: server may return empty body on error
+        const text = await response.text();
+        let data: any = {};
+        try {
+          data = text ? JSON.parse(text) : {};
+        } catch (e) {
+          console.error('Failed to parse JSON response from /api/auth/login:', text);
+          data = {};
+        }
+
+        if (!response.ok) {
+          setError(data.message || "Login failed");
+          setIsLoading(false);
+          return;
+        }
+
+        // Store auth info
+        localStorage.setItem("isAuthenticated", "true");
+        localStorage.setItem("token", data.token);
+        localStorage.setItem("userId", data.userId);
+        localStorage.setItem("username", data.username);
+        localStorage.setItem("email", data.email);
+
+        navigate("/");
+      } else {
+        // SIGN UP - POST to /api/auth/register
+        if (formData.password !== formData.confirmPassword) {
+          setError("Passwords don't match!");
+          setIsLoading(false);
+          return;
+        }
+
+        const response = await fetch("/api/auth/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            username: formData.name,
+            email: formData.email,
+            password: formData.password,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          setError(data.message || "Registration failed");
+          setIsLoading(false);
+          return;
+        }
+
+        // After registration, auto-login
+        alert("Account created successfully! Please log in.");
+        setFormData({
+          email: "",
+          password: "",
+          confirmPassword: "",
+          name: "",
+        });
+        setIsLogin(true);
+      }
+    } catch (err) {
+      setError("Network error. Please try again.");
+      console.error(err);
     }
+
+    setIsLoading(false);
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -103,6 +159,11 @@ export default function Login() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5">
+          {error && (
+            <div className="p-3 bg-red-100 border border-red-400 rounded-lg text-red-600 text-sm">
+              {error}
+            </div>
+          )}
           {!isLogin && (
             <div>
               <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
@@ -192,9 +253,10 @@ export default function Login() {
 
           <button
             type="submit"
-            className="w-full bg-gray-900 text-white py-3.5 rounded-xl font-medium hover:bg-gray-800 transition-colors text-sm mt-6"
+            disabled={isLoading}
+            className="w-full bg-gray-900 text-white py-3.5 rounded-xl font-medium hover:bg-gray-800 transition-colors text-sm mt-6 disabled:bg-gray-400"
           >
-            {isLogin ? "Log in" : "Sign up"}
+            {isLoading ? "Loading..." : isLogin ? "Log in" : "Sign up"}
           </button>
         </form>
 
