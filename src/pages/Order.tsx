@@ -5,6 +5,7 @@ import { Link, NavLink } from "react-router-dom"
 import { Clock, Menu as MenuIcon, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { motion, AnimatePresence } from "framer-motion"
 
 interface OrderItem {
   quantity: number
@@ -28,7 +29,7 @@ interface OrderStats {
 }
 
 const navigationItems = [
-  { label: "Dashboard", path: "/" },
+  { label: "Overview", path: "/dashboard" },
   { label: "Order", path: "/orders" },
   { label: "Inventory", path: "/inventory" },
   { label: "Products", path: "/products" },
@@ -144,8 +145,6 @@ export default function Order() {
       isFinished: false,
     },
   ])
-
-  // Load Poppins font on component mount
   useEffect(() => {
     const link = document.createElement('link');
     link.href = 'https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap';
@@ -204,14 +203,14 @@ export default function Order() {
     
     setTimeout(() => {
       setOrders(prevOrders => prevOrders.filter(order => order.id !== id))
-    }, 500)
+    }, 100)
   }
 
   return (
     <div className="min-h-screen bg-white" style={{ fontFamily: 'Poppins, sans-serif' }}>
-      {/* SIDEBAR */}
+
       <>
-        {/* Sidebar Toggle Button */}
+
         <button
           onClick={() => setIsOpen(!isOpen)}
           className="fixed top-6 left-6 z-50 p-3 bg-white rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 active:scale-95"
@@ -223,15 +222,13 @@ export default function Order() {
           )}
         </button>
 
-        {/* Backdrop */}
         {isOpen && (
           <div
             className="fixed inset-0 backdrop-blur-sm bg-black/20 z-40 transition-all duration-300"
             onClick={() => setIsOpen(false)}
           />
         )}
-
-        {/* Sidebar */}
+          {/* Sidebar */}
         <aside
           className={cn(
             "fixed top-0 left-0 h-full w-72 bg-white p-6 flex flex-col shadow-2xl z-50 transition-all duration-300 ease-in-out",
@@ -298,15 +295,10 @@ export default function Order() {
           </div>
         </aside>
       </>
-
-      {/* MAIN CONTENT */}
       <div className="p-6 pl-24">
         <div className="mb-8">
           <h1 className="text-sm font-semibold text-gray-700 tracking-wider mb-6">ORDERS</h1>
-
-          {/* Header Section */}
           <div className="flex gap-6 items-start mb-8">
-            {/* Cook Info Card */}
             <div className="bg-white rounded-2xl p-6 flex-1 max-w-sm shadow-lg">
               <div className="flex justify-between items-center mb-3">
                 <MenuIcon className="w-5 h-5 text-gray-900" />
@@ -322,7 +314,6 @@ export default function Order() {
               </div>
             </div>
      
-            {/* Stats Cards */}
             <div className="flex gap-4 flex-1">
               <div className="bg-red-700 rounded-xl p-6 flex flex-col items-center justify-center min-w-24">
                 <span className="text-white text-sm font-semibold mb-3">NEW</span>
@@ -345,64 +336,89 @@ export default function Order() {
               </div>
             </div>
           </div>
-
-          {/* Orders Grid */}
           <div className="bg-gray-100 rounded-3xl p-4 shadow-sm">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              {orders.map((order) => (
-                <div 
-                  key={order.id} 
-                  className={`bg-white rounded-2xl p-5 shadow-md hover:shadow-lg transition-all duration-500 ${
-                    order.isFinished ? 'opacity-0 scale-95' : 'opacity-100 scale-100'
-                  }`}
-                >
-                  {/* Order Header */}
-                  <div className="flex justify-between items-start mb-4">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-bold text-gray-900">TABLE {order.tableNumber}</span>
-                    </div>
-                    <span className={`${getStatusColor(order.status)} text-xs font-bold px-3 py-1 rounded-full`}>
-                      {getStatusLabel(order.status)}
-                    </span>
-                  </div>
-
-                  {/* Order Items */}
-                  <div className="space-y-2 mb-6 border-b border-gray-200 pb-4">
-                    {order.items.map((item, idx) => (
-                      <div key={idx} className="flex justify-between text-sm text-gray-700">
-                        <span className="font-semibold">{item.quantity}x</span>
-                        <span className="text-gray-600">{item.name}</span>
+              <AnimatePresence mode="popLayout">
+                {orders.map((order) => (
+                  <motion.div
+                    key={order.id}
+                    layout
+                    initial={{ opacity: 0, scale: 0.8, y: 20 }}
+                    animate={{ 
+                      opacity: 1, 
+                      scale: 1, 
+                      y: 0,
+                      transition: {
+                        type: "spring",
+                        stiffness: 300,
+                        damping: 25
+                      }
+                    }}
+                    exit={{ 
+                      opacity: 0, 
+                      scale: 0.8,
+                      y: -20,
+                      transition: {
+                        duration: 0.3,
+                        ease: "easeInOut"
+                      }
+                    }}
+                    whileHover={{ 
+                      scale: 1.02,
+                      boxShadow: "0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)",
+                      transition: {
+                        duration: 0.2
+                      }
+                    }}
+                    className="bg-white rounded-2xl p-5 shadow-md"
+                  >
+                    <div className="flex justify-between items-start mb-4">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-gray-900">TABLE {order.tableNumber}</span>
                       </div>
-                    ))}
-                  </div>
+                      <span className={`${getStatusColor(order.status)} text-xs font-bold px-3 py-1 rounded-full`}>
+                        {getStatusLabel(order.status)}
+                      </span>
+                    </div>
+                    <div className="space-y-2 mb-6 border-b border-gray-200 pb-4">
+                      {order.items.map((item, idx) => (
+                        <div key={idx} className="flex justify-between text-sm text-gray-700">
+                          <span className="font-semibold">{item.quantity}x</span>
+                          <span className="text-gray-600">{item.name}</span>
+                        </div>
+                      ))}
+                    </div>
 
-                  {/* Action Buttons */}
-                  <div className="flex gap-3">
-                    <button
-                      onClick={() => toggleStartOrder(order.id)}
-                      disabled={order.isPreparing || order.isFinished}
-                      className={`flex-1 py-2 px-3 rounded-lg font-bold text-xs transition-all duration-200 ${
-                        order.isPreparing || order.isFinished
-                          ? "bg-white text-gray-400 shadow-md opacity-50 cursor-not-allowed"
-                          : "bg-white text-gray-900 shadow-md hover:shadow-lg hover:scale-105 active:scale-95"
-                      }`}
-                    >
-                      START
-                    </button>
-                    <button
-                      onClick={() => toggleFinishOrder(order.id)}
-                      disabled={!order.isPreparing}
-                      className={`flex-1 py-2 px-3 rounded-lg font-bold text-xs transition-all duration-200 ${
-                        order.isPreparing
-                          ? "bg-green-600 text-white hover:bg-green-700 hover:shadow-lg hover:scale-105 active:scale-95"
-                          : "bg-green-600 text-white opacity-50 cursor-not-allowed"
-                      }`}
-                    >
-                      FINISHED
-                    </button>
-                  </div>
-                </div>
-              ))}
+                    <div className="flex gap-3">
+                      <motion.button
+                        onClick={() => toggleStartOrder(order.id)}
+                        disabled={order.isPreparing || order.isFinished}
+                        whileTap={{ scale: order.isPreparing || order.isFinished ? 1 : 0.95 }}
+                        className={`flex-1 py-2 px-3 rounded-lg font-bold text-xs transition-all duration-200 ${
+                          order.isPreparing || order.isFinished
+                            ? "bg-white text-gray-400 shadow-md opacity-50 cursor-not-allowed"
+                            : "bg-white text-gray-900 shadow-md hover:shadow-lg hover:scale-105"
+                        }`}
+                      >
+                        START
+                      </motion.button>
+                      <motion.button
+                        onClick={() => toggleFinishOrder(order.id)}
+                        disabled={!order.isPreparing}
+                        whileTap={{ scale: order.isPreparing ? 0.95 : 1 }}
+                        whileHover={{ scale: order.isPreparing ? 1.05 : 1 }}
+                        className={`flex-1 py-2 px-3 rounded-lg font-bold text-xs transition-all duration-200 ${
+                          order.isPreparing
+                            ? "bg-green-600 text-white hover:bg-green-700 hover:shadow-lg"
+                            : "bg-green-600 text-white opacity-50 cursor-not-allowed"
+                        }`}
+                      >
+                        FINISHED
+                      </motion.button>
+                    </div>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
             </div>
           </div>
         </div>

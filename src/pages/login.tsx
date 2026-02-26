@@ -17,21 +17,16 @@ export default function Login() {
     e.preventDefault();
     
     if (isLogin) {
-   
       localStorage.setItem("isAuthenticated", "true");
-      navigate("/");
+      navigate("/dashboard");
     } else {
-      
       if (formData.password !== formData.confirmPassword) {
         alert("Passwords don't match!");
         return;
       }
-      
-     
       localStorage.setItem("userEmail", formData.email);
       localStorage.setItem("userName", formData.name);
       
-
       alert("Account created successfully! Please log in.");
       
       setFormData({
@@ -61,7 +56,7 @@ export default function Login() {
               isLogin
                 ? "text-gray-900 border-b-2 border-gray-900"
                 : "text-gray-400"
-            }`} >
+            }`}>
             <svg
               className="w-5 h-5"
               fill="none"
