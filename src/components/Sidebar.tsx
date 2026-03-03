@@ -5,11 +5,13 @@ import { cn } from "@/lib/utils"
 import { Menu, X } from "lucide-react"
 
 const navigationItems = [
-  { label: "Dashboard", path: "/" },
+  { label: "Dashboard", path: "/home" },
   { label: "Order", path: "/orders" },
   { label: "Inventory", path: "/inventory" },
   { label: "Products", path: "/products" },
   { label: "Menus", path: "/menu" },
+  { label: "Sales", path: "/sales" },
+  { label: "Reports", path: "/reports" },
 ]
 
 const additionalItems = [
@@ -63,7 +65,7 @@ export function Sidebar() {
       
         <nav className="flex-1 space-y-1.5">
           {navigationItems.map((item) => (
-            <NavLink key={item.label} to={item.path} end onClick={() => setIsOpen(false)}>
+            <NavLink key={item.label} to={item.path} end>
               {({ isActive }) => (
                 <Button
                   variant="ghost"
