@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ShoppingBag, Truck, Award, Utensils } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -7,6 +7,9 @@ export default function TheCrunch() {
   const [activeMenu, setActiveMenu] = useState('main');
   const [cartCount, setCartCount] = useState(0);
   const [isSignedIn, setIsSignedIn] = useState(false); // retained for styling but not used
+
+  // products fetched from backend
+  const [productList, setProductList] = useState<any[]>([]);
 
   const getCurrentDay = () => {
     const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -19,7 +22,19 @@ export default function TheCrunch() {
   const navigate = useNavigate();
   const handleSignIn = () => {
     navigate('/login');
-    <div className="min-h-screen bg-white" style={{ fontFamily: "'Poppins', sans-serif" }}>
+  };
+
+  // load products when component mounts
+  useEffect(() => {
+    fetch('/api/products')
+      .then((r) => r.json())
+      .then(setProductList)
+      .catch(console.error);
+  }, []);
+
+  // wrap JSX in return; the link tag stays inside fragment
+  return (
+    <>
       <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
       
       <motion.header
@@ -197,6 +212,18 @@ export default function TheCrunch() {
           <motion.div className="bg-white rounded-3xl p-8 shadow-xl" whileHover={{ boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)" }}>
             <h3 className="text-3xl font-bold text-gray-800 mb-2">Menus for today</h3>
             <p className="text-gray-400 text-sm mb-8">Ultra-crispy, jagged edges that hold "crunch" for longer than a standard nugget.</p>
+            {/* display simple list from backend */}
+            {productList.length > 0 ? (
+              <ul className="space-y-2">
+                {productList.map((p) => (
+                  <li key={p.id} className="text-gray-700">
+                    {p.name} – ₱{p.price}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-gray-500 text-sm">(no products yet)</p>
+            )}
 
             <motion.div className="rounded-2xl overflow-hidden mb-6 shadow-lg" whileHover={{ scale: 1.05 }} transition={{ duration: 0.3 }}>
               <img src="https://i.pinimg.com/736x/84/df/b5/84dfb5732aa30595aeac6d2b9b43d23f.jpg" alt="Breakfast" className="w-full h-48 object-cover" />
@@ -268,6 +295,6 @@ export default function TheCrunch() {
           </div>
         </div>
       </motion.footer>
-    </div>
+    </>
   );
 }

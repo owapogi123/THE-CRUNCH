@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Link, NavLink } from "react-router-dom"
+import { Link, NavLink, useNavigate } from "react-router-dom"
 import { Menu, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -25,6 +25,7 @@ const additionalItems = [
 
 export function Sidebar() {
   const [isOpen, setIsOpen] = useState(false)
+  const navigate = useNavigate()
 
   return (
     <>
@@ -144,18 +145,22 @@ export function Sidebar() {
                 animate={{ x: 0, opacity: 1 }}
                 transition={{ delay: 0.45 }}
               >
-                <Link to="/login" className="w-full" onClick={() => {
+                {/* logout should clear all auth tokens and navigate programmatically */}
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start rounded-xl text-sm text-black mt-6 transition-all duration-200 px-4 py-2.5 hover:bg-red-50 hover:text-red-600"
+                  onClick={() => {
+                    // clear everything related to session
                     localStorage.removeItem('isAuthenticated');
+                    localStorage.removeItem('authToken');
                     localStorage.removeItem('userName');
-                  }}>
-                  <Button
-                    variant="ghost"
-                    className="w-full justify-start rounded-xl text-sm text-black mt-6 transition-all duration-200 px-4 py-2.5 hover:bg-red-50 hover:text-red-600"
-                    onClick={() => setIsOpen(false)}
-                  >
-                    Log Out
-                  </Button>
-                </Link>
+                    setIsOpen(false);
+                    // using navigate prop ensures App re-checks isAuth
+                    navigate('/login');
+                  }}
+                >
+                  Log Out
+                </Button>
               </motion.div>
             </div>
           </motion.aside>

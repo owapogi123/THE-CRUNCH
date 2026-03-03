@@ -101,8 +101,14 @@ export const authApi = {
   login: (username: string, password: string) =>
     api.post('/auth/login', { username, password }),
 
-  register: (username: string, password: string) =>
-    api.post('/auth/register', { username, password }),
+  /**
+   * Register a new admin
+   * @param name user's name
+   * @param email user's email (will be used as username)
+   * @param password plain text password
+   */
+  register: (name: string, email: string, password: string) =>
+    api.post('/auth/register', { name, email, password }),
 
   logout: () => {
     localStorage.removeItem('authToken');

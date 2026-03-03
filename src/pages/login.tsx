@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Eye, EyeOff } from "lucide-react";
+import { authApi } from "../lib/api";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -22,29 +23,22 @@ export default function Login() {
     setIsLoading(true);
 
     if (isLogin) {
-      // call backend login
+      // call backend login using shared helper
       try {
-        const res = await fetch("http://localhost:5000/auth/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            email: formData.email,
-            password: formData.password,
-          }),
-        });
-        const data = await res.json();
-        if (res.ok) {
-          localStorage.setItem("isAuthenticated", "true");
-          localStorage.setItem("userName", data.name || "");
-          setIsLoading(false);
-          navigate("/dashboard");
-        } else {
-          setIsLoading(false);
-          setError(data.message || "Invalid credentials");
-        }
-      } catch (err) {
+        const data = await authApi.login(formData.email, formData.password);
+        console.log("Login response:", data);
+        localStorage.setItem("authToken", data.token);
+        localStorage.setItem("isAuthenticated", "true");
+        localStorage.setItem("userName", data.username || data.name || "");
+        // notify other components
+        window.dispatchEvent(new Event('authChange'));
+        // go to protected dashboard
+        navigate("/dashboard");
+      } catch (err: any) {
+        console.error("Login failed:", err);
+        setError(err.message || "Invalid credentials");
+      } finally {
         setIsLoading(false);
-        setError("Network error");
       }
     } else {
       if (formData.password !== formData.confirmPassword) {
@@ -54,32 +48,21 @@ export default function Login() {
       }
 
       try {
-        const res = await fetch("http://localhost:5000/auth/register", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: formData.name,
-            email: formData.email,
-            password: formData.password,
-          }),
+        await authApi.register(formData.name, formData.email, formData.password);
+        alert("Account created successfully! Please log in.");
+        setFormData({
+          email: formData.email,
+          password: "",
+          confirmPassword: "",
+          name: "",
         });
-        const data = await res.json();
-        if (res.ok) {
-          alert("Account created successfully! Please log in.");
-          setFormData({
-            email: formData.email,
-            password: "",
-            confirmPassword: "",
-            name: "",
-          });
-          setIsLogin(true);
-        } else {
-          setError(data.message || "Failed to register");
-        }
-      } catch (err) {
-        setError("Network error");
+        setIsLogin(true);
+      } catch (err: any) {
+        console.error("Registration failed:", err);
+        setError(err.message || "Failed to register");
+      } finally {
+        setIsLoading(false);
       }
-      setIsLoading(false);
     }
   };
 

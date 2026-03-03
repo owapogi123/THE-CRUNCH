@@ -6,6 +6,7 @@ import { Clock, Menu as MenuIcon, X, Bell } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { motion, AnimatePresence } from "framer-motion"
+import { api } from "../lib/api" // for backend calls
 
 interface OrderItem {
   quantity: number
@@ -207,6 +208,65 @@ export default function Order() {
     }
   }, [])
 
+  // --- POS state for cashier
+  const [products, setProducts] = useState<any[]>([])
+  const [cart, setCart] = useState<any[]>([])
+  const [orderType, setOrderType] = useState<'dine-in'|'take-out'>('dine-in')
+
+  useEffect(() => {
+    api.get<any[]>('/products').then(setProducts).catch(console.error)
+  }, [])
+
+  const addToCart = (prod: any) => {
+    setCart((c) => {
+      const existing = c.find((x) => x.id === prod.id)
+      if (existing) {
+        return c.map((x) =>
+          x.id === prod.id
+            ? { ...x, qty: x.qty + 1, subtotal: +(x.qty + 1) * prod.price }
+            : x
+        )
+      }
+      return [...c, { id: prod.id, name: prod.name, price: +prod.price, qty: 1, subtotal: +prod.price }]
+    })
+  }
+
+  const updateQty = (id: number, qty: number) => {
+    if (qty <= 0) {
+      setCart((c) => c.filter((x) => x.id !== id))
+    } else {
+      setCart((c) =>
+        c.map((x) =>
+          x.id === id ? { ...x, qty, subtotal: qty * x.price } : x
+        )
+      )
+    }
+  }
+
+  const total = cart.reduce((sum, x) => sum + x.subtotal, 0)
+
+  const submitOrder = async () => {
+    if (cart.length === 0) return alert('Cart is empty')
+    try {
+      const items = cart.map((x) => ({ product_id: x.id, qty: x.qty, subtotal: x.subtotal }))
+      const body: any = { items, total, orderType }
+      const res = await api.post('/orders', body)
+      alert('Order saved!')
+      // add to localStorage queue and orders
+      const saved = JSON.parse(localStorage.getItem('orders') || '[]')
+      const newOrder = { id: res.orderId || Date.now(), status: 'Pending', items: cart, total }
+      localStorage.setItem('orders', JSON.stringify([newOrder, ...saved]))
+      const queue = JSON.parse(localStorage.getItem('cookQueue') || '[]')
+      localStorage.setItem('cookQueue', JSON.stringify([newOrder, ...queue]))
+      setCart([])
+      // refresh inventory
+      api.get<any[]>('/products').then(setProducts).catch(console.error)
+    } catch (err) {
+      console.error(err)
+      alert('Failed to submit order')
+    }
+  }
+
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000)
     return () => clearInterval(timer)
@@ -357,6 +417,71 @@ export default function Order() {
 
       {/* MAIN CONTENT */}
       <div className="p-6 pl-24">
+        {/* cashier POS panel */}
+        <div className="mb-8 bg-white rounded-2xl p-6 shadow-lg">
+          <h2 className="text-lg font-semibold mb-4">Point of Sale</h2>
+          <div className="flex flex-col md:flex-row gap-6">
+            {/* product list */}
+            <div className="flex-1">
+              <h3 className="text-sm font-medium mb-2">Products</h3>
+              <div className="grid grid-cols-2 gap-2 max-h-64 overflow-auto">
+                {products.map((p) => (
+                  <button
+                    key={p.id}
+                    className="border rounded p-2 text-left hover:bg-gray-100"
+                    onClick={() => addToCart(p)}
+                  >
+                    <div className="text-sm font-medium">{p.name}</div>
+                    <div className="text-xs text-gray-500">₱{p.price}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+            {/* cart section */}
+            <div className="flex-1">
+              <h3 className="text-sm font-medium mb-2">Cart</h3>
+              {cart.length === 0 ? (
+                <p className="text-gray-500 text-xs">No items</p>
+              ) : (
+                <div className="space-y-2">
+                  {cart.map((c) => (
+                    <div key={c.id} className="flex justify-between items-center">
+                      <span className="text-sm">{c.name} x </span>
+                      <input
+                        type="number"
+                        min="1"
+                        value={c.qty}
+                        onChange={(e) => updateQty(c.id, Number(e.target.value))}
+                        className="w-12 border px-1 text-sm"
+                      />
+                      <span className="text-sm">₱{c.subtotal.toFixed(2)}</span>
+                    </div>
+                  ))}
+                  <div className="flex justify-between font-bold">
+                    <span>Total</span>
+                    <span>₱{total.toFixed(2)}</span>
+                  </div>
+                  <div className="flex gap-2 items-center">
+                    <select
+                      value={orderType}
+                      onChange={(e) => setOrderType(e.target.value as any)}
+                      className="border px-2 py-1 text-sm"
+                    >
+                      <option value="dine-in">Dine-In</option>
+                      <option value="take-out">Take-Out</option>
+                    </select>
+                    <button
+                      onClick={submitOrder}
+                      className="bg-blue-600 text-white px-3 py-1 rounded text-xs hover:bg-blue-700"
+                    >
+                      Submit
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
         <div className="mb-8">
           <div className="flex items-center justify-between mb-6">
             <h1 className="text-sm font-semibold text-gray-700 tracking-wider">ORDERS</h1>
@@ -424,7 +549,6 @@ export default function Order() {
                     >
                       <div className="flex justify-between items-start mb-4">
                         <div>
-                          <span className="text-sm font-bold text-gray-900">TABLE {order.tableNumber}</span>
                           <p className="text-xs text-gray-400 mt-0.5">{order.orderNumber}</p>
                         </div>
                         <span className={`${getStatusColor(order.status)} text-xs font-bold px-3 py-1 rounded-full`}>

@@ -1,4 +1,5 @@
 import { Routes, Route } from "react-router-dom"
+import { useState, useEffect } from "react"
 import AdminDashboard from "./pages/index"
 
 import Order from "./pages/Order"
@@ -10,12 +11,27 @@ import UserAccounts from "./pages/useraccounts"
 import { Navigate } from "react-router-dom"
 
 export default function App() {
-  const isAuth = localStorage.getItem("isAuthenticated") === "true";
+  // keep auth flag in state so routing updates when storage changes (logout/login)
+  const [isAuth, setIsAuth] = useState(() =>
+    localStorage.getItem("isAuthenticated") === "true"
+  );
+
+  // listen for storage events (another tab or manual clear) and update
+  useEffect(() => {
+    const handler = () => {
+      setIsAuth(localStorage.getItem("isAuthenticated") === "true");
+    };
+    window.addEventListener("storage", handler);
+    return () => window.removeEventListener("storage", handler);
+  }, []);
 
   return (
     <Routes>
-      {/* public pages */}
-      <Route path="/" element={<Products />} />
+      {/* public pages; if already authenticated, send root to dashboard */}
+      <Route
+        path="/"
+        element={isAuth ? <Navigate to="/dashboard" /> : <Products />}
+      />
       <Route path="/login" element={<Login />} />
 
       {/* protected pages */}

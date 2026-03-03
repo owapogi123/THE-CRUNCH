@@ -7,6 +7,7 @@ import { Sidebar } from "@/components/Sidebar"
 import { OrdersTable } from "@/components/orders-table"
 import { SalesChart } from "@/components/sales-chart"
 import { useState, useEffect } from "react"
+import { api } from "@/lib/api" // used for backend fetches
 
 interface Order {
   id: number
@@ -40,6 +41,30 @@ export default function AdminDashboard() {
     }
 
     loadData() // load on mount
+
+    // also fetch from backend once
+    api.get<any[]>('/orders').then((rows) => {
+      if (rows && rows.length) {
+        const grouped: Record<number, any> = {}
+        rows.forEach(r => {
+          if (!grouped[r.id]) {
+            grouped[r.id] = {
+              id: r.id,
+              orderNumber: String(r.id),
+              items: [],
+              total: Number(r.total) || 0,
+              date: r.date ? new Date(r.date).toLocaleDateString() : '',
+              time: r.date ? new Date(r.date).toLocaleTimeString() : '',
+              status: r.status || ''
+            }
+          }
+          if (r.productId) {
+            grouped[r.id].items.push({ name: r.productName || '', price: r.price || 0, quantity: r.quantity })
+          }
+        })
+        setOrders(Object.values(grouped))
+      }
+    }).catch(console.error)
 
     // ✅ Listen for localStorage changes (when cashier submits an order)
     window.addEventListener("storage", loadData)
