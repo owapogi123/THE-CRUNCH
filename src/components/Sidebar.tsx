@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils"
 import { motion, AnimatePresence } from "framer-motion"
 
 const navigationItems = [
-  { label: "Dashboard", path: "/" },
+  { label: "Dashboard", path: "/dashboard" },
   { label: "Order", path: "/orders" },
   { label: "Inventory", path: "/inventory" },
   { label: "Products", path: "/products" },
@@ -144,7 +144,10 @@ export function Sidebar() {
                 animate={{ x: 0, opacity: 1 }}
                 transition={{ delay: 0.45 }}
               >
-                <Link to="/login" className="w-full">
+                <Link to="/login" className="w-full" onClick={() => {
+                    localStorage.removeItem('isAuthenticated');
+                    localStorage.removeItem('userName');
+                  }}>
                   <Button
                     variant="ghost"
                     className="w-full justify-start rounded-xl text-sm text-black mt-6 transition-all duration-200 px-4 py-2.5 hover:bg-red-50 hover:text-red-600"

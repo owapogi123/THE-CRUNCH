@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ShoppingBag, Truck, Award, Utensils } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function TheCrunch() {
   const [activeMenu, setActiveMenu] = useState('main');
   const [cartCount, setCartCount] = useState(0);
-  const [isSignedIn, setIsSignedIn] = useState(false);
+  const [isSignedIn, setIsSignedIn] = useState(false); // retained for styling but not used
 
   const getCurrentDay = () => {
     const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -15,11 +16,9 @@ export default function TheCrunch() {
   const handleAddToCart = () => setCartCount(prev => prev + 1);
   const handleSubscribe = () => alert('Thank you for subscribing to The Crunch!');
 
+  const navigate = useNavigate();
   const handleSignIn = () => {
-    setIsSignedIn(!isSignedIn);
-  };
-
-  return (
+    navigate('/login');
     <div className="min-h-screen bg-white" style={{ fontFamily: "'Poppins', sans-serif" }}>
       <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
       
@@ -43,7 +42,7 @@ export default function TheCrunch() {
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
             >
-              {isSignedIn ? 'Sign out' : 'Sign in'}
+              Sign in
             </motion.button>
 
             <motion.button

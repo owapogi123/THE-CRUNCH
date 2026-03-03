@@ -15,34 +15,71 @@ export default function Login() {
     name: "",
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
+    setError("");
+    setIsLoading(true);
+
     if (isLogin) {
-   
-      localStorage.setItem("isAuthenticated", "true");
-      navigate("/");
+      // call backend login
+      try {
+        const res = await fetch("http://localhost:5000/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: formData.email,
+            password: formData.password,
+          }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          localStorage.setItem("isAuthenticated", "true");
+          localStorage.setItem("userName", data.name || "");
+          setIsLoading(false);
+          navigate("/dashboard");
+        } else {
+          setIsLoading(false);
+          setError(data.message || "Invalid credentials");
+        }
+      } catch (err) {
+        setIsLoading(false);
+        setError("Network error");
+      }
     } else {
-      
       if (formData.password !== formData.confirmPassword) {
         alert("Passwords don't match!");
+        setIsLoading(false);
         return;
       }
-      
-     
-      localStorage.setItem("userEmail", formData.email);
-      localStorage.setItem("userName", formData.name);
-      
 
-      alert("Account created successfully! Please log in.");
-      
-      setFormData({
-        email: formData.email, 
-        password: "",
-        confirmPassword: "",
-        name: "",
-      });
-      setIsLogin(true);
+      try {
+        const res = await fetch("http://localhost:5000/auth/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: formData.name,
+            email: formData.email,
+            password: formData.password,
+          }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          alert("Account created successfully! Please log in.");
+          setFormData({
+            email: formData.email,
+            password: "",
+            confirmPassword: "",
+            name: "",
+          });
+          setIsLogin(true);
+        } else {
+          setError(data.message || "Failed to register");
+        }
+      } catch (err) {
+        setError("Network error");
+      }
+      setIsLoading(false);
     }
   };
 

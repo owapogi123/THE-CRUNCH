@@ -92,6 +92,7 @@ function OrderTimer({ startedAt, orderNumber }: { startedAt: number; orderNumber
 export default function Order() {
   const [currentTime, setCurrentTime] = useState(new Date())
   const [isOpen, setIsOpen] = useState(false)
+  const [notifPermission, setNotifPermission] = useState(Notification.permission)
   const [orders, setOrders] = useState<OrderCard[]>([
     {
       id: "1",
