@@ -445,19 +445,26 @@ export default function Order() {
               ) : (
                 <div className="space-y-2">
                   {cart.map((c) => (
-                    <div key={c.id} className="flex justify-between items-center">
-                      <span className="text-sm">{c.name} x </span>
+                    <div key={c.id} className="flex justify-between items-center gap-2 p-2 bg-gray-50 rounded">
+                      <span className="text-sm font-medium flex-1">{c.name}</span>
                       <input
                         type="number"
                         min="1"
                         value={c.qty}
                         onChange={(e) => updateQty(c.id, Number(e.target.value))}
-                        className="w-12 border px-1 text-sm"
+                        className="w-10 border px-1 py-1 text-xs text-center rounded"
                       />
-                      <span className="text-sm">₱{c.subtotal.toFixed(2)}</span>
+                      <span className="text-sm font-medium min-w-16 text-right">₱{c.subtotal.toFixed(2)}</span>
+                      <button
+                        onClick={() => updateQty(c.id, 0)}
+                        className="bg-red-500 text-white px-2 py-1 rounded text-xs hover:bg-red-600 transition"
+                        title="Remove item"
+                      >
+                        ✕
+                      </button>
                     </div>
                   ))}
-                  <div className="flex justify-between font-bold">
+                  <div className="flex justify-between font-bold border-t pt-2 mt-2">
                     <span>Total</span>
                     <span>₱{total.toFixed(2)}</span>
                   </div>
@@ -465,16 +472,27 @@ export default function Order() {
                     <select
                       value={orderType}
                       onChange={(e) => setOrderType(e.target.value as any)}
-                      className="border px-2 py-1 text-sm"
+                      className="border px-2 py-1 text-sm rounded"
                     >
                       <option value="dine-in">Dine-In</option>
                       <option value="take-out">Take-Out</option>
                     </select>
+                  </div>
+                  <div className="flex gap-2">
                     <button
                       onClick={submitOrder}
-                      className="bg-blue-600 text-white px-3 py-1 rounded text-xs hover:bg-blue-700"
+                      className="flex-1 bg-green-600 text-white px-3 py-2 rounded text-xs font-bold hover:bg-green-700 transition"
                     >
-                      Submit
+                      Submit Order
+                    </button>
+                    <button
+                      onClick={() => {
+                        setCart([])
+                        setOrderType('dine-in')
+                      }}
+                      className="flex-1 bg-red-600 text-white px-3 py-2 rounded text-xs font-bold hover:bg-red-700 transition"
+                    >
+                      Cancel Order
                     </button>
                   </div>
                 </div>

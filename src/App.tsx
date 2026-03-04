@@ -16,13 +16,17 @@ export default function App() {
     localStorage.getItem("isAuthenticated") === "true"
   );
 
-  // listen for storage events (another tab or manual clear) and update
+  // listen for storage events (another tab or manual clear) and custom auth changes
   useEffect(() => {
     const handler = () => {
       setIsAuth(localStorage.getItem("isAuthenticated") === "true");
     };
     window.addEventListener("storage", handler);
-    return () => window.removeEventListener("storage", handler);
+    window.addEventListener("authChange", handler);
+    return () => {
+      window.removeEventListener("storage", handler);
+      window.removeEventListener("authChange", handler);
+    };
   }, []);
 
   return (
