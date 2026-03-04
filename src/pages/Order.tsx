@@ -212,6 +212,7 @@ export default function Order() {
   const [products, setProducts] = useState<any[]>([])
   const [cart, setCart] = useState<any[]>([])
   const [orderType, setOrderType] = useState<'dine-in'|'take-out'>('dine-in')
+  const [paymentMethod, setPaymentMethod] = useState<'cash'|'e-payment'>('cash')
 
   useEffect(() => {
     api.get<any[]>('/products').then(setProducts).catch(console.error)
@@ -249,16 +250,18 @@ export default function Order() {
     if (cart.length === 0) return alert('Cart is empty')
     try {
       const items = cart.map((x) => ({ product_id: x.id, qty: x.qty, subtotal: x.subtotal }))
-      const body: any = { items, total, orderType }
+      const body: any = { items, total, orderType, paymentMethod }
       const res = await api.post('/orders', body)
       alert('Order saved!')
       // add to localStorage queue and orders
       const saved = JSON.parse(localStorage.getItem('orders') || '[]')
-      const newOrder = { id: res.orderId || Date.now(), status: 'Pending', items: cart, total }
+      const newOrder = { id: res.orderId || Date.now(), status: 'Pending', items: cart, total, orderType, paymentMethod }
       localStorage.setItem('orders', JSON.stringify([newOrder, ...saved]))
       const queue = JSON.parse(localStorage.getItem('cookQueue') || '[]')
       localStorage.setItem('cookQueue', JSON.stringify([newOrder, ...queue]))
       setCart([])
+      setPaymentMethod('cash')
+      setOrderType('dine-in')
       // refresh inventory
       api.get<any[]>('/products').then(setProducts).catch(console.error)
     } catch (err) {
@@ -472,10 +475,18 @@ export default function Order() {
                     <select
                       value={orderType}
                       onChange={(e) => setOrderType(e.target.value as any)}
-                      className="border px-2 py-1 text-sm rounded"
+                      className="border px-2 py-1 text-sm rounded flex-1"
                     >
                       <option value="dine-in">Dine-In</option>
                       <option value="take-out">Take-Out</option>
+                    </select>
+                    <select
+                      value={paymentMethod}
+                      onChange={(e) => setPaymentMethod(e.target.value as any)}
+                      className="border px-2 py-1 text-sm rounded flex-1"
+                    >
+                      <option value="cash">Cash</option>
+                      <option value="e-payment">E-Payment</option>
                     </select>
                   </div>
                   <div className="flex gap-2">
