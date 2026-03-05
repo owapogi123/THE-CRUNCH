@@ -1,4 +1,4 @@
-import { useState, useEffect, lazy } from "react"
+import { useState, useEffect } from "react"
 import { Link, NavLink, useNavigate } from "react-router-dom"
 import { Search, X, ShoppingBag, Trash2, Menu, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -73,6 +73,7 @@ export default function MenuPage() {
   const [paidAmount, setPaidAmount] = useState(0)
   const [orderNumber, setOrderNumber] = useState("")
   const [savedCart, setSavedCart] = useState<CartItem[]>([])
+  const [isOpen, setIsOpen] = useState(false)
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -114,41 +115,6 @@ export default function MenuPage() {
   const handlePayment = () => {
     const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0)
     const newOrderNumber = `#${Math.floor(10000 + Math.random() * 90000)}`
-    const orderId = Date.now()
-
-    const existingOrders = JSON.parse(localStorage.getItem("orders") || "[]")
-    const newOrder = {
-      id: orderId,
-      orderNumber: newOrderNumber,
-      items: cart,
-      total,
-      date: new Date().toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }),
-      time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-      status: "Pending",
-      paymentCategory: "Cash",
-    }
-    localStorage.setItem("orders", JSON.stringify([newOrder, ...existingOrders]))
-
-    const existingQueue = JSON.parse(localStorage.getItem("cookQueue") || "[]")
-    const cookOrder = {
-      id: String(orderId),
-      orderNumber: newOrderNumber,
-      tableNumber: Math.floor(Math.random() * 10) + 1,
-      status: "dine-in",
-      items: cart.map(i => ({ quantity: i.quantity, name: i.name })),
-      isPreparing: false,
-      isFinished: false,
-    }
-    localStorage.setItem("cookQueue", JSON.stringify([cookOrder, ...existingQueue]))
-
-    const existingPayments = JSON.parse(localStorage.getItem("payments") || "[]")
-    const newPayment = {
-      id: orderId,
-      category: "Cash",
-      date: newOrder.date,
-      time: newOrder.time,
-    }
-    localStorage.setItem("payments", JSON.stringify([newPayment, ...existingPayments]))
 
     setSavedCart([...cart])
     setPaidAmount(total)
@@ -263,7 +229,6 @@ export default function MenuPage() {
         </aside>
       </>
 
-            
       <div className="flex-1 flex flex-col">
         <motion.div className="bg-white shadow-sm px-8 py-6 border-b border-gray-200" initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ duration: 0.3 }}>
           <div className="flex items-center justify-between ml-16">
@@ -289,22 +254,23 @@ export default function MenuPage() {
 
             <motion.div className="mb-8" initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.15 }}>
               <h2 className="text-sm font-bold text-gray-700 mb-4 uppercase tracking-wide">Categories</h2>
-              <div className="grid grid-cols-6 gap-3">
-                {categories.map((category, index) => (
-                  <motion.button
+              <div className="flex flex-wrap gap-2">
+                {categories.map((category) => (
+                  <button
                     key={category.name}
                     onClick={() => setSelectedCategory(category.name)}
-                    className={`${selectedCategory === category.name ? "bg-blue-600 text-white shadow-md" : "bg-white text-gray-700 shadow-sm"} rounded-xl px-4 py-3 flex flex-col items-center gap-2 transition-colors duration-200 border border-gray-100`}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.04 * index }}
-                    // ✅ Simplified: just slight scale up on hover, subtle press on tap
-                    whileHover={{ scale: 1.03 }}
-                    whileTap={{ scale: 0.97 }}
+                    className="relative px-5 py-2 text-sm font-medium rounded-full transition-colors duration-200 focus:outline-none"
+                    style={{ color: selectedCategory === category.name ? '#2563eb' : '#6b7280' }}
                   >
-                    <span className="text-3xl">{category.icon}</span>
-                    <span className="text-sm font-semibold text-center leading-tight">{category.name}</span>
-                  </motion.button>
+                    {selectedCategory === category.name && (
+                      <motion.span
+                        layoutId="categoryPill"
+                        className="absolute inset-0 rounded-full bg-blue-50 border border-blue-200"
+                        transition={{ type: "spring", stiffness: 350, damping: 30 }}
+                      />
+                    )}
+                    <span className="relative z-10">{category.name}</span>
+                  </button>
                 ))}
               </div>
             </motion.div>
@@ -317,22 +283,18 @@ export default function MenuPage() {
                     onClick={() => addToCart(item)}
                     className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100 group"
                     layout
-                    // ✅ Simplified: fade + subtle slide up on enter, no exit animation
                     initial={{ opacity: 0, y: 12 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.2, delay: 0.03 * index }}
-                    // ✅ Simplified hover: gentle lift with soft shadow, no aggressive scaling
                     whileHover={{
                       y: -4,
                       boxShadow: "0 8px 20px rgba(0,0,0,0.08)",
                       transition: { duration: 0.2 }
                     }}
-                    // ✅ Simplified tap: just a soft press feel
                     whileTap={{ scale: 0.97, y: 0 }}
                   >
                     <div className="aspect-square bg-gray-50 flex items-center justify-center overflow-hidden">
-                      {/* ✅ Removed image zoom on hover — cleaner feel */}
                       <img
                         src={item.image}
                         alt={item.name}
@@ -367,7 +329,6 @@ export default function MenuPage() {
                         <motion.div
                           key={item.id}
                           layout
-                          // ✅ Simplified cart item: simple fade + slide in from left
                           initial={{ opacity: 0, x: -16 }}
                           animate={{ opacity: 1, x: 0 }}
                           exit={{ opacity: 0, x: 16 }}
@@ -387,7 +348,6 @@ export default function MenuPage() {
                               <motion.span
                                 className="text-sm font-semibold text-gray-700 min-w-[20px] text-center"
                                 key={item.quantity}
-                                // ✅ Simplified quantity change: just a quick pop
                                 initial={{ scale: 1.2 }}
                                 animate={{ scale: 1 }}
                                 transition={{ duration: 0.15 }}
@@ -424,7 +384,6 @@ export default function MenuPage() {
                     <motion.button
                       onClick={handlePayment}
                       className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold text-lg shadow-md"
-                      // ✅ Simplified: gentle scale on hover, soft press on tap
                       whileHover={{ scale: 1.02 }}
                       whileTap={{ scale: 0.98 }}
                     >
@@ -445,7 +404,6 @@ export default function MenuPage() {
             <div className="fixed inset-0 flex items-center justify-center z-[101] p-4">
               <motion.div
                 className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full relative overflow-hidden"
-                // ✅ Simplified modal: clean fade + scale in
                 initial={{ scale: 0.95, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0.95, opacity: 0 }}

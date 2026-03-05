@@ -6,11 +6,10 @@ import { cn } from "@/lib/utils"
 import { motion, AnimatePresence } from "framer-motion"
 
 const navigationItems = [
-  { label: "Dashboard", path: "/dashboard" },
+  { label: "Overview", path: "/dashboard" },
   { label: "Order", path: "/orders" },
   { label: "Inventory", path: "/inventory" },
   { label: "Products", path: "/products" },
-  { label: "Reports", path: "/reports" },
   { label: "Menus", path: "/menu" },
 
 ]

@@ -10,7 +10,6 @@ fontLink.href = "https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;6
 fontLink.rel = "stylesheet";
 document.head.appendChild(fontLink);
 
-// ── Nav config (mirrors all other pages exactly) ──────────────────────────
 const navigationItems = [
   { label: "Overview",  path: "/dashboard" },
   { label: "Order",     path: "/orders" },
@@ -25,19 +24,6 @@ const additionalItems = [
   { label: "Supplier Maintenance", path: "/suppliers" },
   { label: "Sales & Reports",      path: "/sales-reports" },
 ];
-
-// ── Types ──────────────────────────────────────────────────────────────────
-// Matches exactly what MenuPage writes to localStorage("orders")
-interface StoredOrder {
-  id: number;
-  orderNumber: string;
-  items: { id: number; name: string; price: number; quantity: number; image: string }[];
-  total: number;
-  date: string;   // e.g. "Mar 04, 2025"
-  time: string;   // e.g. "02:30 PM"
-  status: string; // "Pending" | "Completed" | "Cancelled" | "Refunded"
-  paymentCategory: string; // "Cash" | "GCash" | etc.
-}
 
 type Status  = "Completed" | "Pending" | "Cancelled" | "Refunded";
 type LogType = "Sale" | "Refund" | "Void" | "Adjustment";
@@ -54,63 +40,10 @@ interface SaleLog {
   unitPrice: number;
   total: number;
   status: Status;
-  paymentMethod: string; // paymentCategory from the order (e.g. "Cash")
-  operator: string;      // fixed label for who processed it
+  paymentMethod: string;
+  operator: string;
   note?: string;
   _dateObj: Date;
-}
-
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-/**
- * Converts raw orders from localStorage into per-item sale log rows.
- * Maps status correctly:
- *   "Pending"   → order placed but cook hasn't finished it yet
- *   "Completed" → cook clicked "Finished" in Order.tsx
- *   "Cancelled" → cook clicked "Cancel" in Order.tsx
- *   "Refunded"  → cashier/admin clicked "Refund" in Order.tsx history tab
- */
-function ordersToLogs(orders: StoredOrder[]): SaleLog[] {
-  const logs: SaleLog[] = [];
-
-  orders.forEach((order) => {
-    const status: Status =
-      order.status === "Completed" ? "Completed"
-      : order.status === "Cancelled" ? "Cancelled"
-      : order.status === "Refunded"  ? "Refunded"
-      : "Pending";
-
-    const logType: LogType =
-      order.status === "Refunded"  ? "Refund"
-      : order.status === "Cancelled" ? "Void"
-      : "Sale";
-
-    // Parse the stored date string back to a Date for period filtering.
-    // StoredOrder.date is formatted by toLocaleDateString('en-US', { month:'short', day:'2-digit', year:'numeric' })
-    // e.g. "Mar 04, 2025"
-    const _dateObj = new Date(order.date);
-
-    order.items.forEach((item, idx) => {
-      logs.push({
-        id:            `${order.orderNumber}-${idx + 1}`,
-        date:          order.date,
-        time:          order.time,
-        type:          logType,
-        product:       item.name,
-        category:      "Menu Item",
-        quantity:      item.quantity,
-        unitPrice:     item.price,
-        total:         item.price * item.quantity,
-        status,
-        paymentMethod: order.paymentCategory || "Cash",
-        operator:      "Cashier",
-        _dateObj,
-      });
-    });
-  });
-
-  // Sort newest first
-  return logs.sort((a, b) => b._dateObj.getTime() - a._dateObj.getTime());
 }
 
 function groupByDate(logs: SaleLog[]): Record<string, SaleLog[]> {
@@ -122,11 +55,6 @@ function groupByDate(logs: SaleLog[]): Record<string, SaleLog[]> {
   return g;
 }
 
-/**
- * Revenue = sum of ALL non-cancelled, non-voided orders in the period.
- * Includes Pending (placed but not yet cooked) + Completed.
- * Excludes Cancelled and Refunded so refunds deduct from total.
- */
 function getRevenueForPeriod(logs: SaleLog[], period: Period): number {
   const now   = new Date();
   const start = new Date(now);
@@ -137,7 +65,6 @@ function getRevenueForPeriod(logs: SaleLog[], period: Period): number {
 
   return logs
     .filter((l) => {
-      // Exclude cancelled/refunded/voided
       if (l.status === "Cancelled" || l.status === "Refunded") return false;
       if (period === "All Time") return true;
       return l._dateObj >= start && l._dateObj <= now;
@@ -145,7 +72,7 @@ function getRevenueForPeriod(logs: SaleLog[], period: Period): number {
     .reduce((sum, l) => sum + l.total, 0);
 }
 
-// ── Sidebar (identical to all other pages) ────────────────────────────────
+// ── Sidebar ────────────────────────────────────────────────────────────────
 function Sidebar() {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -274,7 +201,6 @@ function RevenueDropdown({
   const periods: Period[] = ["Today", "Last 7 Days", "Last 30 Days", "All Time"];
   const revenue           = getRevenueForPeriod(logs, period);
 
-  // Stats breakdown for the selected period
   const now   = new Date();
   const start = new Date(now);
   if      (period === "Today")        { start.setHours(0, 0, 0, 0); }
@@ -285,10 +211,10 @@ function RevenueDropdown({
     ? logs
     : logs.filter(l => l._dateObj >= start && l._dateObj <= now);
 
-  const completedCount  = inPeriod.filter(l => l.status === "Completed").length;
-  const pendingCount    = inPeriod.filter(l => l.status === "Pending").length;
-  const cancelledCount  = inPeriod.filter(l => l.status === "Cancelled").length;
-  const refundedCount   = inPeriod.filter(l => l.status === "Refunded").length;
+  const completedCount = inPeriod.filter(l => l.status === "Completed").length;
+  const pendingCount   = inPeriod.filter(l => l.status === "Pending").length;
+  const cancelledCount = inPeriod.filter(l => l.status === "Cancelled").length;
+  const refundedCount  = inPeriod.filter(l => l.status === "Refunded").length;
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -331,7 +257,6 @@ function RevenueDropdown({
           </motion.p>
         </AnimatePresence>
 
-        {/* Mini breakdown */}
         <div style={{ display: "flex", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
           {[
             { label: "Completed", count: completedCount, color: "#16a34a" },
@@ -409,50 +334,25 @@ function LogRow({ log, index }: { log: SaleLog; index: number }) {
           borderBottom: "1px solid #f1f5f9",
           backgroundColor: "#fff", transition: "background 0.15s",
         }}>
-        {/* Type dot */}
         <div style={{ width: 8, height: 8, borderRadius: "50%", background: typeColor[log.type], flexShrink: 0 }} />
-
-        {/* Time */}
         <span style={{ color: "#94a3b8", fontSize: 12, width: 72, flexShrink: 0 }}>{log.time}</span>
-
-        {/* Product */}
         <span style={{ color: "#1e293b", fontSize: 13, fontWeight: 500, flex: 1 }}>{log.product}</span>
-
-        {/* Payment method — KEY FIX: was "category" before, now shows "Cash"/"GCash" etc. */}
         <span style={{ color: "#94a3b8", fontSize: 11, width: 80, flexShrink: 0 }}>{log.paymentMethod}</span>
-
-        {/* Type */}
-        <span style={{
-          color: typeColor[log.type], fontSize: 11, fontWeight: 600,
-          width: 70, textAlign: "center", flexShrink: 0,
-        }}>{log.type}</span>
-
-        {/* Qty */}
+        <span style={{ color: typeColor[log.type], fontSize: 11, fontWeight: 600, width: 70, textAlign: "center", flexShrink: 0 }}>{log.type}</span>
         <span style={{ color: "#94a3b8", fontSize: 12, width: 40, flexShrink: 0 }}>×{log.quantity}</span>
-
-        {/* Amount */}
         <span style={{
-          color: log.status === "Cancelled" || log.status === "Refunded"
-            ? "#dc2626" : "#0f172a",
+          color: log.status === "Cancelled" || log.status === "Refunded" ? "#dc2626" : "#0f172a",
           fontSize: 14, fontWeight: 600, width: 100, textAlign: "right", flexShrink: 0,
           textDecoration: log.status === "Cancelled" ? "line-through" : "none",
         }}>
           {log.total === 0 ? "—" : `₱${Math.abs(log.total).toLocaleString()}`}
         </span>
-
-        {/* Status */}
-        <span style={{
-          color: statusColor[log.status], fontSize: 11, fontWeight: 600,
-          width: 80, textAlign: "right", flexShrink: 0,
-        }}>{log.status}</span>
-
-        {/* Expand arrow */}
+        <span style={{ color: statusColor[log.status], fontSize: 11, fontWeight: 600, width: 80, textAlign: "right", flexShrink: 0 }}>{log.status}</span>
         <motion.span
           animate={{ rotate: open ? 180 : 0 }} transition={{ duration: 0.2 }}
           style={{ color: "#cbd5e1", fontSize: 10, width: 16, textAlign: "center", flexShrink: 0 }}>▼</motion.span>
       </motion.div>
 
-      {/* Expanded detail row */}
       <AnimatePresence>
         {open && (
           <motion.div
@@ -501,7 +401,6 @@ function EmptyState() {
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }}
       style={{ padding: 60, textAlign: "center", color: "#cbd5e1" }}>
-      <p style={{ fontSize: 32, margin: "0 0 12px" }}>🧾</p>
       <p style={{ fontSize: 14, fontWeight: 600, margin: "0 0 6px", color: "#94a3b8" }}>No transactions yet</p>
       <p style={{ fontSize: 12, margin: 0 }}>
         Orders placed from the cashier view will appear here automatically.
@@ -509,6 +408,7 @@ function EmptyState() {
     </motion.div>
   );
 }
+
 function SummaryBar({ logs }: { logs: SaleLog[] }) {
   const completed = logs.filter(l => l.status === "Completed");
   const pending   = logs.filter(l => l.status === "Pending");
@@ -554,31 +454,14 @@ export default function SalesReports() {
   const [filterStatus, setFilterStatus] = useState<string>("All");
   const [period,       setPeriod]       = useState<Period>("Today");
   const [logs,         setLogs]         = useState<SaleLog[]>([]);
-  const [lastUpdated,  setLastUpdated]  = useState<Date>(new Date());
-
 
   useEffect(() => {
-    function loadOrders() {
-      try {
-        const raw: StoredOrder[] = JSON.parse(localStorage.getItem("orders") || "[]");
-        setLogs(ordersToLogs(raw));
-        setLastUpdated(new Date());
-      } catch {
-        setLogs([]);
-      }
-    }
-
-    loadOrders(); // initial load
-    window.addEventListener("storage", loadOrders);
-    const interval = setInterval(loadOrders, 3000);
-
-    return () => {
-      window.removeEventListener("storage", loadOrders);
-      clearInterval(interval);
-    };
+    // TODO: replace with actual API call when backend is ready
+    // const data = await apiCall('/orders')
+    // setLogs(ordersToLogs(data))
+    setLogs([]);
   }, []);
 
-  // ── Filter ────────────────────────────────────────────────────────────────
   const filtered = logs.filter((l) => {
     const matchStatus = filterStatus === "All" || l.status === filterStatus;
     const q = search.toLowerCase();
@@ -593,8 +476,6 @@ export default function SalesReports() {
   const grouped = groupByDate(filtered);
   const dates   = Object.keys(grouped);
 
-  const lastUpdatedStr = lastUpdated.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-
   return (
     <div style={{ minHeight: "100vh", background: "#f8fafc", fontFamily: "'Poppins', sans-serif" }}>
 
@@ -602,7 +483,7 @@ export default function SalesReports() {
 
       <div style={{ padding: "40px 40px 40px 88px" }}>
 
-        {/* ── Header ── */}
+        {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}
           style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 20, marginBottom: 28 }}>
@@ -611,27 +492,17 @@ export default function SalesReports() {
             <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, color: "#0f172a" }}>Sales & Reports</h1>
             <p style={{ margin: "6px 0 0", color: "#94a3b8", fontSize: 13 }}>
               Transaction history & audit trail
-              <span style={{
-                marginLeft: 10, background: "#f0fdf4", color: "#16a34a",
-                border: "1px solid #bbf7d0", borderRadius: 99, padding: "2px 10px",
-                fontSize: 10, fontWeight: 600,
-              }}>
-                ● Live
-              </span>
-              <span style={{ marginLeft: 8, color: "#cbd5e1", fontSize: 11 }}>
-                Last synced: {lastUpdatedStr}
-              </span>
             </p>
           </div>
           <RevenueDropdown period={period} setPeriod={setPeriod} logs={logs} />
         </motion.div>
 
-        {/* ── Summary bar (all-time stats) ── */}
+        {/* Summary bar */}
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
           <SummaryBar logs={logs} />
         </motion.div>
 
-        {/* ── Search + Filter ── */}
+        {/* Search + Filter */}
         <motion.div
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.15, duration: 0.35 }}
           style={{ display: "flex", gap: 10, marginBottom: 20, alignItems: "center", flexWrap: "wrap" }}>
@@ -665,7 +536,7 @@ export default function SalesReports() {
           </div>
         </motion.div>
 
-        {/* ── Table ── */}
+        {/* Table */}
         <motion.div
           initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, duration: 0.35 }}
           style={{
@@ -714,7 +585,6 @@ export default function SalesReports() {
 
                 return (
                   <div key={date}>
-                    {/* Date group header */}
                     <div style={{
                       padding: "8px 20px", background: "#f8fafc",
                       borderBottom: "1px solid #f1f5f9", borderTop: "1px solid #f1f5f9",
@@ -736,7 +606,7 @@ export default function SalesReports() {
         </motion.div>
 
         <p style={{ color: "#cbd5e1", fontSize: 11, textAlign: "center", marginTop: 20, fontWeight: 500 }}>
-          {filtered.length} of {logs.length} line items · syncs every 3s
+          {filtered.length} of {logs.length} line items
         </p>
       </div>
     </div>

@@ -6,7 +6,10 @@ import Inventory from "./pages/inventory"
 import Login from "./pages/login"
 import Menu from "./pages/menu"
 import Products from "./pages/products"
-import UserAccounts from "./pages/useraccounts"
+import StaffAccounts from "./pages/staffaccounts"
+import SalesReports from "./pages/sales-reports"
+import AboutTheCrunch from "./pages/aboutthecrunch"
+import UsersMenu from "./pages/usersmenu"
 
 export default function App() {
   const [isAuth, setIsAuth] = useState(() =>
@@ -27,18 +30,18 @@ export default function App() {
 
   return (
     <Routes>
-      {/* public landing — shows Products page, no login required */}
-      <Route path="/" element={<Products />} />
+      <Route path="/" element={<AboutTheCrunch />} />
       <Route path="/login" element={<Login />} />
 
-      {/* protected pages */}
       <Route path="/dashboard" element={isAuth ? <AdminDashboard /> : <Navigate to="/login" />} />
       <Route path="/orders"    element={isAuth ? <Order />          : <Navigate to="/login" />} />
       <Route path="/inventory" element={isAuth ? <Inventory />      : <Navigate to="/login" />} />
       <Route path="/menu"      element={isAuth ? <Menu />           : <Navigate to="/login" />} />
       <Route path="/products"  element={isAuth ? <Products />       : <Navigate to="/login" />} />
-      <Route path="/users"     element={isAuth ? <UserAccounts />   : <Navigate to="/login" />} />
-      
+      <Route path="/users"     element={isAuth ? <StaffAccounts />   : <Navigate to="/login" />} />
+      <Route path="/sales-reports" element={isAuth ? <SalesReports /> : <Navigate to="/login" />} />
+      <Route path="/aboutthecrunch" element={<AboutTheCrunch />} />\
+      <Route path="/usersmenu" element={<UsersMenu />} />
 
       {/* catch all */}
       <Route path="*" element={<Navigate to="/" />} />
