@@ -185,12 +185,20 @@ export default function Order() {
   }, [])
 
   const addToCart = (prod: any) => {
+    const remaining = Number(prod.remainingStock ?? prod.quantity ?? 0)
+    if (remaining <= 0) {
+      alert('Out of stock')
+      return
+    }
+
     setCart((c) => {
       const existing = c.find((x) => x.id === prod.id)
       if (existing) {
+        const nextQty = existing.qty + 1
+        if (nextQty > remaining) return c
         return c.map((x) =>
           x.id === prod.id
-            ? { ...x, qty: x.qty + 1, subtotal: +(x.qty + 1) * prod.price }
+            ? { ...x, qty: nextQty, subtotal: +nextQty * prod.price }
             : x
         )
       }
@@ -199,10 +207,14 @@ export default function Order() {
   }
 
   const updateQty = (id: number, qty: number) => {
+    const prod = products.find((p) => p.id === id)
+    const remaining = Number(prod?.remainingStock ?? prod?.quantity ?? 0)
+
     if (qty <= 0) {
       setCart((c) => c.filter((x) => x.id !== id))
     } else {
-      setCart((c) => c.map((x) => x.id === id ? { ...x, qty, subtotal: qty * x.price } : x))
+      const nextQty = Math.min(qty, Math.max(remaining, 1))
+      setCart((c) => c.map((x) => x.id === id ? { ...x, qty: nextQty, subtotal: nextQty * x.price } : x))
     }
   }
 
@@ -377,9 +389,15 @@ export default function Order() {
               <h3 className="text-sm font-medium mb-2">Products</h3>
               <div className="grid grid-cols-2 gap-2 max-h-64 overflow-auto">
                 {products.map((p) => (
-                  <button key={p.id} className="border rounded p-2 text-left hover:bg-gray-100" onClick={() => addToCart(p)}>
+                  <button
+                    key={p.id}
+                    className="border rounded p-2 text-left hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    onClick={() => addToCart(p)}
+                    disabled={Number(p.remainingStock ?? p.quantity ?? 0) <= 0}
+                  >
                     <div className="text-sm font-medium">{p.name}</div>
                     <div className="text-xs text-gray-500">₱{p.price}</div>
+                    <div className="text-xs text-gray-600">Stock: {Number(p.remainingStock ?? p.quantity ?? 0)}</div>
                   </button>
                 ))}
               </div>
