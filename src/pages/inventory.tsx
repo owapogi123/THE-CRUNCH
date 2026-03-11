@@ -600,7 +600,7 @@ export default function Inventory() {
       const data = await apiCall("/inventory", { method: "GET" }) as InventoryItem[] | null
       if (data && Array.isArray(data)) {
         setInventoryItems(data.map((item: InventoryItem) => ({
-          id: item.id, name: item.name, category: item.category || "Uncategorized",
+          id: item.id, name: item.name || "Unnamed Product", category: item.category || "Uncategorized",
           image: item.image || "/img/placeholder.jpg", incoming: 0, stock: item.stock ?? 0,
           price: item.price?.toString() || "0", unit: (item.unit as UnitType) || "piece",
           batches: (item.batches || []).map((b: Batch) => ({ ...b, receivedAt: new Date(b.receivedAt), expiresAt: b.expiresAt ? new Date(b.expiresAt) : undefined })),

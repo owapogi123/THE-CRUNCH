@@ -90,13 +90,23 @@ export function InventoryClient({ items, onBatchAdded, onBatchReturned, onAddPro
     name: "", category: "Ingredients", price: "", unit: "piece", stock: "0"
   })
 
-  const filteredItems = useMemo(() => items.filter((item) => {
-    const matchesSearch    = item.name.toLowerCase().includes(searchQuery.toLowerCase())
-    const matchesCategory  = categoryFilter === "all" || item.category.toLowerCase() === categoryFilter.toLowerCase()
-    const matchesStock     = stockFilter === "all" || (stockFilter === "low" && item.stock < 50) || (stockFilter === "normal" && item.stock >= 50)
-    const matchesUnit      = unitFilter === "all" || item.unit === unitFilter
-    return matchesSearch && matchesCategory && matchesStock && matchesUnit
-  }), [items, searchQuery, categoryFilter, stockFilter, unitFilter])
+  const filteredItems = useMemo(() => {
+    const normalizedSearch = searchQuery.toLowerCase()
+    const normalizedCategory = categoryFilter.toLowerCase()
+
+    return items.filter((item) => {
+      const itemName = String(item?.name ?? "").toLowerCase()
+      const itemCategory = String(item?.category ?? "").toLowerCase()
+      const itemStock = Number(item?.stock ?? 0)
+
+      const matchesSearch = itemName.includes(normalizedSearch)
+      const matchesCategory = categoryFilter === "all" || itemCategory === normalizedCategory
+      const matchesStock = stockFilter === "all" || (stockFilter === "low" && itemStock < 50) || (stockFilter === "normal" && itemStock >= 50)
+      const matchesUnit = unitFilter === "all" || item?.unit === unitFilter
+
+      return matchesSearch && matchesCategory && matchesStock && matchesUnit
+    })
+  }, [items, searchQuery, categoryFilter, stockFilter, unitFilter])
 
   const totalItems     = filteredItems.length
   const totalPages     = Math.ceil(totalItems / rowsPerPage)

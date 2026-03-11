@@ -1,15 +1,9 @@
 import { useState, useEffect } from "react"
-import { Link, NavLink, useNavigate } from "react-router-dom"
-import { Search, X, ShoppingBag, Trash2, Menu, Check } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { cn } from "@/lib/utils"
+import { Search, ShoppingBag, Trash2, Check, X } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
+import { Sidebar } from "@/components/Sidebar"
+import { api } from "../lib/api"
 import chickenImg from '../assets/img/chicken.jpg'
-import friesImg from '../assets/img/fries.jpg'
-import chipsImg from '../assets/img/chips.jpg'
-import honeyglazedImg from '../assets/img/honeyglazed.jpg'
-import regchickenImg from '../assets/img/regchicken.jpg'
-import chickengarlicImg from '../assets/img/chickengarlic.jpg'
 
 interface MenuItem {
   id: number
@@ -17,6 +11,7 @@ interface MenuItem {
   price: number
   image: string
   category: string
+  remainingStock?: number
 }
 
 interface CartItem {
@@ -27,54 +22,17 @@ interface CartItem {
   quantity: number
 }
 
-interface Category {
-  name: string
-  icon: string
-}
-
-const menuItems: MenuItem[] = [
-  { id: 1, name: "French Fries", price: 99, image: friesImg, category: "FRENCH FRIES" },
-  { id: 2, name: "Crispy Chips", price: 89, image: chipsImg, category: "SIDES" },
-  { id: 3, name: "Honey Glazed Chicken", price: 69, image: honeyglazedImg, category: "CHICKEN" },
-  { id: 4, name: "Regular Chicken", price: 60, image: regchickenImg, category: "CHICKEN" },
-  { id: 5, name: "Chicken Pops", price: 99, image: chickenImg, category: "CHICKEN POPS" },
-  { id: 6, name: "Garlic Buttered Chicken", price: 99, image: chickengarlicImg, category: "CHICKEN" },
-]
-
-const categories: Category[] = [
-  { name: "ALL ITEMS", icon: "" },
-  { name: "FRENCH FRIES", icon: "" },
-  { name: "CHICKEN", icon: "" },
-  { name: "DRINKS", icon: "" },
-  { name: "CHICKEN POPS", icon: "" },
-  { name: "SIDES", icon: "" },
-]
-
-const navigationItems = [
-  { label: "Dashboard", path: "/" },
-  { label: "Order", path: "/orders" },
-  { label: "Inventory", path: "/inventory" },
-  { label: "Products", path: "/products" },
-  { label: "Menus", path: "/menu" },
-]
-
-const additionalItems = [
-  { label: "User Accounts", path: "/users" },
-  { label: "Menu Management", path: "/menu-management" },
-  { label: "Supplier Maintenance", path: "/suppliers" },
-  { label: "Sales & Reports", path: "/sales-reports" }
-]
-
 export default function MenuPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>("ALL ITEMS")
   const [searchQuery, setSearchQuery] = useState<string>("")
   const [cart, setCart] = useState<CartItem[]>([])
+  const [products, setProducts] = useState<MenuItem[]>([])
+  const [orderType, setOrderType] = useState<'dine-in' | 'take-out'>('dine-in')
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'e-payment'>('cash')
   const [showSuccessModal, setShowSuccessModal] = useState(false)
   const [paidAmount, setPaidAmount] = useState(0)
   const [orderNumber, setOrderNumber] = useState("")
   const [savedCart, setSavedCart] = useState<CartItem[]>([])
-  const [isOpen, setIsOpen] = useState(false)
-  const navigate = useNavigate()
 
   useEffect(() => {
     const link = document.createElement('link');
@@ -83,12 +41,42 @@ export default function MenuPage() {
     document.head.appendChild(link);
   }, []);
 
+  useEffect(() => {
+    api.get<any[]>('/products')
+      .then((data) => {
+        const mapped = (data || []).map((p: any) => ({
+          id: Number(p.id),
+          name: String(p.name ?? `Product #${p.id}`),
+          price: Number(p.price ?? 0),
+          image: String(p.image ?? chickenImg),
+          category: String(p.category ?? 'UNCATEGORIZED').toUpperCase(),
+          remainingStock: Number(p.remainingStock ?? p.quantity ?? 0),
+        }))
+        setProducts(mapped)
+      })
+      .catch(console.error)
+  }, [])
+
+  const categoryNames = [
+    'ALL ITEMS',
+    ...Array.from(new Set(products.map((p) => p.category).filter(Boolean))),
+  ]
+
   const addToCart = (item: MenuItem) => {
-    const existingItem = cart.find((cartItem) => cartItem.name === item.name)
+    const remaining = Number(item.remainingStock ?? 0)
+    if (remaining <= 0) {
+      alert('Out of stock')
+      return
+    }
+
+    const existingItem = cart.find((cartItem) => cartItem.id === item.id)
     if (existingItem) {
+      const nextQty = existingItem.quantity + 1
+      if (nextQty > remaining) return
+
       setCart(cart.map((cartItem) =>
-        cartItem.name === item.name
-          ? { ...cartItem, quantity: cartItem.quantity + 1 }
+        cartItem.id === item.id
+          ? { ...cartItem, quantity: nextQty }
           : cartItem
       ))
     } else {
@@ -101,34 +89,69 @@ export default function MenuPage() {
   }
 
   const updateQuantity = (itemId: number, change: number) => {
-    setCart(
-      cart
-        .map((item) =>
-          item.id === itemId
-            ? { ...item, quantity: Math.max(0, item.quantity + change) }
-            : item
-        )
-        .filter((item) => item.quantity > 0)
+    const product = products.find((p) => p.id === itemId)
+    const remaining = Number(product?.remainingStock ?? 0)
+
+    setCart((prev) => prev
+      .map((item) => {
+        if (item.id !== itemId) return item
+        const nextQty = Math.max(0, item.quantity + change)
+        if (nextQty > remaining) return item
+        return { ...item, quantity: nextQty }
+      })
+      .filter((item) => item.quantity > 0)
     )
   }
 
-  const handlePayment = () => {
-    const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0)
-    const newOrderNumber = `#${Math.floor(10000 + Math.random() * 90000)}`
+  const handlePayment = async () => {
+    if (cart.length === 0) return alert('Cart is empty')
 
-    setSavedCart([...cart])
-    setPaidAmount(total)
-    setOrderNumber(newOrderNumber)
-    setShowSuccessModal(true)
+    const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0)
+    const items = cart.map((item) => ({
+      product_id: item.id,
+      qty: item.quantity,
+      subtotal: item.price * item.quantity,
+      name: item.name,
+      price: item.price,
+    }))
+
+    try {
+      const response = await api.post<any>('/orders', {
+        items,
+        total,
+        order_type: orderType,
+        payment_method: paymentMethod,
+      })
+
+      setSavedCart([...cart])
+      setPaidAmount(total)
+      setOrderNumber(String(response?.orderNumber ?? `#${Math.floor(10000 + Math.random() * 90000)}`))
+      setShowSuccessModal(true)
+
+      const refreshed = await api.get<any[]>('/products')
+      setProducts((refreshed || []).map((p: any) => ({
+        id: Number(p.id),
+        name: String(p.name ?? `Product #${p.id}`),
+        price: Number(p.price ?? 0),
+        image: String(p.image ?? chickenImg),
+        category: String(p.category ?? 'UNCATEGORIZED').toUpperCase(),
+        remainingStock: Number(p.remainingStock ?? p.quantity ?? 0),
+      })))
+    } catch (error) {
+      console.error(error)
+      alert('Failed to submit order')
+    }
   }
 
   const handleCloseModal = () => {
     setShowSuccessModal(false)
     setCart([])
     setSavedCart([])
+    setPaymentMethod('cash')
+    setOrderType('dine-in')
   }
 
-  const filteredItems = menuItems.filter((item) => {
+  const filteredItems = products.filter((item) => {
     const matchesCategory = selectedCategory === "ALL ITEMS" || item.category === selectedCategory
     const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase())
     return matchesCategory && matchesSearch
@@ -139,95 +162,7 @@ export default function MenuPage() {
 
   return (
     <div className="flex h-screen bg-gradient-to-br from-gray-50 via-gray-100 to-gray-50" style={{ fontFamily: 'Poppins, sans-serif' }}>
-      {/* SIDEBAR */}
-      <>
-        {/* Sidebar Toggle Button */}
-        <button
-          onClick={() => setIsOpen(!isOpen)}
-          className="fixed top-6 left-6 z-50 p-3 bg-white rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 active:scale-95"
-        >
-          {isOpen ? (
-            <X className="w-6 h-6 text-black" />
-          ) : (
-            <Menu className="w-6 h-6 text-black" />
-          )}
-        </button>
-
-        {/* Backdrop */}
-        {isOpen && (
-          <div
-            className="fixed inset-0 backdrop-blur-sm bg-black/20 z-40 transition-all duration-300"
-            onClick={() => setIsOpen(false)}
-          />
-        )}
-
-        {/* Sidebar */}
-        <aside
-          className={cn(
-            "fixed top-0 left-0 h-full w-72 bg-white p-6 flex flex-col shadow-2xl z-50 transition-all duration-300 ease-in-out",
-            isOpen ? "translate-x-0 opacity-100" : "-translate-x-full opacity-0"
-          )}
-          style={{ fontFamily: 'Poppins, sans-serif' }}
-        >
-          <div className="flex items-center justify-center mb-10 mt-8">
-            <span className="text-2xl font-bold text-black">
-              The Crunch
-            </span>
-          </div>
-
-          <div className="text-xs text-gray-400 mb-4 uppercase tracking-wider font-medium px-2">
-            Navigation
-          </div>
-
-          <nav className="flex-1 space-y-1.5">
-            {navigationItems.map((item) => (
-              <NavLink key={item.label} to={item.path} end onClick={() => setIsOpen(false)}>
-                {({ isActive }) => (
-                  <Button
-                    variant="ghost"
-                    className={cn(
-                      "w-full justify-start rounded-xl text-sm transition-all duration-300 px-4 py-2.5",
-                      "text-black hover:bg-gray-50 hover:shadow-sm hover:scale-[1.02] active:scale-95",
-                      isActive && "bg-gray-100 text-black font-semibold"
-                    )}
-                  >
-                    {item.label}
-                  </Button>
-                )}
-              </NavLink>
-            ))}
-          </nav>
-
-          <div className="space-y-1.5 mt-6 pt-6 border-t border-gray-100">
-            {additionalItems.map((item) => (
-              <NavLink key={item.label} to={item.path} onClick={() => setIsOpen(false)}>
-                {({ isActive }) => (
-                  <Button
-                    variant="ghost"
-                    className={cn(
-                      "w-full justify-start rounded-xl text-sm transition-all duration-300 px-4 py-2.5",
-                      "text-black hover:bg-gray-50 hover:shadow-sm hover:scale-[1.02] active:scale-95",
-                      isActive && "bg-gray-100 text-black font-semibold"
-                    )}
-                  >
-                    {item.label}
-                  </Button>
-                )}
-              </NavLink>
-            ))}
-
-            <Link to="/login" className="w-full">
-              <Button
-                variant="ghost"
-                className="w-full justify-start rounded-xl text-sm text-black mt-6 transition-all duration-300 px-4 py-2.5 hover:bg-red-50 hover:text-red-600 hover:shadow-sm hover:scale-[1.02] active:scale-95"
-                onClick={() => setIsOpen(false)}
-              >
-                Log Out
-              </Button>
-            </Link>
-          </div>
-        </aside>
-      </>
+      <Sidebar />
 
       <div className="flex-1 flex flex-col">
         <motion.div className="bg-white shadow-sm px-8 py-6 border-b border-gray-200" initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ duration: 0.3 }}>
@@ -255,21 +190,21 @@ export default function MenuPage() {
             <motion.div className="mb-8" initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.15 }}>
               <h2 className="text-sm font-bold text-gray-700 mb-4 uppercase tracking-wide">Categories</h2>
               <div className="flex flex-wrap gap-2">
-                {categories.map((category) => (
+                {categoryNames.map((categoryName) => (
                   <button
-                    key={category.name}
-                    onClick={() => setSelectedCategory(category.name)}
+                    key={categoryName}
+                    onClick={() => setSelectedCategory(categoryName)}
                     className="relative px-5 py-2 text-sm font-medium rounded-full transition-colors duration-200 focus:outline-none"
-                    style={{ color: selectedCategory === category.name ? '#2563eb' : '#6b7280' }}
+                    style={{ color: selectedCategory === categoryName ? '#2563eb' : '#6b7280' }}
                   >
-                    {selectedCategory === category.name && (
+                    {selectedCategory === categoryName && (
                       <motion.span
                         layoutId="categoryPill"
                         className="absolute inset-0 rounded-full bg-blue-50 border border-blue-200"
                         transition={{ type: "spring", stiffness: 350, damping: 30 }}
                       />
                     )}
-                    <span className="relative z-10">{category.name}</span>
+                    <span className="relative z-10">{categoryName}</span>
                   </button>
                 ))}
               </div>
@@ -278,35 +213,50 @@ export default function MenuPage() {
             <motion.div className="grid grid-cols-4 gap-5" layout>
               <AnimatePresence mode="popLayout">
                 {filteredItems.map((item, index) => (
+                  (() => {
+                    const stock = Number(item.remainingStock ?? 0)
+                    const isOutOfStock = stock <= 0
+                    return (
                   <motion.button
                     key={item.id}
                     onClick={() => addToCart(item)}
-                    className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100 group"
+                    disabled={isOutOfStock}
+                    className={`bg-white rounded-2xl overflow-hidden shadow-sm border group transition-all ${isOutOfStock ? "border-red-200 opacity-70 cursor-not-allowed" : "border-gray-100"}`}
                     layout
                     initial={{ opacity: 0, y: 12 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.2, delay: 0.03 * index }}
-                    whileHover={{
+                    whileHover={isOutOfStock ? undefined : {
                       y: -4,
                       boxShadow: "0 8px 20px rgba(0,0,0,0.08)",
                       transition: { duration: 0.2 }
                     }}
-                    whileTap={{ scale: 0.97, y: 0 }}
+                    whileTap={isOutOfStock ? undefined : { scale: 0.97, y: 0 }}
                   >
                     <div className="aspect-square bg-gray-50 flex items-center justify-center overflow-hidden">
                       <img
                         src={item.image}
                         alt={item.name}
-                        className="w-full h-full object-cover"
+                        className={`w-full h-full object-cover ${isOutOfStock ? "grayscale" : ""}`}
                         onError={(e) => { e.currentTarget.src = chickenImg; }}
                       />
                     </div>
                     <div className="p-4">
-                      <p className="text-xs font-semibold text-gray-800 mb-2 text-center line-clamp-2">{item.name}</p>
+                      <div className="mb-2 flex items-center justify-center gap-2">
+                        <p className="text-xs font-semibold text-gray-800 text-center line-clamp-2">{item.name}</p>
+                        {isOutOfStock && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-600">OUT OF STOCK</span>
+                        )}
+                      </div>
                       <p className="text-gray-900 font-bold text-center text-base">₱{item.price}</p>
+                      <p className={`text-xs mt-1 text-center ${isOutOfStock ? "text-red-500 font-semibold" : "text-gray-500"}`}>
+                        Stock: {stock}
+                      </p>
                     </div>
                   </motion.button>
+                    )
+                  })()
                 ))}
               </AnimatePresence>
             </motion.div>
@@ -381,8 +331,26 @@ export default function MenuPage() {
                         <span className="font-bold text-gray-800 text-xl">₱{totalPrice}</span>
                       </div>
                     </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <select
+                        value={orderType}
+                        onChange={(e) => setOrderType(e.target.value as 'dine-in' | 'take-out')}
+                        className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                      >
+                        <option value="dine-in">Dine In</option>
+                        <option value="take-out">Take Out</option>
+                      </select>
+                      <select
+                        value={paymentMethod}
+                        onChange={(e) => setPaymentMethod(e.target.value as 'cash' | 'e-payment')}
+                        className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                      >
+                        <option value="cash">Cash</option>
+                        <option value="e-payment">E-Payment</option>
+                      </select>
+                    </div>
                     <motion.button
-                      onClick={handlePayment}
+                      onClick={() => { void handlePayment() }}
                       className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold text-lg shadow-md"
                       whileHover={{ scale: 1.02 }}
                       whileTap={{ scale: 0.98 }}
