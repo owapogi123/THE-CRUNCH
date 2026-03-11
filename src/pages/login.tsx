@@ -70,13 +70,13 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200 p-4 font-['Poppins',sans-serif]">
-      <div className="w-full max-w-md bg-white rounded-3xl shadow-xl p-8">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-700 p-4 font-['Poppins',sans-serif]">
+      <div className="w-full max-w-md bg-slate-50 rounded-3xl shadow-2xl border border-slate-200 p-8">
         <div className="flex items-center justify-center gap-6 mb-8">
           <button
             onClick={() => { setIsLogin(true); setError(""); }}
             className={`flex items-center gap-2 text-base font-medium transition-colors pb-1 ${
-              isLogin ? "text-gray-900 border-b-2 border-gray-900" : "text-gray-400"
+              isLogin ? "text-slate-900 border-b-2 border-slate-900" : "text-slate-500"
             }`}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -89,7 +89,7 @@ export default function Login() {
           <button
             onClick={() => { setIsLogin(false); setError(""); }}
             className={`flex items-center gap-2 text-base font-medium transition-colors pb-1 ${
-              !isLogin ? "text-gray-900 border-b-2 border-gray-900" : "text-gray-400"
+              !isLogin ? "text-slate-900 border-b-2 border-slate-900" : "text-slate-500"
             }`}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -193,7 +193,7 @@ export default function Login() {
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full bg-gray-900 text-white py-3.5 rounded-xl font-medium hover:bg-gray-800 transition-colors text-sm mt-6 disabled:bg-gray-400"
+            className="w-full bg-slate-900 text-white py-3.5 rounded-xl font-semibold border border-slate-900 hover:bg-slate-800 transition-colors text-sm mt-6 disabled:bg-slate-700 disabled:text-white disabled:opacity-100"
           >
             {isLoading ? "Loading..." : isLogin ? "Log in" : "Sign up"}
           </button>
@@ -211,7 +211,7 @@ export default function Login() {
         <div className="space-y-3">
           <button
             type="button"
-            className="w-full flex items-center justify-center gap-3 px-4 py-3 border border-gray-300 rounded-xl hover:bg-gray-50 transition-colors text-sm font-medium text-gray-700"
+            className="w-full flex items-center justify-center gap-3 px-4 py-3 border border-slate-300 bg-white rounded-xl hover:bg-slate-100 transition-colors text-sm font-medium text-slate-700"
           >
             <svg className="w-5 h-5" viewBox="0 0 24 24">
               <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
