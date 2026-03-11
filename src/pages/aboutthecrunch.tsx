@@ -52,6 +52,7 @@ const perks = [
   { title: 'Made with Love', desc: "Every order crafted like it's for family." },
   { title: 'Bold Flavors', desc: '7 signature sauces to satisfy any craving.' },
   { title: 'Community First', desc: 'Built for the neighborhood, by the neighborhood.' },
+  { title: 'Branches', desc: 'We have 250+ branches nationwide' },
 ];
 
 export default function AboutTheCrunch() {

@@ -10,6 +10,8 @@ import StaffAccounts from "./pages/staffaccounts"
 import SalesReports from "./pages/sales-reports"
 import AboutTheCrunch from "./pages/aboutthecrunch"
 import UsersMenu from "./pages/usersmenu"
+import StockManager from "./pages/stockmanager"
+
 
 export default function App() {
   const [isAuth, setIsAuth] = useState(() =>
@@ -30,7 +32,7 @@ export default function App() {
 
   return (
     <Routes>
-      <Route path="/" element={<AboutTheCrunch />} />
+      <Route path="/" element={<Products />} />
       <Route path="/login" element={<Login />} />
 
       <Route path="/dashboard" element={isAuth ? <AdminDashboard /> : <Navigate to="/login" />} />
@@ -42,6 +44,8 @@ export default function App() {
       <Route path="/sales-reports" element={isAuth ? <SalesReports /> : <Navigate to="/login" />} />
       <Route path="/aboutthecrunch" element={<AboutTheCrunch />} />\
       <Route path="/usersmenu" element={<UsersMenu />} />
+      <Route path="/stockmanager" element={isAuth ? <StockManager /> : <Navigate to="/login" />} />
+
 
       {/* catch all */}
       <Route path="*" element={<Navigate to="/" />} />
