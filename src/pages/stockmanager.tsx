@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import type { ReactNode } from "react";
 import { motion, AnimatePresence, type Variants, type Transition } from "framer-motion";
 import { Sidebar } from "@/components/Sidebar";
@@ -6,7 +6,7 @@ import { Sidebar } from "@/components/Sidebar";
 // ── Types (aligned with DB schema) ─────────────────────────────────────────
 type WithdrawalType = "initial" | "supplementary" | "return";
 type StockStatus    = "critical" | "low" | "normal";
-type Tab            = "dashboard" | "withdrawal" | "alerts" | "suppliers" | "reports" | "critical";
+type Tab            = "dashboard" | "withdrawal" | "alerts" | "suppliers";
 type SupplierField  = keyof Omit<Supplier, "supplier_id">;
 
 // Matches: Inventory table + Stock_Status join
@@ -134,8 +134,6 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "withdrawal", label: "Withdrawal" },
   { id: "alerts",     label: "Alerts"     },
   { id: "suppliers",  label: "Suppliers"  },
-  { id: "reports",    label: "Reports"    },
-  { id: "critical",   label: "Critical"   },
 ];
 
 // ── Status helpers ──────────────────────────────────────────────────────────
@@ -265,7 +263,6 @@ export default function StockManager() {
   const [products,    setProducts]    = useState<Product[]>([]);
   const [withdrawals, setWithdrawals] = useState<StockStatusRecord[]>([]);
   const [suppliers,   setSuppliers]   = useState<Supplier[]>([]);
-  const [reports,     setReports]     = useState<Report[]>([]);
 
   // ── UI state ──────────────────────────────────────────────────────────
   const [isLoading,  setIsLoading]  = useState(true);
@@ -279,23 +276,14 @@ export default function StockManager() {
   const [wdType,       setWdType]       = useState<WithdrawalType>("initial");
   const [adjProductId, setAdjProductId] = useState<number | null>(null);
   const [adjQty,       setAdjQty]       = useState("");
+  const [dashboardSearch, setDashboardSearch] = useState("");
+  const [supplierSearch,  setSupplierSearch]  = useState("");
   const [showSupplierForm, setShowSupplierForm] = useState(false);
   const [supplierForm,     setSupplierForm]     = useState<Omit<Supplier, "supplier_id">>(BLANK_SUPPLIER);
 
   // ── Reconciliation modal state ────────────────────────────────────────
   const [showReconcile,   setShowReconcile]   = useState(false);
   const [reconcileItems,  setReconcileItems]  = useState<{ product_id: number; product_name: string; unit: string; withdrawn: number; returnQty: string }[]>([]);
-
-  // ── Live clock ────────────────────────────────────────────────────────
-  const [clock, setClock] = useState(
-    new Date().toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
-  );
-  useEffect(() => {
-    const t = setInterval(() =>
-      setClock(new Date().toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", second: "2-digit" }))
-    , 1000);
-    return () => clearInterval(t);
-  }, []);
 
   // ── Google Fonts ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -314,11 +302,10 @@ export default function StockManager() {
     setIsLoading(true);
     setError(null);
     try {
-      const [inv, wd, sup, rep] = await Promise.all([
+      const [inv, wd, sup] = await Promise.all([
         api.getInventory(),
         api.getWithdrawals(),
         api.getSuppliers(),
-        api.getReports(),
       ]);
 
       const normalizedProducts: Product[] = inv.map((p) => ({
@@ -342,17 +329,9 @@ export default function StockManager() {
         quantity: toNumber(r.quantity),
       }));
 
-      const normalizedReports: Report[] = rep.map((r) => ({
-        ...r,
-        report_id: toNumber(r.report_id),
-        total_sales: toNumber(r.total_sales),
-        total_transaction: toNumber(r.total_transaction),
-      }));
-
       setProducts(normalizedProducts);
       setWithdrawals(normalizedWithdrawals);
       setSuppliers(sup);
-      setReports(normalizedReports);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load data.");
     } finally {
@@ -372,6 +351,45 @@ export default function StockManager() {
   // ── Derived values ────────────────────────────────────────────────────
   const lowStock      = products.filter(p => getStockStatus(p) === "low");
   const criticalStock = products.filter(p => getStockStatus(p) === "critical");
+  const attentionItems = useMemo(
+    () => products.filter(p => getStockStatus(p) !== "normal"),
+    [products]
+  );
+
+  const dashboardFilteredProducts = useMemo(() => {
+    const q = dashboardSearch.trim().toLowerCase();
+    const filtered = !q
+      ? products
+      : products.filter((p) =>
+          p.product_name.toLowerCase().includes(q) || p.category.toLowerCase().includes(q)
+        );
+
+    return [...filtered].sort((a, b) => {
+      const aPct = a.mainStock / Math.max(1, a.reorderPoint * 2);
+      const bPct = b.mainStock / Math.max(1, b.reorderPoint * 2);
+      return aPct - bPct;
+    });
+  }, [products, dashboardSearch]);
+
+  const filteredSuppliers = useMemo(() => {
+    const q = supplierSearch.trim().toLowerCase();
+    if (!q) return suppliers;
+    return suppliers.filter((s) =>
+      s.supplier_name.toLowerCase().includes(q) ||
+      (s.products_supplied ?? "").toLowerCase().includes(q)
+    );
+  }, [suppliers, supplierSearch]);
+
+  const selectedWithdrawalProduct = useMemo(
+    () => products.find(p => p.product_id === wdProductId) ?? null,
+    [products, wdProductId]
+  );
+
+  const selectedWithdrawalStatus = selectedWithdrawalProduct ? getStockStatus(selectedWithdrawalProduct) : "normal";
+  const selectedWithdrawalPct = selectedWithdrawalProduct
+    ? Math.min(100, Math.round((selectedWithdrawalProduct.mainStock / Math.max(1, selectedWithdrawalProduct.reorderPoint)) * 100))
+    : 0;
+
   const totalWithdrawn = products.reduce((s, p) => s + toNumber(p.dailyWithdrawn), 0);
   const totalWasted    = products.reduce((s, p) => s + toNumber(p.wasted), 0);
   const totalReturned  = products.reduce((s, p) => s + toNumber(p.returned), 0);
@@ -547,10 +565,20 @@ export default function StockManager() {
               className="px-4 py-2 text-xs font-semibold bg-indigo-50 text-indigo-600 rounded-xl border border-indigo-100 hover:bg-indigo-100 transition-colors">
               End-of-Day Reconciliation
             </button>
+
+            {attentionItems.length > 0 && (
+              <button
+                onClick={() => setTab("alerts")}
+                className="px-3.5 py-1.5 rounded-full bg-red-100 text-red-600 text-xs font-semibold border border-red-200 animate-pulse"
+              >
+                {attentionItems.length} item{attentionItems.length > 1 ? "s" : ""} need attention
+              </button>
+            )}
+
             <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg">
               <span className={`w-2 h-2 rounded-full ${isLoading ? "bg-amber-400" : "bg-emerald-400"}`}
                 style={{ animation: "pulse 2s infinite" }} />
-              <span className="text-xs font-medium text-slate-600">{clock}</span>
+              <span className="text-xs font-medium text-slate-600">{isLoading ? "Syncing" : "Up to date"}</span>
             </div>
           </div>
         </div>
@@ -558,7 +586,7 @@ export default function StockManager() {
         {/* Tab pills */}
         <div className="pb-3 flex items-center justify-center gap-2">
           {TABS.map(t => {
-            const badge  = t.id === "alerts" ? lowStock.length : t.id === "critical" ? criticalStock.length : 0;
+            const badge  = t.id === "alerts" ? attentionItems.length : 0;
             const active = tab === t.id;
             return (
               <button key={t.id} onClick={() => setTab(t.id)}
@@ -572,7 +600,7 @@ export default function StockManager() {
                 {badge > 0 && (
                   <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none ${
                     active ? "bg-white/20 text-white"
-                      : t.id === "critical" ? "bg-red-100 text-red-600" : "bg-amber-100 text-amber-600"
+                      : "bg-red-100 text-red-600"
                   }`}>{badge}</span>
                 )}
               </button>
@@ -615,6 +643,15 @@ export default function StockManager() {
                   {/* Inventory Table */}
                   <motion.div variants={itemVariants}>
                     <SectionCard title="Main Stock Levels" subtitle="Live overview from Inventory table">
+                      <div className="px-4 pt-4">
+                        <input
+                          type="text"
+                          value={dashboardSearch}
+                          onChange={(e) => setDashboardSearch(e.target.value)}
+                          placeholder="Search by item name or category..."
+                          className="w-full md:w-96 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
+                        />
+                      </div>
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="border-b border-slate-100">
@@ -624,7 +661,7 @@ export default function StockManager() {
                           </tr>
                         </thead>
                         <tbody>
-                          {products.map((p, i) => {
+                          {dashboardFilteredProducts.map((p, i) => {
                             const status = getStockStatus(p);
                             const pct    = Math.min(100, (p.mainStock / Math.max(1, p.reorderPoint * 2)) * 100);
                             return (
@@ -656,6 +693,11 @@ export default function StockManager() {
                               </tr>
                             );
                           })}
+                          {dashboardFilteredProducts.length === 0 && (
+                            <tr>
+                              <td colSpan={9} className="py-8 text-center text-slate-400 text-sm">No inventory items match your search.</td>
+                            </tr>
+                          )}
                         </tbody>
                       </table>
                     </SectionCard>
@@ -748,6 +790,19 @@ export default function StockManager() {
                             ))}
                           </StyledSelect>
                         </FormField>
+
+                        {selectedWithdrawalProduct && selectedWithdrawalStatus !== "normal" && (
+                          <div className={`text-xs px-3 py-2 rounded-xl border ${
+                            selectedWithdrawalStatus === "critical"
+                              ? "bg-red-50 text-red-600 border-red-200"
+                              : "bg-amber-50 text-amber-600 border-amber-200"
+                          }`}>
+                            {selectedWithdrawalStatus === "critical" ? "Critical stock warning" : "Low stock warning"}: 
+                            {" "}{selectedWithdrawalProduct.product_name} is at {selectedWithdrawalPct}% of reorder level 
+                            ({selectedWithdrawalProduct.mainStock} {selectedWithdrawalProduct.unit} left). Avoid over-withdrawal.
+                          </div>
+                        )}
+
                         <FormField label="Quantity">
                           <StyledInput type="number" value={wdQty} onChange={setWdQty} placeholder="Enter amount" />
                         </FormField>
@@ -820,20 +875,26 @@ export default function StockManager() {
               <motion.div key="alerts" variants={pageVariants} initial="hidden" animate="show" exit="exit">
                 <motion.div variants={staggerVariants} initial="hidden" animate="show" className="space-y-4">
                   <motion.div variants={itemVariants} className="grid grid-cols-2 gap-4">
-                    <div className="bg-white rounded-2xl p-5 border border-t-4 border-amber-300 shadow-sm">
-                      <p className="text-xs text-slate-400 font-medium">Low Stock Items</p>
-                      <p className="text-3xl font-bold text-amber-500 mt-1">{lowStock.length}</p>
-                    </div>
                     <div className="bg-white rounded-2xl p-5 border border-t-4 border-red-300 shadow-sm">
                       <p className="text-xs text-slate-400 font-medium">Critical Items</p>
                       <p className="text-3xl font-bold text-red-500 mt-1">{criticalStock.length}</p>
+                    </div>
+                    <div className="bg-white rounded-2xl p-5 border border-t-4 border-amber-300 shadow-sm">
+                      <p className="text-xs text-slate-400 font-medium">Warning Items</p>
+                      <p className="text-3xl font-bold text-amber-500 mt-1">{lowStock.length}</p>
                     </div>
                   </motion.div>
 
                   {lowStock.length === 0 && criticalStock.length === 0 ? (
                     <motion.div variants={itemVariants}><EmptyState message="All stock levels are within safe range." /></motion.div>
                   ) : (
-                    [...criticalStock, ...lowStock].map((p, i) => {
+                    <>
+                    {criticalStock.length > 0 && (
+                      <motion.div variants={itemVariants} className="pt-1">
+                        <p className="text-xs font-semibold text-red-500 uppercase tracking-wider mb-2">Critical</p>
+                      </motion.div>
+                    )}
+                    {criticalStock.map((p, i) => {
                       const status  = getStockStatus(p);
                       const deficit = +(p.reorderPoint - p.mainStock).toFixed(2);
                       return (
@@ -864,7 +925,41 @@ export default function StockManager() {
                           </div>
                         </motion.div>
                       );
-                    })
+                    })}
+                    {lowStock.length > 0 && (
+                      <motion.div variants={itemVariants} className="pt-2">
+                        <p className="text-xs font-semibold text-amber-500 uppercase tracking-wider mb-2">Warning</p>
+                      </motion.div>
+                    )}
+                    {lowStock.map((p, i) => {
+                      const status  = getStockStatus(p);
+                      const deficit = +(p.reorderPoint - p.mainStock).toFixed(2);
+                      return (
+                        <motion.div key={p.inventory_id} variants={itemVariants} transition={{ delay: (criticalStock.length + i) * 0.06 }}
+                          className="bg-white rounded-2xl border border-amber-200 border-t-4 border-t-amber-400 p-5 flex items-center justify-between shadow-sm">
+                          <div className="flex items-center gap-4">
+                            <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 bg-amber-50">
+                              <span className="text-sm font-bold text-amber-500">!</span>
+                            </div>
+                            <div>
+                              <p className="font-semibold text-slate-800">{p.product_name}</p>
+                              <p className="text-xs text-slate-400 mt-0.5">{p.category} · {p.supplier_name}</p>
+                              <p className="text-xs font-medium mt-1 text-amber-500">
+                                {deficit > 0 ? `Need ${deficit} ${p.unit} to reach reorder point` : "Near critical threshold"}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-2xl font-bold text-amber-500">
+                              {p.mainStock} <span className="text-sm font-normal text-slate-400">{p.unit}</span>
+                            </p>
+                            <p className="text-xs text-slate-400 mt-1">Reorder at {p.reorderPoint} · Critical at {p.criticalPoint}</p>
+                            <span className="inline-block mt-2 text-xs font-semibold px-3 py-1 rounded-full bg-amber-100 text-amber-600">Reorder Soon</span>
+                          </div>
+                        </motion.div>
+                      );
+                    })}
+                    </>
                   )}
                 </motion.div>
               </motion.div>
@@ -906,7 +1001,16 @@ export default function StockManager() {
 
                   {/* Suppliers table */}
                   <motion.div variants={itemVariants}>
-                    <SectionCard title="Supplier Directory" subtitle={`${suppliers.length} suppliers from Suppliers table`}>
+                    <SectionCard title="Supplier Directory" subtitle={`${filteredSuppliers.length} supplier${filteredSuppliers.length === 1 ? "" : "s"} shown`}>
+                      <div className="px-4 pt-4">
+                        <input
+                          type="text"
+                          value={supplierSearch}
+                          onChange={(e) => setSupplierSearch(e.target.value)}
+                          placeholder="Search by company or supplied products..."
+                          className="w-full md:w-96 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
+                        />
+                      </div>
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="border-b border-slate-100">
@@ -916,7 +1020,7 @@ export default function StockManager() {
                           </tr>
                         </thead>
                         <tbody>
-                          {suppliers.map((s, i) => (
+                          {filteredSuppliers.map((s, i) => (
                             <tr key={s.supplier_id}
                               style={{ opacity: 0, animation: `fadeInRow 0.28s ease forwards`, animationDelay: `${i * 0.04}s` }}
                               className="border-b border-slate-50 hover:bg-slate-50/70 transition-colors">
@@ -938,147 +1042,8 @@ export default function StockManager() {
                           ))}
                         </tbody>
                       </table>
-                      {suppliers.length === 0 && <EmptyState message="No suppliers found." />}
+                      {filteredSuppliers.length === 0 && <EmptyState message="No suppliers found for this search." />}
                     </SectionCard>
-                  </motion.div>
-                </motion.div>
-              </motion.div>
-            )}
-
-            {/* ── REPORTS ───────────────────────────────────────────────── */}
-            {tab === "reports" && (
-              <motion.div key="reports" variants={pageVariants} initial="hidden" animate="show" exit="exit">
-                <motion.div variants={staggerVariants} initial="hidden" animate="show" className="space-y-6">
-
-                  {/* Report KPIs */}
-                  <motion.div variants={staggerVariants} className="grid grid-cols-3 gap-4">
-                    {([
-                      { label: "Total Sales (Reports)",       value: `₱${reports.reduce((s,r) => s+r.total_sales, 0).toLocaleString()}`, accent: "emerald" },
-                      { label: "Total Transactions",          value: reports.reduce((s,r) => s+r.total_transaction, 0).toString(),        accent: "indigo"  },
-                      { label: "Total Wasted (Inventory)",    value: totalWasted.toFixed(2),                                              accent: "rose"    },
-                    ] as { label: string; value: string; accent: string }[]).map(k => {
-                      const ac = KPI_ACCENT[k.accent];
-                      return (
-                        <motion.div key={k.label} variants={itemVariants}
-                          className={`bg-white rounded-2xl p-5 shadow-sm border border-slate-100 border-t-4 ${ac.border}`}>
-                          <p className="text-xs text-slate-400 font-medium">{k.label}</p>
-                          <p className={`text-3xl font-bold mt-1 leading-none ${ac.value}`}>{k.value}</p>
-                        </motion.div>
-                      );
-                    })}
-                  </motion.div>
-
-                  {/* Reports table from DB */}
-                  <motion.div variants={itemVariants}>
-                    <SectionCard title="Generated Reports" subtitle="From Reports table — report history">
-                      {reports.length === 0 ? (
-                        <EmptyState message="No reports generated yet." />
-                      ) : (
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="border-b border-slate-100">
-                              {["Report ID","Type","Total Sales","Transactions","Generated At"].map(h => (
-                                <th key={h} className={`py-3 px-4 text-[11px] font-semibold text-slate-400 uppercase tracking-wider ${h === "Type" || h === "Report ID" || h === "Generated At" ? "text-left" : "text-right"}`}>{h}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {reports.map((r, i) => (
-                              <tr key={r.report_id}
-                                style={{ opacity: 0, animation: `fadeInRow 0.28s ease forwards`, animationDelay: `${i * 0.04}s` }}
-                                className="border-b border-slate-50 hover:bg-slate-50/70 transition-colors">
-                                <td className="py-3.5 px-4 text-xs text-slate-400 font-mono">#{r.report_id}</td>
-                                <td className="py-3.5 px-4">
-                                  <span className="text-xs font-medium bg-slate-100 text-slate-600 px-2.5 py-1 rounded-lg capitalize">{r.report_type}</span>
-                                </td>
-                                <td className="py-3.5 px-4 text-right text-emerald-600 font-semibold">₱{r.total_sales.toLocaleString()}</td>
-                                <td className="py-3.5 px-4 text-right text-indigo-600 font-medium">{r.total_transaction}</td>
-                                <td className="py-3.5 px-4 text-slate-500 text-xs">
-                                  {new Date(r.generated_at).toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" })}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      )}
-                    </SectionCard>
-                  </motion.div>
-
-                  {/* Consumption summary */}
-                  <motion.div variants={itemVariants}>
-                    <SectionCard title="Consumption Summary" subtitle="Detailed breakdown per Inventory item">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-slate-100">
-                            {["Item","Qty Purchased","Used","Remaining","Wasted","Waste %","Movement"].map(h => (
-                              <th key={h} className={`py-3 px-4 text-[11px] font-semibold text-slate-400 uppercase tracking-wider ${h === "Item" ? "text-left" : h === "Movement" ? "text-center" : "text-right"}`}>{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {products.map((p, i) => {
-                            const wastePercent = p.dailyWithdrawn > 0 ? ((p.wasted / p.dailyWithdrawn) * 100).toFixed(1) : "0.0";
-                            const isFast = p.dailyWithdrawn >= 3;
-                            return (
-                              <tr key={p.inventory_id}
-                                style={{ opacity: 0, animation: `fadeInRow 0.28s ease forwards`, animationDelay: `${i * 0.04}s` }}
-                                className="border-b border-slate-50 hover:bg-slate-50/70 transition-colors">
-                                <td className="py-3.5 px-4 font-medium text-slate-800">{p.product_name}</td>
-                                <td className="py-3.5 px-4 text-right text-slate-500">{p.item_purchased}</td>
-                                <td className="py-3.5 px-4 text-right text-indigo-500 font-medium">{p.dailyWithdrawn}</td>
-                                <td className="py-3.5 px-4 text-right font-semibold text-slate-700">{p.mainStock}</td>
-                                <td className="py-3.5 px-4 text-right text-rose-400 font-medium">{p.wasted}</td>
-                                <td className="py-3.5 px-4 text-right text-slate-400">{wastePercent}%</td>
-                                <td className="py-3.5 px-4 text-center">
-                                  <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${isFast ? "bg-indigo-50 text-indigo-600" : "bg-slate-100 text-slate-500"}`}>
-                                    {isFast ? "Fast" : "Slow"}
-                                  </span>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </SectionCard>
-                  </motion.div>
-                </motion.div>
-              </motion.div>
-            )}
-
-            {/* ── CRITICAL ──────────────────────────────────────────────── */}
-            {tab === "critical" && (
-              <motion.div key="critical" variants={pageVariants} initial="hidden" animate="show" exit="exit">
-                <motion.div variants={staggerVariants} initial="hidden" animate="show" className="space-y-4">
-                  {criticalStock.length === 0 ? (
-                    <motion.div variants={itemVariants}><EmptyState message="No items in critical condition." /></motion.div>
-                  ) : (
-                    criticalStock.map((p, i) => (
-                      <motion.div key={p.inventory_id} variants={itemVariants} transition={{ delay: i * 0.07 }}
-                        className="bg-white border border-slate-100 border-t-4 border-t-red-400 rounded-2xl p-6 flex items-center justify-between shadow-sm">
-                        <div className="flex items-center gap-4">
-                          <div className="w-12 h-12 rounded-2xl bg-red-50 flex items-center justify-center flex-shrink-0">
-                            <span className="text-red-500 font-bold text-lg">!</span>
-                          </div>
-                          <div>
-                            <p className="font-semibold text-slate-800 text-base">{p.product_name}</p>
-                            <p className="text-xs text-slate-400 mt-0.5">{p.category} · Last update: {new Date(p.last_update).toLocaleDateString("en-PH")}</p>
-                            <p className="text-xs text-slate-500 mt-1">Supplier: <span className="font-semibold text-slate-700">{p.supplier_name}</span></p>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-3xl font-bold text-red-500">{p.mainStock}<span className="text-sm text-slate-400 font-normal ml-1">{p.unit}</span></p>
-                          <p className="text-xs text-slate-400 mt-1">Critical at {p.criticalPoint} · Reorder at {p.reorderPoint}</p>
-                          <span className="inline-block mt-2 text-xs font-semibold px-3 py-1 rounded-full bg-red-50 text-red-600">Immediate Action Required</span>
-                        </div>
-                      </motion.div>
-                    ))
-                  )}
-
-                  <motion.div variants={itemVariants} className="bg-white border border-slate-100 rounded-2xl p-5 shadow-sm">
-                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">About Critical Stock</p>
-                    <p className="text-sm text-slate-500 leading-relaxed">
-                      Items shown here have fallen below their defined critical threshold in the Inventory table. Contact suppliers immediately and prioritize restocking to prevent production downtime.
-                    </p>
                   </motion.div>
                 </motion.div>
               </motion.div>

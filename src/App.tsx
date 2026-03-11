@@ -42,7 +42,7 @@ export default function App() {
       <Route path="/products"  element={isAuth ? <Products />       : <Navigate to="/login" />} />
       <Route path="/users"     element={isAuth ? <StaffAccounts />   : <Navigate to="/login" />} />
       <Route path="/sales-reports" element={isAuth ? <SalesReports /> : <Navigate to="/login" />} />
-      <Route path="/aboutthecrunch" element={<AboutTheCrunch />} />\
+      <Route path="/aboutthecrunch" element={<AboutTheCrunch />} />
       <Route path="/usersmenu" element={<UsersMenu />} />
       <Route path="/stockmanager" element={isAuth ? <StockManager /> : <Navigate to="/login" />} />
 
