@@ -155,28 +155,58 @@ router.get("/", async (req, res) => {
 router.put("/:inventory_id", async (req, res) => {
   try {
     const inventoryId = Number(req.params.inventory_id);
-    const stock = Number(req.body.stock);
 
     if (!Number.isFinite(inventoryId) || inventoryId <= 0) {
       return res.status(400).json({ message: "Invalid inventory_id" });
     }
 
-    if (!Number.isFinite(stock) || stock < 0) {
-      return res.status(400).json({ message: "Invalid stock value" });
+    const { stock, daily_withdrawn, returned, wasted } = req.body;
+
+    // Build SET clause dynamically — only update fields that were actually sent
+    const fields = [];
+    const values = [];
+
+    if (stock !== undefined) {
+      if (!Number.isFinite(Number(stock)) || Number(stock) < 0)
+        return res.status(400).json({ message: "Invalid stock value" });
+      fields.push("Stock = ?");
+      values.push(Number(stock));
+    }
+    if (daily_withdrawn !== undefined) {
+      fields.push("Daily_Withdrawn = ?");
+      values.push(Number(daily_withdrawn));
+    }
+    if (returned !== undefined) {
+      fields.push("Returned = ?");
+      values.push(Number(returned));
+    }
+    if (wasted !== undefined) {
+      fields.push("Wasted = ?");
+      values.push(Number(wasted));
     }
 
+    if (fields.length === 0) {
+      return res.status(400).json({ message: "No fields to update" });
+    }
+
+    fields.push("Last_Update = NOW()");
+    values.push(inventoryId);
+
     const [result] = await db.query(
-      `UPDATE Inventory
-       SET Stock = ?, Last_Update = NOW()
-       WHERE Inventory_ID = ?`,
-      [stock, inventoryId]
+      `UPDATE Inventory SET ${fields.join(", ")} WHERE Inventory_ID = ?`,
+      values
     );
 
     if (result.affectedRows === 0) {
       return res.status(404).json({ message: "Inventory record not found" });
     }
 
-    res.json({ success: true, inventory_id: inventoryId, stock });
+    const [rows] = await db.query(
+      `SELECT * FROM Inventory WHERE Inventory_ID = ?`,
+      [inventoryId]
+    );
+
+    res.json(rows[0]);
   } catch (err) {
     console.error("Error updating inventory:", err);
     res.status(500).json({ message: "DB error", error: err.message });

@@ -7,6 +7,14 @@ const DB_PASSWORD = process.env.DB_PASSWORD || '';
 const DB_NAME = process.env.DB_NAME || 'pos_system';
 const DB_PORT = process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306;
 
+async function ensureColumn(connection, tableName, columnName, definitionSql) {
+    const [rows] = await connection.query(`SHOW COLUMNS FROM \`${tableName}\` LIKE ?`, [columnName]);
+    if (rows.length === 0) {
+        await connection.query(`ALTER TABLE \`${tableName}\` ADD COLUMN ${definitionSql}`);
+        console.log(`Added column ${columnName} to ${tableName}`);
+    }
+}
+
 async function setup() {
   let connection;
     const shouldReset = process.argv.includes('--reset');
@@ -29,7 +37,7 @@ async function setup() {
     await connection.query(`USE \`${DB_NAME}\``);
 
     // Drop tables if they exist (order chosen to satisfy foreign keys)
-    const dropStatements = [
+        const dropStatements = [
       'DROP TABLE IF EXISTS Order_Tracking;',
       'DROP TABLE IF EXISTS Kitchen;',
       'DROP TABLE IF EXISTS Receipt;',
@@ -49,6 +57,7 @@ async function setup() {
       'DROP TABLE IF EXISTS Admin;'
     ].join('\n');
 
+        if (shouldReset) {
             await connection.query(dropStatements);
             console.log('Existing tables dropped (reset mode).');
         } else {
@@ -211,6 +220,11 @@ CREATE TABLE IF NOT EXISTS Reports (
 
     await connection.query(createStatements);
     console.log('Tables created.');
+
+    // Ensure Inventory has stock movement summary columns.
+    await ensureColumn(connection, 'Inventory', 'Daily_Withdrawn', '`Daily_Withdrawn` DECIMAL(10,2) DEFAULT 0');
+    await ensureColumn(connection, 'Inventory', 'Returned', '`Returned` DECIMAL(10,2) DEFAULT 0');
+    await ensureColumn(connection, 'Inventory', 'Wasted', '`Wasted` DECIMAL(10,2) DEFAULT 0');
 
     console.log('Database setup completed successfully.');
   } catch (err) {
