@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import type { ReactNode } from "react";
 import { motion, AnimatePresence, type Variants, type Transition } from "framer-motion";
 import { Sidebar } from "@/components/Sidebar";
@@ -9,17 +9,30 @@ type StockStatus    = "critical" | "low" | "normal";
 type Tab            = "dashboard" | "withdrawal" | "alerts" | "suppliers";
 type SupplierField  = keyof Omit<Supplier, "supplier_id">;
 
+/**
+ * CATEGORY LOGIC
+ * ─────────────────────────────────────────────────────────────────
+ * Products with category === "Whole Chicken" or "Chopped Chicken"
+ * are treated as MEAT/PROTEIN → reconcilable = true
+ *
+ * Products with category === "Sauce" (or any category containing
+ * "sauce" / "bottle" / "beverage") are NOT reconcilable.
+ *
+ * The helper `isReconcilable(product)` drives this logic centrally.
+ * ─────────────────────────────────────────────────────────────────
+ */
+
 // Matches: Inventory table + Stock_Status join
 interface Product {
   inventory_id: number;
   product_id: number;
   product_name: string;
-  category: string;
+  category: string;       // e.g. "Whole Chicken" | "Chopped Chicken" | "Sauce" | "Meat" …
   unit: string;
-  mainStock: number;        // Inventory.Stock
-  quantity: number;         // Inventory.Quantity
-  item_purchased: number;   // Inventory.Item_Purchased
-  last_update: string;      // Inventory.Last_Update
+  mainStock: number;      // Inventory.Stock
+  quantity: number;       // Inventory.Quantity
+  item_purchased: number; // Inventory.Item_Purchased
+  last_update: string;    // Inventory.Last_Update
   reorderPoint: number;
   criticalPoint: number;
   supplier_name: string;
@@ -59,6 +72,28 @@ interface Report {
   generated_at: string;
 }
 
+// ── Reconciliation row (extended for chicken return-mode choice) ────────────
+interface ReconcileRow {
+  product_id: number;
+  inventory_id: number;
+  product_name: string;
+  category: string;
+  unit: string;
+  withdrawn: number;
+  returnQty: string;
+  /** Only relevant for "Chopped Chicken": where does the return go? */
+  returnDestination: "chopped" | "whole";
+}
+
+interface RawMaterialForm {
+  name: string;
+  category: string;
+  unit: string;
+  initialStock: string;
+  price: string;
+  description: string;
+}
+
 // ── API Configuration ───────────────────────────────────────────────────────
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:5000/api";
 
@@ -79,55 +114,97 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
-// ── API Calls (mapped to your DB schema) ───────────────────────────────────
+// ── API Calls ────────────────────────────────────────────────────────────────
 const api = {
-  // GET /api/inventory  → returns Inventory JOIN Stock_Status JOIN Menu JOIN Suppliers
-  getInventory:   ()                             => apiFetch<Product[]>("/inventory"),
+  getInventory:   ()=> apiFetch<Product[]>("/inventory"),
+  getWithdrawals: ()=> apiFetch<StockStatusRecord[]>("/stock-status/today"),
 
-  // GET /api/stock-status/today
-  getWithdrawals: ()                             => apiFetch<StockStatusRecord[]>("/stock-status/today"),
-
-  // POST /api/stock-status  →  { product_id, type, quantity, recorded_by }
   postWithdrawal: (body: Omit<StockStatusRecord, "status_id" | "status_date" | "product_name">) =>
     apiFetch<StockStatusRecord>("/stock-status", { method: "POST", body: JSON.stringify(body) }),
 
-  // POST /api/stock-status/spoilage  →  { product_id, quantity, recorded_by }
-  postSpoilage:   (body: { product_id: number; quantity: number; recorded_by: string }) =>
+  postSpoilage: (body: { product_id: number; quantity: number; recorded_by: string }) =>
     apiFetch<{ success: boolean }>("/stock-status/spoilage", { method: "POST", body: JSON.stringify(body) }),
 
-  // GET /api/suppliers
   getSuppliers:   ()                             => apiFetch<Supplier[]>("/suppliers"),
 
-  // POST /api/suppliers
-  postSupplier:   (body: Omit<Supplier, "supplier_id">) =>
+  postSupplier: (body: Omit<Supplier, "supplier_id">) =>
     apiFetch<Supplier>("/suppliers", { method: "POST", body: JSON.stringify(body) }),
 
-  // DELETE /api/suppliers/:id
   deleteSupplier: (id: number)                   => apiFetch<{ success: boolean }>(`/suppliers/${id}`, { method: "DELETE" }),
 
-  // GET /api/reports
   getReports:     ()                             => apiFetch<Report[]>("/reports"),
 
-  // PUT /api/inventory/:id  →  update Stock after withdrawal/return
-  updateStock:    (inventory_id: number, body: { stock: number; daily_withdrawn?: number; returned?: number; wasted?: number }) =>
+  createProduct: (body: { name: string; price: number; quantity: number; category?: string; description?: string; raw_material?: boolean }) =>
+    apiFetch<{ message: string; id: number }>("/products", { method: "POST", body: JSON.stringify(body) }),
+
+  postBatch: (body: { productId: number; productName: string; quantity: number; unit: string }) =>
+    apiFetch<{ id: string }>("/inventory/batches", { method: "POST", body: JSON.stringify(body) }),
+
+  updateStock: (inventory_id: number, body: { stock: number; daily_withdrawn?: number; returned?: number; wasted?: number }) =>
     apiFetch<Product>(`/inventory/${inventory_id}`, { method: "PUT", body: JSON.stringify(body) }),
 };
 
-// ── Constants ───────────────────────────────────────────────────────────────
+// ── Category / reconcilability helpers ─────────────────────────────────────
+
+/**
+ * Returns true for meat / protein products that go back into storage
+ * when there are leftovers at end-of-day.
+ *
+ * Sauces and bottled items are EXCLUDED — once they leave the shelf they
+ * are never reconciled back.
+ */
+function isReconcilable(p: Product): boolean {
+  const cat = p.category.toLowerCase();
+  // Exclude sauces, bottles, beverages, condiments
+  if (
+    cat.includes("sauce") ||
+    cat.includes("bottle") ||
+    cat.includes("beverage") ||
+    cat.includes("condiment") ||
+    cat.includes("drink")
+  ) return false;
+  // Include everything else that was actually withdrawn
+  return true;
+}
+
+function isWholeChicken(p: Product): boolean {
+  return p.category.toLowerCase().includes("whole chicken");
+}
+
+function isChoppedChicken(p: Product): boolean {
+  return p.category.toLowerCase().includes("chopped chicken");
+}
+
+function isChicken(p: Product): boolean {
+  return isWholeChicken(p) || isChoppedChicken(p);
+}
+
+// ── Constants ────────────────────────────────────────────────────────────────
 const BLANK_SUPPLIER: Omit<Supplier, "supplier_id"> = {
   supplier_name: "", contact_number: "", delivery_schedule: "",
   product_id: 0, email: "", products_supplied: "",
+};
+
+const BLANK_RAW_MATERIAL: RawMaterialForm = {
+  name: "",
+  category: "Sauce",
+  unit: "liter",
+  initialStock: "",
+  price: "",
+  description: "",
 };
 
 const SUPPLIER_FIELDS: { key: SupplierField; label: string; placeholder: string }[] = [
   { key: "supplier_name",     label: "Company Name",      placeholder: "e.g. FreshMill Co."   },
   { key: "email",             label: "Email Address",     placeholder: "e.g. juan@company.ph" },
   { key: "contact_number",    label: "Phone Number",      placeholder: "e.g. 0917-123-4567"   },
-  { key: "products_supplied", label: "Supplied Products", placeholder: "e.g. Flour, Sugar"    },
+  { key: "products_supplied", label: "Supplied Products", placeholder: "e.g. Whole Chicken"   },
   { key: "delivery_schedule", label: "Delivery Schedule", placeholder: "e.g. Mon, Wed, Fri"   },
 ];
 
 const WITHDRAWAL_TYPES: WithdrawalType[] = ["initial", "supplementary", "return"];
+
+const RAW_MATERIAL_UNITS = ["kg", "g", "liter", "ml", "piece", "pack", "bottle"] as const;
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "dashboard",  label: "Dashboard"  },
@@ -169,6 +246,15 @@ const KPI_ACCENT: Record<string, { border: string; value: string }> = {
   rose:    { border: "border-t-rose-400",    value: "text-rose-500"    },
   emerald: { border: "border-t-emerald-400", value: "text-emerald-600" },
 };
+
+// Category tag styling
+function getCategoryStyle(category: string): string {
+  const cat = category.toLowerCase();
+  if (cat.includes("whole chicken"))   return "bg-orange-50 text-orange-600 border-orange-100";
+  if (cat.includes("chopped chicken")) return "bg-amber-50 text-amber-700 border-amber-100";
+  if (cat.includes("sauce"))           return "bg-rose-50 text-rose-500 border-rose-100";
+  return "bg-slate-50 text-slate-500 border-slate-100";
+}
 
 // ── Framer Motion presets ───────────────────────────────────────────────────
 const smoothEase: Transition = { duration: 0.38, ease: [0.25, 0.46, 0.45, 0.94] };
@@ -259,7 +345,7 @@ function Toast({ message, type, onClose }: { message: string; type: "success" | 
 export default function StockManager() {
   const [tab, setTab] = useState<Tab>("dashboard");
 
-  // ── Data state (from API) ─────────────────────────────────────────────
+  // ── Data state ────────────────────────────────────────────────────────
   const [products,    setProducts]    = useState<Product[]>([]);
   const [withdrawals, setWithdrawals] = useState<StockStatusRecord[]>([]);
   const [suppliers,   setSuppliers]   = useState<Supplier[]>([]);
@@ -280,10 +366,12 @@ export default function StockManager() {
   const [supplierSearch,  setSupplierSearch]  = useState("");
   const [showSupplierForm, setShowSupplierForm] = useState(false);
   const [supplierForm,     setSupplierForm]     = useState<Omit<Supplier, "supplier_id">>(BLANK_SUPPLIER);
+  const [showRawMaterialForm, setShowRawMaterialForm] = useState(false);
+  const [rawMaterialForm, setRawMaterialForm] = useState<RawMaterialForm>(BLANK_RAW_MATERIAL);
 
   // ── Reconciliation modal state ────────────────────────────────────────
-  const [showReconcile,   setShowReconcile]   = useState(false);
-  const [reconcileItems,  setReconcileItems]  = useState<{ product_id: number; product_name: string; unit: string; withdrawn: number; returnQty: string }[]>([]);
+  const [showReconcile,  setShowReconcile]  = useState(false);
+  const [reconcileItems, setReconcileItems] = useState<ReconcileRow[]>([]);
 
   // ── Google Fonts ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -297,7 +385,7 @@ export default function StockManager() {
     return () => { document.head.removeChild(link); document.head.removeChild(style); };
   }, []);
 
-  // ── Fetch all data from backend ───────────────────────────────────────
+  // ── Fetch all data ────────────────────────────────────────────────────
   const fetchAll = useCallback(async () => {
     setIsLoading(true);
     setError(null);
@@ -310,23 +398,23 @@ export default function StockManager() {
 
       const normalizedProducts: Product[] = inv.map((p) => ({
         ...p,
-        inventory_id: toNumber(p.inventory_id),
-        product_id: toNumber(p.product_id),
-        mainStock: toNumber(p.mainStock),
-        quantity: toNumber(p.quantity),
+        inventory_id:  toNumber(p.inventory_id),
+        product_id:    toNumber(p.product_id),
+        mainStock:     toNumber(p.mainStock),
+        quantity:      toNumber(p.quantity),
         item_purchased: toNumber(p.item_purchased),
-        reorderPoint: toNumber(p.reorderPoint),
+        reorderPoint:  toNumber(p.reorderPoint),
         criticalPoint: toNumber(p.criticalPoint),
         dailyWithdrawn: toNumber(p.dailyWithdrawn),
-        returned: toNumber(p.returned),
-        wasted: toNumber(p.wasted),
+        returned:      toNumber(p.returned),
+        wasted:        toNumber(p.wasted),
       }));
 
       const normalizedWithdrawals: StockStatusRecord[] = wd.map((r) => ({
         ...r,
-        status_id: toNumber(r.status_id),
+        status_id:  toNumber(r.status_id),
         product_id: toNumber(r.product_id),
-        quantity: toNumber(r.quantity),
+        quantity:   toNumber(r.quantity),
       }));
 
       setProducts(normalizedProducts);
@@ -346,15 +434,12 @@ export default function StockManager() {
       if (wdProductId  === null) setWdProductId(products[0].product_id);
       if (adjProductId === null) setAdjProductId(products[0].product_id);
     }
-  }, [products]);
+  }, [products, wdProductId, adjProductId]);
 
   // ── Derived values ────────────────────────────────────────────────────
-  const lowStock      = products.filter(p => getStockStatus(p) === "low");
-  const criticalStock = products.filter(p => getStockStatus(p) === "critical");
-  const attentionItems = useMemo(
-    () => products.filter(p => getStockStatus(p) !== "normal"),
-    [products]
-  );
+  const lowStock       = products.filter(p => getStockStatus(p) === "low");
+  const criticalStock  = products.filter(p => getStockStatus(p) === "critical");
+  const attentionItems = useMemo(() => products.filter(p => getStockStatus(p) !== "normal"), [products]);
 
   const dashboardFilteredProducts = useMemo(() => {
     const q = dashboardSearch.trim().toLowerCase();
@@ -363,7 +448,6 @@ export default function StockManager() {
       : products.filter((p) =>
           p.product_name.toLowerCase().includes(q) || p.category.toLowerCase().includes(q)
         );
-
     return [...filtered].sort((a, b) => {
       const aPct = a.mainStock / Math.max(1, a.reorderPoint * 2);
       const bPct = b.mainStock / Math.max(1, b.reorderPoint * 2);
@@ -384,9 +468,8 @@ export default function StockManager() {
     () => products.find(p => p.product_id === wdProductId) ?? null,
     [products, wdProductId]
   );
-
   const selectedWithdrawalStatus = selectedWithdrawalProduct ? getStockStatus(selectedWithdrawalProduct) : "normal";
-  const selectedWithdrawalPct = selectedWithdrawalProduct
+  const selectedWithdrawalPct    = selectedWithdrawalProduct
     ? Math.min(100, Math.round((selectedWithdrawalProduct.mainStock / Math.max(1, selectedWithdrawalProduct.reorderPoint)) * 100))
     : 0;
 
@@ -394,9 +477,13 @@ export default function StockManager() {
   const totalWasted    = products.reduce((s, p) => s + toNumber(p.wasted), 0);
   const totalReturned  = products.reduce((s, p) => s + toNumber(p.returned), 0);
 
+  // Chicken-specific KPIs for dashboard callout
+  const wholeChickenProducts   = products.filter(isWholeChicken);
+  const choppedChickenProducts = products.filter(isChoppedChicken);
+
   const showToast = (message: string, type: "success" | "error") => setToast({ message, type });
 
-  // ── Submit Withdrawal → POST /api/stock-status ─────────────────────────
+  // ── Submit Withdrawal ────────────────────────────────────────────────
   async function submitWithdrawal() {
     const qty = parseFloat(wdQty);
     if (!qty || qty <= 0 || wdProductId === null) return;
@@ -409,12 +496,10 @@ export default function StockManager() {
         product_id:  wdProductId,
         type:        wdType,
         quantity:    qty,
-        recorded_by: "Admin", // TODO: replace with logged-in user from auth context
+        recorded_by: "Admin",
       });
-
       setWithdrawals(prev => [newRecord, ...prev]);
 
-      // Update inventory stock locally (optimistic), then sync PUT /api/inventory/:id
       const updatedStock = wdType === "return"
         ? +(product.mainStock + qty).toFixed(2)
         : Math.max(0, +(product.mainStock - qty).toFixed(2));
@@ -444,7 +529,7 @@ export default function StockManager() {
     }
   }
 
-  // ── Submit Spoilage → POST /api/stock-status/spoilage ─────────────────
+  // ── Submit Spoilage ──────────────────────────────────────────────────
   async function submitSpoilage() {
     const qty = parseFloat(adjQty);
     if (!qty || qty <= 0 || adjProductId === null) return;
@@ -454,10 +539,8 @@ export default function StockManager() {
     setSubmitting(true);
     try {
       await api.postSpoilage({ product_id: adjProductId, quantity: qty, recorded_by: "Admin" });
-
       const updatedStock = Math.max(0, +(product.mainStock - qty).toFixed(2));
       await api.updateStock(product.inventory_id, { stock: updatedStock, wasted: +(product.wasted + qty).toFixed(2) });
-
       setProducts(prev => prev.map(p =>
         p.product_id === adjProductId
           ? { ...p, mainStock: updatedStock, wasted: +(p.wasted + qty).toFixed(2) }
@@ -472,40 +555,129 @@ export default function StockManager() {
     }
   }
 
-  // ── End-of-Day Reconciliation (Bulk Return) ────────────────────────────
+  // ── Open Reconciliation Modal ─────────────────────────────────────────
+  /**
+   * RULE:
+   * - Only products where isReconcilable() === true AND dailyWithdrawn > 0 are shown.
+   * - Sauces / bottled items are EXCLUDED.
+   * - Chopped chicken rows get an extra "returnDestination" toggle
+   *   so staff can choose whether the excess goes back as chopped or as whole.
+   */
   function openReconcile() {
-    const items = products
-      .filter(p => p.dailyWithdrawn > 0)
-      .map(p => ({ product_id: p.product_id, product_name: p.product_name, unit: p.unit, withdrawn: p.dailyWithdrawn, returnQty: "" }));
+    const items: ReconcileRow[] = products
+      .filter(p => isReconcilable(p) && p.dailyWithdrawn > 0)
+      .map(p => ({
+        product_id:         p.product_id,
+        inventory_id:       p.inventory_id,
+        product_name:       p.product_name,
+        category:           p.category,
+        unit:               p.unit,
+        withdrawn:          p.dailyWithdrawn,
+        returnQty:          "",
+        returnDestination:  "chopped" as const,
+      }));
     setReconcileItems(items);
     setShowReconcile(true);
   }
 
+  // ── Submit Reconciliation ─────────────────────────────────────────────
+  /**
+   * For each valid return row:
+   *   - If product is Chopped Chicken AND returnDestination === "whole":
+   *       → post return against the matching Whole Chicken product
+   *       → do NOT update the Chopped Chicken stock (it's already consumed)
+   *       → add qty back to the Whole Chicken inventory
+   *   - Otherwise (normal meat return):
+   *       → post return against the same product
+   *       → add qty back to that product's stock
+   */
   async function submitReconciliation() {
     const validItems = reconcileItems.filter(i => parseFloat(i.returnQty) > 0);
     if (validItems.length === 0) return;
     setSubmitting(true);
+
     try {
       for (const item of validItems) {
-        const qty = parseFloat(item.returnQty);
-        const product = products.find(p => p.product_id === item.product_id);
-        if (!product) continue;
+        const qty            = parseFloat(item.returnQty);
+        const sourceProduct  = products.find(p => p.product_id === item.product_id);
+        if (!sourceProduct) continue;
 
-        await api.postWithdrawal({ product_id: item.product_id, type: "return", quantity: qty, recorded_by: "Admin" });
-        const updatedStock = +(product.mainStock + qty).toFixed(2);
-        await api.updateStock(product.inventory_id, {
-          stock:           updatedStock,
-          daily_withdrawn: Math.max(0, +(product.dailyWithdrawn - qty).toFixed(2)),
-          returned:        +(product.returned + qty).toFixed(2),
-        });
-        setProducts(prev => prev.map(p =>
-          p.product_id === item.product_id
-            ? { ...p, mainStock: updatedStock, returned: +(p.returned + qty).toFixed(2), dailyWithdrawn: Math.max(0, +(p.dailyWithdrawn - qty).toFixed(2)) }
-            : p
-        ));
+        const returnAsWhole =
+          isChoppedChicken(sourceProduct) && item.returnDestination === "whole";
+
+        if (returnAsWhole) {
+          // Find matching Whole Chicken product (same supplier or first whole chicken available)
+          const wholeChickenProduct =
+            products.find(
+              p => isWholeChicken(p) && p.supplier_name === sourceProduct.supplier_name
+            ) ?? products.find(p => isWholeChicken(p));
+
+          if (!wholeChickenProduct) {
+            showToast(`No Whole Chicken inventory found to return to.`, "error");
+            continue;
+          }
+
+          // Post return record against Whole Chicken
+          await api.postWithdrawal({
+            product_id:  wholeChickenProduct.product_id,
+            type:        "return",
+            quantity:    qty,
+            recorded_by: "Admin",
+          });
+
+          // Update Whole Chicken stock +qty
+          const updatedWholeStock = +(wholeChickenProduct.mainStock + qty).toFixed(2);
+          await api.updateStock(wholeChickenProduct.inventory_id, {
+            stock:    updatedWholeStock,
+            returned: +(wholeChickenProduct.returned + qty).toFixed(2),
+          });
+
+          // Update Chopped Chicken dailyWithdrawn -qty (the units are no longer "out")
+          const updatedChoppedWithdrawn = Math.max(0, +(sourceProduct.dailyWithdrawn - qty).toFixed(2));
+          await api.updateStock(sourceProduct.inventory_id, {
+            stock:           sourceProduct.mainStock, // unchanged
+            daily_withdrawn: updatedChoppedWithdrawn,
+            returned:        +(sourceProduct.returned + qty).toFixed(2),
+          });
+
+          setProducts(prev => prev.map(p => {
+            if (p.product_id === wholeChickenProduct.product_id) {
+              return { ...p, mainStock: updatedWholeStock, returned: +(p.returned + qty).toFixed(2) };
+            }
+            if (p.product_id === sourceProduct.product_id) {
+              return { ...p, dailyWithdrawn: updatedChoppedWithdrawn, returned: +(p.returned + qty).toFixed(2) };
+            }
+            return p;
+          }));
+
+        } else {
+          // Normal return — goes back to the same product
+          await api.postWithdrawal({
+            product_id:  item.product_id,
+            type:        "return",
+            quantity:    qty,
+            recorded_by: "Admin",
+          });
+
+          const updatedStock           = +(sourceProduct.mainStock + qty).toFixed(2);
+          const updatedDailyWithdrawn  = Math.max(0, +(sourceProduct.dailyWithdrawn - qty).toFixed(2));
+
+          await api.updateStock(sourceProduct.inventory_id, {
+            stock:           updatedStock,
+            daily_withdrawn: updatedDailyWithdrawn,
+            returned:        +(sourceProduct.returned + qty).toFixed(2),
+          });
+
+          setProducts(prev => prev.map(p =>
+            p.product_id === item.product_id
+              ? { ...p, mainStock: updatedStock, dailyWithdrawn: updatedDailyWithdrawn, returned: +(p.returned + qty).toFixed(2) }
+              : p
+          ));
+        }
       }
+
       setShowReconcile(false);
-      showToast(`${validItems.length} item(s) reconciled and returned to stock.`, "success");
+      showToast(`${validItems.length} item(s) reconciled successfully.`, "success");
       await fetchAll();
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Reconciliation failed.", "error");
@@ -514,7 +686,7 @@ export default function StockManager() {
     }
   }
 
-  // ── Add Supplier → POST /api/suppliers ───────────────────────────────
+  // ── Add / Remove Supplier ────────────────────────────────────────────
   async function addSupplier() {
     if (!supplierForm.supplier_name.trim()) return;
     setSubmitting(true);
@@ -531,7 +703,6 @@ export default function StockManager() {
     }
   }
 
-  // ── Remove Supplier → DELETE /api/suppliers/:id ───────────────────────
   async function removeSupplier(id: number) {
     try {
       await api.deleteSupplier(id);
@@ -546,7 +717,51 @@ export default function StockManager() {
     setSupplierForm(prev => ({ ...prev, [field]: value }));
   }
 
-  // ── RENDER ────────────────────────────────────────────────────────────────
+  async function addRawMaterial() {
+    const name = rawMaterialForm.name.trim();
+    const qty = Number(rawMaterialForm.initialStock);
+    const price = Number(rawMaterialForm.price || 0);
+
+    if (!name) {
+      showToast("Please enter a raw material name.", "error");
+      return;
+    }
+
+    if (!Number.isFinite(qty) || qty <= 0) {
+      showToast("Initial stock must be greater than 0.", "error");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const created = await api.createProduct({
+        name,
+        price: Number.isFinite(price) ? price : 0,
+        quantity: 0,
+        category: rawMaterialForm.category.trim(),
+        description: rawMaterialForm.description.trim() || undefined,
+        raw_material: true,
+      });
+
+      await api.postBatch({
+        productId: created.id,
+        productName: name,
+        quantity: qty,
+        unit: rawMaterialForm.unit,
+      });
+
+      await fetchAll();
+      setRawMaterialForm(BLANK_RAW_MATERIAL);
+      setShowRawMaterialForm(false);
+      showToast("Raw material added to stock.", "success");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to add raw material.", "error");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  // ── RENDER ────────────────────────────────────────────────────────────
   return (
     <div style={{ fontFamily: "'Poppins', sans-serif" }} className="min-h-screen bg-[#f5f6fa]">
       <Sidebar />
@@ -565,16 +780,12 @@ export default function StockManager() {
               className="px-4 py-2 text-xs font-semibold bg-indigo-50 text-indigo-600 rounded-xl border border-indigo-100 hover:bg-indigo-100 transition-colors">
               End-of-Day Reconciliation
             </button>
-
             {attentionItems.length > 0 && (
-              <button
-                onClick={() => setTab("alerts")}
-                className="px-3.5 py-1.5 rounded-full bg-red-100 text-red-600 text-xs font-semibold border border-red-200 animate-pulse"
-              >
+              <button onClick={() => setTab("alerts")}
+                className="px-3.5 py-1.5 rounded-full bg-red-100 text-red-600 text-xs font-semibold border border-red-200 animate-pulse">
                 {attentionItems.length} item{attentionItems.length > 1 ? "s" : ""} need attention
               </button>
             )}
-
             <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg">
               <span className={`w-2 h-2 rounded-full ${isLoading ? "bg-amber-400" : "bg-emerald-400"}`}
                 style={{ animation: "pulse 2s infinite" }} />
@@ -599,8 +810,7 @@ export default function StockManager() {
                 {t.label}
                 {badge > 0 && (
                   <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none ${
-                    active ? "bg-white/20 text-white"
-                      : "bg-red-100 text-red-600"
+                    active ? "bg-white/20 text-white" : "bg-red-100 text-red-600"
                   }`}>{badge}</span>
                 )}
               </button>
@@ -615,7 +825,7 @@ export default function StockManager() {
         {isLoading ? <LoadingSkeleton /> : (
           <AnimatePresence mode="wait">
 
-            {/* ── DASHBOARD ─────────────────────────────────────────────── */}
+            {/* ── DASHBOARD ────────────────────────────────────────────── */}
             {tab === "dashboard" && (
               <motion.div key="dashboard" variants={pageVariants} initial="hidden" animate="show" exit="exit">
                 <motion.div variants={staggerVariants} initial="hidden" animate="show" className="space-y-6">
@@ -640,10 +850,45 @@ export default function StockManager() {
                     })}
                   </motion.div>
 
+                  {/* Chicken Inventory Summary Banner */}
+                  {(wholeChickenProducts.length > 0 || choppedChickenProducts.length > 0) && (
+                    <motion.div variants={itemVariants}
+                      className="bg-gradient-to-r from-orange-50 to-amber-50 border border-orange-100 rounded-2xl p-4 flex items-center gap-6">
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg">🐔</span>
+                        <span className="text-xs font-bold text-orange-700 uppercase tracking-wider">Chicken Inventory</span>
+                      </div>
+                      <div className="flex gap-6 flex-1">
+                        {wholeChickenProducts.map(p => (
+                          <div key={p.product_id} className="flex items-center gap-3">
+                            <div className="w-2 h-2 rounded-full bg-orange-400" />
+                            <div>
+                              <p className="text-xs text-orange-600 font-medium">Whole Chicken</p>
+                              <p className="text-sm font-bold text-orange-800">{p.mainStock} <span className="text-xs font-normal text-orange-500">{p.unit}</span></p>
+                            </div>
+                          </div>
+                        ))}
+                        {wholeChickenProducts.length > 0 && choppedChickenProducts.length > 0 && (
+                          <div className="flex items-center text-orange-200 text-lg font-light">→</div>
+                        )}
+                        {choppedChickenProducts.map(p => (
+                          <div key={p.product_id} className="flex items-center gap-3">
+                            <div className="w-2 h-2 rounded-full bg-amber-500" />
+                            <div>
+                              <p className="text-xs text-amber-600 font-medium">Chopped Chicken</p>
+                              <p className="text-sm font-bold text-amber-800">{p.mainStock} <span className="text-xs font-normal text-amber-500">{p.unit}</span></p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-xs text-orange-400 italic">Delivered whole → chopped separately in inventory</p>
+                    </motion.div>
+                  )}
+
                   {/* Inventory Table */}
                   <motion.div variants={itemVariants}>
                     <SectionCard title="Main Stock Levels" subtitle="Live overview from Inventory table">
-                      <div className="px-4 pt-4">
+                      <div className="px-4 pt-4 flex flex-col md:flex-row md:items-center gap-3 md:justify-between">
                         <input
                           type="text"
                           value={dashboardSearch}
@@ -651,6 +896,12 @@ export default function StockManager() {
                           placeholder="Search by item name or category..."
                           className="w-full md:w-96 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
                         />
+                        <button
+                          onClick={() => setShowRawMaterialForm(true)}
+                          className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 transition-colors"
+                        >
+                          Add Raw Material
+                        </button>
                       </div>
                       <table className="w-full text-sm">
                         <thead>
@@ -674,7 +925,11 @@ export default function StockManager() {
                                     <span className="font-medium text-slate-800">{p.product_name}</span>
                                   </div>
                                 </td>
-                                <td className="py-3.5 px-4 text-slate-400 text-xs">{p.category}</td>
+                                <td className="py-3.5 px-4">
+                                  <span className={`text-[11px] font-medium px-2 py-0.5 rounded-md border ${getCategoryStyle(p.category)}`}>
+                                    {p.category}
+                                  </span>
+                                </td>
                                 <td className="py-3.5 px-4 text-right font-semibold text-slate-700">{p.mainStock} <span className="text-slate-400 font-normal text-xs">{p.unit}</span></td>
                                 <td className="py-3.5 px-4 text-right text-slate-500">{p.item_purchased}</td>
                                 <td className="py-3.5 px-4 text-right text-indigo-500 font-medium">{p.dailyWithdrawn}</td>
@@ -705,7 +960,6 @@ export default function StockManager() {
 
                   {/* Bottom row */}
                   <motion.div variants={itemVariants} className="grid grid-cols-2 gap-4">
-                    {/* Last update tracker */}
                     <SectionCard title="Last Inventory Updates" subtitle="Most recently updated items (Inventory.Last_Update)">
                       <div className="divide-y divide-slate-50">
                         {[...products]
@@ -726,7 +980,6 @@ export default function StockManager() {
                       </div>
                     </SectionCard>
 
-                    {/* Record Spoilage */}
                     <SectionCard title="Record Spoilage" subtitle="Log wasted items — updates Inventory.Stock">
                       <div className="p-5 space-y-4">
                         <FormField label="Select Item">
@@ -747,7 +1000,7 @@ export default function StockManager() {
               </motion.div>
             )}
 
-            {/* ── WITHDRAWAL ────────────────────────────────────────────── */}
+            {/* ── WITHDRAWAL ───────────────────────────────────────────── */}
             {tab === "withdrawal" && (
               <motion.div key="withdrawal" variants={pageVariants} initial="hidden" animate="show" exit="exit">
                 <motion.div variants={staggerVariants} initial="hidden" animate="show" className="space-y-6">
@@ -756,7 +1009,6 @@ export default function StockManager() {
                     {/* Withdrawal Form */}
                     <SectionCard title="New Withdrawal Record" subtitle="Posts to Stock_Status table">
                       <div className="p-5 space-y-4">
-                        {/* Type selector */}
                         <FormField label="Record Type">
                           <div className="grid grid-cols-3 gap-2">
                             {WITHDRAWAL_TYPES.map(t => (
@@ -770,7 +1022,6 @@ export default function StockManager() {
                           </div>
                         </FormField>
 
-                        {/* Type descriptions */}
                         <div className={`text-xs px-3 py-2 rounded-xl border ${
                           wdType === "initial"       ? "bg-indigo-50 text-indigo-600 border-indigo-100" :
                           wdType === "supplementary" ? "bg-sky-50 text-sky-600 border-sky-100" :
@@ -783,11 +1034,34 @@ export default function StockManager() {
 
                         <FormField label="Select Item">
                           <StyledSelect value={wdProductId ?? ""} onChange={v => setWdProductId(Number(v))}>
-                            {products.map(p => (
-                              <option key={p.product_id} value={p.product_id}>
-                                {p.product_name} ({p.mainStock} {p.unit})
-                              </option>
-                            ))}
+                            {/* Group chickens together for clarity */}
+                            {wholeChickenProducts.length > 0 && (
+                              <optgroup label="── Whole Chicken ──">
+                                {wholeChickenProducts.map(p => (
+                                  <option key={p.product_id} value={p.product_id}>
+                                    {p.product_name} ({p.mainStock} {p.unit})
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
+                            {choppedChickenProducts.length > 0 && (
+                              <optgroup label="── Chopped Chicken ──">
+                                {choppedChickenProducts.map(p => (
+                                  <option key={p.product_id} value={p.product_id}>
+                                    {p.product_name} ({p.mainStock} {p.unit})
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
+                            {products.filter(p => !isChicken(p)).length > 0 && (
+                              <optgroup label="── Other Items ──">
+                                {products.filter(p => !isChicken(p)).map(p => (
+                                  <option key={p.product_id} value={p.product_id}>
+                                    {p.product_name} ({p.mainStock} {p.unit})
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
                           </StyledSelect>
                         </FormField>
 
@@ -797,9 +1071,16 @@ export default function StockManager() {
                               ? "bg-red-50 text-red-600 border-red-200"
                               : "bg-amber-50 text-amber-600 border-amber-200"
                           }`}>
-                            {selectedWithdrawalStatus === "critical" ? "Critical stock warning" : "Low stock warning"}: 
-                            {" "}{selectedWithdrawalProduct.product_name} is at {selectedWithdrawalPct}% of reorder level 
+                            {selectedWithdrawalStatus === "critical" ? "Critical stock warning" : "Low stock warning"}:{" "}
+                            {selectedWithdrawalProduct.product_name} is at {selectedWithdrawalPct}% of reorder level
                             ({selectedWithdrawalProduct.mainStock} {selectedWithdrawalProduct.unit} left). Avoid over-withdrawal.
+                          </div>
+                        )}
+
+                        {/* Sauce notice */}
+                        {selectedWithdrawalProduct && selectedWithdrawalProduct.category.toLowerCase().includes("sauce") && (
+                          <div className="text-xs px-3 py-2 rounded-xl border bg-rose-50 text-rose-500 border-rose-100">
+                            ⚠️ Sauce items are not reconciled at end-of-day. Once withdrawn, they are considered consumed.
                           </div>
                         )}
 
@@ -855,7 +1136,15 @@ export default function StockManager() {
                           {products.filter(p => p.dailyWithdrawn > 0).map((p, i) => (
                             <motion.div key={p.inventory_id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}
                               className="p-5 hover:bg-slate-50/50 transition-colors">
-                              <p className="text-xs text-slate-400 truncate font-medium">{p.product_name}</p>
+                              <div className="flex items-center gap-1.5 mb-1">
+                                <p className="text-xs text-slate-400 truncate font-medium">{p.product_name}</p>
+                                {/* Show reconcilable badge */}
+                                {isReconcilable(p) ? (
+                                  <span className="text-[9px] font-bold text-emerald-500 bg-emerald-50 px-1.5 py-0.5 rounded-full border border-emerald-100 whitespace-nowrap">reconcilable</span>
+                                ) : (
+                                  <span className="text-[9px] font-bold text-rose-400 bg-rose-50 px-1.5 py-0.5 rounded-full border border-rose-100 whitespace-nowrap">no return</span>
+                                )}
+                              </div>
                               <p className="text-2xl font-bold text-slate-800 mt-1.5 leading-none">
                                 {p.dailyWithdrawn}<span className="text-sm text-slate-400 font-normal ml-1">{p.unit}</span>
                               </p>
@@ -870,7 +1159,7 @@ export default function StockManager() {
               </motion.div>
             )}
 
-            {/* ── ALERTS ────────────────────────────────────────────────── */}
+            {/* ── ALERTS ───────────────────────────────────────────────── */}
             {tab === "alerts" && (
               <motion.div key="alerts" variants={pageVariants} initial="hidden" animate="show" exit="exit">
                 <motion.div variants={staggerVariants} initial="hidden" animate="show" className="space-y-4">
@@ -889,83 +1178,88 @@ export default function StockManager() {
                     <motion.div variants={itemVariants}><EmptyState message="All stock levels are within safe range." /></motion.div>
                   ) : (
                     <>
-                    {criticalStock.length > 0 && (
-                      <motion.div variants={itemVariants} className="pt-1">
-                        <p className="text-xs font-semibold text-red-500 uppercase tracking-wider mb-2">Critical</p>
-                      </motion.div>
-                    )}
-                    {criticalStock.map((p, i) => {
-                      const status  = getStockStatus(p);
-                      const deficit = +(p.reorderPoint - p.mainStock).toFixed(2);
-                      return (
-                        <motion.div key={p.inventory_id} variants={itemVariants} transition={{ delay: i * 0.06 }}
-                          className={`bg-white rounded-2xl border border-t-4 p-5 flex items-center justify-between shadow-sm ${
-                            status === "critical" ? "border-red-200 border-t-red-400" : "border-amber-200 border-t-amber-400"
-                          }`}>
-                          <div className="flex items-center gap-4">
-                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${status === "critical" ? "bg-red-50" : "bg-amber-50"}`}>
-                              <span className={`text-sm font-bold ${status === "critical" ? "text-red-500" : "text-amber-500"}`}>!</span>
-                            </div>
-                            <div>
-                              <p className="font-semibold text-slate-800">{p.product_name}</p>
-                              <p className="text-xs text-slate-400 mt-0.5">{p.category} · {p.supplier_name}</p>
-                              <p className={`text-xs font-medium mt-1 ${status === "critical" ? "text-red-500" : "text-amber-500"}`}>
-                                {deficit > 0 ? `Need ${deficit} ${p.unit} to reach reorder point` : "Below critical threshold"}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <p className={`text-2xl font-bold ${status === "critical" ? "text-red-500" : "text-amber-500"}`}>
-                              {p.mainStock} <span className="text-sm font-normal text-slate-400">{p.unit}</span>
-                            </p>
-                            <p className="text-xs text-slate-400 mt-1">Reorder at {p.reorderPoint} · Critical at {p.criticalPoint}</p>
-                            <span className={`inline-block mt-2 text-xs font-semibold px-3 py-1 rounded-full ${STATUS_BADGE[status]}`}>
-                              {status === "critical" ? "Restock Now" : "Reorder Soon"}
-                            </span>
-                          </div>
+                      {criticalStock.length > 0 && (
+                        <motion.div variants={itemVariants} className="pt-1">
+                          <p className="text-xs font-semibold text-red-500 uppercase tracking-wider mb-2">Critical</p>
                         </motion.div>
-                      );
-                    })}
-                    {lowStock.length > 0 && (
-                      <motion.div variants={itemVariants} className="pt-2">
-                        <p className="text-xs font-semibold text-amber-500 uppercase tracking-wider mb-2">Warning</p>
-                      </motion.div>
-                    )}
-                    {lowStock.map((p, i) => {
-                      const status  = getStockStatus(p);
-                      const deficit = +(p.reorderPoint - p.mainStock).toFixed(2);
-                      return (
-                        <motion.div key={p.inventory_id} variants={itemVariants} transition={{ delay: (criticalStock.length + i) * 0.06 }}
-                          className="bg-white rounded-2xl border border-amber-200 border-t-4 border-t-amber-400 p-5 flex items-center justify-between shadow-sm">
-                          <div className="flex items-center gap-4">
-                            <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 bg-amber-50">
-                              <span className="text-sm font-bold text-amber-500">!</span>
+                      )}
+                      {criticalStock.map((p, i) => {
+                        const status  = getStockStatus(p);
+                        const deficit = +(p.reorderPoint - p.mainStock).toFixed(2);
+                        return (
+                          <motion.div key={p.inventory_id} variants={itemVariants} transition={{ delay: i * 0.06 }}
+                            className={`bg-white rounded-2xl border border-t-4 p-5 flex items-center justify-between shadow-sm ${
+                              status === "critical" ? "border-red-200 border-t-red-400" : "border-amber-200 border-t-amber-400"
+                            }`}>
+                            <div className="flex items-center gap-4">
+                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${status === "critical" ? "bg-red-50" : "bg-amber-50"}`}>
+                                <span className={`text-sm font-bold ${status === "critical" ? "text-red-500" : "text-amber-500"}`}>!</span>
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <p className="font-semibold text-slate-800">{p.product_name}</p>
+                                  <span className={`text-[10px] font-medium px-2 py-0.5 rounded-md border ${getCategoryStyle(p.category)}`}>{p.category}</span>
+                                </div>
+                                <p className="text-xs text-slate-400 mt-0.5">{p.supplier_name}</p>
+                                <p className={`text-xs font-medium mt-1 ${status === "critical" ? "text-red-500" : "text-amber-500"}`}>
+                                  {deficit > 0 ? `Need ${deficit} ${p.unit} to reach reorder point` : "Below critical threshold"}
+                                </p>
+                              </div>
                             </div>
-                            <div>
-                              <p className="font-semibold text-slate-800">{p.product_name}</p>
-                              <p className="text-xs text-slate-400 mt-0.5">{p.category} · {p.supplier_name}</p>
-                              <p className="text-xs font-medium mt-1 text-amber-500">
-                                {deficit > 0 ? `Need ${deficit} ${p.unit} to reach reorder point` : "Near critical threshold"}
+                            <div className="text-right">
+                              <p className={`text-2xl font-bold ${status === "critical" ? "text-red-500" : "text-amber-500"}`}>
+                                {p.mainStock} <span className="text-sm font-normal text-slate-400">{p.unit}</span>
                               </p>
+                              <p className="text-xs text-slate-400 mt-1">Reorder at {p.reorderPoint} · Critical at {p.criticalPoint}</p>
+                              <span className={`inline-block mt-2 text-xs font-semibold px-3 py-1 rounded-full ${STATUS_BADGE[status]}`}>
+                                {status === "critical" ? "Restock Now" : "Reorder Soon"}
+                              </span>
                             </div>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-2xl font-bold text-amber-500">
-                              {p.mainStock} <span className="text-sm font-normal text-slate-400">{p.unit}</span>
-                            </p>
-                            <p className="text-xs text-slate-400 mt-1">Reorder at {p.reorderPoint} · Critical at {p.criticalPoint}</p>
-                            <span className="inline-block mt-2 text-xs font-semibold px-3 py-1 rounded-full bg-amber-100 text-amber-600">Reorder Soon</span>
-                          </div>
+                          </motion.div>
+                        );
+                      })}
+                      {lowStock.length > 0 && (
+                        <motion.div variants={itemVariants} className="pt-2">
+                          <p className="text-xs font-semibold text-amber-500 uppercase tracking-wider mb-2">Warning</p>
                         </motion.div>
-                      );
-                    })}
+                      )}
+                      {lowStock.map((p, i) => {
+                        const deficit = +(p.reorderPoint - p.mainStock).toFixed(2);
+                        return (
+                          <motion.div key={p.inventory_id} variants={itemVariants} transition={{ delay: (criticalStock.length + i) * 0.06 }}
+                            className="bg-white rounded-2xl border border-amber-200 border-t-4 border-t-amber-400 p-5 flex items-center justify-between shadow-sm">
+                            <div className="flex items-center gap-4">
+                              <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 bg-amber-50">
+                                <span className="text-sm font-bold text-amber-500">!</span>
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <p className="font-semibold text-slate-800">{p.product_name}</p>
+                                  <span className={`text-[10px] font-medium px-2 py-0.5 rounded-md border ${getCategoryStyle(p.category)}`}>{p.category}</span>
+                                </div>
+                                <p className="text-xs text-slate-400 mt-0.5">{p.supplier_name}</p>
+                                <p className="text-xs font-medium mt-1 text-amber-500">
+                                  {deficit > 0 ? `Need ${deficit} ${p.unit} to reach reorder point` : "Near critical threshold"}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-2xl font-bold text-amber-500">
+                                {p.mainStock} <span className="text-sm font-normal text-slate-400">{p.unit}</span>
+                              </p>
+                              <p className="text-xs text-slate-400 mt-1">Reorder at {p.reorderPoint} · Critical at {p.criticalPoint}</p>
+                              <span className="inline-block mt-2 text-xs font-semibold px-3 py-1 rounded-full bg-amber-100 text-amber-600">Reorder Soon</span>
+                            </div>
+                          </motion.div>
+                        );
+                      })}
                     </>
                   )}
                 </motion.div>
               </motion.div>
             )}
 
-            {/* ── SUPPLIERS ─────────────────────────────────────────────── */}
+            {/* ── SUPPLIERS ────────────────────────────────────────────── */}
             {tab === "suppliers" && (
               <motion.div key="suppliers" variants={pageVariants} initial="hidden" animate="show" exit="exit">
                 <motion.div variants={staggerVariants} initial="hidden" animate="show" className="space-y-5">
@@ -999,7 +1293,6 @@ export default function StockManager() {
                     )}
                   </AnimatePresence>
 
-                  {/* Suppliers table */}
                   <motion.div variants={itemVariants}>
                     <SectionCard title="Supplier Directory" subtitle={`${filteredSuppliers.length} supplier${filteredSuppliers.length === 1 ? "" : "s"} shown`}>
                       <div className="px-4 pt-4">
@@ -1015,7 +1308,7 @@ export default function StockManager() {
                         <thead>
                           <tr className="border-b border-slate-100">
                             {["Supplier ID","Company","Contact Number","Products Supplied","Delivery Schedule",""].map(h => (
-                              <th key={h} className={`py-3 px-4 text-[11px] font-semibold text-slate-400 uppercase tracking-wider text-left`}>{h}</th>
+                              <th key={h} className="py-3 px-4 text-[11px] font-semibold text-slate-400 uppercase tracking-wider text-left">{h}</th>
                             ))}
                           </tr>
                         </thead>
@@ -1048,12 +1341,121 @@ export default function StockManager() {
                 </motion.div>
               </motion.div>
             )}
-
           </AnimatePresence>
         )}
       </main>
 
-      {/* ── End-of-Day Reconciliation Modal ─────────────────────────────────── */}
+      {/* ── Add Raw Material Modal ─────────────────────────────────────── */}
+      <AnimatePresence>
+        {showRawMaterialForm && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-xl overflow-hidden"
+            >
+              <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
+                <div>
+                  <p className="font-semibold text-slate-800">Add Raw Material</p>
+                  <p className="text-xs text-slate-400 mt-0.5">Add items like chicken, sauces, and other ingredients.</p>
+                </div>
+                <button
+                  onClick={() => setShowRawMaterialForm(false)}
+                  className="text-slate-400 hover:text-slate-600 transition-colors text-lg"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="p-6 grid grid-cols-2 gap-4">
+                <div className="col-span-2">
+                  <FormField label="Material Name">
+                    <StyledInput
+                      type="text"
+                      value={rawMaterialForm.name}
+                      onChange={(v) => setRawMaterialForm((prev) => ({ ...prev, name: v }))}
+                      placeholder="e.g. Whole Chicken"
+                    />
+                  </FormField>
+                </div>
+
+                <FormField label="Category">
+                  <StyledInput
+                    type="text"
+                    value={rawMaterialForm.category}
+                    onChange={(v) => setRawMaterialForm((prev) => ({ ...prev, category: v }))}
+                    placeholder="e.g. Sauce, Chopped Chicken"
+                  />
+                </FormField>
+
+                <FormField label="Unit">
+                  <StyledSelect
+                    value={rawMaterialForm.unit}
+                    onChange={(v) => setRawMaterialForm((prev) => ({ ...prev, unit: v }))}
+                  >
+                    {RAW_MATERIAL_UNITS.map((u) => (
+                      <option key={u} value={u}>{u}</option>
+                    ))}
+                  </StyledSelect>
+                </FormField>
+
+                <FormField label="Initial Stock">
+                  <StyledInput
+                    type="number"
+                    value={rawMaterialForm.initialStock}
+                    onChange={(v) => setRawMaterialForm((prev) => ({ ...prev, initialStock: v }))}
+                    placeholder="e.g. 20"
+                  />
+                </FormField>
+
+                <FormField label="Price (optional)">
+                  <StyledInput
+                    type="number"
+                    value={rawMaterialForm.price}
+                    onChange={(v) => setRawMaterialForm((prev) => ({ ...prev, price: v }))}
+                    placeholder="e.g. 180"
+                  />
+                </FormField>
+
+                <div className="col-span-2">
+                  <FormField label="Description (optional)">
+                    <StyledInput
+                      type="text"
+                      value={rawMaterialForm.description}
+                      onChange={(v) => setRawMaterialForm((prev) => ({ ...prev, description: v }))}
+                      placeholder="Optional notes"
+                    />
+                  </FormField>
+                </div>
+              </div>
+
+              <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-end gap-3">
+                <button
+                  onClick={() => setShowRawMaterialForm(false)}
+                  className="px-4 py-2 text-sm font-medium text-slate-500 hover:text-slate-700 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={addRawMaterial}
+                  disabled={submitting}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition-colors disabled:opacity-60"
+                >
+                  {submitting ? "Saving..." : "Save Raw Material"}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── End-of-Day Reconciliation Modal ─────────────────────────────── */}
       <AnimatePresence>
         {showReconcile && (
           <motion.div
@@ -1062,51 +1464,147 @@ export default function StockManager() {
             <motion.div
               initial={{ scale: 0.94, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.94, opacity: 0 }}
               className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden">
+
+              {/* Modal Header */}
               <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
                 <div>
                   <p className="font-semibold text-slate-800">End-of-Day Reconciliation</p>
-                  <p className="text-xs text-slate-400 mt-0.5">Record leftover stock returned to main storage</p>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Only meat &amp; protein items are shown. Sauces and bottled items are excluded.
+                  </p>
                 </div>
                 <button onClick={() => setShowReconcile(false)} className="text-slate-400 hover:text-slate-600 transition-colors text-lg">✕</button>
               </div>
-              <div className="p-6 space-y-3 max-h-96 overflow-y-auto">
+
+              {/* Legend */}
+              <div className="px-6 pt-4 flex items-center gap-4 text-xs text-slate-400">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-orange-400 inline-block" /> Whole Chicken
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block" /> Chopped Chicken
+                  <span className="ml-1 text-amber-500 font-medium">(can return as whole)</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-slate-400 inline-block" /> Other Meat/Protein
+                </span>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-6 space-y-3 max-h-[26rem] overflow-y-auto">
                 {reconcileItems.length === 0 ? (
-                  <p className="text-sm text-slate-400 text-center py-8">No items currently withdrawn.</p>
+                  <p className="text-sm text-slate-400 text-center py-8">No reconcilable items currently withdrawn.</p>
                 ) : (
-                  reconcileItems.map((item, i) => (
-                    <div key={item.product_id} className="flex items-center justify-between gap-4 p-3.5 bg-slate-50 rounded-xl">
-                      <div className="flex-1">
-                        <p className="text-sm font-medium text-slate-800">{item.product_name}</p>
-                        <p className="text-xs text-slate-400 mt-0.5">Withdrawn: {item.withdrawn} {item.unit}</p>
+                  reconcileItems.map((item, i) => {
+                    const isChopped = item.category.toLowerCase().includes("chopped chicken");
+                    const isWhole   = item.category.toLowerCase().includes("whole chicken");
+                    const dotColor  = isWhole ? "bg-orange-400" : isChopped ? "bg-amber-500" : "bg-slate-400";
+
+                    return (
+                      <div key={item.product_id}
+                        className={`p-4 rounded-2xl border transition-colors ${
+                          isChopped ? "bg-amber-50/60 border-amber-100" :
+                          isWhole   ? "bg-orange-50/60 border-orange-100" :
+                                      "bg-slate-50 border-slate-100"
+                        }`}>
+                        {/* Row top: name + withdrawn info */}
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 mt-0.5 ${dotColor}`} />
+                            <div>
+                              <p className="text-sm font-semibold text-slate-800">{item.product_name}</p>
+                              <p className="text-xs text-slate-400 mt-0.5">
+                                Withdrawn today: <span className="font-medium text-slate-600">{item.withdrawn} {item.unit}</span>
+                              </p>
+                            </div>
+                          </div>
+                          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${getCategoryStyle(item.category)}`}>
+                            {item.category}
+                          </span>
+                        </div>
+
+                        {/* Return qty input */}
+                        <div className="flex items-center gap-3">
+                          <label className="text-xs text-slate-500 whitespace-nowrap w-20 flex-shrink-0">Return qty:</label>
+                          <input
+                            type="number"
+                            value={item.returnQty}
+                            placeholder="0"
+                            min={0}
+                            max={item.withdrawn}
+                            onChange={e => setReconcileItems(prev =>
+                              prev.map((r, j) => j === i ? { ...r, returnQty: e.target.value } : r)
+                            )}
+                            className="w-28 border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-slate-300"
+                          />
+                          <span className="text-xs text-slate-400">{item.unit}</span>
+
+                          {/* Destination toggle — only for Chopped Chicken */}
+                          {isChopped && parseFloat(item.returnQty) > 0 && (
+                            <div className="ml-auto flex items-center gap-2 bg-white border border-amber-200 rounded-xl p-1">
+                              <span className="text-[10px] text-amber-600 font-semibold ml-1">Return as:</span>
+                              <button
+                                onClick={() => setReconcileItems(prev =>
+                                  prev.map((r, j) => j === i ? { ...r, returnDestination: "chopped" } : r)
+                                )}
+                                className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all ${
+                                  item.returnDestination === "chopped"
+                                    ? "bg-amber-500 text-white shadow-sm"
+                                    : "text-slate-400 hover:text-amber-500"
+                                }`}>
+                                Chopped
+                              </button>
+                              <button
+                                onClick={() => setReconcileItems(prev =>
+                                  prev.map((r, j) => j === i ? { ...r, returnDestination: "whole" } : r)
+                                )}
+                                className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all ${
+                                  item.returnDestination === "whole"
+                                    ? "bg-orange-500 text-white shadow-sm"
+                                    : "text-slate-400 hover:text-orange-500"
+                                }`}>
+                                Whole
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Destination explainer */}
+                        {isChopped && parseFloat(item.returnQty) > 0 && (
+                          <p className="text-[10px] text-slate-400 mt-2 ml-23 pl-px">
+                            {item.returnDestination === "whole"
+                              ? "↩ Excess will be returned to Whole Chicken stock"
+                              : "↩ Excess will stay as Chopped Chicken stock"}
+                          </p>
+                        )}
                       </div>
-                      <div className="flex items-center gap-2 w-48">
-                        <label className="text-xs text-slate-500 whitespace-nowrap">Return qty:</label>
-                        <input
-                          type="number" value={item.returnQty} placeholder="0"
-                          max={item.withdrawn}
-                          onChange={e => setReconcileItems(prev => prev.map((r, j) => j === i ? { ...r, returnQty: e.target.value } : r))}
-                          className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-slate-300"
-                        />
-                        <span className="text-xs text-slate-400">{item.unit}</span>
-                      </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
-              <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-end gap-3">
-                <button onClick={() => setShowReconcile(false)}
-                  className="px-5 py-2.5 text-sm font-medium text-slate-500 hover:text-slate-700 transition-colors">Cancel</button>
-                <button onClick={submitReconciliation} disabled={submitting}
-                  className="px-5 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-xl hover:bg-slate-700 transition-colors disabled:opacity-60">
-                  {submitting ? "Saving..." : "Confirm Returns"}
-                </button>
+
+              {/* Modal Footer */}
+              <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-between">
+                <p className="text-xs text-slate-400">
+                  {reconcileItems.filter(i => parseFloat(i.returnQty) > 0).length} item(s) to reconcile
+                </p>
+                <div className="flex items-center gap-3">
+                  <button onClick={() => setShowReconcile(false)}
+                    className="px-5 py-2.5 text-sm font-medium text-slate-500 hover:text-slate-700 transition-colors">
+                    Cancel
+                  </button>
+                  <button onClick={submitReconciliation} disabled={submitting || reconcileItems.filter(i => parseFloat(i.returnQty) > 0).length === 0}
+                    className="px-5 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-xl hover:bg-slate-700 transition-colors disabled:opacity-60">
+                    {submitting ? "Saving..." : "Confirm Returns"}
+                  </button>
+                </div>
               </div>
             </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* ── Toast ──────────────────────────────────────────────────────────── */}
+      {/* ── Toast ─────────────────────────────────────────────────────────── */}
       <AnimatePresence>
         {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
       </AnimatePresence>
@@ -1114,7 +1612,7 @@ export default function StockManager() {
   );
 }
 
-// ── Sub-components ──────────────────────────────────────────────────────────
+// ── Sub-components ───────────────────────────────────────────────────────────
 function SectionCard({ title, subtitle, children }: { title: string; subtitle: string; children: ReactNode }) {
   return (
     <div className="bg-white border border-slate-100 rounded-2xl overflow-hidden shadow-sm">

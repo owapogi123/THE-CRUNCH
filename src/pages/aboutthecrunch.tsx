@@ -1,8 +1,8 @@
 import { useRef, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion, useInView } from 'framer-motion';
+import { motion, useInView, type Variants } from 'framer-motion';
 
-const fadeUp = {
+const fadeUp: Variants = {
   hidden: { opacity: 0, y: 40 },
   visible: (i = 0) => ({
     opacity: 1,
@@ -11,7 +11,7 @@ const fadeUp = {
   }),
 };
 
-const fadeLeft = {
+const fadeLeft: Variants = {
   hidden: { opacity: 0, x: -40 },
   visible: {
     opacity: 1,
@@ -20,7 +20,7 @@ const fadeLeft = {
   },
 };
 
-const fadeRight = {
+const fadeRight: Variants = {
   hidden: { opacity: 0, x: 40 },
   visible: {
     opacity: 1,
@@ -29,7 +29,17 @@ const fadeRight = {
   },
 };
 
-function AnimatedSection({ children, variants = fadeUp, custom = 0, className = '' }: any) {
+function AnimatedSection({
+  children,
+  variants = fadeUp,
+  custom = 0,
+  className = '',
+}: {
+  children: React.ReactNode
+  variants?: Variants
+  custom?: number
+  className?: string
+}) {
   const ref = useRef(null);
   const isInView = useInView(ref, { once: true, margin: '-80px' });
   return (
@@ -77,9 +87,7 @@ export default function AboutTheCrunch() {
         transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
         style={{
           position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
+          top: 0, left: 0, right: 0,
           zIndex: 500,
           padding: '0 7vw',
           height: 68,
@@ -96,8 +104,7 @@ export default function AboutTheCrunch() {
           onClick={() => navigate('/aboutthecrunch')}
           style={{
             fontFamily: "'Playfair Display', serif",
-            fontSize: 22,
-            fontWeight: 900,
+            fontSize: 22, fontWeight: 900,
             color: scrolled ? '#111' : '#fff',
             cursor: 'pointer',
             letterSpacing: '-0.3px',
@@ -107,84 +114,51 @@ export default function AboutTheCrunch() {
           The <span style={{ color: '#f5c842' }}>Crunch</span>
         </div>
 
-        {/* Right side */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
-          {/* Menu link */}
+          {/* Home */}
+          <motion.button
+            whileHover={{ y: -1 }}
+            onClick={() => navigate('/')}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              fontFamily: "'Poppins', sans-serif", fontSize: 13, fontWeight: 500,
+              color: scrolled ? '#555' : 'rgba(255,255,255,0.8)',
+              transition: 'color 0.3s', padding: 0,
+            }}
+          >
+            Home
+          </motion.button>
+
+          {/* Menu */}
           <motion.button
             whileHover={{ y: -1 }}
             onClick={() => navigate('/usersmenu')}
             style={{
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-              fontFamily: "'Poppins', sans-serif",
-              fontSize: 13,
-              fontWeight: 500,
+              background: 'none', border: 'none', cursor: 'pointer',
+              fontFamily: "'Poppins', sans-serif", fontSize: 13, fontWeight: 500,
               color: scrolled ? '#555' : 'rgba(255,255,255,0.8)',
-              transition: 'color 0.3s',
-              padding: 0,
+              transition: 'color 0.3s', padding: 0,
             }}
           >
             Menu
           </motion.button>
+
+          {/* About */}
           <motion.button
             whileHover={{ y: -1 }}
             onClick={() => navigate('/aboutthecrunch')}
             style={{
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-              fontFamily: "'Poppins', sans-serif",
-              fontSize: 13,
-              fontWeight: 500,
+              background: 'none', border: 'none', cursor: 'pointer',
+              fontFamily: "'Poppins', sans-serif", fontSize: 13, fontWeight: 500,
               color: scrolled ? '#111' : '#fff',
-              transition: 'color 0.3s',
-              padding: 0,
+              transition: 'color 0.3s', padding: 0,
             }}
           >
             About
           </motion.button>
-          <div style={{ width: 1, height: 20, background: scrolled ? '#e5e7eb' : 'rgba(255,255,255,0.25)' }} />
-          <motion.button
-            whileHover={{ scale: 1.03 }}
-            whileTap={{ scale: 0.97 }}
-            onClick={() => navigate('/login')}
-            style={{
-              background: 'none',
-              border: `1.5px solid ${scrolled ? '#d1d5db' : 'rgba(255,255,255,0.5)'}`,
-              borderRadius: 10,
-              padding: '7px 20px',
-              fontSize: 13,
-              fontWeight: 600,
-              color: scrolled ? '#111' : '#fff',
-              cursor: 'pointer',
-              fontFamily: "'Poppins', sans-serif",
-              transition: 'all 0.3s',
-            }}
-          >
-            Log In
-          </motion.button>
-          <motion.button
-            whileHover={{ scale: 1.03, backgroundColor: '#e6b800' }}
-            whileTap={{ scale: 0.97 }}
-            onClick={() => navigate('/login')}
-            style={{
-              background: '#f5c842',
-              border: 'none',
-              borderRadius: 10,
-              padding: '8px 20px',
-              fontSize: 13,
-              fontWeight: 700,
-              color: '#111',
-              cursor: 'pointer',
-              fontFamily: "'Poppins', sans-serif",
-              transition: 'background 0.2s',
-            }}
-          >
-            Sign Up
-          </motion.button>
         </div>
       </motion.nav>
+
       <section style={{ position: 'relative', height: '100vh', overflow: 'hidden', display: 'flex', alignItems: 'flex-end' }}>
         <motion.div
           initial={{ scale: 1.12, opacity: 0 }}
@@ -193,7 +167,7 @@ export default function AboutTheCrunch() {
           style={{ position: 'absolute', inset: 0 }}
         >
           <img
-            src="https://images.unsplash.com/photo-1626645738196-c2a7c87a8f58?w=1800&q=85"
+            src="https://shorturl.at/01YLe"
             alt="Crispy fried chicken"
             style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center' }}
           />
@@ -202,37 +176,31 @@ export default function AboutTheCrunch() {
 
         <div style={{ position: 'relative', zIndex: 10, padding: '0 7vw 72px', maxWidth: 900 }}>
           <motion.p
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
+            initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.4, duration: 0.6 }}
             style={{ fontSize: 12, fontWeight: 600, letterSpacing: '0.25em', textTransform: 'uppercase', color: '#f5c842', marginBottom: 18 }}
           >
             Since 2021 · Quezon City
           </motion.p>
           <motion.h1
-            initial={{ opacity: 0, y: 36 }}
-            animate={{ opacity: 1, y: 0 }}
+            initial={{ opacity: 0, y: 36 }} animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.55, duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
             style={{ fontFamily: "'Playfair Display', serif", fontSize: 'clamp(52px, 8vw, 100px)', fontWeight: 900, color: '#fff', lineHeight: 1.0, margin: '0 0 28px' }}
           >
             The Crunch<br />
             <span style={{ fontStyle: 'italic', color: '#f5c842' }}>Fairview.</span>
           </motion.h1>
-
           <motion.p
-            initial={{ opacity: 0, y: 24 }}
-            animate={{ opacity: 1, y: 0 }}
+            initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.75, duration: 0.7 }}
             style={{ fontSize: 'clamp(15px, 1.8vw, 19px)', color: 'rgba(255,255,255,0.78)', lineHeight: 1.7, maxWidth: 560, fontWeight: 300 }}
           >
-            One of the leading of the Boneless Fried Chicken Brands in the Philippines Serving Deliciousness at 200+ Branches Nationwide 
+            One of the leading Boneless Fried Chicken Brands in the Philippines. Serving Deliciousness at 200+ Branches Nationwide.
           </motion.p>
         </div>
 
         <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 1.4 }}
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1.4 }}
           style={{ position: 'absolute', bottom: 32, right: '7vw', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}
         >
           <motion.div
@@ -242,14 +210,15 @@ export default function AboutTheCrunch() {
           />
         </motion.div>
       </section>
-      <section style={{ padding: '100px 7vw', maxWidth: 1280, margin: '0 auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 72, alignItems: 'center' }}>
+
+      <section style={{ padding: '100px 7vw', maxWidth: 1280, margin: '0 auto', display: 'grid', gridTemplateColumns: '2fr 2fr', gap: 80, alignItems: 'center' }}>
         <AnimatedSection variants={fadeLeft}>
           <div style={{ position: 'relative' }}>
-            <div style={{ borderRadius: 32, overflow: 'hidden', aspectRatio: '4/5', boxShadow: '0 32px 80px rgba(0,0,0,0.14)' }}>
+            <div style={{ borderRadius: 32, overflow: 'hidden', boxShadow: '0 32px 80px rgba(0,0,0,0.14)', background: '#fef9ee' }}>
               <img
-                src="https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=800&q=85"
-                alt="Delicious burger"
-                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                src="https://shorturl.at/v3t6W"
+                alt="The Crunch XL"
+                style={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center' }}
               />
             </div>
             <motion.div
@@ -258,8 +227,7 @@ export default function AboutTheCrunch() {
               style={{
                 position: 'absolute', bottom: -24, right: -24,
                 background: '#f5c842', borderRadius: 24, padding: '20px 28px',
-                boxShadow: '0 12px 40px rgba(245,200,66,0.35)',
-                textAlign: 'center',
+                boxShadow: '0 12px 40px rgba(245,200,66,0.35)', textAlign: 'center',
               }}
             >
               <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 38, fontWeight: 900, color: '#111', lineHeight: 1 }}>7</div>
@@ -271,16 +239,17 @@ export default function AboutTheCrunch() {
         <AnimatedSection variants={fadeRight}>
           <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.22em', textTransform: 'uppercase', color: '#f5c842', marginBottom: 16 }}>What We Are</p>
           <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: 'clamp(34px, 4vw, 52px)', fontWeight: 700, lineHeight: 1.15, marginBottom: 24, color: '#111' }}>
-            Our Vision<br />
+            Our Vision
           </h2>
           <p style={{ fontSize: 16, color: '#555', lineHeight: 1.85, marginBottom: 20, fontWeight: 300 }}>
-            Through a shared commitment to execellence we are dedicated to the uncompromising quality of our food and service while taking exceptional care of our guests and staff
+            Through a shared commitment to excellence we are dedicated to the uncompromising quality of our food and service while taking exceptional care of our guests and staff.
           </p>
           <p style={{ fontSize: 16, color: '#555', lineHeight: 1.85, fontWeight: 300 }}>
-            We will continuously strive to surpass our own accomplishments and be recognized as one of the most progressive and sustainable businesse in the country with more than 250 branches by 2024
+            We will continuously strive to surpass our own accomplishments and be recognized as one of the most progressive and sustainable businesses in the country with more than 250 branches by 2024.
           </p>
         </AnimatedSection>
       </section>
+
       <section style={{ background: '#111', padding: '100px 7vw', position: 'relative', overflow: 'hidden' }}>
         <div style={{ position: 'absolute', top: -120, right: -120, width: 500, height: 500, borderRadius: '50%', background: 'rgba(245,200,66,0.06)', pointerEvents: 'none' }} />
         <div style={{ maxWidth: 1280, margin: '0 auto' }}>
@@ -295,13 +264,14 @@ export default function AboutTheCrunch() {
             </AnimatedSection>
             <AnimatedSection variants={fadeRight}>
               <p style={{ fontSize: 17, color: 'rgba(255,255,255,0.6)', lineHeight: 1.85, fontWeight: 300 }}>
-                To Serve more people with a unique style of high quality boneless fried chicken, and to help Filipinos start a profitable and easy to manage business
+                To serve more people with a unique style of high quality boneless fried chicken, and to help Filipinos start a profitable and easy to manage business.
               </p>
               <div style={{ marginTop: 32, height: 2, width: 80, background: '#f5c842', borderRadius: 2 }} />
             </AnimatedSection>
           </div>
         </div>
       </section>
+
       <section style={{ padding: '100px 7vw', maxWidth: 1280, margin: '0 auto' }}>
         <AnimatedSection>
           <div style={{ textAlign: 'center', marginBottom: 64 }}>
@@ -318,12 +288,8 @@ export default function AboutTheCrunch() {
               <motion.div
                 whileHover={{ y: -6, boxShadow: '0 24px 60px rgba(0,0,0,0.1)' }}
                 style={{
-                  background: '#fff',
-                  borderRadius: 24,
-                  padding: '40px 36px',
-                  boxShadow: '0 2px 16px rgba(0,0,0,0.06)',
-                  transition: 'box-shadow 0.3s',
-                  height: '100%',
+                  background: '#fff', borderRadius: 24, padding: '40px 36px',
+                  boxShadow: '0 2px 16px rgba(0,0,0,0.06)', transition: 'box-shadow 0.3s', height: '100%',
                 }}
               >
                 <h3 style={{ fontSize: 17, fontWeight: 700, color: '#111', marginBottom: 10 }}>{perk.title}</h3>
@@ -333,44 +299,63 @@ export default function AboutTheCrunch() {
           ))}
         </div>
       </section>
-      <section style={{ margin: '0 7vw 100px', borderRadius: 36, overflow: 'hidden', position: 'relative', minHeight: 340, display: 'flex', alignItems: 'center' }}>
+
+      <section style={{ margin: '0 7vw 100px', borderRadius: 36, overflow: 'hidden', position: 'relative', minHeight: 380, display: 'flex', alignItems: 'center' }}>
         <img
-          src="https://i.pinimg.com/736x/bb/fc/c3/bbfcc3f1b58a8f28ccaa198f23f6ad9e.jpg"
+          src="https://shorturl.at/mWMOx"
           alt="Chicken feast"
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center' }}
         />
-        <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.72)' }} />
-        <div style={{ position: 'relative', zIndex: 10, padding: '0 64px', maxWidth: 640 }}>
+        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to right, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.55) 50%, rgba(0,0,0,0.15) 100%)' }} />
+
+        <div style={{ position: 'relative', zIndex: 10, padding: '52px 64px', maxWidth: 560 }}>
           <AnimatedSection>
-            <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: 'clamp(28px, 4vw, 48px)', fontWeight: 700, color: '#fff', lineHeight: 1.2, marginBottom: 20 }}>
-              Ready to taste<br /><em style={{ color: '#f5c842' }}>The Crunch?</em>
+            <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: '#f5c842', marginBottom: 14 }}>
+              Now Serving
+            </p>
+            <h2 style={{
+              fontFamily: "'Playfair Display', serif",
+              fontSize: 'clamp(32px, 4vw, 52px)',
+              fontWeight: 700, color: '#fff', lineHeight: 1.15, marginBottom: 16
+            }}>
+              Ready to taste<br />
+              <em style={{ color: '#f5c842' }}>The Crunch?</em>
             </h2>
-            <p style={{ fontSize: 15, color: 'rgba(255,255,255,0.65)', marginBottom: 36, fontWeight: 300, lineHeight: 1.7 }}>
+            <p style={{ fontSize: 15, color: 'rgba(255,255,255,0.7)', marginBottom: 36, fontWeight: 300, lineHeight: 1.75, maxWidth: 400 }}>
               Visit us today and experience the crispiest chicken in town. Dine in, takeout, or order for your whole crew.
             </p>
-            <motion.button
-              whileHover={{ scale: 1.04, backgroundColor: '#e6b800' }}
-              whileTap={{ scale: 0.97 }}
-              onClick={() => navigate('/usersmenu')}
-              style={{
-                background: '#f5c842',
-                color: '#111',
-                border: 'none',
-                borderRadius: 14,
-                padding: '16px 40px',
-                fontSize: 14,
-                fontWeight: 700,
-                cursor: 'pointer',
-                fontFamily: "'Poppins', sans-serif",
-                letterSpacing: '0.04em',
-                transition: 'background 0.2s',
-              }}
-            >
-              Order Now
-            </motion.button>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+              <motion.button
+                whileHover={{ scale: 1.04, backgroundColor: '#e6b800' }}
+                whileTap={{ scale: 0.97 }}
+                onClick={() => navigate('/usersmenu')}
+                style={{
+                  background: '#f5c842', color: '#111', border: 'none', borderRadius: 14,
+                  padding: '14px 36px', fontSize: 14, fontWeight: 700, cursor: 'pointer',
+                  fontFamily: "'Poppins', sans-serif", letterSpacing: '0.04em', transition: 'background 0.2s',
+                }}
+              >
+                Order Now
+              </motion.button>
+              <motion.button
+                whileHover={{ scale: 1.04 }}
+                whileTap={{ scale: 0.97 }}
+                onClick={() => navigate('/')}
+                style={{
+                  background: 'rgba(255,255,255,0.12)', color: '#fff',
+                  border: '1.5px solid rgba(255,255,255,0.3)', borderRadius: 14,
+                  padding: '14px 36px', fontSize: 14, fontWeight: 600, cursor: 'pointer',
+                  fontFamily: "'Poppins', sans-serif", letterSpacing: '0.04em',
+                  backdropFilter: 'blur(8px)', transition: 'all 0.2s',
+                }}
+              >
+                Learn More
+              </motion.button>
+            </div>
           </AnimatedSection>
         </div>
       </section>
+
       <div style={{ textAlign: 'center', padding: '0 0 60px', color: '#bbb', fontSize: 12, letterSpacing: '0.1em' }}>
         © {new Date().getFullYear()} The Crunch Fairview Dahlia Quezon City · All rights reserved
       </div>
