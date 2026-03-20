@@ -1,189 +1,362 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { motion, AnimatePresence, useScroll, useTransform } from 'framer-motion'
-import { Search, Star, Flame, Crown, Sparkles, Clock, ChevronRight, ChevronDown } from 'lucide-react'
+import { motion, AnimatePresence, useScroll, useTransform, useInView, type Variants } from 'framer-motion'
+import { Search, Star, Flame, Crown, Clock, ChevronDown, Droplets } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 
 /* ─────────────────────────────────────────────
-   CONSTANTS
+   DESIGN TOKENS
+   bg:       #0e0c0a
+   surface:  #151210
+   text:     #f0ede8
+   muted:    rgba(240,237,232,0.45)
+   accent:   #f5c842
+   border:   rgba(240,237,232,0.07)
 ───────────────────────────────────────────── */
-const NAV_H    = 68   // px  – nav bar height
-const BANNER_H = 44   // px  – hours banner height
-const TAB_TOP  = NAV_H + BANNER_H  // 112
 
-const CATEGORIES = ['All', 'Chicken', 'Sides', 'Drinks', 'Combos']
+const NAV_H    = 68
+const BANNER_H = 44
+const TAB_TOP  = NAV_H + BANNER_H
+
+const CATEGORIES = ['All', 'Chicken', 'Sides', 'Drinks', 'Combos'] as const
+type Category = typeof CATEGORIES[number]
+
+const fadeUp: Variants = {
+  hidden: { opacity: 0, y: 48 },
+  visible: (i = 0) => ({
+    opacity: 1, y: 0,
+    transition: { delay: i * 0.11, duration: 0.75, ease: [0.22, 1, 0.36, 1] },
+  }),
+}
 
 /* ─────────────────────────────────────────────
    TYPES
 ───────────────────────────────────────────── */
 interface Product {
-  id: number
-  name: string
-  category: string
-  rating: number
-  badge: string
+  id:          number
+  name:        string        // display name on Products page
+  menuName:    string        // exact name in Delicacy RECIPES for deep-link
+  category:    Category
+  rating:      number
+  badge:       string
   description: string
-  spicy: boolean
-  img: string
+  price:       number        // real price from menu board
+  spicy:       boolean
+  img:         string
+  isDrink?:    boolean       // true → clicking Order navigates to usersmenu
 }
 
-interface MenuItem {
-  name: string
-  price: number
-  tag?: string
-  note?: string
-}
+interface MenuItem  { name: string; price: number; tag?: string; note?: string }
+interface FlavorItem { name: string; accent: string; desc: string; img: string }
 
 /* ─────────────────────────────────────────────
-   DATA
+   PRODUCT DATA  —  names & prices from menu image
 ───────────────────────────────────────────── */
 const STATIC_PRODUCTS: Product[] = [
-  { id: 1, name: 'Whole Fried Chicken',              category: 'Chicken', rating: 4.9, badge: 'Bestseller', description: 'Our signature boneless fried chicken — ultra-crispy, juicy inside.',  spicy: false, img: 'https://bit.ly/4ckRqHY'   },
-  { id: 2, name: 'Half Fried Chicken',               category: 'Chicken', rating: 4.8, badge: 'Hot',        description: 'All the crunch you love, with a fiery kick that lingers.',            spicy: true,  img: 'https://bit.ly/3P8sz0j'   },
-  { id: 3, name: 'Crispy Chicken Shots with Drink',  category: 'Chicken', rating: 4.7, badge: 'New',        description: 'Tossed in rich garlic butter sauce. Dangerously good.',                spicy: false, img: 'https://bit.ly/40Z9n7T'  },
-  { id: 4, name: 'Chicken Skin with Rice and Drink', category: 'Sides',   rating: 4.5, badge: '',           description: 'Creamy, crunchy, refreshing. The perfect sidekick.',                 spicy: false, img: 'https://bit.ly/3P6DcAK'  },
-  { id: 5, name: '3pcs Fried Chicken with Rice',     category: 'Sides',   rating: 4.6, badge: 'Fan Fave',   description: 'Seasoned shoestring fries with our secret crunch dust.',              spicy: false, img: 'https://surl.li/wdwndi'  },
-  { id: 6, name: '1pc Fried Chicken With Rice',      category: 'Drinks',  rating: 4.4, badge: '',           description: 'House-brewed milk tea, the perfect cool-down companion.',            spicy: false, img: 'https://surl.lt/rckddk'  },
-  { id: 7, name: '2pcs Fried Chicken With Rice',     category: 'Combos',  rating: 4.9, badge: 'Best Value', description: 'Classic Crunch + Fries + Drink. The full experience.',               spicy: false, img: 'https://surl.li/dwocmt'  },
-  { id: 8, name: 'Spicy Combo B',                    category: 'Combos',  rating: 4.8, badge: 'Hot Deal',   description: 'Spicy Crunch + Coleslaw + Iced Tea. Dare to combo.',                 spicy: true,  img: 'https://bit.ly/3P8sz0j'  },
+  /* ── CHICKEN ── */
+  {
+    id: 1, name: 'Whole Chicken',
+    menuName: 'Whole Crispy Fried Chicken',
+    category: 'Chicken', rating: 4.9, badge: 'Bestseller',
+    description: '12 pcs | Perfect for 4–6 pax. Choice of 2 Flavors.',
+    price: 598, spicy: false, img: 'https://bit.ly/4ckRqHY',
+  },
+  {
+    id: 2, name: 'Half Chicken',
+    menuName: 'Half Crispy Fried Chicken',
+    category: 'Chicken', rating: 4.8, badge: 'Hot',
+    description: '6 pcs | Perfect for 2–3 pax. Choice of 1 Flavor.',
+    price: 328, spicy: true, img: 'https://bit.ly/3P8sz0j',
+  },
+  {
+    id: 3, name: 'Chicken Shots w/ Rice',
+    menuName: 'Crispy Chicken Shots with Drink',
+    category: 'Chicken', rating: 4.7, badge: 'New',
+    description: 'Crispy bite-sized chicken shots served with rice.',
+    price: 88, spicy: false, img: 'https://bit.ly/40Z9n7T',
+  },
+  {
+    id: 4, name: 'Chicken Skin w/ Rice',
+    menuName: 'Chicken Skin with Rice and Drink',
+    category: 'Chicken', rating: 4.5, badge: '',
+    description: 'Ultra-crispy chicken skin served with steamed rice.',
+    price: 78, spicy: false, img: 'https://bit.ly/3P6DcAK',
+  },
+  {
+    id: 5, name: '2 pcs. Chicken w/ Rice',
+    menuName: '2 pcs. Chicken With Rice and Drink',
+    category: 'Chicken', rating: 4.6, badge: 'Fan Fave',
+    description: '2 pieces of crispy fried chicken with steamed rice.',
+    price: 148, spicy: false, img: 'https://bit.ly/4r5rfZI',
+  },
+  {
+    id: 6, name: '3 pcs. Chicken w/ Rice',
+    menuName: '3 pcs. Chicken With Rice and Drink',
+    category: 'Chicken', rating: 4.8, badge: 'Bestseller',
+    description: '3 pieces of crispy fried chicken with steamed rice. Good for 1 pax.',
+    price: 188, spicy: false, img: 'https://bit.ly/4r1CAtC',
+  },
+
+  /* ── SIDES ── */
+  {
+    id: 10, name: 'Chicken Skin Bucket',
+    menuName: 'Classic Chicken Skin Bucket',
+    category: 'Sides', rating: 4.7, badge: 'Must Try',
+    description: 'BBQ, Sour Cream, or Cheese — choose your favorite flavor bucket.',
+    price: 158, spicy: false, img: 'https://bit.ly/3P6DcAK',
+  },
+  {
+    id: 11, name: 'Chicken Shots Bucket',
+    menuName: 'Chicken Shots Bucket',
+    category: 'Sides', rating: 4.6, badge: '',
+    description: 'A full bucket of our bite-sized crispy chicken shots.',
+    price: 178, spicy: false, img: 'https://bit.ly/40Z9n7T',
+  },
+  {
+    id: 12, name: 'Twister Fries',
+    menuName: 'Twister Fries',
+    category: 'Sides', rating: 4.8, badge: 'Must Try',
+    description: 'Seasoned spiral-cut fries — crispy, seasoned, and addictive.',
+    price: 145, spicy: false,
+    img: 'https://i.pinimg.com/736x/e1/fe/5d/e1fe5d75042f22074b9ec16f1db491f4.jpg',
+  },
+  {
+    id: 13, name: 'Regular Fries',
+    menuName: 'Twister Fries',
+    category: 'Sides', rating: 4.4, badge: '',
+    description: 'Classic golden fries, perfectly salted and crispy.',
+    price: 69, spicy: false,
+    img: 'https://i.pinimg.com/1200x/95/02/12/9502126d74d78185aca0697e53c91197.jpg',
+  },
+  {
+    id: 14, name: 'Tteokbokki',
+    menuName: 'Tteokbokki',
+    category: 'Sides', rating: 4.5, badge: '',
+    description: 'Chewy Korean rice cakes in a spicy-sweet sauce.',
+    price: 95, spicy: true, img: 'https://bit.ly/3MMEeRT',
+  },
+  {
+    id: 15, name: 'Fishcake',
+    menuName: 'Fishcake',
+    category: 'Sides', rating: 4.6, badge: 'Bestseller',
+    description: 'Savory fishcake slices — the perfect crowd-pleasing add-on.',
+    price: 95, spicy: false, img: 'https://bit.ly/4s9ZvUC',
+  },
+  {
+    id: 16, name: 'Kimchi',
+    menuName: 'Kimchi',
+    category: 'Sides', rating: 4.3, badge: '',
+    description: 'Traditional fermented kimchi. Tangy, spicy, and punchy.',
+    price: 55, spicy: true, img: 'https://bit.ly/47bPoX5',
+  },
+  {
+    id: 17, name: 'The Crunch Burger w/ Cheese',
+    menuName: 'The Crunch Burger with Cheese',
+    category: 'Sides', rating: 4.7, badge: 'Must Try',
+    description: 'Crispy chicken on a toasted bun, topped with melted cheese.',
+    price: 104, spicy: false,
+    img: 'https://i.pinimg.com/736x/d4/38/09/d4380931a50783483fc53d55209245e1.jpg',
+  },
+
+  /* ── DRINKS (Fruit Soda) ── */
+  {
+    id: 20, name: 'Kiwi Fruit Soda',
+    menuName: 'Kiwi Fruit Soda',
+    category: 'Drinks', rating: 4.8, badge: 'Bestseller',
+    description: 'Bright, citrusy kiwi soda. Bestselling flavor — refreshing every sip.',
+    price: 50, spicy: false, img: 'https://shorturl.at/sBHbi', isDrink: true,
+  },
+  {
+    id: 21, name: 'Lychee Fruit Soda',
+    menuName: 'Lychee Fruit Soda',
+    category: 'Drinks', rating: 4.6, badge: '',
+    description: 'Floral, delicate lychee — light and perfectly sweet.',
+    price: 50, spicy: false, img: 'https://shorturl.at/RuKTf', isDrink: true,
+  },
+  {
+    id: 22, name: 'Green Apple Fruit Soda',
+    menuName: 'Green Apple Fruit Soda',
+    category: 'Drinks', rating: 4.5, badge: '',
+    description: 'Tangy green apple soda — sweet, sour, and super refreshing.',
+    price: 50, spicy: false, img: 'https://tinyurl.com/mrydynur', isDrink: true,
+  },
+  {
+    id: 23, name: 'Blueberry Fruit Soda',
+    menuName: 'Blueberry Fruit Soda',
+    category: 'Drinks', rating: 4.5, badge: '',
+    description: 'Rich and berry-forward blueberry soda. Deep, sweet flavor.',
+    price: 50, spicy: false, img: 'https://shorturl.at/PbnDy', isDrink: true,
+  },
+  {
+    id: 24, name: 'Strawberry Fruit Soda',
+    menuName: 'Strawberry Fruit Soda',
+    category: 'Drinks', rating: 4.6, badge: '',
+    description: 'Bright strawberry soda. Sweet, vibrant, and crowd-pleasing.',
+    price: 50, spicy: false, img: 'https://tinyurl.com/3ccde5sv', isDrink: true,
+  },
+  {
+    id: 25, name: 'Mango Fruit Soda',
+    menuName: 'Mango Fruit Soda',
+    category: 'Drinks', rating: 4.7, badge: '',
+    description: 'Tropical mango fizz — juicy, golden, and summer-ready.',
+    price: 50, spicy: false, img: 'https://shorturl.at/MvNpm', isDrink: true,
+  },
+
+  /* ── COMBOS ── */
+  {
+    id: 30, name: '2 pcs. Chicken w/ Rice & Drink',
+    menuName: '2 pcs. Chicken With Rice and Drink',
+    category: 'Combos', rating: 4.8, badge: 'Best Value',
+    description: '2 pcs. of crispy chicken + steamed rice + your choice of fruit soda.',
+    price: 188, spicy: false, img: 'https://bit.ly/4r5rfZI',
+  },
+  {
+    id: 31, name: '3 pcs. Chicken w/ Rice & Drink',
+    menuName: '3 pcs. Chicken With Rice and Drink',
+    category: 'Combos', rating: 4.9, badge: 'Best Value',
+    description: '3 pcs. of crispy chicken + steamed rice + your choice of fruit soda.',
+    price: 228, spicy: false, img: 'https://bit.ly/4r1CAtC',
+  },
+  {
+    id: 32, name: 'Chicken Shots w/ Rice & Drink',
+    menuName: 'Crispy Chicken Shots with Drink',
+    category: 'Combos', rating: 4.7, badge: 'Fan Fave',
+    description: 'Crispy chicken shots + steamed rice + your choice of fruit soda.',
+    price: 128, spicy: false, img: 'https://bit.ly/40Z9n7T',
+  },
+  {
+    id: 33, name: 'Chicken Skin w/ Rice & Drink',
+    menuName: 'Chicken Skin with Rice and Drink',
+    category: 'Combos', rating: 4.5, badge: '',
+    description: 'Crispy chicken skin + steamed rice + your choice of fruit soda.',
+    price: 118, spicy: false, img: 'https://bit.ly/3P6DcAK',
+  },
 ]
 
-const BADGE_CONFIG: Record<string, string> = {
-  'Bestseller': 'linear-gradient(135deg,#f97316,#ea580c)',
-  'Hot':        'linear-gradient(135deg,#ef4444,#dc2626)',
-  'Hot Deal':   'linear-gradient(135deg,#ef4444,#dc2626)',
-  'New':        'linear-gradient(135deg,#8b5cf6,#7c3aed)',
-  'Fan Fave':   'linear-gradient(135deg,#16a34a,#15803d)',
-  'Best Value': 'linear-gradient(135deg,#0284c7,#0369a1)',
+const BADGE_CONFIG: Record<string, { label: string; bg: string; textDark?: boolean }> = {
+  'Bestseller': { label: 'Bestseller', bg: '#f5c842', textDark: true },
+  'Hot':        { label: 'Hot',        bg: '#ef4444' },
+  'New':        { label: 'New',        bg: '#8b5cf6' },
+  'Fan Fave':   { label: 'Fan Fave',   bg: '#16a34a' },
+  'Best Value': { label: 'Best Value', bg: '#0284c7' },
+  'Must Try':   { label: 'Must Try',   bg: '#7c3aed' },
 }
 
+/* ── Full menu list data (from image) ── */
 const RICE_MEALS: MenuItem[] = [
-  { name: '1 pc. Chicken',     price: 80  },
-  { name: '2 pcs. Chicken',    price: 135 },
-  { name: '3 pcs. Chicken',    price: 185, tag: 'Must Try' },
-  { name: 'Chicken Skin',      price: 70  },
-  { name: 'Chicken Shots',     price: 75  },
+  { name: '2 pcs. Chicken w/ Rice',        price: 148 },
+  { name: '3 pcs. Chicken w/ Rice',        price: 188, tag: 'Must Try' },
+  { name: 'Chicken Shots w/ Rice',         price: 88  },
+  { name: 'Chicken Skin w/ Rice',          price: 78  },
+  { name: '2 pcs. Chicken w/ Rice & Drink',price: 188, tag: 'Bestseller' },
+  { name: '3 pcs. Chicken w/ Rice & Drink',price: 228, tag: 'Bestseller' },
+  { name: 'Chicken Shots w/ Rice & Drink', price: 128 },
+  { name: 'Chicken Skin w/ Rice & Drink',  price: 118 },
 ]
-
-const SIDES: MenuItem[] = [
-  { name: 'Kimchi',                       price: 45  },
-  { name: 'Fishcake',                     price: 85  },
-  { name: 'Tteokbokki',                   price: 85  },
-  { name: 'Classic Chicken Skin Bucket',  price: 140, tag: 'Must Try' },
-  { name: 'Flavored Chicken Skin Bucket', price: 140 },
-  { name: 'Chicken Shots Bucket',         price: 160 },
-  { name: 'Twister Fries',                price: 140, tag: 'Must Try' },
-  { name: 'The Crunch Burger',            price: 80,  tag: 'Must Try', note: '+₱5 with cheese' },
+const WHOLE_HALF: MenuItem[] = [
+  { name: 'Whole Chicken (12 pcs | 4–6 pax)', price: 598, tag: 'Choice of 2 Flavors' },
+  { name: 'Half Chicken (6 pcs | 2–3 pax)',   price: 328, note: 'Choice of 1 Flavor' },
 ]
-
+const SIDES_LIST: MenuItem[] = [
+  { name: 'Chicken Skin Bucket (BBQ / Sour Cream / Cheese)', price: 158, tag: 'Must Try' },
+  { name: 'Chicken Shots Bucket',                             price: 178 },
+  { name: 'Twister Fries',                                    price: 145, tag: 'Must Try' },
+  { name: 'Regular Fries',                                    price: 69  },
+  { name: 'Tteokbokki',                                       price: 95  },
+  { name: 'Fishcake',                                         price: 95,  tag: 'Bestseller' },
+  { name: 'Kimchi',                                           price: 55  },
+  { name: 'The Crunch Burger w/ Cheese',                      price: 104, tag: 'Must Try' },
+]
 const FRUIT_SODA: MenuItem[] = [
-  { name: 'Strawberry',  price: 70 },
-  { name: 'Green Apple', price: 70 },
-  { name: 'Kiwi',        price: 70 },
-  { name: 'Lychee',      price: 70 },
-  { name: 'Mango',       price: 70 },
-  { name: 'Blueberry',   price: 70 },
+  { name: 'Kiwi',        price: 50, tag: 'Bestseller' },
+  { name: 'Lychee',      price: 50 },
+  { name: 'Green Apple', price: 50 },
+  { name: 'Blueberry',   price: 50 },
+  { name: 'Strawberry',  price: 50 },
+  { name: 'Mango',       price: 50 },
 ]
-
-interface FlavorItem {
-  name: string
-  emoji: string
-  color: string
-  border: string
-  accent: string
-  desc: string
-  img: string
-}
 
 const SIGNATURE_FLAVORS: FlavorItem[] = [
-  {
-    name: 'Classic',
-    emoji: '',
-    color: 'rgba(251,191,36,0.08)',
-    border: 'rgba(251,191,36,0.2)',
-    accent: '#fbbf24',
-    desc: 'Golden, lightly seasoned, perfectly crispy — the OG.',
-    img: 'https://url-shortener.me/HH43',
-  },
-  {
-    name: 'Honey Garlic',
-    emoji: '',
-    color: 'rgba(245,158,11,0.08)',
-    border: 'rgba(245,158,11,0.2)',
-    accent: '#f59e0b',
-    desc: 'Sweet honey meets bold roasted garlic. Sticky & addictive.',
-    img: 'https://url-shortener.me/HH3Z',
-  },
-  {
-    name: 'Teriyaki',
-    emoji: '',
-    color: 'rgba(139,92,246,0.08)',
-    border: 'rgba(139,92,246,0.2)',
-    accent: '#8b5cf6',
-    desc: 'Savory-sweet Japanese glaze with a glossy caramel finish.',
-    img: 'https://url-shortener.me/HH44',
-  },
-  {
-    name: 'Texas BBQ',
-    emoji: '',
-    color: 'rgba(239,68,68,0.08)',
-    border: 'rgba(239,68,68,0.2)',
-    accent: '#ef4444',
-    desc: 'Smoky, tangy, rich — slow-cooked BBQ vibes in every bite.',
-    img: 'https://url-shortener.me/HH47',
-  },
-  {
-    name: 'Garlic Parmesan',
-    emoji: '',
-    color: 'rgba(255,255,255,0.05)',
-    border: 'rgba(255,255,255,0.12)',
-    accent: '#e5e7eb',
-    desc: 'Creamy parmesan dusted over buttery garlic-coated chicken.',
-    img: 'https://url-shortener.me/HH49',
-  },
-  {
-    name: 'K-Style',
-    emoji: '',
-    color: 'rgba(249,115,22,0.08)',
-    border: 'rgba(249,115,22,0.2)',
-    accent: '#f97316',
-    desc: 'Korean-inspired sweet chili glaze with a punchy depth.',
-    img: 'https://url-shortener.me/HH4C',
-  },
-  {
-    name: 'Spicy K-Style',
-    emoji: '',
-    color: 'rgba(220,38,38,0.08)',
-    border: 'rgba(220,38,38,0.2)',
-    accent: '#dc2626',
-    desc: 'K-Style cranked up — fiery heat that builds with every piece.',
-    img: 'https://url-shortener.me/HH4G',
-  },
+  { name: 'Classic',         accent: '#fbbf24', desc: 'Golden, lightly seasoned, perfectly crispy — the OG.',           img: 'https://url-shortener.me/HH43' },
+  { name: 'Honey Garlic',    accent: '#f59e0b', desc: 'Sweet honey meets bold roasted garlic. Sticky & addictive.',     img: 'https://url-shortener.me/HH3Z' },
+  { name: 'Teriyaki',        accent: '#8b5cf6', desc: 'Savory-sweet Japanese glaze with a glossy caramel finish.',      img: 'https://url-shortener.me/HH44' },
+  { name: 'Texas BBQ',       accent: '#ef4444', desc: 'Smoky, tangy, rich — slow-cooked BBQ vibes in every bite.',      img: 'https://url-shortener.me/HH47' },
+  { name: 'Garlic Parmesan', accent: '#9ca3af', desc: 'Creamy parmesan dusted over buttery garlic-coated chicken.',     img: 'https://url-shortener.me/HH49' },
+  { name: 'K-Style',         accent: '#f97316', desc: 'Korean-inspired sweet chili glaze with a punchy depth.',         img: 'https://url-shortener.me/HH4C' },
+  { name: 'Spicy K-Style',   accent: '#dc2626', desc: 'K-Style cranked up — fiery heat that builds with every piece.',  img: 'https://url-shortener.me/HH4G' },
 ]
 
 /* ─────────────────────────────────────────────
-   SMALL COMPONENTS
+   PAGE TRANSITION OVERLAY
 ───────────────────────────────────────────── */
-function RatingStars({ rating }: { rating: number }) {
+function PageTransitionOverlay({ visible, itemName }: { visible: boolean; itemName: string }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-      {[1,2,3,4,5].map((s) => (
-        <Star
-          key={s} size={11}
-          fill={s <= Math.round(rating) ? '#f97316' : 'transparent'}
-          color={s <= Math.round(rating) ? '#f97316' : 'rgba(255,255,255,0.2)'}
-        />
-      ))}
-      <span style={{ fontSize: 12, fontWeight: 700, color: '#f97316', marginLeft: 5 }}>{rating}</span>
-    </div>
+    <AnimatePresence>
+      {visible && (
+        <>
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            style={{ position: 'fixed', inset: 0, zIndex: 9998, background: '#0e0c0a', pointerEvents: 'all' }}
+          />
+          <motion.div
+            initial={{ x: '-100%' }} animate={{ x: '130%' }} exit={{ opacity: 0 }}
+            transition={{ duration: 0.6, ease: [0.76, 0, 0.24, 1], delay: 0.05 }}
+            style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'linear-gradient(105deg, transparent 25%, rgba(245,200,66,0.25) 50%, transparent 75%)', pointerEvents: 'none' }}
+          />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.86, y: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.92, y: -10 }}
+            transition={{ duration: 0.38, ease: [0.22, 1, 0.36, 1], delay: 0.1 }}
+            style={{ position: 'fixed', top: '30%', left: '40%', transform: 'translate(-50%,-50%)', zIndex: 10000, textAlign: 'center', pointerEvents: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20 }}
+          >
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10, background: 'rgba(245,200,66,0.1)', border: '1px solid rgba(245,200,66,0.3)', borderRadius: 40, padding: '8px 20px' }}>
+              <motion.div
+                animate={{ rotate: 360 }}
+                transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                style={{ width: 13, height: 13, borderRadius: '50%', border: '2px solid rgba(245,200,66,0.35)', borderTopColor: '#f5c842', flexShrink: 0 }}
+              />
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#f5c842', letterSpacing: '0.18em', textTransform: 'uppercase' as const, fontFamily: "'Poppins', sans-serif" }}>
+                Taking you there
+              </span>
+            </div>
+            <div style={{ fontFamily: "'Poppins', sans-serif", fontSize: 'clamp(20px,3vw,34px)', fontWeight: 800, color: '#f0ede8', letterSpacing: '-0.02em', lineHeight: 1.15, maxWidth: 480, padding: '0 32px' }}>
+              {itemName}
+            </div>
+            <motion.div
+              initial={{ width: 0 }} animate={{ width: 64 }}
+              transition={{ duration: 0.4, delay: 0.22, ease: [0.22, 1, 0.36, 1] }}
+              style={{ height: 1, background: 'rgba(245,200,66,0.4)', borderRadius: 1 }}
+            />
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
   )
 }
 
-function FloatingOrbs() {
+/* ─────────────────────────────────────────────
+   SUB-COMPONENTS
+───────────────────────────────────────────── */
+function Reveal({ children, variants = fadeUp, custom = 0, style = {} }: {
+  children: React.ReactNode; variants?: Variants; custom?: number; style?: React.CSSProperties
+}) {
+  const ref = useRef(null)
+  const isInView = useInView(ref, { once: true, margin: '-72px' })
   return (
-    <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 0, overflow: 'hidden' }}>
-      <div style={{ position: 'absolute', top: '-10%', left: '15%',   width: 700, height: 700, borderRadius: '50%', background: 'radial-gradient(circle,rgba(249,115,22,0.07) 0%,transparent 65%)' }} />
-      <div style={{ position: 'absolute', top: '40%',  right: '-5%',  width: 500, height: 500, borderRadius: '50%', background: 'radial-gradient(circle,rgba(234,88,12,0.05)  0%,transparent 65%)' }} />
-      <div style={{ position: 'absolute', bottom:'-10%',left: '35%',  width: 600, height: 600, borderRadius: '50%', background: 'radial-gradient(circle,rgba(249,115,22,0.06) 0%,transparent 65%)' }} />
+    <motion.div ref={ref} variants={variants} initial="hidden" animate={isInView ? 'visible' : 'hidden'} custom={custom} style={style}>
+      {children}
+    </motion.div>
+  )
+}
+
+function EyebrowLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+      <div style={{ width: 28, height: 1, background: '#f5c842' }} />
+      <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.25em', textTransform: 'uppercase' as const, color: '#f5c842', fontFamily: "'Poppins', sans-serif" }}>
+        {children}
+      </span>
     </div>
   )
 }
@@ -191,27 +364,20 @@ function FloatingOrbs() {
 function MenuRow({ item, index }: { item: MenuItem; index: number }) {
   return (
     <motion.div
-      initial={{ opacity: 0, x: -10 }}
-      whileInView={{ opacity: 1, x: 0 }}
-      viewport={{ once: true }}
-      transition={{ delay: index * 0.04, duration: 0.35 }}
-      style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '11px 0', borderBottom: '1px solid rgba(255,255,255,0.05)',
-      }}
+      initial={{ opacity: 0, x: -10 }} whileInView={{ opacity: 1, x: 0 }}
+      viewport={{ once: true }} transition={{ delay: index * 0.05, duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+      style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '11px 0', borderBottom: '1px solid rgba(240,237,232,0.06)' }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.75)', fontWeight: 500 }}>{item.name}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' as const }}>
+        <span style={{ fontSize: 13.5, color: 'rgba(240,237,232,0.68)', fontWeight: 400 }}>{item.name}</span>
         {item.tag && (
-          <span style={{ fontSize: 9, fontWeight: 800, padding: '3px 8px', borderRadius: 20, background: 'linear-gradient(135deg,#f97316,#ea580c)', color: '#fff', letterSpacing: '0.05em', textTransform: 'uppercase' as const }}>
+          <span style={{ fontSize: 9, fontWeight: 700, padding: '3px 9px', borderRadius: 20, background: 'rgba(245,200,66,0.12)', color: '#f5c842', letterSpacing: '0.08em', textTransform: 'uppercase' as const, border: '1px solid rgba(245,200,66,0.22)' }}>
             {item.tag}
           </span>
         )}
-        {item.note && (
-          <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', fontStyle: 'italic' as const }}>{item.note}</span>
-        )}
+        {item.note && <span style={{ fontSize: 10, color: 'rgba(240,237,232,0.22)', fontStyle: 'italic' as const }}>{item.note}</span>}
       </div>
-      <span style={{ fontSize: 14, fontWeight: 700, color: '#f97316', flexShrink: 0, marginLeft: 16 }}>₱{item.price}</span>
+      <span style={{ fontSize: 14, fontWeight: 700, color: '#f5c842', flexShrink: 0, marginLeft: 16 }}>₱{item.price}</span>
     </motion.div>
   )
 }
@@ -219,10 +385,27 @@ function MenuRow({ item, index }: { item: MenuItem; index: number }) {
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
-      <h3 style={{ margin: 0, fontFamily: "'Playfair Display',serif", fontSize: 20, fontWeight: 800, color: '#fff', letterSpacing: '-0.01em' }}>
+      <h3 style={{ margin: 0, fontFamily: "'Poppins', sans-serif", fontSize: 18, fontWeight: 700, color: '#f0ede8', letterSpacing: '-0.01em' }}>
         {children}
       </h3>
-      <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.07)' }} />
+      <div style={{ flex: 1, height: 1, background: 'rgba(240,237,232,0.07)' }} />
+    </div>
+  )
+}
+
+/* ─────────────────────────────────────────────
+   DRINK SIZE BADGE — shows 16oz / 22oz pills
+───────────────────────────────────────────── */
+function DrinkSizeBadge() {
+  return (
+    <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
+      {[{ label: '16oz', price: '₱50' }, { label: '22oz', price: '₱60' }].map(s => (
+        <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(245,200,66,0.08)', border: '1px solid rgba(245,200,66,0.2)', borderRadius: 30, padding: '4px 12px' }}>
+          <Droplets size={10} color="#f5c842" />
+          <span style={{ fontSize: 11, fontWeight: 600, color: '#f5c842' }}>{s.label}</span>
+          <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(240,237,232,0.5)' }}>{s.price}</span>
+        </div>
+      ))}
     </div>
   )
 }
@@ -232,410 +415,353 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 ───────────────────────────────────────────── */
 export default function Products() {
   const navigate = useNavigate()
+  const [products, setProducts]               = useState<Product[]>(STATIC_PRODUCTS)
+  const [category, setCategory]               = useState<Category>('All')
+  const [search, setSearch]                   = useState('')
+  const [hoveredId, setHoveredId]             = useState<number | null>(null)
+  const [isOpen, setIsOpen]                   = useState(false)
+  const [expandedFlavor, setExpandedFlavor]   = useState<string | null>(null)
+  const [transitioning, setTransitioning]     = useState(false)
+  const [transitionLabel, setTransitionLabel] = useState('')
 
-  const [products, setProducts]   = useState<Product[]>(STATIC_PRODUCTS)
-  const [category, setCategory]   = useState('All')
-  const [search, setSearch]       = useState('')
-  const [hoveredId, setHoveredId] = useState<number | null>(null)
-  const [isOpen, setIsOpen]             = useState(false)
-  const [expandedFlavor, setExpandedFlavor] = useState<string | null>(null)
+  const heroRef     = useRef<HTMLDivElement>(null)
+  const { scrollY } = useScroll()
+  const heroY       = useTransform(scrollY, [0, 400], [0, 60])
+  const heroOpacity = useTransform(scrollY, [0, 350], [1, 0.4])
 
-  const heroRef             = useRef<HTMLDivElement>(null)
-  const { scrollY }         = useScroll()
-  const heroY               = useTransform(scrollY, [0, 400], [0, 60])
-  const heroOpacity         = useTransform(scrollY, [0, 350], [1, 0.5])
-
-  /* Check opening hours */
   useEffect(() => {
     const check = () => {
-      const now  = new Date()
-      const day  = now.getDay()
-      const h    = now.getHours()
-      const m    = now.getMinutes()
-      const t    = h + m / 60
-      const wday = day >= 1 && day <= 5
-      const wend = day === 0 || day === 6
-      setIsOpen((wday && t >= 10 && t < 22) || (wend && t >= 11 && t < 20.5))
+      const now = new Date(); const day = now.getDay()
+      const t = now.getHours() + now.getMinutes() / 60
+      setIsOpen((day >= 1 && day <= 5 && t >= 10 && t < 22) || ((day === 0 || day === 6) && t >= 11 && t < 20.5))
     }
     check()
     const id = setInterval(check, 60_000)
     return () => clearInterval(id)
   }, [])
 
-  /* Fetch products from API (fallback to static) */
   useEffect(() => {
     fetch('/api/products')
-      .then((r) => r.json())
-      .then((data: Product[]) => { if (data?.length) setProducts(data) })
+      .then(r => r.json())
+      .then((d: Product[]) => { if (d?.length) setProducts(d) })
       .catch(() => {})
   }, [])
 
-  const filtered = products.filter((p) => {
-    const matchCat    = category === 'All' || p.category === category
-    const matchSearch = p.name.toLowerCase().includes(search.toLowerCase())
-    return matchCat && matchSearch
-  })
+  const filtered = products.filter(p =>
+    (category === 'All' || p.category === category) &&
+    p.name.toLowerCase().includes(search.toLowerCase())
+  )
+  const topPick = filtered.find(p => p.badge === 'Bestseller') ?? filtered[0]
 
-  const topPick = filtered.find((p) => p.badge === 'Bestseller') ?? filtered[0]
-
-  /* ── shared button style ── */
-  const orderBtn: React.CSSProperties = {
-    background:   'linear-gradient(135deg,#f97316,#ea580c)',
-    border:       'none',
-    borderRadius: 30,
-    padding:      '10px 24px',
-    fontSize:     13,
-    fontWeight:   700,
-    color:        '#fff',
-    cursor:       'pointer',
-    fontFamily:   'inherit',
-    whiteSpace:   'nowrap',
-    boxShadow:    '0 4px 16px rgba(249,115,22,0.35)',
-    letterSpacing:'0.01em',
+  /* Navigate to usersmenu with animated transition */
+  const orderItem = (displayName: string, menuName: string) => {
+    setTransitionLabel(displayName)
+    setTransitioning(true)
+    setTimeout(() => {
+      navigate(`/usersmenu?item=${encodeURIComponent(menuName.toLowerCase())}`)
+    }, 540)
   }
 
-  /* ════════════════════════════════════════════
-     RENDER
-  ════════════════════════════════════════════ */
-  return (
-    <div style={{ fontFamily: "'DM Sans','Poppins',sans-serif", background: '#0a0a0a', minHeight: '100vh', position: 'relative' }}>
-      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Playfair+Display:wght@700;800;900&display=swap" rel="stylesheet" />
-      <FloatingOrbs />
+  const btnGold: React.CSSProperties = {
+    background: '#f5c842', border: 'none', borderRadius: 12,
+    padding: '10px 24px', fontSize: 13, fontWeight: 700,
+    color: '#111', cursor: 'pointer', fontFamily: "'Poppins', sans-serif",
+    letterSpacing: '0.01em', transition: 'background 0.2s', whiteSpace: 'nowrap' as const,
+  }
 
-      {/* ══════════════════ NAV ══════════════════ */}
+  return (
+    <div style={{ fontFamily: "'Poppins', sans-serif", background: '#0e0c0a', minHeight: '100vh', color: '#f0ede8', position: 'relative' }}>
+
+      {/* ── Google Fonts: Poppins ── */}
+      <link
+        href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,400&display=swap"
+        rel="stylesheet"
+      />
+
+      {/* Page transition overlay */}
+      <PageTransitionOverlay visible={transitioning} itemName={transitionLabel} />
+
+      {/* Ambient gold glows */}
+      <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 0, overflow: 'hidden' }}>
+        <div style={{ position: 'absolute', top: '-8%',   left: '10%',  width: 700, height: 700, borderRadius: '50%', background: 'radial-gradient(circle,rgba(245,200,66,0.055) 0%,transparent 65%)' }} />
+        <div style={{ position: 'absolute', top: '45%',   right: '-8%', width: 520, height: 520, borderRadius: '50%', background: 'radial-gradient(circle,rgba(245,200,66,0.035) 0%,transparent 65%)' }} />
+        <div style={{ position: 'absolute', bottom: '-8%',left: '30%',  width: 600, height: 600, borderRadius: '50%', background: 'radial-gradient(circle,rgba(245,200,66,0.045) 0%,transparent 65%)' }} />
+      </div>
+
+      {/* ════════════ NAV ════════════ */}
       <motion.header
-        initial={{ y: -80, opacity: 0 }}
-        animate={{ y: 0,   opacity: 1 }}
-        transition={{ duration: 0.6, ease: [0.22,1,0.36,1] }}
-        style={{
-          position: 'sticky', top: 0, zIndex: 200,
-          height: NAV_H,
-          background: 'rgba(10,10,10,0.92)',
-          backdropFilter: 'blur(28px)',
-          WebkitBackdropFilter: 'blur(28px)',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
-          display: 'flex', alignItems: 'center',
-        }}
+        initial={{ y: -80, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
+        transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+        style={{ position: 'sticky', top: 0, zIndex: 200, height: NAV_H, background: 'rgba(14,12,10,0.92)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', borderBottom: '1px solid rgba(240,237,232,0.06)', display: 'flex', alignItems: 'center' }}
       >
         <div style={{ maxWidth: 1280, margin: '0 auto', padding: '0 40px', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          {/* Logo */}
-          <Link to="/" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{ width: 36, height: 36, borderRadius: 10, background: 'linear-gradient(135deg,#f97316,#ea580c)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 16px rgba(249,115,22,0.4)', flexShrink: 0 }}>
-              <Flame size={18} color="#fff" />
-            </div>
-            <span style={{ fontFamily: "'Playfair Display',serif", fontWeight: 800, fontSize: 20, color: '#fff', letterSpacing: '-0.02em' }}>
-              The <span style={{ color: '#f97316' }}>Crunch</span>
+          <button onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+            <span style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 800, fontSize: 20, color: '#f0ede8', letterSpacing: '-0.02em' }}>
+              The <span style={{ color: '#f5c842' }}>Crunch</span>
             </span>
-          </Link>
-
-          {/* Nav links */}
+          </button>
           <nav style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-            {(['Home','Menu','About'] as const).map((item, i) => (
-              <Link
-                key={item}
-                to={['/','/usersmenu','/aboutthecrunch'][i]}
-                style={{ color: 'rgba(255,255,255,0.5)', fontSize: 14, textDecoration: 'none', fontWeight: 500, padding: '8px 16px', borderRadius: 10, transition: 'all 0.2s' }}
-                onMouseEnter={(e) => { e.currentTarget.style.color='#fff'; e.currentTarget.style.background='rgba(255,255,255,0.07)' }}
-                onMouseLeave={(e) => { e.currentTarget.style.color='rgba(255,255,255,0.5)'; e.currentTarget.style.background='transparent' }}
-              >{item}</Link>
+            {(['Home', 'Menu', 'About'] as const).map((label, i) => (
+              <Link key={label} to={['/', '/usersmenu', '/aboutthecrunch'][i]}
+                style={{ color: 'rgba(240,237,232,0.45)', fontSize: 13.5, textDecoration: 'none', fontWeight: 500, padding: '7px 14px', borderRadius: 8, transition: 'all 0.2s' }}
+                onMouseEnter={e => { e.currentTarget.style.color = '#f0ede8'; e.currentTarget.style.background = 'rgba(240,237,232,0.07)' }}
+                onMouseLeave={e => { e.currentTarget.style.color = 'rgba(240,237,232,0.45)'; e.currentTarget.style.background = 'transparent' }}
+              >{label}</Link>
             ))}
-
-            <div style={{ width: 1, height: 20, background: 'rgba(255,255,255,0.1)', margin: '0 6px' }} />
-
+            <div style={{ width: 1, height: 18, background: 'rgba(240,237,232,0.1)', margin: '0 6px' }} />
             <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} onClick={() => navigate('/login')}
-              style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.11)', borderRadius: 10, padding: '8px 20px', fontSize: 13, fontWeight: 600, color: '#fff', cursor: 'pointer', fontFamily: 'inherit' }}>
+              style={{ background: 'rgba(240,237,232,0.07)', border: '1px solid rgba(240,237,232,0.12)', borderRadius: 8, padding: '8px 18px', fontSize: 13, fontWeight: 600, color: '#f0ede8', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
               Log In
             </motion.button>
-            <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} onClick={() => navigate('/login')}
-              style={{ background: 'linear-gradient(135deg,#f97316,#ea580c)', border: 'none', borderRadius: 10, padding: '9px 22px', fontSize: 13, fontWeight: 700, color: '#fff', cursor: 'pointer', fontFamily: 'inherit', boxShadow: '0 4px 20px rgba(249,115,22,0.4)' }}>
+            <motion.button whileHover={{ scale: 1.02, backgroundColor: '#e6b800' }} whileTap={{ scale: 0.97 }} onClick={() => navigate('/login')}
+              style={{ background: '#f5c842', border: 'none', borderRadius: 8, padding: '9px 22px', fontSize: 13, fontWeight: 700, color: '#111', cursor: 'pointer', fontFamily: "'Poppins', sans-serif", transition: 'background 0.2s' }}>
               Sign Up
             </motion.button>
           </nav>
         </div>
       </motion.header>
 
-      {/* ══════════════════ HOURS BANNER ══════════════════ */}
-      <div
-        style={{
-          position: 'sticky',
-          top: NAV_H,
-          zIndex: 190,
-          height: BANNER_H,
-          background: 'rgba(18,10,4,0.96)',
-          backdropFilter: 'blur(20px)',
-          WebkitBackdropFilter: 'blur(20px)',
-          borderBottom: '1px solid rgba(249,115,22,0.18)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          gap: 16, flexWrap: 'wrap',
-          overflow: 'hidden',
-          padding: '0 40px',
-        }}
-      >
-        {/* shimmer sweep */}
-        <motion.div
-          animate={{ x: ['-120%','220%'] }}
-          transition={{ duration: 4, repeat: Infinity, repeatDelay: 3, ease: 'easeInOut' }}
-          style={{ position: 'absolute', top: 0, bottom: 0, width: '40%', background: 'linear-gradient(90deg,transparent,rgba(249,115,22,0.07),transparent)', pointerEvents: 'none' }}
-        />
-
-        {/* Open / Closed pill */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: isOpen ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)', border: `1px solid ${isOpen ? 'rgba(34,197,94,0.35)' : 'rgba(239,68,68,0.35)'}`, borderRadius: 30, padding: '4px 14px', flexShrink: 0 }}>
-          <motion.div
-            animate={{ scale: [1,1.4,1] }}
-            transition={{ duration: 1.8, repeat: Infinity }}
-            style={{ width: 7, height: 7, borderRadius: '50%', background: isOpen ? '#22c55e' : '#ef4444' }}
-          />
-          <span style={{ fontSize: 11, fontWeight: 700, color: isOpen ? '#22c55e' : '#ef4444', letterSpacing: '0.07em', textTransform: 'uppercase' as const }}>
+      {/* ════════════ HOURS BANNER ════════════ */}
+      <div style={{ position: 'sticky', top: NAV_H, zIndex: 190, height: BANNER_H, background: 'rgba(17,13,8,0.96)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(245,200,66,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16, overflow: 'hidden', padding: '0 40px' }}>
+        <motion.div animate={{ x: ['-120%', '220%'] }} transition={{ duration: 4, repeat: Infinity, repeatDelay: 3, ease: 'easeInOut' }}
+          style={{ position: 'absolute', top: 0, bottom: 0, width: '40%', background: 'linear-gradient(90deg,transparent,rgba(245,200,66,0.06),transparent)', pointerEvents: 'none' }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: isOpen ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)', border: `1px solid ${isOpen ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`, borderRadius: 30, padding: '4px 13px', flexShrink: 0 }}>
+          <motion.div animate={{ scale: [1, 1.4, 1] }} transition={{ duration: 1.8, repeat: Infinity }}
+            style={{ width: 6, height: 6, borderRadius: '50%', background: isOpen ? '#22c55e' : '#ef4444' }} />
+          <span style={{ fontSize: 10.5, fontWeight: 700, color: isOpen ? '#22c55e' : '#ef4444', letterSpacing: '0.07em', textTransform: 'uppercase' as const }}>
             {isOpen ? 'Open Now' : 'Closed'}
           </span>
         </div>
-
-        <div style={{ width: 1, height: 14, background: 'rgba(255,255,255,0.12)', flexShrink: 0 }} />
-        <Clock size={13} color="#f97316" style={{ flexShrink: 0 }} />
-
-        <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', fontWeight: 500, whiteSpace: 'nowrap' as const }}>
-          <span style={{ color: '#fff', fontWeight: 700 }}>Mon – Fri</span>
-          {'\u00A0\u00A0'}10:00 AM – 10:00 PM
+        <div style={{ width: 1, height: 13, background: 'rgba(240,237,232,0.1)', flexShrink: 0 }} />
+        <Clock size={12} color="#f5c842" style={{ flexShrink: 0 }} />
+        <span style={{ fontSize: 12, color: 'rgba(240,237,232,0.42)', whiteSpace: 'nowrap' as const }}>
+          <span style={{ color: '#f0ede8', fontWeight: 600 }}>Mon – Fri</span>{'\u00A0\u00A0'}10:00 AM – 10:00 PM
         </span>
-
-        <div style={{ width: 4, height: 4, borderRadius: '50%', background: 'rgba(249,115,22,0.6)', flexShrink: 0 }} />
-
-        <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', fontWeight: 500, whiteSpace: 'nowrap' as const }}>
-          <span style={{ color: '#fff', fontWeight: 700 }}>Sat – Sun</span>
-          {'\u00A0\u00A0'}11:00 AM – 8:30 PM
+        <div style={{ width: 3, height: 3, borderRadius: '50%', background: 'rgba(245,200,66,0.45)', flexShrink: 0 }} />
+        <span style={{ fontSize: 12, color: 'rgba(240,237,232,0.42)', whiteSpace: 'nowrap' as const }}>
+          <span style={{ color: '#f0ede8', fontWeight: 600 }}>Sat – Sun</span>{'\u00A0\u00A0'}11:00 AM – 8:30 PM
         </span>
       </div>
 
-      {/* ══════════════════ HERO ══════════════════ */}
-      <div ref={heroRef} style={{ position: 'relative', overflow: 'hidden', padding: '88px 40px 64px' }}>
+      {/* ════════════ HERO ════════════ */}
+      <div ref={heroRef} style={{ position: 'relative', overflow: 'hidden', padding: '92px 40px 72px' }}>
         <motion.div style={{ maxWidth: 1280, margin: '0 auto', y: heroY, opacity: heroOpacity }}>
-
-          <motion.div
-            initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'rgba(249,115,22,0.1)', border: '1px solid rgba(249,115,22,0.22)', borderRadius: 30, padding: '6px 16px', marginBottom: 28 }}
-          >
-            <Sparkles size={13} color="#f97316" />
-            <span style={{ fontSize: 11, fontWeight: 700, color: '#f97316', letterSpacing: '0.1em', textTransform: 'uppercase' as const }}>The Crunch Fairview</span>
+          <motion.div initial={{ opacity: 0, x: -16 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.3, duration: 0.6 }}>
+            <EyebrowLabel>The Crunch Fairview</EyebrowLabel>
           </motion.div>
-
           <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: 40 }}>
             <div>
-              <motion.h1
-                initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.7, ease: [0.22,1,0.36,1] }}
-                style={{ fontFamily: "'Playfair Display',serif", fontSize: 'clamp(52px,7vw,96px)', fontWeight: 900, color: '#fff', margin: 0, lineHeight: 1.0, letterSpacing: '-0.03em' }}
-              >
-                Our<br />
-                <span style={{ WebkitTextStroke: '2px #f97316', color: 'transparent' }}>Products</span>
+              <motion.h1 initial={{ opacity: 0, y: 36 }} animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.45, duration: 0.85, ease: [0.22, 1, 0.36, 1] }}
+                style={{ fontFamily: "'Poppins', sans-serif", fontSize: 'clamp(52px,7vw,96px)', fontWeight: 900, color: '#f0ede8', margin: 0, lineHeight: 0.95, letterSpacing: '-0.03em' }}>
+                Our<br /><em style={{ color: '#f5c842', fontStyle: 'italic' }}>Menu.</em>
               </motion.h1>
-              <motion.p
-                initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }}
-                style={{ color: 'rgba(255,255,255,0.4)', fontSize: 16, margin: '20px 0 0', maxWidth: 400, lineHeight: 1.75 }}
-              >
+              <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.65 }}
+                style={{ color: 'rgba(240,237,232,0.42)', fontSize: 15.5, margin: '22px 0 0', maxWidth: 400, lineHeight: 1.8, fontWeight: 300 }}>
                 Fresh, hot, and fan-favorite — discover what makes The Crunch unforgettable.
               </motion.p>
             </div>
-
-            {/* Search */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.35 }}
-              style={{ position: 'relative', width: 340 }}
-            >
-              <Search size={15} style={{ position: 'absolute', left: 18, top: '50%', transform: 'translateY(-50%)', color: 'rgba(255,255,255,0.28)', zIndex: 1, pointerEvents: 'none' }} />
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.5 }}
+              style={{ position: 'relative', width: 340 }}>
+              <Search size={14} style={{ position: 'absolute', left: 18, top: '50%', transform: 'translateY(-50%)', color: 'rgba(240,237,232,0.22)', pointerEvents: 'none', zIndex: 1 }} />
               <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                value={search} onChange={e => setSearch(e.target.value)}
                 placeholder="Search the menu..."
-                style={{ width: '100%', padding: '14px 18px 14px 46px', borderRadius: 16, border: '1px solid rgba(255,255,255,0.09)', fontSize: 14, outline: 'none', background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(12px)', boxSizing: 'border-box', fontFamily: 'inherit', color: '#fff', transition: 'border-color 0.2s,background 0.2s' }}
-                onFocus={(e) => { e.target.style.borderColor='rgba(249,115,22,0.45)'; e.target.style.background='rgba(255,255,255,0.08)' }}
-                onBlur={(e)  => { e.target.style.borderColor='rgba(255,255,255,0.09)'; e.target.style.background='rgba(255,255,255,0.05)' }}
+                style={{ width: '100%', padding: '14px 18px 14px 46px', borderRadius: 14, border: '1px solid rgba(240,237,232,0.1)', fontSize: 14, outline: 'none', background: 'rgba(240,237,232,0.05)', backdropFilter: 'blur(12px)', boxSizing: 'border-box', fontFamily: "'Poppins', sans-serif", color: '#f0ede8', transition: 'border-color 0.2s, background 0.2s' }}
+                onFocus={e => { e.target.style.borderColor = 'rgba(245,200,66,0.45)'; e.target.style.background = 'rgba(240,237,232,0.08)' }}
+                onBlur={e  => { e.target.style.borderColor = 'rgba(240,237,232,0.1)';  e.target.style.background = 'rgba(240,237,232,0.05)' }}
               />
             </motion.div>
           </div>
         </motion.div>
       </div>
 
-      {/* ══════════════════ CATEGORY TABS ══════════════════ */}
-      <div style={{
-        position: 'sticky',
-        top: TAB_TOP,   // 68 + 44 = 112
-        zIndex: 180,
-        background: 'rgba(10,10,10,0.95)',
-        backdropFilter: 'blur(24px)',
-        WebkitBackdropFilter: 'blur(24px)',
-        borderBottom: '1px solid rgba(255,255,255,0.05)',
-      }}>
-        <div style={{ maxWidth: 1280, margin: '0 auto', padding: '0 40px', display: 'flex', gap: 2, overflowX: 'auto' }}>
-          {CATEGORIES.map((cat) => (
-            <button
-              key={cat}
-              onClick={() => setCategory(cat)}
-              style={{ position: 'relative', padding: '17px 24px', border: 'none', background: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 14, fontFamily: 'inherit', whiteSpace: 'nowrap', color: category === cat ? '#f97316' : 'rgba(255,255,255,0.35)', transition: 'color 0.2s' }}
-            >
+      {/* ════════════ CATEGORY TABS ════════════ */}
+      <div style={{ position: 'sticky', top: TAB_TOP, zIndex: 180, background: 'rgba(14,12,10,0.96)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', borderBottom: '1px solid rgba(240,237,232,0.06)' }}>
+        <div style={{ maxWidth: 1280, margin: '0 auto', padding: '0 40px', display: 'flex', overflowX: 'auto' }}>
+          {CATEGORIES.map(cat => (
+            <button key={cat} onClick={() => setCategory(cat)}
+              style={{ position: 'relative', padding: '16px 22px', border: 'none', background: 'none', cursor: 'pointer', fontWeight: category === cat ? 700 : 400, fontSize: 13.5, fontFamily: "'Poppins', sans-serif", whiteSpace: 'nowrap', color: category === cat ? '#f5c842' : 'rgba(240,237,232,0.35)', transition: 'color 0.2s', display: 'flex', alignItems: 'center', gap: 6 }}>
+              {cat === 'Drinks' && <Droplets size={12} color={category === cat ? '#f5c842' : 'rgba(240,237,232,0.28)'} />}
               {cat}
               {category === cat && (
-                <motion.div
-                  layoutId="tabIndicator"
-                  style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 2, background: 'linear-gradient(90deg,#f97316,#ea580c)', borderRadius: '2px 2px 0 0' }}
-                />
+                <motion.div layoutId="tabIndicator" style={{ position: 'absolute', bottom: 0, left: 12, right: 12, height: 2, background: '#f5c842', borderRadius: '2px 2px 0 0' }} />
               )}
             </button>
           ))}
         </div>
       </div>
 
-      {/* ══════════════════ MAIN CONTENT ══════════════════ */}
-      <div style={{ maxWidth: 1280, margin: '0 auto', padding: '60px 40px 100px', position: 'relative', zIndex: 1 }}>
-
-        {/* TOP PICK banner */}
-        {!search && topPick && (
+      {/* ════════════ DRINKS NOTICE BANNER ════════════ */}
+      <AnimatePresence>
+        {category === 'Drinks' && (
           <motion.div
-            initial={{ opacity: 0, y: 28 }} animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.7, ease: [0.22,1,0.36,1] }}
-            style={{ marginBottom: 72, borderRadius: 32, overflow: 'hidden', position: 'relative', height: 440, cursor: 'pointer' }}
-            whileHover="hovered"
+            initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            style={{ overflow: 'hidden', background: 'rgba(245,200,66,0.06)', borderBottom: '1px solid rgba(245,200,66,0.12)' }}
           >
-            <motion.img
-              src={topPick.img} alt={topPick.name}
-              variants={{ hovered: { scale: 1.05 } }} transition={{ duration: 0.7 }}
-              style={{ width: '100%', height: '100%', objectFit: 'cover', filter: 'brightness(1.1) saturate(1.25) contrast(1.05)' }}
-            />
-            <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(105deg,rgba(0,0,0,0.9) 0%,rgba(0,0,0,0.5) 45%,rgba(0,0,0,0.05) 100%)' }} />
-            <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top,rgba(249,115,22,0.15) 0%,transparent 50%)' }} />
-
-            <div style={{ position: 'absolute', top: 40, left: 48 }}>
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'rgba(249,115,22,0.18)', border: '1px solid rgba(249,115,22,0.35)', borderRadius: 30, padding: '6px 16px' }}>
-                <Crown size={12} color="#f97316" />
-                <span style={{ fontSize: 10, fontWeight: 800, color: '#f97316', letterSpacing: '0.12em', textTransform: 'uppercase' as const }}>Top Pick</span>
-              </div>
-            </div>
-
-            <div style={{ position: 'absolute', bottom: 52, left: 52, right: 52 }}>
-              <motion.h2
-                variants={{ hovered: { x: 6 } }} transition={{ duration: 0.3 }}
-                style={{ fontFamily: "'Playfair Display',serif", margin: '0 0 10px', fontSize: 'clamp(30px,4vw,56px)', fontWeight: 900, color: '#fff', lineHeight: 1.05, letterSpacing: '-0.025em' }}
-              >
-                {topPick.name}
-              </motion.h2>
-              <p style={{ margin: '0 0 22px', fontSize: 15, color: 'rgba(255,255,255,0.6)', maxWidth: 500, lineHeight: 1.7 }}>
-                {topPick.description}
-              </p>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-                <RatingStars rating={topPick.rating} />
-                <span style={{ color: 'rgba(255,255,255,0.2)' }}>·</span>
-                <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>{topPick.category}</span>
-                <motion.button
-                  whileHover={{ scale: 1.04, boxShadow: '0 12px 36px rgba(249,115,22,0.55)' }}
-                  whileTap={{ scale: 0.96 }}
-                  style={{ ...orderBtn, marginLeft: 'auto', padding: '12px 28px', fontSize: 14 }}
-                >
-                  Order Now
-                </motion.button>
-              </div>
+            <div style={{ maxWidth: 1280, margin: '0 auto', padding: '12px 40px', display: 'flex', alignItems: 'center', gap: 12 }}>
+              <Droplets size={14} color="#f5c842" />
+              <span style={{ fontSize: 12.5, color: 'rgba(240,237,232,0.55)', fontWeight: 400 }}>
+                Fruit Soda is available in <strong style={{ color: '#f5c842' }}>16oz (₱50)</strong> and <strong style={{ color: '#f5c842' }}>22oz (₱60)</strong>. Click <strong style={{ color: '#f0ede8' }}>Order</strong> to add to your order on the menu page.
+              </span>
             </div>
           </motion.div>
         )}
+      </AnimatePresence>
 
-        {/* Item count row */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 40 }}>
-          <span style={{ fontSize: 12, fontWeight: 700, color: 'rgba(255,255,255,0.2)', letterSpacing: '0.1em', textTransform: 'uppercase' as const }}>
+      {/* ════════════ MAIN CONTENT ════════════ */}
+      <div style={{ maxWidth: 1280, margin: '0 auto', padding: '64px 40px 100px', position: 'relative', zIndex: 1 }}>
+
+        {/* TOP PICK BANNER */}
+        {!search && topPick && (
+          <Reveal style={{ marginBottom: 80 }}>
+            <motion.div whileHover="hovered"
+              style={{ borderRadius: 32, overflow: 'hidden', position: 'relative', height: 460, cursor: 'pointer', background: '#0a0806' }}>
+              <motion.img src={topPick.img} alt={topPick.name}
+                variants={{ hovered: { scale: 1.05 } }} transition={{ duration: 0.75 }}
+                style={{ width: '100%', height: '100%', objectFit: 'cover', filter: 'brightness(0.82) saturate(1.1)', display: 'block' }}
+              />
+              <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(100deg,rgba(8,6,4,0.93) 0%,rgba(8,6,4,0.52) 46%,rgba(8,6,4,0.08) 100%)' }} />
+              <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top,rgba(245,200,66,0.09) 0%,transparent 52%)' }} />
+              <div style={{ position: 'absolute', top: 36, left: 44 }}>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'rgba(245,200,66,0.12)', border: '1px solid rgba(245,200,66,0.28)', borderRadius: 30, padding: '6px 16px' }}>
+                  <Crown size={11} color="#f5c842" />
+                  <span style={{ fontSize: 10, fontWeight: 700, color: '#f5c842', letterSpacing: '0.12em', textTransform: 'uppercase' as const }}>Top Pick</span>
+                </div>
+              </div>
+              <div style={{ position: 'absolute', bottom: 48, left: 48, right: 48 }}>
+                <motion.h2 variants={{ hovered: { x: 6 } }} transition={{ duration: 0.3 }}
+                  style={{ fontFamily: "'Poppins', sans-serif", margin: '0 0 10px', fontSize: 'clamp(28px,4vw,52px)', fontWeight: 800, color: '#f0ede8', lineHeight: 1.08, letterSpacing: '-0.02em' }}>
+                  {topPick.name}
+                </motion.h2>
+                <p style={{ margin: '0 0 20px', fontSize: 14.5, color: 'rgba(240,237,232,0.52)', maxWidth: 500, lineHeight: 1.75, fontWeight: 300 }}>{topPick.description}</p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' as const }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                    <Star size={12} fill="#f5c842" color="#f5c842" />
+                    <span style={{ fontSize: 13, fontWeight: 700, color: '#f5c842' }}>{topPick.rating}</span>
+                  </div>
+                  <span style={{ color: 'rgba(240,237,232,0.2)' }}>·</span>
+                  <span style={{ color: 'rgba(240,237,232,0.38)', fontSize: 13 }}>{topPick.category}</span>
+                  <span style={{ fontSize: 22, fontWeight: 800, color: '#f5c842', marginLeft: 8 }}>₱{topPick.price}</span>
+                  <motion.button whileHover={{ scale: 1.04, backgroundColor: '#e6b800' }} whileTap={{ scale: 0.96 }}
+                    onClick={() => orderItem(topPick.name, topPick.menuName)}
+                    style={{ ...btnGold, marginLeft: 'auto', padding: '12px 32px', fontSize: 14, borderRadius: 14 }}>
+                    Order Now
+                  </motion.button>
+                </div>
+              </div>
+            </motion.div>
+          </Reveal>
+        )}
+
+        {/* Item count */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 44 }}>
+          <div style={{ width: 24, height: 1, background: '#f5c842', flexShrink: 0 }} />
+          <span style={{ fontSize: 11, fontWeight: 600, color: 'rgba(240,237,232,0.22)', letterSpacing: '0.2em', textTransform: 'uppercase' as const, whiteSpace: 'nowrap' }}>
             {filtered.length} item{filtered.length !== 1 ? 's' : ''}
           </span>
-          <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.05)' }} />
+          <div style={{ flex: 1, height: 1, background: 'rgba(240,237,232,0.06)' }} />
         </div>
 
-        {/* ── PRODUCT GRID ── */}
+        {/* PRODUCT GRID */}
         <AnimatePresence mode="wait">
-          <motion.div
-            key={category + search}
+          <motion.div key={category + search}
             style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(310px,1fr))', gap: 22 }}
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}
-          >
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
             {filtered.map((p, i) => {
-              const badgeBg = BADGE_CONFIG[p.badge] ?? null
-              const isHov   = hoveredId === p.id
+              const badge  = BADGE_CONFIG[p.badge] ?? null
+              const isHov  = hoveredId === p.id
+              const isDrink = !!p.isDrink
               return (
-                <motion.div
-                  key={p.id}
-                  initial={{ opacity: 0, y: 32 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.055, duration: 0.5, ease: [0.22,1,0.36,1] }}
-                  onHoverStart={() => setHoveredId(p.id)}
-                  onHoverEnd={()   => setHoveredId(null)}
+                <motion.div key={p.id}
+                  initial={{ opacity: 0, y: 36 }} animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.055, duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+                  onHoverStart={() => setHoveredId(p.id)} onHoverEnd={() => setHoveredId(null)}
                   whileHover={{ y: -10 }}
                   style={{
-                    background:   'rgba(255,255,255,0.04)',
-                    borderRadius: 24,
-                    overflow:     'hidden',
-                    border:       `1.5px solid ${isHov ? 'rgba(249,115,22,0.3)' : 'rgba(255,255,255,0.07)'}`,
-                    boxShadow:    isHov ? '0 24px 60px rgba(0,0,0,0.6),0 0 0 1px rgba(249,115,22,0.1)' : 'none',
-                    cursor:       'pointer',
-                    transition:   'border-color 0.3s,box-shadow 0.3s',
-                  }}
-                >
-                  {/* Image */}
-                  <div style={{ position: 'relative', height: 240, overflow: 'hidden', background: '#1a1008' }}>
-                    <motion.img
-                      src={p.img} alt={p.name}
-                      animate={{ scale: isHov ? 1.08 : 1 }}
-                      transition={{ duration: 0.55, ease: [0.22,1,0.36,1] }}
-                      style={{
-                        width: '100%', height: '100%', objectFit: 'cover',
-                        filter: isHov
-                          ? 'brightness(1.15) saturate(1.4) contrast(1.08)'
-                          : 'brightness(1.05) saturate(1.2) contrast(1.04)',
-                        transition: 'filter 0.4s ease',
-                      }}
-                    />
-                    <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to bottom,transparent 45%,rgba(0,0,0,0.72))' }} />
-                    {isHov && (
-                      <motion.div
-                        initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-                        style={{ position: 'absolute', inset: 0, background: 'linear-gradient(135deg,rgba(249,115,22,0.08),transparent)' }}
-                      />
-                    )}
+                    background: '#151210', borderRadius: 24, overflow: 'hidden',
+                    border: `1px solid ${isHov ? (isDrink ? 'rgba(99,179,237,0.35)' : 'rgba(245,200,66,0.28)') : 'rgba(240,237,232,0.07)'}`,
+                    boxShadow: isHov ? `0 24px 64px rgba(0,0,0,0.55), 0 0 0 1px ${isDrink ? 'rgba(99,179,237,0.08)' : 'rgba(245,200,66,0.07)'}` : '0 2px 16px rgba(0,0,0,0.3)',
+                    cursor: 'pointer', transition: 'border-color 0.3s, box-shadow 0.3s', position: 'relative' as const,
+                  }}>
 
-                    {/* Badge */}
-                    {badgeBg && (
-                      <span style={{ position: 'absolute', top: 14, left: 14, background: badgeBg, color: '#fff', fontSize: 10, fontWeight: 800, padding: '5px 12px', borderRadius: 20, letterSpacing: '0.06em', textTransform: 'uppercase' as const, boxShadow: '0 4px 14px rgba(0,0,0,0.35)' }}>
-                        {p.badge}
+                  {/* Top accent line */}
+                  <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: isHov ? (isDrink ? 'linear-gradient(90deg,transparent,rgba(99,179,237,0.5),transparent)' : 'linear-gradient(90deg,transparent,rgba(245,200,66,0.4),transparent)') : 'transparent', transition: 'background 0.35s', zIndex: 2 }} />
+
+                  {/* Drink category ribbon */}
+                  {isDrink && (
+                    <div style={{ position: 'absolute', top: 0, right: 0, background: 'rgba(99,179,237,0.12)', border: '0 0 0 1px solid rgba(99,179,237,0.2)', borderRadius: '0 24px 0 12px', padding: '5px 12px', display: 'flex', alignItems: 'center', gap: 4, zIndex: 3 }}>
+                      <Droplets size={10} color="rgba(147,210,255,0.8)" />
+                      <span style={{ fontSize: 9, fontWeight: 700, color: 'rgba(147,210,255,0.8)', letterSpacing: '0.08em', textTransform: 'uppercase' as const }}>Fruit Soda</span>
+                    </div>
+                  )}
+
+                  <div style={{ position: 'relative', height: 220, overflow: 'hidden', background: '#1a1208' }}>
+                    <motion.img src={p.img} alt={p.name}
+                      animate={{ scale: isHov ? 1.08 : 1 }} transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover', filter: isHov ? 'brightness(1.1) saturate(1.25)' : 'brightness(0.9) saturate(1.05)', transition: 'filter 0.4s' }}
+                    />
+                    <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to bottom,transparent 38%,rgba(8,6,4,0.78))' }} />
+                    {isHov && <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ position: 'absolute', inset: 0, background: isDrink ? 'linear-gradient(135deg,rgba(99,179,237,0.06),transparent)' : 'linear-gradient(135deg,rgba(245,200,66,0.07),transparent)' }} />}
+                    {badge && (
+                      <span style={{ position: 'absolute', top: 14, left: 14, background: badge.bg, color: badge.textDark ? '#111' : '#fff', fontSize: 10, fontWeight: 700, padding: '4px 11px', borderRadius: 20, letterSpacing: '0.05em', textTransform: 'uppercase' as const }}>
+                        {badge.label}
                       </span>
                     )}
-
-                    {/* Spicy indicator */}
                     {p.spicy && (
-                      <motion.div
-                        animate={{ rotate: isHov ? [0,-12,12,0] : 0 }} transition={{ duration: 0.45 }}
-                        style={{ position: 'absolute', top: 14, right: 14, background: 'rgba(239,68,68,0.18)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: '50%', width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(6px)' }}
-                      >
-                        <Flame size={15} color="#ef4444" />
+                      <motion.div animate={{ rotate: isHov ? [0, -12, 12, 0] : 0 }} transition={{ duration: 0.45 }}
+                        style={{ position: 'absolute', top: 14, right: 14, background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.28)', borderRadius: '50%', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(6px)' }}>
+                        <Flame size={14} color="#ef4444" />
                       </motion.div>
                     )}
-
-                    {/* Rating pill */}
-                    <div style={{ position: 'absolute', bottom: 12, right: 12, background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(10px)', borderRadius: 30, padding: '5px 11px', display: 'flex', alignItems: 'center', gap: 5, border: '1px solid rgba(255,255,255,0.07)' }}>
-                      <Star size={11} fill="#f97316" color="#f97316" />
-                      <span style={{ color: '#fff', fontSize: 12, fontWeight: 700 }}>{p.rating}</span>
+                    <div style={{ position: 'absolute', bottom: 12, right: 12, background: 'rgba(8,6,4,0.72)', backdropFilter: 'blur(8px)', borderRadius: 20, padding: '4px 10px', display: 'flex', alignItems: 'center', gap: 4, border: '1px solid rgba(240,237,232,0.07)' }}>
+                      <Star size={10} fill="#f5c842" color="#f5c842" />
+                      <span style={{ color: '#f0ede8', fontSize: 12, fontWeight: 700 }}>{p.rating}</span>
                     </div>
                   </div>
 
-                  {/* Info */}
-                  <div style={{ padding: '20px 22px 22px' }}>
-                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
-                      <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#fff', lineHeight: 1.35, letterSpacing: '-0.01em' }}>{p.name}</h3>
-                      <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 600, padding: '4px 10px', borderRadius: 20, background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.35)', border: '1px solid rgba(255,255,255,0.07)', marginTop: 2 }}>
+                  <div style={{ padding: '18px 22px 22px' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 6 }}>
+                      <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#f0ede8', lineHeight: 1.3, letterSpacing: '-0.01em' }}>{p.name}</h3>
+                      <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 500, padding: '3px 9px', borderRadius: 20, background: 'rgba(240,237,232,0.05)', color: 'rgba(240,237,232,0.28)', border: '1px solid rgba(240,237,232,0.08)', marginTop: 2 }}>
                         {p.category}
                       </span>
                     </div>
-                    <p style={{ margin: '0 0 18px', fontSize: 13, color: 'rgba(255,255,255,0.38)', lineHeight: 1.65 }}>{p.description}</p>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <RatingStars rating={p.rating} />
+                    <p style={{ margin: '0 0 4px', fontSize: 12.5, color: 'rgba(240,237,232,0.36)', lineHeight: 1.65, fontWeight: 300 }}>{p.description}</p>
+
+                    {/* Drink size info */}
+                    {isDrink && (
+                      <div style={{ display: 'flex', gap: 6, margin: '10px 0 14px' }}>
+                        {[{ s: '16oz', price: 50 }, { s: '22oz', price: 60 }].map(sz => (
+                          <span key={sz.s} style={{ fontSize: 10.5, fontWeight: 600, padding: '3px 10px', borderRadius: 20, background: 'rgba(245,200,66,0.08)', color: '#f5c842', border: '1px solid rgba(245,200,66,0.18)' }}>
+                            {sz.s} — ₱{sz.price}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: isDrink ? 0 : 14 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <Star size={11} fill="#f5c842" color="#f5c842" />
+                        <span style={{ fontSize: 12, fontWeight: 600, color: '#f5c842' }}>{p.rating}</span>
+                        {!isDrink && (
+                          <span style={{ fontSize: 14, fontWeight: 800, color: '#f5c842', marginLeft: 4 }}>₱{p.price}</span>
+                        )}
+                      </div>
                       <motion.button
-                        whileHover={{ scale: 1.05, boxShadow: '0 6px 24px rgba(249,115,22,0.5)' }}
+                        whileHover={{ scale: 1.05, backgroundColor: isDrink ? '#93c5fd' : '#e6b800' }}
                         whileTap={{ scale: 0.95 }}
-                        style={orderBtn}
+                        onClick={() => orderItem(p.name, p.menuName)}
+                        style={{
+                          ...btnGold,
+                          background: isDrink ? 'rgba(99,179,237,0.18)' : '#f5c842',
+                          color: isDrink ? '#93c5fd' : '#111',
+                          border: isDrink ? '1px solid rgba(99,179,237,0.3)' : 'none',
+                        }}
                       >
-                        Order
+                        {isDrink ? 'Order' : 'Order'}
                       </motion.button>
                     </div>
                   </div>
@@ -645,123 +771,55 @@ export default function Products() {
           </motion.div>
         </AnimatePresence>
 
-        {/* Empty state */}
         {filtered.length === 0 && (
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} style={{ textAlign: 'center', padding: '120px 0' }}>
-            <div style={{ fontSize: 56, marginBottom: 16 }}>🍗</div>
-            <p style={{ fontSize: 20, fontWeight: 700, color: 'rgba(255,255,255,0.5)', margin: '0 0 8px' }}>Nothing found</p>
-            <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.25)' }}>Try a different search or category</p>
+            <div style={{ fontSize: 52, marginBottom: 16 }}>🍗</div>
+            <p style={{ fontSize: 20, fontWeight: 700, color: 'rgba(240,237,232,0.38)', margin: '0 0 8px' }}>Nothing found</p>
+            <p style={{ fontSize: 14, color: 'rgba(240,237,232,0.2)', fontWeight: 300 }}>Try a different search or category</p>
           </motion.div>
         )}
 
-        {/* ══════════════════ SIGNATURE FLAVORS ══════════════════ */}
-        <motion.div
-          initial={{ opacity: 0, y: 40 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: '-80px' }}
-          transition={{ duration: 0.7, ease: [0.22,1,0.36,1] }}
-          style={{ marginTop: 96 }}
-        >
-          <div style={{ textAlign: 'center', marginBottom: 48 }}>
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'rgba(249,115,22,0.1)', border: '1px solid rgba(249,115,22,0.2)', borderRadius: 30, padding: '6px 16px', marginBottom: 20 }}>
-              <Sparkles size={13} color="#f97316" />
-              <span style={{ fontSize: 11, fontWeight: 700, color: '#f97316', letterSpacing: '0.1em', textTransform: 'uppercase' as const }}>Available in every chicken</span>
-            </div>
-            <h2 style={{ fontFamily: "'Playfair Display',serif", fontSize: 'clamp(32px,4vw,52px)', fontWeight: 900, color: '#fff', margin: '0 0 12px', letterSpacing: '-0.02em' }}>
-              Signature <span style={{ WebkitTextStroke: '1.5px #f97316', color: 'transparent' }}>Flavors</span>
-            </h2>
-            <p style={{ fontSize: 15, color: 'rgba(255,255,255,0.35)', maxWidth: 420, margin: '0 auto' }}>
-              Click any flavor to see what it looks like. Pick your favorite.
-            </p>
-          </div>
-
+        {/* ════════════ SIGNATURE FLAVORS ════════════ */}
+        <Reveal style={{ marginTop: 104 }}>
+          <EyebrowLabel>Available in every chicken</EyebrowLabel>
+          <h2 style={{ fontFamily: "'Poppins', sans-serif", fontSize: 'clamp(28px,4vw,48px)', fontWeight: 800, color: '#f0ede8', margin: '0 0 10px', letterSpacing: '-0.02em' }}>
+            Signature <em style={{ color: '#f5c842', fontStyle: 'italic' }}>Flavors</em>
+          </h2>
+          <p style={{ fontSize: 14.5, color: 'rgba(240,237,232,0.36)', maxWidth: 420, margin: '0 0 40px', fontWeight: 300, lineHeight: 1.7 }}>
+            Click any flavor to see what it looks like. Pick your favorite.
+          </p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(175px,1fr))', gap: 12 }}>
             {SIGNATURE_FLAVORS.map((f, i) => {
               const isExpanded = expandedFlavor === f.name
               return (
-                <motion.div
-                  key={f.name}
-                  initial={{ opacity: 0, y: 24 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true }}
-                  transition={{ delay: i * 0.06, duration: 0.45 }}
-                  style={{ gridColumn: isExpanded ? 'span 2' : 'span 1' }}
-                >
-                  {/* Card button */}
-                  <motion.button
-                    onClick={() => setExpandedFlavor(isExpanded ? null : f.name)}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    style={{
-                      width: '100%',
-                      background: isExpanded
-                        ? `linear-gradient(135deg, ${f.color}, rgba(0,0,0,0.3))`
-                        : f.color,
-                      border: `1px solid ${isExpanded ? f.accent : f.border}`,
-                      borderRadius: isExpanded ? '20px 20px 0 0' : 20,
-                      padding: '18px 20px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      cursor: 'pointer',
-                      fontFamily: 'inherit',
-                      transition: 'all 0.25s',
-                      boxShadow: isExpanded ? `0 0 24px ${f.accent}22` : 'none',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <span style={{ fontSize: 26, lineHeight: 1 }}>{f.emoji}</span>
-                      <span style={{ fontSize: 14, fontWeight: 700, color: '#fff', letterSpacing: '-0.01em' }}>{f.name}</span>
-                    </div>
-                    <motion.div
-                      animate={{ rotate: isExpanded ? 180 : 0 }}
-                      transition={{ duration: 0.25 }}
-                    >
-                      <ChevronDown size={16} color={isExpanded ? f.accent : 'rgba(255,255,255,0.35)'} />
+                <motion.div key={f.name}
+                  initial={{ opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true }} transition={{ delay: i * 0.06, duration: 0.5 }}
+                  style={{ gridColumn: isExpanded ? 'span 2' : 'span 1' }}>
+                  <motion.button onClick={() => setExpandedFlavor(isExpanded ? null : f.name)}
+                    whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+                    style={{ width: '100%', background: isExpanded ? `${f.accent}18` : `${f.accent}10`, border: `1.5px solid ${isExpanded ? f.accent : `${f.accent}35`}`, borderRadius: isExpanded ? '18px 18px 0 0' : 18, padding: '17px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', fontFamily: "'Poppins', sans-serif", transition: 'all 0.25s', boxShadow: isExpanded ? `0 0 28px ${f.accent}20` : 'none' }}>
+                    <span style={{ fontSize: 13.5, fontWeight: 700, color: '#f0ede8', letterSpacing: '-0.01em' }}>{f.name}</span>
+                    <motion.div animate={{ rotate: isExpanded ? 180 : 0 }} transition={{ duration: 0.25 }}>
+                      <ChevronDown size={15} color={isExpanded ? f.accent : 'rgba(240,237,232,0.28)'} />
                     </motion.div>
                   </motion.button>
-
-                  {/* Dropdown preview */}
                   <AnimatePresence>
                     {isExpanded && (
-                      <motion.div
-                        key="preview"
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        exit={{ opacity: 0, height: 0 }}
-                        transition={{ duration: 0.35, ease: [0.22,1,0.36,1] }}
-                        style={{
-                          overflow: 'hidden',
-                          border: `1px solid ${f.accent}`,
-                          borderTop: 'none',
-                          borderRadius: '0 0 20px 20px',
-                          background: 'rgba(10,8,5,0.97)',
-                        }}
-                      >
+                      <motion.div key="preview"
+                        initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+                        style={{ overflow: 'hidden', border: `1.5px solid ${f.accent}`, borderTop: 'none', borderRadius: '0 0 18px 18px', background: '#0a0806' }}>
                         <div style={{ position: 'relative', height: 200, overflow: 'hidden' }}>
-                          <img
-                            src={f.img}
-                            alt={f.name}
-                            style={{
-                              width: '100%', height: '100%', objectFit: 'cover',
-                              filter: 'brightness(0.9) saturate(1.3) contrast(1.05)',
-                            }}
-                          />
-                          {/* gradient scrim */}
-                          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(10,8,5,0.95) 0%, rgba(0,0,0,0.2) 60%, transparent 100%)' }} />
-                          {/* accent color tint */}
-                          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(135deg, ${f.accent}18, transparent 60%)` }} />
-
-                          {/* Flavor name overlay */}
-                          <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '16px 20px' }}>
+                          <img src={f.img} alt={f.name} style={{ width: '100%', height: '100%', objectFit: 'cover', filter: 'brightness(0.88) saturate(1.2)' }} />
+                          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(8,6,4,0.95) 0%, rgba(0,0,0,0.12) 55%, transparent 100%)' }} />
+                          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(135deg, ${f.accent}14, transparent 60%)` }} />
+                          <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '16px 18px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                              <span style={{ fontSize: 22 }}>{f.emoji}</span>
-                              <span style={{ fontFamily: "'Playfair Display',serif", fontSize: 20, fontWeight: 800, color: '#fff', letterSpacing: '-0.02em' }}>{f.name}</span>
-                              <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, padding: '4px 10px', borderRadius: 20, background: f.accent, color: '#fff', letterSpacing: '0.05em', textTransform: 'uppercase' as const }}>
-                                Flavor
-                              </span>
+                              <span style={{ fontFamily: "'Poppins', sans-serif", fontSize: 17, fontWeight: 800, color: '#f0ede8' }}>{f.name}</span>
+                              <span style={{ marginLeft: 'auto', fontSize: 9, fontWeight: 700, padding: '3px 9px', borderRadius: 20, background: f.accent, color: ['#fbbf24','#f59e0b','#f5c842'].includes(f.accent) ? '#111' : '#fff', letterSpacing: '0.06em', textTransform: 'uppercase' as const }}>Flavor</span>
                             </div>
-                            <p style={{ margin: 0, fontSize: 12, color: 'rgba(255,255,255,0.6)', lineHeight: 1.55 }}>{f.desc}</p>
+                            <p style={{ margin: 0, fontSize: 12, color: 'rgba(240,237,232,0.55)', lineHeight: 1.6, fontWeight: 300 }}>{f.desc}</p>
                           </div>
                         </div>
                       </motion.div>
@@ -771,70 +829,99 @@ export default function Products() {
               )
             })}
           </div>
-        </motion.div>
+        </Reveal>
 
-        {/* ══════════════════ FULL MENU ══════════════════ */}
-        <motion.div
-          initial={{ opacity: 0, y: 40 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: '-80px' }}
-          transition={{ duration: 0.7, ease: [0.22,1,0.36,1] }}
-          style={{ marginTop: 96 }}
-        >
-          <div style={{ textAlign: 'center', marginBottom: 56 }}>
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'rgba(249,115,22,0.1)', border: '1px solid rgba(249,115,22,0.2)', borderRadius: 30, padding: '6px 16px', marginBottom: 20 }}>
-              <ChevronRight size={13} color="#f97316" />
-              <span style={{ fontSize: 11, fontWeight: 700, color: '#f97316', letterSpacing: '0.1em', textTransform: 'uppercase' as const }}>Full Menu</span>
-            </div>
-            <h2 style={{ fontFamily: "'Playfair Display',serif", fontSize: 'clamp(32px,4vw,52px)', fontWeight: 900, color: '#fff', margin: 0, letterSpacing: '-0.02em' }}>
-              Everything <span style={{ WebkitTextStroke: '1.5px #f97316', color: 'transparent' }}>We Offer</span>
-            </h2>
-          </div>
+        {/* ════════════ FULL MENU ════════════ */}
+        <Reveal style={{ marginTop: 104 }}>
+          <EyebrowLabel>Full Menu</EyebrowLabel>
+          <h2 style={{ fontFamily: "'Poppins', sans-serif", fontSize: 'clamp(28px,4vw,48px)', fontWeight: 800, color: '#f0ede8', margin: '0 0 48px', letterSpacing: '-0.02em' }}>
+            Everything <em style={{ color: '#f5c842', fontStyle: 'italic' }}>We Offer</em>
+          </h2>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: 22 }}>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: 28 }}>
+            {/* Whole & Half */}
+            <motion.div initial={{ opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.6 }}
+              style={{ background: '#151210', border: '1px solid rgba(240,237,232,0.07)', borderRadius: 24, padding: '32px 28px', position: 'relative', overflow: 'hidden' }}>
+              <div style={{ position: 'absolute', top: 0, left: 28, right: 28, height: 2, background: 'linear-gradient(90deg,transparent,rgba(245,200,66,0.22),transparent)', borderRadius: 2 }} />
+              <SectionLabel>Whole & Half Chicken</SectionLabel>
+              <p style={{ fontSize: 11, color: 'rgba(240,237,232,0.26)', margin: '4px 0 16px', fontStyle: 'italic' as const }}>Add ₱40 for Kimchi · Make it Spicy +₱5/pc</p>
+              {WHOLE_HALF.map((item, idx) => <MenuRow key={item.name} item={item} index={idx} />)}
+            </motion.div>
+
             {/* Rice Meals */}
-            <motion.div
-              initial={{ opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }} transition={{ duration: 0.5 }}
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1.5px solid rgba(255,255,255,0.07)', borderRadius: 24, padding: '32px 28px' }}
-            >
+            <motion.div initial={{ opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.6, delay: 0.08 }}
+              style={{ background: '#151210', border: '1px solid rgba(240,237,232,0.07)', borderRadius: 24, padding: '32px 28px', position: 'relative', overflow: 'hidden' }}>
+              <div style={{ position: 'absolute', top: 0, left: 28, right: 28, height: 2, background: 'linear-gradient(90deg,transparent,rgba(245,200,66,0.22),transparent)', borderRadius: 2 }} />
               <SectionLabel>Rice Meals</SectionLabel>
-              <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', margin: '0 0 16px', fontStyle: 'italic' as const, letterSpacing: '0.04em' }}>Choice of Original or Spicy</p>
-              <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-                {['Original','Spicy 🔥'].map((opt) => (
-                  <span key={opt} style={{ fontSize: 11, fontWeight: 700, padding: '5px 14px', borderRadius: 20, background: opt === 'Spicy 🔥' ? 'rgba(239,68,68,0.15)' : 'rgba(255,255,255,0.07)', border: `1px solid ${opt === 'Spicy 🔥' ? 'rgba(239,68,68,0.3)' : 'rgba(255,255,255,0.1)'}`, color: opt === 'Spicy 🔥' ? '#ef4444' : 'rgba(255,255,255,0.6)' }}>
-                    {opt}
-                  </span>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+                {['Original', 'Spicy +₱5/pc 🔥'].map(opt => (
+                  <span key={opt} style={{ fontSize: 10.5, fontWeight: 600, padding: '4px 11px', borderRadius: 20, background: opt.includes('Spicy') ? 'rgba(239,68,68,0.12)' : 'rgba(240,237,232,0.06)', border: `1px solid ${opt.includes('Spicy') ? 'rgba(239,68,68,0.25)' : 'rgba(240,237,232,0.1)'}`, color: opt.includes('Spicy') ? '#ef4444' : 'rgba(240,237,232,0.45)' }}>{opt}</span>
                 ))}
               </div>
-              {RICE_MEALS.map((item, i) => <MenuRow key={item.name} item={item} index={i} />)}
+              {RICE_MEALS.map((item, idx) => <MenuRow key={item.name} item={item} index={idx} />)}
             </motion.div>
 
             {/* Sides */}
-            <motion.div
-              initial={{ opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }} transition={{ duration: 0.5, delay: 0.1 }}
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1.5px solid rgba(255,255,255,0.07)', borderRadius: 24, padding: '32px 28px' }}
-            >
+            <motion.div initial={{ opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.6, delay: 0.16 }}
+              style={{ background: '#151210', border: '1px solid rgba(240,237,232,0.07)', borderRadius: 24, padding: '32px 28px', position: 'relative', overflow: 'hidden' }}>
+              <div style={{ position: 'absolute', top: 0, left: 28, right: 28, height: 2, background: 'linear-gradient(90deg,transparent,rgba(245,200,66,0.22),transparent)', borderRadius: 2 }} />
               <SectionLabel>Sides</SectionLabel>
-              <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', margin: '0 0 20px', fontStyle: 'italic' as const, letterSpacing: '0.04em' }}>Perfect add-ons to any meal</p>
-              {SIDES.map((item, i) => <MenuRow key={item.name} item={item} index={i} />)}
+              <p style={{ fontSize: 11, color: 'rgba(240,237,232,0.26)', margin: '4px 0 16px', fontStyle: 'italic' as const }}>Perfect add-ons to any meal</p>
+              {SIDES_LIST.map((item, idx) => <MenuRow key={item.name} item={item} index={idx} />)}
             </motion.div>
 
             {/* Fruit Soda */}
-            <motion.div
-              initial={{ opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }} transition={{ duration: 0.5, delay: 0.2 }}
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1.5px solid rgba(255,255,255,0.07)', borderRadius: 24, padding: '32px 28px' }}
-            >
+            <motion.div initial={{ opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.6, delay: 0.24 }}
+              style={{ background: '#151210', border: '1px solid rgba(240,237,232,0.07)', borderRadius: 24, padding: '32px 28px', position: 'relative', overflow: 'hidden' }}>
+              <div style={{ position: 'absolute', top: 0, left: 28, right: 28, height: 2, background: 'linear-gradient(90deg,transparent,rgba(99,179,237,0.22),transparent)', borderRadius: 2 }} />
               <SectionLabel>Fruit Soda</SectionLabel>
-              <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', margin: '0 0 20px', fontStyle: 'italic' as const, letterSpacing: '0.04em' }}>All flavors — ₱70 each</p>
-              {FRUIT_SODA.map((item, i) => <MenuRow key={item.name} item={item} index={i} />)}
+              <DrinkSizeBadge />
+              {FRUIT_SODA.map((item, idx) => <MenuRow key={item.name} item={item} index={idx} />)}
+              <p style={{ fontSize: 10.5, color: 'rgba(240,237,232,0.2)', marginTop: 12, fontStyle: 'italic' as const }}>* Prices shown are for 16oz. 22oz is ₱60.</p>
             </motion.div>
-          </div>
-        </motion.div>
 
-      </div>{/* end main content */}
+          </div>
+        </Reveal>
+
+      </div>
+
+      {/* ════════════ FOOTER ════════════ */}
+      <footer style={{ borderTop: '1px solid rgba(240,237,232,0.06)', padding: '52px 40px 40px', position: 'relative', zIndex: 1 }}>
+        <div style={{ maxWidth: 1280, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 32, marginBottom: 40 }}>
+          <div>
+            <button onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', marginBottom: 12 }}>
+              <span style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 800, fontSize: 17, color: '#f0ede8', letterSpacing: '-0.02em' }}>
+                The <span style={{ color: '#f5c842' }}>Crunch</span>
+              </span>
+            </button>
+            <p style={{ fontSize: 13, color: 'rgba(240,237,232,0.26)', margin: 0, lineHeight: 1.65, maxWidth: 220, fontWeight: 300 }}>
+              Crispy, saucy, and always fresh.<br />Fairview, Quezon City.
+            </p>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 12 }}>
+            <span style={{ fontSize: 10, fontWeight: 700, color: 'rgba(240,237,232,0.18)', letterSpacing: '0.12em', textTransform: 'uppercase' as const }}>Follow Us</span>
+            <div style={{ display: 'flex', gap: 24 }}>
+              {[
+                { label: 'Instagram', href: 'https://www.instagram.com/thecrunchfairview' },
+                { label: 'Facebook',  href: 'https://www.facebook.com/thecrunchfairview' },
+              ].map(s => (
+                <a key={s.label} href={s.href} target="_blank" rel="noopener noreferrer"
+                  style={{ fontSize: 14, fontWeight: 500, color: 'rgba(240,237,232,0.4)', textDecoration: 'none', transition: 'color 0.2s' }}
+                  onMouseEnter={e => { e.currentTarget.style.color = '#f5c842' }}
+                  onMouseLeave={e => { e.currentTarget.style.color = 'rgba(240,237,232,0.4)' }}
+                >{s.label}</a>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div style={{ maxWidth: 1280, margin: '0 auto', paddingTop: 24, borderTop: '1px solid rgba(240,237,232,0.05)', textAlign: 'center' as const }}>
+          <span style={{ fontSize: 12, color: 'rgba(240,237,232,0.14)', fontWeight: 300 }}>
+            © {new Date().getFullYear()} The Crunch Fairview. All rights reserved.
+          </span>
+        </div>
+      </footer>
+
     </div>
   )
-} 
+}
