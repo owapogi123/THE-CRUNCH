@@ -264,6 +264,16 @@ function isChicken(p: Product) {
   return isWholeChicken(p) || isChoppedChicken(p);
 }
 
+function isMenuFoodProduct(p: Pick<Product, "category" | "promo">) {
+  const promo = String(p.promo ?? "")
+    .toUpperCase()
+    .trim();
+  const category = String(p.category ?? "")
+    .toLowerCase()
+    .trim();
+  return promo === "MENU FOOD" || category.includes("menu food");
+}
+
 function getStockStatus(p: Product): StockStatus {
   if (p.mainStock <= p.criticalPoint) return "critical";
   if (p.mainStock <= p.reorderPoint) return "low";
@@ -1345,12 +1355,17 @@ export default function StockManager() {
   }, [products, wdProductId, adjProductId]);
 
   // ── Derived ───────────────────────────────────────────────────────────────
-  const lowStock = products.filter((p) => getStockStatus(p) === "low");
+  const lowStock = products.filter(
+    (p) => !isMenuFoodProduct(p) && getStockStatus(p) === "low",
+  );
   const criticalStock = products.filter(
-    (p) => getStockStatus(p) === "critical",
+    (p) => !isMenuFoodProduct(p) && getStockStatus(p) === "critical",
   );
   const attentionItems = useMemo(
-    () => products.filter((p) => getStockStatus(p) !== "normal"),
+    () =>
+      products.filter(
+        (p) => !isMenuFoodProduct(p) && getStockStatus(p) !== "normal",
+      ),
     [products],
   );
 
@@ -1367,7 +1382,7 @@ export default function StockManager() {
 
   const dashboardFilteredProducts = useMemo(() => {
     const q = dashboardSearch.trim().toLowerCase();
-    const stockManagerProducts = products;
+    const stockManagerProducts = products.filter((p) => !isMenuFoodProduct(p));
     const filtered = !q
       ? stockManagerProducts
       : stockManagerProducts.filter(

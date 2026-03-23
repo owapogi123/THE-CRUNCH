@@ -101,6 +101,7 @@ export function InventoryClient({
     unit: "piece",
     stock: "0",
   });
+  const addProductCategories = ["Supplies", "Menu Food"] as const;
 
   const filteredItems = useMemo(() => {
     const normalizedSearch = searchQuery.toLowerCase();
@@ -195,7 +196,7 @@ export function InventoryClient({
       return alert("Please enter product name and price");
     onAddProduct?.({
       name: newProductData.name,
-      category: "Supplies",
+      category: newProductData.category,
       price: newProductData.price,
       unit: newProductData.unit as UnitType,
       stock: parseInt(newProductData.stock) || 0,
@@ -596,12 +597,23 @@ export function InventoryClient({
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Category
                 </label>
-                <Input
-                  type="text"
-                  value="Supplies"
-                  readOnly
-                  className="w-full h-10 border-2 border-gray-300 rounded-lg bg-gray-50 text-gray-600"
-                />
+                <Select
+                  value={newProductData.category}
+                  onValueChange={(value) =>
+                    setNewProductData({ ...newProductData, category: value })
+                  }
+                >
+                  <SelectTrigger className="w-full h-10 bg-white border-2 border-gray-300 rounded-lg">
+                    <SelectValue placeholder="Select category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {addProductCategories.map((category) => (
+                      <SelectItem key={category} value={category}>
+                        {category}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
