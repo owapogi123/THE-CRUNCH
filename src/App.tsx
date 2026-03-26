@@ -45,7 +45,7 @@ export default function App() {
       <Route path="/aboutthecrunch" element={<AboutTheCrunch />} />
       <Route path="/usersmenu" element={<UsersMenu />} />
       <Route path="/stockmanager" element={isAuth ? <StockManager /> : <Navigate to="/login" />} />
-
+  
 
       {/* catch all */}
       <Route path="*" element={<Navigate to="/" />} />
