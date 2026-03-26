@@ -2326,8 +2326,7 @@ export default function StockManager() {
                   </motion.div>
                 </motion.div>
               )}
-
-              {/* ── SUPPLIERS ────────────────────────────────────────────────── */}
+              
               {tab === "suppliers" && (
                 <motion.div key="suppliers" variants={pageVariants} initial="hidden" animate="show" exit="exit">
                   <motion.div variants={staggerVariants} initial="hidden" animate="show" className="space-y-5">
@@ -2430,7 +2429,6 @@ export default function StockManager() {
                 </motion.div>
               )}
 
-              {/* ── PURCHASE ORDERS ──────────────────────────────────────────── */}
               {tab === "purchases" && (
                 <motion.div key="purchases" variants={pageVariants} initial="hidden" animate="show" exit="exit">
                   <motion.div variants={staggerVariants} initial="hidden" animate="show" className="space-y-5">
@@ -2532,8 +2530,6 @@ export default function StockManager() {
             </AnimatePresence>
           )}
         </main>
-
-        {/* ── MODALS & OVERLAYS ─────────────────────────────────────────────── */}
 
         <AnimatePresence>
           {selectedOrder && (
