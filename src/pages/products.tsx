@@ -335,9 +335,6 @@ function PageTransitionOverlay({ visible, itemName }: { visible: boolean; itemNa
   )
 }
 
-/* ─────────────────────────────────────────────
-   SUB-COMPONENTS
-───────────────────────────────────────────── */
 function Reveal({ children, variants = fadeUp, custom = 0, style = {} }: {
   children: React.ReactNode; variants?: Variants; custom?: number; style?: React.CSSProperties
 }) {
@@ -393,9 +390,6 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   )
 }
 
-/* ─────────────────────────────────────────────
-   DRINK SIZE BADGE — shows 16oz / 22oz pills
-───────────────────────────────────────────── */
 function DrinkSizeBadge() {
   return (
     <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
@@ -409,10 +403,6 @@ function DrinkSizeBadge() {
     </div>
   )
 }
-
-/* ─────────────────────────────────────────────
-   MAIN PAGE
-───────────────────────────────────────────── */
 export default function Products() {
   const navigate = useNavigate()
   const [products, setProducts]               = useState<Product[]>(STATIC_PRODUCTS)
@@ -478,7 +468,7 @@ export default function Products() {
         rel="stylesheet"
       />
 
-      {/* Page transition overlay */}
+   
       <PageTransitionOverlay visible={transitioning} itemName={transitionLabel} />
 
       {/* Ambient gold glows */}
@@ -593,7 +583,6 @@ export default function Products() {
         </div>
       </div>
 
-      {/* ════════════ DRINKS NOTICE BANNER ════════════ */}
       <AnimatePresence>
         {category === 'Drinks' && (
           <motion.div
