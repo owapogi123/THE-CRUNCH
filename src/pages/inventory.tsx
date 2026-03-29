@@ -641,14 +641,29 @@ export default function Inventory() {
           })
         })
 
-        setInventoryItems(normalizedRows.map((item) => ({
-          id: Number(item.id ?? item.product_id ?? item.inventory_id ?? 0),
-          name: item.name || item.product_name || "Unnamed Product", category: item.category || "Uncategorized",
-          image: item.image || "/img/placeholder.jpg", incoming: 0, stock: (item as any).dailyWithdrawn ?? 0,
-          price: item.price?.toString() || "0", unit: (item.unit as UnitType) || "piece",
-          batches: (item.batches || []).map((b: Batch) => ({ ...b, receivedAt: new Date(b.receivedAt), expiresAt: b.expiresAt ? new Date(b.expiresAt) : undefined })),
-          totalUsedToday: 0,
-        })))
+        setInventoryItems(
+          normalizedRows.map((item) => ({
+            id: Number(item.id ?? item.product_id ?? item.inventory_id ?? 0),
+            name: item.name || item.product_name || "Unnamed Product",
+            category: item.category || "Uncategorized",
+            image: item.image || "/img/placeholder.jpg",
+            incoming: 0,
+            stock: Number(
+              (item as any).quantity ??
+                (item as any).stock ??
+                (item as any).dailyWithdrawn ??
+                0,
+            ),
+            price: item.price?.toString() || "0",
+            unit: (item.unit as UnitType) || "piece",
+            batches: (item.batches || []).map((b: Batch) => ({
+              ...b,
+              receivedAt: new Date(b.receivedAt),
+              expiresAt: b.expiresAt ? new Date(b.expiresAt) : undefined,
+            })),
+            totalUsedToday: 0,
+          })),
+        );
       }
     } catch (error) { console.error("Failed to load inventory:", error) }
     finally { if (showLoader) setLoading(false) }

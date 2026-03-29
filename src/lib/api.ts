@@ -1,5 +1,33 @@
 // API configuration and utility functions
-const API_BASE_URL = '/api';
+const RAW_API_URL = (import.meta as { env?: { VITE_API_URL?: string } }).env
+  ?.VITE_API_URL;
+
+function isLocalHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+function resolveApiBaseUrl(): string {
+  if (!RAW_API_URL) return "/api";
+
+  const trimmed = RAW_API_URL.replace(/\/+$/, "");
+  if (typeof window !== "undefined" && isLocalHostname(window.location.hostname)) {
+    // In local dev, prefer the Vite proxy over any stale tunnel override.
+    return "/api";
+  }
+
+  if (
+    typeof window !== "undefined" &&
+    window.location.protocol === "https:" &&
+    /^http:\/\//i.test(trimmed)
+  ) {
+    // Avoid browser permission/mixed-content failures on secure pages.
+    return "/api";
+  }
+
+  return `${trimmed}/api`;
+}
+
+const API_BASE_URL = resolveApiBaseUrl();
 
 interface FetchOptions extends RequestInit {
   skipAuth?: boolean;
@@ -18,7 +46,7 @@ interface ApiError extends Error {
 }
 
 // Body types accepted by apiCall
-type ApiBody = object | FormData | URLSearchParams | string
+type ApiBody = object | FormData | URLSearchParams | string;
 
 // Return type for authApi.login
 interface LoginResponse {
@@ -36,14 +64,19 @@ interface LoginResponse {
  */
 export const apiCall = async <T = unknown>(
   endpoint: string,
-  options: FetchOptions = {}
+  options: FetchOptions = {},
 ): Promise<T> => {
   const { skipAuth = false, ...fetchOptions } = options;
 
-  const url = `${API_BASE_URL}${endpoint}`;
+  const isAbsoluteUrl = /^https?:\/\//i.test(endpoint);
+  const endpointWithoutApiPrefix = endpoint.replace(/^\/?api(?=\/)/i, "");
+  const normalizedEndpoint = endpointWithoutApiPrefix.startsWith("/")
+    ? endpointWithoutApiPrefix
+    : `/${endpointWithoutApiPrefix}`;
+  const url = isAbsoluteUrl ? endpoint : `${API_BASE_URL}${normalizedEndpoint}`;
 
   const headers: Record<string, string> = {
-    ...(fetchOptions.headers as Record<string, string> || {}),
+    ...((fetchOptions.headers as Record<string, string>) || {}),
   };
 
   // Auth token injected server-side via httpOnly cookie — no localStorage needed
@@ -55,11 +88,15 @@ export const apiCall = async <T = unknown>(
   let bodyToSend: BodyInit | undefined = undefined;
   if (fetchOptions.body !== undefined && fetchOptions.body !== null) {
     const b = fetchOptions.body as ApiBody;
-    if (typeof b === 'string' || b instanceof FormData || b instanceof URLSearchParams) {
+    if (
+      typeof b === "string" ||
+      b instanceof FormData ||
+      b instanceof URLSearchParams
+    ) {
       bodyToSend = b;
     } else {
       bodyToSend = JSON.stringify(b);
-      headers['Content-Type'] = 'application/json';
+      headers["Content-Type"] = "application/json";
     }
   }
 
@@ -81,8 +118,8 @@ export const apiCall = async <T = unknown>(
         errData = text;
       }
       const message =
-        typeof errData === 'object' && errData !== null
-          ? errData.message ?? `HTTP ${response.status}`
+        typeof errData === "object" && errData !== null
+          ? (errData.message ?? `HTTP ${response.status}`)
           : `HTTP ${response.status}`;
       const err = new Error(message) as ApiError;
       err.status = response.status;
@@ -106,25 +143,29 @@ export const apiCall = async <T = unknown>(
 // Common API methods (pass raw bodies; apiCall handles serialization)
 export const api = {
   get: <T = unknown>(endpoint: string) =>
-    apiCall<T>(endpoint, { method: 'GET' }),
+    apiCall<T>(endpoint, { method: "GET" }),
 
   post: <T = unknown>(endpoint: string, body?: ApiBody) =>
-    apiCall<T>(endpoint, { method: 'POST', body: body as BodyInit }),
+    apiCall<T>(endpoint, { method: "POST", body: body as BodyInit }),
 
   put: <T = unknown>(endpoint: string, body?: ApiBody) =>
-    apiCall<T>(endpoint, { method: 'PUT', body: body as BodyInit }),
+    apiCall<T>(endpoint, { method: "PUT", body: body as BodyInit }),
 
   delete: <T = unknown>(endpoint: string) =>
-    apiCall<T>(endpoint, { method: 'DELETE' }),
+    apiCall<T>(endpoint, { method: "DELETE" }),
 
   patch: <T = unknown>(endpoint: string, body?: ApiBody) =>
-    apiCall<T>(endpoint, { method: 'PATCH', body: body as BodyInit }),
+    apiCall<T>(endpoint, { method: "PATCH", body: body as BodyInit }),
 };
 
 // Auth-specific API calls
 export const authApi = {
-  login: (username: string, password: string) =>
-    api.post<LoginResponse>('/auth/login', { username, password }),
+  login: (usernameOrEmail: string, password: string) =>
+    api.post<LoginResponse>("/auth/login", {
+      username: usernameOrEmail,
+      email: usernameOrEmail,
+      password,
+    }),
 
   /**
    * Register a new admin
@@ -133,7 +174,7 @@ export const authApi = {
    * @param password plain text password
    */
   register: (name: string, email: string, password: string) =>
-    api.post<void>('/auth/register', { name, email, password }),
+    api.post<void>("/auth/register", { name, email, password }),
 
-  logout: () => api.post<void>('/auth/logout'),
+  logout: () => api.post<void>("/auth/logout"),
 };
