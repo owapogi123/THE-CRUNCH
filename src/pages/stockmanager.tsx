@@ -39,6 +39,7 @@ export interface POItem {
   unit: string;
   quantity: number;
   unitCost: number;
+  expiryDate?: string;
 }
 
 export interface PurchaseOrder {
@@ -124,9 +125,7 @@ interface ReconcileRow {
 interface RawMaterialForm {
   name: string;
   category: string;
-  unit: string;
   initialStock: string;
-  expiryDate: string;
   price: string;
   description: string;
 }
@@ -360,9 +359,7 @@ const BLANK_SUPPLIER: Omit<Supplier, "supplier_id"> = {
 const BLANK_RAW_MATERIAL: RawMaterialForm = {
   name: "",
   category: "Sauce",
-  unit: "liter",
   initialStock: "",
-  expiryDate: "",
   price: "",
   description: "",
 };
@@ -400,16 +397,6 @@ const WITHDRAWAL_TYPES: WithdrawalType[] = [
   "supplementary",
   "return",
 ];
-
-const RAW_MATERIAL_UNITS = [
-  "kg",
-  "g",
-  "liter",
-  "ml",
-  "piece",
-  "pack",
-  "bottle",
-] as const;
 
 const STATUS_BADGE: Record<StockStatus, string> = {
   critical: "bg-red-100 text-red-600",
@@ -870,7 +857,7 @@ function PODetailDrawer({
 }: {
   order: PurchaseOrder;
   onClose: () => void;
-  onStatusChange: (id: string, status: POStatus) => void;
+  onStatusChange: (order: PurchaseOrder, status: POStatus) => void;
 }) {
   const total = calcPOTotal(order.items);
   const tax = total * 0.12;
@@ -936,6 +923,11 @@ function PODetailDrawer({
                   <p className="text-xs text-gray-400">
                     {item.category} · {item.quantity} {item.unit}
                   </p>
+                  {item.expiryDate ? (
+                    <p className="text-xs text-amber-600 mt-1">
+                      Expiry: {formatExpiryDate(item.expiryDate)}
+                    </p>
+                  ) : null}
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-semibold text-gray-800">
@@ -997,13 +989,126 @@ function PODetailDrawer({
       {next && (
         <div className="px-6 py-4 border-t border-gray-100">
           <button
-            onClick={() => onStatusChange(order.id, next)}
+            onClick={() => onStatusChange(order, next)}
             className="w-full py-3 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-700 transition-colors"
           >
             {next === "Ordered" ? "Send to Supplier" : "Mark as Received"}
           </button>
         </div>
       )}
+    </motion.div>
+  );
+}
+
+function ReceivePOModal({
+  order,
+  loading,
+  onClose,
+  onConfirm,
+}: {
+  order: PurchaseOrder;
+  loading: boolean;
+  onClose: () => void;
+  onConfirm: (expiryDates: Record<number, string>) => Promise<void>;
+}) {
+  const [expiryDates, setExpiryDates] = useState<Record<number, string>>(() =>
+    Object.fromEntries(order.items.map((item) => [item.id, item.expiryDate || ""])),
+  );
+
+  const handleConfirm = async () => {
+    const missingItems = order.items.filter((item) => !expiryDates[item.id]?.trim());
+    if (missingItems.length > 0) {
+      alert("Please set an expiry date for each item before marking the order as received.");
+      return;
+    }
+    await onConfirm(expiryDates);
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+    >
+      <motion.div
+        initial={{ scale: 0.96, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.96, opacity: 0 }}
+        transition={{ type: "spring", stiffness: 300, damping: 28 }}
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col"
+      >
+        <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-800">Receive Purchase Order</h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Set expiry dates now, before stock is added to inventory.
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            <CloseIcon />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+          <div className="rounded-xl bg-slate-50 border border-slate-100 px-4 py-3">
+            <p className="text-sm font-semibold text-slate-800">{order.id}</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {order.supplier} · Expected delivery {order.deliveryDate}
+            </p>
+          </div>
+
+          {order.items.map((item) => (
+            <div
+              key={item.id}
+              className="grid grid-cols-[minmax(0,1fr)_180px] gap-4 items-end rounded-xl border border-slate-100 px-4 py-4"
+            >
+              <div>
+                <p className="text-sm font-semibold text-slate-800">{item.name}</p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {item.category} · {item.quantity} {item.unit}
+                </p>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5">
+                  Expiry Date
+                </label>
+                <input
+                  type="date"
+                  value={expiryDates[item.id] || ""}
+                  onChange={(e) =>
+                    setExpiryDates((prev) => ({
+                      ...prev,
+                      [item.id]: e.target.value,
+                    }))
+                  }
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200"
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="px-6 py-4 border-t border-gray-100 flex gap-3">
+          <button
+            onClick={onClose}
+            disabled={loading}
+            className="flex-1 py-3 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-60"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={loading}
+            className="flex-1 py-3 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-700 transition-colors disabled:opacity-60"
+          >
+            {loading ? "Receiving..." : "Confirm Receive"}
+          </button>
+        </div>
+      </motion.div>
     </motion.div>
   );
 }
@@ -1971,6 +2076,9 @@ export default function StockManager() {
   const [selectedOrder, setSelectedOrder] = useState<PurchaseOrder | null>(
     null,
   );
+  const [receivingOrder, setReceivingOrder] = useState<PurchaseOrder | null>(
+    null,
+  );
   const [showCreatePO, setShowCreatePO] = useState(false);
   const [poFilterStatus, setPoFilterStatus] = useState<POStatus | "All">("All");
   const [poLoading, setPoLoading] = useState(false);
@@ -2018,6 +2126,15 @@ export default function StockManager() {
 
   const handleClosePOModal = useCallback(() => {
     setPrefillPOProduct(undefined);
+  }, []);
+
+  const handleOpenReceivePO = useCallback((order: PurchaseOrder) => {
+    setReceivingOrder(order);
+    setSelectedOrder(null);
+  }, []);
+
+  const handleCloseReceivePO = useCallback(() => {
+    setReceivingOrder(null);
   }, []);
 
   const openThresholdEditor = useCallback((product: Product) => {
@@ -2313,56 +2430,92 @@ export default function StockManager() {
 
   // ── PO actions ────────────────────────────────────────────────────────────
   const handlePOStatusChange = useCallback(
-    async (id: string, status: POStatus) => {
+    async (order: PurchaseOrder, status: POStatus) => {
+      if (status === "Received") {
+        handleOpenReceivePO(order);
+        return;
+      }
+
       setPoLoading(true);
       try {
-        const updated =
-          status === "Received"
-            ? await api.po.markReceived(id, "Staff on Duty")
-            : await api.po.updateStatus(id, status);
+        const updated = await api.po.updateStatus(order.id, status);
 
-        setPoOrders((prev) => prev.map((o) => (o.id === id ? updated : o)));
-        setSelectedOrder((prev) => (prev?.id === id ? updated : prev));
+        setPoOrders((prev) =>
+          prev.map((existingOrder) =>
+            existingOrder.id === order.id ? updated : existingOrder,
+          ),
+        );
+        setSelectedOrder((prev) => (prev?.id === order.id ? updated : prev));
+      } catch (err) {
+        showToast(
+          err instanceof Error
+            ? err.message
+            : "Failed to update purchase order status.",
+          "error",
+        );
+      } finally {
+        setPoLoading(false);
+      }
+    },
+    [handleOpenReceivePO],
+  );
 
-        // ── When a PO is received, add each item's quantity to main stock ──
-        if (status === "Received") {
-          const order = poOrders.find((o) => o.id === id);
-          if (order) {
-            const unmatchedItems: string[] = [];
+  const handleConfirmReceivePO = useCallback(
+    async (expiryDates: Record<number, string>) => {
+      if (!receivingOrder) return;
 
-            const stockUpdates = order.items.map(async (poItem) => {
-              // Match PO item name to a product (case-insensitive)
-              const match = products.find(
-                (p) =>
-                  p.product_name.trim().toLowerCase() ===
-                  poItem.name.trim().toLowerCase(),
-              );
-              if (!match) {
-                unmatchedItems.push(poItem.name);
-                return;
-              }
+      setPoLoading(true);
+      try {
+        const updated = await api.po.markReceived(receivingOrder.id, "Staff on Duty");
+        const mergedOrder: PurchaseOrder = {
+          ...updated,
+          items: updated.items.map((item) => ({
+            ...item,
+            expiryDate: expiryDates[item.id] || "",
+          })),
+        };
 
-              const newStock = +(
-                match.mainStock + Number(poItem.quantity)
-              ).toFixed(2);
-              await api.updateStock(match.inventory_id, { stock: newStock });
-            });
-
-            await Promise.allSettled(stockUpdates);
-            await fetchAll(); // refresh all stock levels from server
-
-            if (unmatchedItems.length > 0) {
-              showToast(
-                `Stock updated, but ${unmatchedItems.length} item(s) not found in inventory: ${unmatchedItems.join(", ")}`,
-                "error",
-              );
-            } else {
-              showToast(
-                "PO received — all items added to main stock.",
-                "success",
-              );
-            }
+        const unmatchedItems: string[] = [];
+        const batchCreations = mergedOrder.items.map(async (poItem) => {
+          const match = products.find(
+            (p) =>
+              p.product_name.trim().toLowerCase() ===
+              poItem.name.trim().toLowerCase(),
+          );
+          if (!match) {
+            unmatchedItems.push(poItem.name);
+            return;
           }
+
+          await api.postBatch({
+            productId: match.product_id,
+            productName: match.product_name,
+            quantity: Number(poItem.quantity),
+            unit: poItem.unit || match.unit,
+            expiresAt: poItem.expiryDate || undefined,
+          });
+
+          const newStock = +(match.mainStock + Number(poItem.quantity)).toFixed(2);
+          await api.updateStock(match.inventory_id, { stock: newStock });
+        });
+
+        await Promise.allSettled(batchCreations);
+        await fetchAll();
+        setPoOrders((prev) =>
+          prev.map((order) =>
+            order.id === mergedOrder.id ? { ...mergedOrder } : order,
+          ),
+        );
+        setSelectedOrder(mergedOrder);
+        setReceivingOrder(null);
+
+        if (unmatchedItems.length > 0) {
+          showToast(
+            `Batches created, but ${unmatchedItems.length} item(s) not found in inventory: ${unmatchedItems.join(", ")}`,
+            "error",
+          );
+        } else {
+          showToast("PO received — new batches added to FIFO queue.", "success");
         }
       } catch (err) {
         showToast(
@@ -2375,7 +2528,7 @@ export default function StockManager() {
         setPoLoading(false);
       }
     },
-    [poOrders, products, fetchAll],
+    [fetchAll, products, receivingOrder],
   );
 
   const handlePOCreate = useCallback(async (po: Omit<PurchaseOrder, "id">) => {
@@ -2651,23 +2804,19 @@ export default function StockManager() {
       showToast("Initial stock must be greater than 0.", "error");
       return;
     }
-    if (!rawMaterialForm.expiryDate) {
-      showToast("Please select an expiry date.", "error");
-      return;
-    }
     setSubmitting(true);
     try {
       const normalizedName = name.toLowerCase();
       const existing = products.find(
         (p) => p.product_name.trim().toLowerCase() === normalizedName,
       );
+      const batchUnit = existing?.unit || "piece";
       if (existing) {
         await api.postBatch({
           productId: existing.product_id,
           productName: existing.product_name,
           quantity: qty,
-          unit: rawMaterialForm.unit,
-          expiresAt: rawMaterialForm.expiryDate,
+          unit: batchUnit,
         });
       } else {
         const created = await api.createProduct({
@@ -2682,8 +2831,7 @@ export default function StockManager() {
           productId: created.id,
           productName: name,
           quantity: qty,
-          unit: rawMaterialForm.unit,
-          expiresAt: rawMaterialForm.expiryDate,
+          unit: batchUnit,
         });
       }
       await fetchAll();
@@ -4230,6 +4378,17 @@ export default function StockManager() {
           )}
         </AnimatePresence>
 
+        <AnimatePresence>
+          {receivingOrder && (
+            <ReceivePOModal
+              order={receivingOrder}
+              loading={poLoading}
+              onClose={handleCloseReceivePO}
+              onConfirm={handleConfirmReceivePO}
+            />
+          )}
+        </AnimatePresence>
+
         {/* ── CREATE PO MODAL — supports both blank and prefilled ── */}
         <AnimatePresence>
           {(showCreatePO || prefillPOProduct !== undefined) && (
@@ -4299,20 +4458,6 @@ export default function StockManager() {
                       placeholder="e.g. Sauce, Chopped Chicken"
                     />
                   </FormField>
-                  <FormField label="Unit">
-                    <StyledSelect
-                      value={rawMaterialForm.unit}
-                      onChange={(v) =>
-                        setRawMaterialForm((p) => ({ ...p, unit: v }))
-                      }
-                    >
-                      {RAW_MATERIAL_UNITS.map((u) => (
-                        <option key={u} value={u}>
-                          {u}
-                        </option>
-                      ))}
-                    </StyledSelect>
-                  </FormField>
                   <FormField label="Initial Stock">
                     <StyledInput
                       type="number"
@@ -4321,16 +4466,6 @@ export default function StockManager() {
                         setRawMaterialForm((p) => ({ ...p, initialStock: v }))
                       }
                       placeholder="e.g. 20"
-                    />
-                  </FormField>
-                  <FormField label="Expiry Date">
-                    <StyledInput
-                      type="date"
-                      value={rawMaterialForm.expiryDate}
-                      onChange={(v) =>
-                        setRawMaterialForm((p) => ({ ...p, expiryDate: v }))
-                      }
-                      placeholder=""
                     />
                   </FormField>
                   <FormField label="Price (optional)">

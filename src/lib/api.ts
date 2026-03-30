@@ -3,14 +3,19 @@ const RAW_API_URL = (import.meta as { env?: { VITE_API_URL?: string } }).env
   ?.VITE_API_URL;
 
 function isLocalHostname(hostname: string): boolean {
-  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  return (
+    hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1"
+  );
 }
 
 function resolveApiBaseUrl(): string {
   if (!RAW_API_URL) return "/api";
 
   const trimmed = RAW_API_URL.replace(/\/+$/, "");
-  if (typeof window !== "undefined" && isLocalHostname(window.location.hostname)) {
+  if (
+    typeof window !== "undefined" &&
+    isLocalHostname(window.location.hostname)
+  ) {
     // In local dev, prefer the Vite proxy over any stale tunnel override.
     return "/api";
   }
@@ -51,8 +56,10 @@ type ApiBody = object | FormData | URLSearchParams | string;
 // Return type for authApi.login
 interface LoginResponse {
   token: string;
-  username?: string;
-  name?: string;
+  userId: number;
+  username: string;
+  email: string;
+  role: "administrator" | "cashier" | "cook" | "inventory_manager" | "customer";
 }
 
 /**
@@ -79,11 +86,10 @@ export const apiCall = async <T = unknown>(
     ...((fetchOptions.headers as Record<string, string>) || {}),
   };
 
-  // Auth token injected server-side via httpOnly cookie — no localStorage needed
-  // If your backend still requires a Bearer token header, handle it here:
-  // if (!skipAuth) { headers['Authorization'] = `Bearer ${cookieToken}` }
-  void skipAuth; // explicitly unused until backend auth strategy is finalized
-
+  if (!skipAuth) {
+    const token = localStorage.getItem("authToken");
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  }
   // Prepare body: if body present and not FormData/string, stringify and set JSON header
   let bodyToSend: BodyInit | undefined = undefined;
   if (fetchOptions.body !== undefined && fetchOptions.body !== null) {
@@ -178,3 +184,30 @@ export const authApi = {
 
   logout: () => api.post<void>("/auth/logout"),
 };
+
+export const staffApi = {
+  getAll: () => apiCall<StaffMember[]>("/users/staff", { method: "GET" }),
+
+  create: (data: {
+    username: string;
+    email: string;
+    password: string;
+    role: string;
+  }) =>
+    apiCall<{ message: string; userId: number; role: string }>(
+      "/users/staff/create",
+      { method: "POST", body: JSON.stringify(data) },
+    ),
+
+  delete: (id: number) =>
+    apiCall<{ message: string }>(`/users/staff/${id}`, { method: "DELETE" }),
+};
+
+// ─── Add StaffMember type ──────────────────────────────────────
+export interface StaffMember {
+  id: number;
+  username: string;
+  email: string;
+  role: string;
+  created_at: string;
+}
