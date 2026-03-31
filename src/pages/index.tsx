@@ -11,9 +11,6 @@ import {
   Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend
 } from "recharts"
 import { api } from "@/lib/api"
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 interface OrderItem {
   name: string
   price: number
@@ -81,25 +78,19 @@ interface WeeklySalesPoint {
   lastWeek: number
 }
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-
 const DAYS_OF_WEEK = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 const WEEKDAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri"]
 const WEEKEND_NAMES = ["Sat", "Sun"]
 
-// Weekdays: 10:00am – 10:00pm  (2-hour slots)
 const WEEKDAY_SLOTS = ["10am", "12pm", "2pm", "4pm", "6pm", "8pm", "10pm"]
 const WEEKDAY_SLOT_RANGES: [number, number][] = [
   [10, 12], [12, 14], [14, 16], [16, 18], [18, 20], [20, 22], [22, 24],
 ]
-
-// Weekends: 11:30am – 8:30pm  (approx 2-hour slots, capped at 20:30)
 const WEEKEND_SLOTS = ["11:30am", "1:30pm", "3:30pm", "5:30pm", "7:30pm"]
 const WEEKEND_SLOT_RANGES: [number, number][] = [
   [11.5, 13.5], [13.5, 15.5], [15.5, 17.5], [17.5, 19.5], [19.5, 20.5],
 ]
 
-// Union of all unique slot labels for heatmap rows
 const ALL_HOUR_SLOTS = ["10am", "11:30am", "12pm", "1:30pm", "2pm", "3:30pm", "4pm", "5:30pm", "6pm", "7:30pm", "8pm", "10pm"]
 
 const PAYMENT_COLORS: Record<string, string> = {
@@ -111,8 +102,6 @@ const PAYMENT_COLORS: Record<string, string> = {
 }
 
 const ORDER_TYPE_COLORS = ["#7C2D2D", "#A84040", "#C46060", "#DDA0A0", "#EEC8C8"]
-
-// ─── Period helpers ───────────────────────────────────────────────────────────
 
 function generatePeriodOptions(): PeriodOption[] {
   const currentYear = new Date().getFullYear()
@@ -169,8 +158,6 @@ function shiftDateString(dateStr: string, days: number): string {
   d.setDate(d.getDate() + days)
   return d.toISOString()
 }
-
-// ─── Derived stat helpers ─────────────────────────────────────────────────────
 
 function computeTopItems(orders: Order[]): TopItem[] {
   const counts: Record<string, number> = {}
@@ -262,9 +249,6 @@ function computeWeeklySales(thisWeekOrders: Order[], lastWeekOrders: Order[]): W
     lastWeek: lastMap[day] ?? 0,
   }))
 }
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
 interface KpiCardProps {
   label: string
   value: string
@@ -381,9 +365,6 @@ function TopItemsChart({ items }: TopItemsProps) {
     </div>
   )
 }
-
-// ─── Main Dashboard ───────────────────────────────────────────────────────────
-
 export default function AdminDashboard() {
   const [orders, setOrders] = useState<Order[]>([])
   const [selectedPeriod, setSelectedPeriod] = useState<string>("month_current")
@@ -391,8 +372,6 @@ export default function AdminDashboard() {
 
   const periodOptions = useMemo(() => generatePeriodOptions(), [])
   const filteredOrders = useMemo(() => filterOrdersByPeriod(orders, selectedPeriod), [orders, selectedPeriod])
-
-  // ── KPI metrics ──
   const totalOrders  = filteredOrders.length
   const totalSales   = filteredOrders.reduce((sum, o) => sum + o.total, 0)
   const avgOrderValue = totalOrders > 0 ? totalSales / totalOrders : 0
@@ -402,7 +381,6 @@ export default function AdminDashboard() {
   const completionRate  = totalOrders > 0 ? ((completedOrders / totalOrders) * 100).toFixed(1) : "0.0"
   const cancellationRate = totalOrders > 0 ? ((cancelledOrders / totalOrders) * 100).toFixed(1) : "0.0"
 
-  // ── Derived stats ──
   const topItems        = useMemo(() => computeTopItems(filteredOrders), [filteredOrders])
   const orderTypes      = useMemo(() => computeOrderTypes(filteredOrders), [filteredOrders])
   const paymentBreakdown = useMemo(() => computePaymentBreakdown(filteredOrders), [filteredOrders])
@@ -421,7 +399,6 @@ export default function AdminDashboard() {
   const yAxisFormatter = (v: number) =>
     salesView === "sales" ? `₱${v >= 1000 ? Math.round(v / 1000) + "k" : v}` : String(v)
 
-  // ── Data fetch ──
   useEffect(() => {
     const fetchFromDB = async () => {
       try {
@@ -462,15 +439,11 @@ export default function AdminDashboard() {
     return () => clearInterval(interval)
   }, [])
 
-  // ─── Render ───────────────────────────────────────────────────────────────
-
   return (
     <div className="flex min-h-screen bg-gray-50 font-['Poppins',sans-serif]">
       <Sidebar />
       <main className="flex-1 p-8 pl-24">
         <div className="bg-[#FDFAF6] rounded-3xl p-8 min-h-[calc(100vh-5rem)]">
-
-          {/* ── Header ── */}
           <div className="flex items-center justify-between mb-8">
             <div className="flex items-center gap-3">
               <img src="src/assets/img/logo.jpg" alt="The Crunch Logo" className="w-12 h-12 rounded-full" />
@@ -505,7 +478,6 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* ── KPI Cards ── */}
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4 mb-8">
             <KpiCard label="Total Orders"     value={totalOrders.toLocaleString()}        trend="Live" up={null} />
             <KpiCard label="Total Sales"      value={`₱${totalSales.toLocaleString()}`}   trend="Live" up={null} />
@@ -514,8 +486,6 @@ export default function AdminDashboard() {
             <KpiCard label="Completion Rate"  value={`${completionRate}%`}                trend="Of all orders" up={parseFloat(completionRate) >= 90} />
             <KpiCard label="Cancellation Rate" value={`${cancellationRate}%`}             trend="Of all orders" up={parseFloat(cancellationRate) <= 5} />
           </div>
-
-          {/* ── Sales Chart + Payment Breakdown ── */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">
             <div className="lg:col-span-8">
               <Card className="bg-white rounded-2xl p-6 shadow-md border-0">
@@ -591,23 +561,19 @@ export default function AdminDashboard() {
               </Card>
             </div>
           </div>
-
-          {/* ── Heatmap + Top Items + Order Types ── */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
 
-            {/* Peak Hours Heatmap */}
             <Card className="bg-white rounded-2xl p-6 shadow-md border-0">
               <h3 className="text-lg font-semibold text-gray-800 mb-4">Peak Hours</h3>
               <PeakHoursHeatmap cells={heatmapCells} />
             </Card>
 
-            {/* Top Selling Items */}
+
             <Card className="bg-white rounded-2xl p-6 shadow-md border-0">
               <h3 className="text-lg font-semibold text-gray-800 mb-4">Top-Selling Items</h3>
               <TopItemsChart items={topItems} />
             </Card>
 
-            {/* Order Type Breakdown */}
             <Card className="bg-white rounded-2xl p-6 shadow-md border-0">
               <h3 className="text-lg font-semibold text-gray-800 mb-4">Order Types</h3>
               {orderTypes.length > 0 ? (
@@ -629,8 +595,6 @@ export default function AdminDashboard() {
               )}
             </Card>
           </div>
-
-          {/* ── Orders Table ── */}
           <OrdersTable orders={filteredOrders} />
 
         </div>

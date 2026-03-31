@@ -54,7 +54,6 @@ function getRevenueForPeriod(logs: SaleLog[], period: Period): number {
     .reduce((sum, l) => sum + l.total, 0);
 }
 
-// ── Revenue Dropdown ───────────────────────────────────────────────────────
 function RevenueDropdown({
   period, setPeriod, logs,
 }: {
@@ -174,7 +173,6 @@ function RevenueDropdown({
   );
 }
 
-// ── Log Row ────────────────────────────────────────────────────────────────
 const statusColor: Record<Status, string> = {
   Completed: "#16a34a", Pending: "#d97706", Cancelled: "#dc2626", Refunded: "#2563eb",
 };
@@ -322,9 +320,6 @@ export default function SalesReports() {
   const [logs,         setLogs]         = useState<SaleLog[]>([]);
 
   useEffect(() => {
-    // TODO: replace with actual API call when backend is ready
-    // const data = await apiCall('/orders')
-    // setLogs(ordersToLogs(data))
     setLogs([]);
   }, []);
 
@@ -363,12 +358,12 @@ export default function SalesReports() {
           <RevenueDropdown period={period} setPeriod={setPeriod} logs={logs} />
         </motion.div>
 
-        {/* Summary bar */}
+
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
           <SummaryBar logs={logs} />
         </motion.div>
 
-        {/* Search + Filter */}
+
         <motion.div
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.15, duration: 0.35 }}
           style={{ display: "flex", gap: 10, marginBottom: 20, alignItems: "center", flexWrap: "wrap" }}>
@@ -402,7 +397,7 @@ export default function SalesReports() {
           </div>
         </motion.div>
 
-        {/* Table */}
+
         <motion.div
           initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, duration: 0.35 }}
           style={{

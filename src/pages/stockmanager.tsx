@@ -2,9 +2,6 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import type { ReactNode } from "react";
 import { motion, AnimatePresence, type Variants, type Transition } from "framer-motion";
 import { Sidebar } from "@/components/Sidebar";
-
-// ── TYPES ────────────────────────────────────────────────────────────────────
-
 type WithdrawalType = "initial" | "supplementary" | "return";
 type StockStatus = "critical" | "low" | "normal";
 type Tab = "dashboard" | "withdrawal" | "alerts" | "suppliers" | "purchases";
@@ -20,8 +17,6 @@ interface Supplier { supplier_id: number; supplier_name: string; contact_number:
 interface Batch { batch_id: number; product_id: number; product_name: string; quantity: number; remaining_qty: number; unit: string; received_date: string; expiry_date: string | null; status: "active" | "withdrawn" | "returned" | "expired"; returned_qty: number; notes?: string; updated_at?: string; }
 interface ReconcileRow { product_id: number; inventory_id: number; product_name: string; category: string; unit: string; withdrawn: number; returnQty: string; returnDestination: "chopped" | "whole"; }
 interface RawMaterialForm { name: string; category: string; unit: string; initialStock: string; expiryDate: string; price: string; description: string; }
-
-// ── API ──────────────────────────────────────────────────────────────────────
 
 const RAW_API_URL = (import.meta as { env?: { VITE_API_URL?: string } }).env?.VITE_API_URL;
 
@@ -66,8 +61,6 @@ const api = {
   },
 };
 
-// ── CONSTANTS ────────────────────────────────────────────────────────────────
-
 const TABS: { id: Tab; label: string }[] = [
   { id: "dashboard", label: "Dashboard" }, { id: "withdrawal", label: "Withdrawal" },
   { id: "alerts", label: "Alerts" }, { id: "suppliers", label: "Suppliers" }, { id: "purchases", label: "Purchase Orders" },
@@ -103,14 +96,10 @@ const KPI_ACCENT: Record<string, { border: string; value: string }> = {
   rose: { border: "border-t-rose-400", value: "text-rose-500" }, emerald: { border: "border-t-emerald-400", value: "text-emerald-600" },
 };
 
-// ── MOTION ───────────────────────────────────────────────────────────────────
-
 const ease: Transition = { duration: 0.38, ease: [0.25, 0.46, 0.45, 0.94] };
 const pageVariants: Variants = { hidden: { opacity: 0, y: 18 }, show: { opacity: 1, y: 0, transition: ease }, exit: { opacity: 0, y: -10, transition: { duration: 0.2 } } };
 const staggerVariants: Variants = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.07, delayChildren: 0.04 } } };
 const itemVariants: Variants = { hidden: { opacity: 0, y: 14 }, show: { opacity: 1, y: 0, transition: { duration: 0.32, ease: [0.25, 0.46, 0.45, 0.94] } } };
-
-// ── HELPERS ──────────────────────────────────────────────────────────────────
 
 const calcPOTotal = (items: POItem[]) => items.reduce((s, i) => s + i.quantity * i.unitCost, 0);
 const isWholeChicken = (p: Product) => p.category.toLowerCase().includes("whole chicken");
@@ -130,8 +119,6 @@ const getCategoryStyle = (cat: string) => {
   if (c.includes("sauce")) return "bg-rose-50 text-rose-500 border-rose-100";
   return "bg-slate-50 text-slate-500 border-slate-100";
 };
-
-// ── SHARED UI ────────────────────────────────────────────────────────────────
 
 function LoadingSkeleton() {
   return (
@@ -225,8 +212,6 @@ function ThresholdEditor({ warningValue, criticalValue, onWarningChange, onCriti
   );
 }
 
-// ── PO COMPONENTS ────────────────────────────────────────────────────────────
-
 function POBadge({ status }: { status: POStatus }) {
   const s = PO_STATUS_STYLES[status];
   return <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium ${s.bg} ${s.text}`}><span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />{status}</span>;
@@ -294,8 +279,6 @@ function PODetailDrawer({ order, onClose, onStatusChange }: { order: PurchaseOrd
     </motion.div>
   );
 }
-
-// ── CREATE PO MODAL ──────────────────────────────────────────────────────────
 
 interface CreatePOModalProps { onClose: () => void; onCreate: (po: Omit<PurchaseOrder, "id">) => Promise<void>; quickOrderProducts: Product[]; allProducts: Product[]; prefillProduct?: { name: string; category: string; unit: string; supplier: string } | null; }
 
@@ -403,8 +386,6 @@ function CreatePOModal({ onClose, onCreate, quickOrderProducts, allProducts, pre
   );
 }
 
-// ── STOCK ALERT RESTOCK BANNER ───────────────────────────────────────────────
-
 function StockAlertRestockBanner({ criticalItems, lowItems, onOrderNow }: { criticalItems: Product[]; lowItems: Product[]; onOrderNow: (p: Product) => void }) {
   const [collapsed, setCollapsed] = useState(false);
   const total = criticalItems.length + lowItems.length;
@@ -469,8 +450,6 @@ function StockAlertRestockBanner({ criticalItems, lowItems, onOrderNow }: { crit
   );
 }
 
-// ── YESTERDAY RETURNS BANNER ─────────────────────────────────────────────────
-
 function YesterdayReturnsBanner({ batches }: { batches: Batch[] }) {
   const [collapsed, setCollapsed] = useState(false);
   if (batches.length === 0) return null;
@@ -505,8 +484,6 @@ function YesterdayReturnsBanner({ batches }: { batches: Batch[] }) {
     </motion.div>
   );
 }
-
-// ── FIFO BATCH PREVIEW ───────────────────────────────────────────────────────
 
 function FIFOBatchPreview({ batches, qtyNeeded, unit }: { batches: Batch[]; qtyNeeded: number; unit: string }) {
   const preview = useMemo(() => {
@@ -560,8 +537,6 @@ function FIFOBatchPreview({ batches, qtyNeeded, unit }: { batches: Batch[]; qtyN
     </div>
   );
 }
-
-// ── MAIN COMPONENT ───────────────────────────────────────────────────────────
 
 export default function StockManager() {
   const [tab, setTab] = useState<Tab>("dashboard");
@@ -816,8 +791,6 @@ export default function StockManager() {
     finally { setSubmitting(false); }
   }
 
-  // ── RENDER ───────────────────────────────────────────────────────────────
-
   const cartIcon = <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" /></svg>;
 
   return (
@@ -856,7 +829,6 @@ export default function StockManager() {
           {isLoading ? <LoadingSkeleton /> : (
             <AnimatePresence mode="wait">
 
-              {/* ── DASHBOARD ─────────────────────────────────────────────── */}
               {tab === "dashboard" && (
                 <motion.div key="dashboard" variants={pageVariants} initial="hidden" animate="show" exit="exit">
                   <motion.div variants={staggerVariants} initial="hidden" animate="show" className="space-y-6">
@@ -936,7 +908,6 @@ export default function StockManager() {
                 </motion.div>
               )}
 
-              {/* ── WITHDRAWAL ────────────────────────────────────────────── */}
               {tab === "withdrawal" && (
                 <motion.div key="withdrawal" variants={pageVariants} initial="hidden" animate="show" exit="exit">
                   <motion.div variants={staggerVariants} initial="hidden" animate="show" className="space-y-6">
@@ -1015,7 +986,6 @@ export default function StockManager() {
                 </motion.div>
               )}
 
-              {/* ── ALERTS ────────────────────────────────────────────────── */}
               {tab === "alerts" && (
                 <motion.div key="alerts" variants={pageVariants} initial="hidden" animate="show" exit="exit">
                   <motion.div variants={staggerVariants} initial="hidden" animate="show" className="space-y-4">
@@ -1061,7 +1031,6 @@ export default function StockManager() {
                 </motion.div>
               )}
 
-              {/* ── SUPPLIERS ─────────────────────────────────────────────── */}
               {tab === "suppliers" && (
                 <motion.div key="suppliers" variants={pageVariants} initial="hidden" animate="show" exit="exit">
                   <motion.div variants={staggerVariants} initial="hidden" animate="show" className="space-y-5">
@@ -1105,7 +1074,6 @@ export default function StockManager() {
                 </motion.div>
               )}
 
-              {/* ── PURCHASE ORDERS ───────────────────────────────────────── */}
               {tab === "purchases" && (
                 <motion.div key="purchases" variants={pageVariants} initial="hidden" animate="show" exit="exit">
                   <motion.div variants={staggerVariants} initial="hidden" animate="show" className="space-y-5">
@@ -1174,7 +1142,6 @@ export default function StockManager() {
           )}
         </main>
 
-        {/* ── OVERLAYS ──────────────────────────────────────────────────────── */}
         <AnimatePresence>
           {selectedOrder && (
             <><motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setSelectedOrder(null)} className="fixed inset-0 bg-black/10 z-40" /><PODetailDrawer order={selectedOrder} onClose={() => setSelectedOrder(null)} onStatusChange={handlePOStatusChange} /></>

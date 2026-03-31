@@ -76,7 +76,6 @@ const stats = [
   { value: '∞',    label: 'Happy Customers'      },
 ];
 
-/* Shared font shorthand */
 const PP = "'Poppins', sans-serif";
 
 export default function AboutTheCrunch() {
@@ -100,13 +99,11 @@ export default function AboutTheCrunch() {
   return (
     <div style={{ fontFamily: PP, background: '#0e0c0a', minHeight: '100vh', color: '#f0ede8' }}>
 
-      {/* ── Poppins only ── */}
       <link
         href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,700;1,800;1,900&display=swap"
         rel="stylesheet"
       />
 
-      {/* ════════════ NAV ════════════ */}
       <motion.nav
         initial={{ y: -80, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
@@ -163,7 +160,6 @@ export default function AboutTheCrunch() {
         </div>
       </motion.nav>
 
-      {/* ════════════ HERO ════════════ */}
       <section ref={heroRef} style={{ position: 'relative', height: '100vh', overflow: 'hidden', display: 'flex', alignItems: 'flex-end' }}>
 
         <motion.div
@@ -181,7 +177,7 @@ export default function AboutTheCrunch() {
           <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(75deg, rgba(8,6,4,0.65) 0%, transparent 55%)' }} />
         </motion.div>
 
-        {/* Noise texture */}
+
         <div style={{ position: 'absolute', inset: 0, backgroundImage: "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E\")", pointerEvents: 'none', zIndex: 2 }} />
 
         <motion.div style={{ position: 'relative', zIndex: 10, padding: '0 6vw 88px', maxWidth: 900, y: heroTextY, opacity: heroOpacity }}>
@@ -241,8 +237,6 @@ export default function AboutTheCrunch() {
             </motion.button>
           </motion.div>
         </motion.div>
-
-        {/* Scroll indicator */}
         <motion.div
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1.6 }}
           style={{ position: 'absolute', bottom: 40, right: '6vw', zIndex: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}
@@ -257,8 +251,6 @@ export default function AboutTheCrunch() {
           />
         </motion.div>
       </section>
-
-      {/* ════════════ STATS BAR ════════════ */}
       <div style={{ background: '#f5c842', padding: '32px 6vw', position: 'relative', zIndex: 2 }}>
         <div style={{ maxWidth: 1200, margin: '0 auto', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)' }}>
           {stats.map((s, i) => (
@@ -275,8 +267,6 @@ export default function AboutTheCrunch() {
           ))}
         </div>
       </div>
-
-      {/* ════════════ VISION ════════════ */}
       <section id="about-vision" style={{ padding: '128px 6vw', background: '#0e0c0a', position: 'relative', overflow: 'hidden' }}>
         <div style={{ position: 'absolute', top: '15%', left: '-8%', width: 640, height: 640, borderRadius: '50%', background: 'radial-gradient(circle, rgba(245,200,66,0.048) 0%, transparent 65%)', pointerEvents: 'none' }} />
 
@@ -294,8 +284,6 @@ export default function AboutTheCrunch() {
                 />
                 <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(8,6,4,0.42) 0%, transparent 55%)' }} />
               </div>
-
-              {/* Floating flavors badge */}
               <motion.div
                 animate={{ y: [-6, 6, -6] }}
                 transition={{ repeat: Infinity, duration: 4.0, ease: 'easeInOut' }}
@@ -304,8 +292,6 @@ export default function AboutTheCrunch() {
                 <div style={{ fontFamily: PP, fontSize: 44, fontWeight: 900, color: '#111', lineHeight: 1 }}>7</div>
                 <div style={{ fontFamily: PP, fontSize: 9, fontWeight: 700, color: 'rgba(17,17,17,0.55)', letterSpacing: '0.16em', textTransform: 'uppercase' as const, marginTop: 5 }}>Flavors</div>
               </motion.div>
-
-              {/* Floating top-rated badge */}
               <motion.div
                 animate={{ y: [4, -4, 4] }}
                 transition={{ repeat: Infinity, duration: 4.4, ease: 'easeInOut', delay: 0.6 }}
@@ -316,8 +302,6 @@ export default function AboutTheCrunch() {
               </motion.div>
             </div>
           </Reveal>
-
-          {/* Text col */}
           <Reveal variants={fadeRight}>
             <Label>What We Are</Label>
             <h2 style={{
@@ -345,8 +329,6 @@ export default function AboutTheCrunch() {
           </Reveal>
         </div>
       </section>
-
-      {/* ════════════ MISSION ════════════ */}
       <section style={{ background: '#151210', padding: '128px 6vw', position: 'relative', overflow: 'hidden' }}>
         <div style={{ position: 'absolute', top: -100, right: -100, width: 520, height: 520, borderRadius: '50%', background: 'radial-gradient(circle, rgba(245,200,66,0.055) 0%, transparent 65%)', pointerEvents: 'none' }} />
         <div style={{ position: 'absolute', bottom: -120, left: '18%', width: 440, height: 440, borderRadius: '50%', background: 'radial-gradient(circle, rgba(245,200,66,0.038) 0%, transparent 65%)', pointerEvents: 'none' }} />
@@ -386,8 +368,6 @@ export default function AboutTheCrunch() {
           </div>
         </div>
       </section>
-
-      {/* ════════════ PERKS ════════════ */}
       <section style={{ padding: '128px 6vw', background: '#0e0c0a' }}>
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <Reveal>
@@ -433,7 +413,6 @@ export default function AboutTheCrunch() {
         </div>
       </section>
 
-      {/* ════════════ CTA BANNER ════════════ */}
       <section style={{ margin: '0 4vw 108px', borderRadius: 36, overflow: 'hidden', position: 'relative', minHeight: 440, display: 'flex', alignItems: 'center' }}>
         <img
           src="https://shorturl.at/mWMOx"
@@ -482,7 +461,6 @@ export default function AboutTheCrunch() {
         </div>
       </section>
 
-      {/* ════════════ FOOTER ════════════ */}
       <footer style={{ borderTop: '1px solid rgba(240,237,232,0.07)', padding: '56px 6vw 42px', position: 'relative', zIndex: 1 }}>
         <div style={{ maxWidth: 1200, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 36, marginBottom: 44 }}>
           <div>
