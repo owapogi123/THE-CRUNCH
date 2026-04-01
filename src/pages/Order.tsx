@@ -55,8 +55,6 @@ interface RawOrder {
 }
 
 const COOK_TIME_SECONDS = 10 * 60
-
-// ── Audio alert (pure Web Audio API, no files needed) ──────────────────────
 function playAlertSound() {
   try {
     const ctx = new AudioContext()
@@ -78,7 +76,6 @@ function playAlertSound() {
   }
 }
 
-// ── Order Timer ─────────────────────────────────────────────────────────────
 function OrderTimer({
   startedAt,
   orderNumber,
@@ -139,7 +136,6 @@ function OrderTimer({
   )
 }
 
-// ── Main Component ───────────────────────────────────────────────────────────
 export default function Order() {
   const [currentTime, setCurrentTime]       = useState(new Date())
   const [notifPermission, setNotifPermission] = useState(Notification.permission)
@@ -149,7 +145,6 @@ export default function Order() {
   const [history, setHistory]               = useState<HistoryEntry[]>([])
   const [cancellingId, setCancellingId]     = useState<string | null>(null)
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
   const parseOrders = (rows: RawOrder[]): OrderCard[] => {
     const grouped: Record<string, OrderCard> = {}
 
@@ -220,8 +215,6 @@ export default function Order() {
       (a, b) => b.finishedAt.getTime() - a.finishedAt.getTime()
     )
   }
-
-  // ── Fetch ──────────────────────────────────────────────────────────────────
   const fetchAll = async () => {
     try {
       const [queueRows, allRows] = await Promise.all([
@@ -260,7 +253,6 @@ export default function Order() {
     return () => clearInterval(timer)
   }, [])
 
-  // ── Actions ────────────────────────────────────────────────────────────────
   const handleStart = async (id: string) => {
     try {
       await api.patch(`/orders/${id}`, {
@@ -303,7 +295,6 @@ export default function Order() {
     }
   }
 
-  // ── Formatters ─────────────────────────────────────────────────────────────
   const formatDateTime = (date: Date) => {
     const days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"]
     const dayName = days[date.getDay()]
@@ -331,12 +322,10 @@ export default function Order() {
   const getStatusLabel = (status: string) =>
     status === "dine-in" ? "Dine In" : "Take Out"
 
-  // ── Derived counts ─────────────────────────────────────────────────────────
   const newCount     = orders.filter((o) => !o.isPreparing && !o.isReady).length
   const processCount = orders.filter((o) => o.isPreparing && !o.isReady).length
   const readyCount   = orders.filter((o) => o.isReady).length
 
-  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-white" style={{ fontFamily: "Poppins, sans-serif" }}>
       <Sidebar />
@@ -429,11 +418,7 @@ export default function Order() {
             )}
           </button>
         </div>
-
-        {/* Tab Content */}
         <AnimatePresence mode="wait">
-
-          {/* ORDER QUEUE */}
           {activeTab === "queue" && (
             <motion.div
               key="queue"
@@ -468,7 +453,7 @@ export default function Order() {
                               : "border-transparent"
                           }`}
                         >
-                          {/* Card Header */}
+               
                           <div className="flex justify-between items-start mb-4">
                             <p className="text-xs text-gray-400 mt-0.5">{order.orderNumber}</p>
                             <span className={`${getStatusColor(order.status)} text-xs font-bold px-3 py-1 rounded-full`}>
@@ -484,10 +469,10 @@ export default function Order() {
                             />
                           )}
 
-                          {/* Ready badge */}
+                
                           {order.isReady && (
                             <div className="flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg text-xs font-bold mb-3 bg-green-100 text-green-700">
-                              ✅ Ready to serve
+                              Ready to serve
                             </div>
                           )}
 
@@ -504,7 +489,7 @@ export default function Order() {
                           {/* Action Buttons */}
                           <div className="flex gap-2 flex-col">
                             <div className="flex gap-2">
-                              {/* START */}
+      
                               <button
                                 onClick={() => {
                                   if (!order.isPreparing && !order.isReady) {
@@ -519,8 +504,6 @@ export default function Order() {
                               >
                                 START
                               </button>
-
-                              {/* READY / FINISH */}
                               {!order.isReady ? (
                                 <button
                                   onClick={() => {
@@ -545,8 +528,6 @@ export default function Order() {
                                 </button>
                               )}
                             </div>
-
-                            {/* CANCEL */}
                             <button
                               onClick={() => {
                                 if (cancellingId !== order.id && !order.isReady) {

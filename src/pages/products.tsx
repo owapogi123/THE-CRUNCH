@@ -3,16 +3,6 @@ import { motion, AnimatePresence, useScroll, useTransform, useInView, type Varia
 import { Search, Star, Flame, Crown, Clock, ChevronDown, Droplets } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 
-/* ─────────────────────────────────────────────
-   DESIGN TOKENS
-   bg:       #0e0c0a
-   surface:  #151210
-   text:     #f0ede8
-   muted:    rgba(240,237,232,0.45)
-   accent:   #f5c842
-   border:   rgba(240,237,232,0.07)
-───────────────────────────────────────────── */
-
 const NAV_H    = 68
 const BANNER_H = 44
 const TAB_TOP  = NAV_H + BANNER_H
@@ -28,9 +18,6 @@ const fadeUp: Variants = {
   }),
 }
 
-/* ─────────────────────────────────────────────
-   TYPES
-───────────────────────────────────────────── */
 interface Product {
   id:          number
   name:        string        // display name on Products page
@@ -48,11 +35,8 @@ interface Product {
 interface MenuItem  { name: string; price: number; tag?: string; note?: string }
 interface FlavorItem { name: string; accent: string; desc: string; img: string }
 
-/* ─────────────────────────────────────────────
-   PRODUCT DATA  —  names & prices from menu image
-───────────────────────────────────────────── */
 const STATIC_PRODUCTS: Product[] = [
-  /* ── CHICKEN ── */
+
   {
     id: 1, name: 'Whole Chicken',
     menuName: 'Whole Crispy Fried Chicken',
@@ -96,7 +80,7 @@ const STATIC_PRODUCTS: Product[] = [
     price: 188, spicy: false, img: 'https://bit.ly/4r1CAtC',
   },
 
-  /* ── SIDES ── */
+
   {
     id: 10, name: 'Chicken Skin Bucket',
     menuName: 'Classic Chicken Skin Bucket',
@@ -157,7 +141,6 @@ const STATIC_PRODUCTS: Product[] = [
     img: 'https://i.pinimg.com/736x/d4/38/09/d4380931a50783483fc53d55209245e1.jpg',
   },
 
-  /* ── DRINKS (Fruit Soda) ── */
   {
     id: 20, name: 'Kiwi Fruit Soda',
     menuName: 'Kiwi Fruit Soda',
@@ -201,7 +184,6 @@ const STATIC_PRODUCTS: Product[] = [
     price: 50, spicy: false, img: 'https://shorturl.at/MvNpm', isDrink: true,
   },
 
-  /* ── COMBOS ── */
   {
     id: 30, name: '2 pcs. Chicken w/ Rice & Drink',
     menuName: '2 pcs. Chicken With Rice and Drink',
@@ -241,7 +223,6 @@ const BADGE_CONFIG: Record<string, { label: string; bg: string; textDark?: boole
   'Must Try':   { label: 'Must Try',   bg: '#7c3aed' },
 }
 
-/* ── Full menu list data (from image) ── */
 const RICE_MEALS: MenuItem[] = [
   { name: '2 pcs. Chicken w/ Rice',        price: 148 },
   { name: '3 pcs. Chicken w/ Rice',        price: 188, tag: 'Must Try' },
@@ -285,9 +266,6 @@ const SIGNATURE_FLAVORS: FlavorItem[] = [
   { name: 'Spicy K-Style',   accent: '#dc2626', desc: 'K-Style cranked up — fiery heat that builds with every piece.',  img: 'https://url-shortener.me/HH4G' },
 ]
 
-/* ─────────────────────────────────────────────
-   PAGE TRANSITION OVERLAY
-───────────────────────────────────────────── */
 function PageTransitionOverlay({ visible, itemName }: { visible: boolean; itemName: string }) {
   return (
     <AnimatePresence>
@@ -462,7 +440,6 @@ export default function Products() {
   return (
     <div style={{ fontFamily: "'Poppins', sans-serif", background: '#0e0c0a', minHeight: '100vh', color: '#f0ede8', position: 'relative' }}>
 
-      {/* ── Google Fonts: Poppins ── */}
       <link
         href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,400&display=swap"
         rel="stylesheet"
@@ -478,7 +455,7 @@ export default function Products() {
         <div style={{ position: 'absolute', bottom: '-8%',left: '30%',  width: 600, height: 600, borderRadius: '50%', background: 'radial-gradient(circle,rgba(245,200,66,0.045) 0%,transparent 65%)' }} />
       </div>
 
-      {/* ════════════ NAV ════════════ */}
+
       <motion.header
         initial={{ y: -80, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
         transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
@@ -512,7 +489,6 @@ export default function Products() {
         </div>
       </motion.header>
 
-      {/* ════════════ HOURS BANNER ════════════ */}
       <div style={{ position: 'sticky', top: NAV_H, zIndex: 190, height: BANNER_H, background: 'rgba(17,13,8,0.96)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(245,200,66,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16, overflow: 'hidden', padding: '0 40px' }}>
         <motion.div animate={{ x: ['-120%', '220%'] }} transition={{ duration: 4, repeat: Infinity, repeatDelay: 3, ease: 'easeInOut' }}
           style={{ position: 'absolute', top: 0, bottom: 0, width: '40%', background: 'linear-gradient(90deg,transparent,rgba(245,200,66,0.06),transparent)', pointerEvents: 'none' }} />
@@ -534,7 +510,6 @@ export default function Products() {
         </span>
       </div>
 
-      {/* ════════════ HERO ════════════ */}
       <div ref={heroRef} style={{ position: 'relative', overflow: 'hidden', padding: '92px 40px 72px' }}>
         <motion.div style={{ maxWidth: 1280, margin: '0 auto', y: heroY, opacity: heroOpacity }}>
           <motion.div initial={{ opacity: 0, x: -16 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.3, duration: 0.6 }}>
@@ -566,8 +541,6 @@ export default function Products() {
           </div>
         </motion.div>
       </div>
-
-      {/* ════════════ CATEGORY TABS ════════════ */}
       <div style={{ position: 'sticky', top: TAB_TOP, zIndex: 180, background: 'rgba(14,12,10,0.96)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', borderBottom: '1px solid rgba(240,237,232,0.06)' }}>
         <div style={{ maxWidth: 1280, margin: '0 auto', padding: '0 40px', display: 'flex', overflowX: 'auto' }}>
           {CATEGORIES.map(cat => (
@@ -600,7 +573,6 @@ export default function Products() {
         )}
       </AnimatePresence>
 
-      {/* ════════════ MAIN CONTENT ════════════ */}
       <div style={{ maxWidth: 1280, margin: '0 auto', padding: '64px 40px 100px', position: 'relative', zIndex: 1 }}>
 
         {/* TOP PICK BANNER */}
@@ -653,8 +625,6 @@ export default function Products() {
           </span>
           <div style={{ flex: 1, height: 1, background: 'rgba(240,237,232,0.06)' }} />
         </div>
-
-        {/* PRODUCT GRID */}
         <AnimatePresence mode="wait">
           <motion.div key={category + search}
             style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(310px,1fr))', gap: 22 }}
@@ -675,11 +645,8 @@ export default function Products() {
                     boxShadow: isHov ? `0 24px 64px rgba(0,0,0,0.55), 0 0 0 1px ${isDrink ? 'rgba(99,179,237,0.08)' : 'rgba(245,200,66,0.07)'}` : '0 2px 16px rgba(0,0,0,0.3)',
                     cursor: 'pointer', transition: 'border-color 0.3s, box-shadow 0.3s', position: 'relative' as const,
                   }}>
-
-                  {/* Top accent line */}
                   <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: isHov ? (isDrink ? 'linear-gradient(90deg,transparent,rgba(99,179,237,0.5),transparent)' : 'linear-gradient(90deg,transparent,rgba(245,200,66,0.4),transparent)') : 'transparent', transition: 'background 0.35s', zIndex: 2 }} />
 
-                  {/* Drink category ribbon */}
                   {isDrink && (
                     <div style={{ position: 'absolute', top: 0, right: 0, background: 'rgba(99,179,237,0.12)', border: '0 0 0 1px solid rgba(99,179,237,0.2)', borderRadius: '0 24px 0 12px', padding: '5px 12px', display: 'flex', alignItems: 'center', gap: 4, zIndex: 3 }}>
                       <Droplets size={10} color="rgba(147,210,255,0.8)" />
@@ -767,8 +734,6 @@ export default function Products() {
             <p style={{ fontSize: 14, color: 'rgba(240,237,232,0.2)', fontWeight: 300 }}>Try a different search or category</p>
           </motion.div>
         )}
-
-        {/* ════════════ SIGNATURE FLAVORS ════════════ */}
         <Reveal style={{ marginTop: 104 }}>
           <EyebrowLabel>Available in every chicken</EyebrowLabel>
           <h2 style={{ fontFamily: "'Poppins', sans-serif", fontSize: 'clamp(28px,4vw,48px)', fontWeight: 800, color: '#f0ede8', margin: '0 0 10px', letterSpacing: '-0.02em' }}>
@@ -819,8 +784,6 @@ export default function Products() {
             })}
           </div>
         </Reveal>
-
-        {/* ════════════ FULL MENU ════════════ */}
         <Reveal style={{ marginTop: 104 }}>
           <EyebrowLabel>Full Menu</EyebrowLabel>
           <h2 style={{ fontFamily: "'Poppins', sans-serif", fontSize: 'clamp(28px,4vw,48px)', fontWeight: 800, color: '#f0ede8', margin: '0 0 48px', letterSpacing: '-0.02em' }}>
@@ -849,8 +812,6 @@ export default function Products() {
               </div>
               {RICE_MEALS.map((item, idx) => <MenuRow key={item.name} item={item} index={idx} />)}
             </motion.div>
-
-            {/* Sides */}
             <motion.div initial={{ opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.6, delay: 0.16 }}
               style={{ background: '#151210', border: '1px solid rgba(240,237,232,0.07)', borderRadius: 24, padding: '32px 28px', position: 'relative', overflow: 'hidden' }}>
               <div style={{ position: 'absolute', top: 0, left: 28, right: 28, height: 2, background: 'linear-gradient(90deg,transparent,rgba(245,200,66,0.22),transparent)', borderRadius: 2 }} />
@@ -858,8 +819,6 @@ export default function Products() {
               <p style={{ fontSize: 11, color: 'rgba(240,237,232,0.26)', margin: '4px 0 16px', fontStyle: 'italic' as const }}>Perfect add-ons to any meal</p>
               {SIDES_LIST.map((item, idx) => <MenuRow key={item.name} item={item} index={idx} />)}
             </motion.div>
-
-            {/* Fruit Soda */}
             <motion.div initial={{ opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.6, delay: 0.24 }}
               style={{ background: '#151210', border: '1px solid rgba(240,237,232,0.07)', borderRadius: 24, padding: '32px 28px', position: 'relative', overflow: 'hidden' }}>
               <div style={{ position: 'absolute', top: 0, left: 28, right: 28, height: 2, background: 'linear-gradient(90deg,transparent,rgba(99,179,237,0.22),transparent)', borderRadius: 2 }} />
@@ -873,8 +832,6 @@ export default function Products() {
         </Reveal>
 
       </div>
-
-      {/* ════════════ FOOTER ════════════ */}
       <footer style={{ borderTop: '1px solid rgba(240,237,232,0.06)', padding: '52px 40px 40px', position: 'relative', zIndex: 1 }}>
         <div style={{ maxWidth: 1280, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 32, marginBottom: 40 }}>
           <div>

@@ -232,11 +232,6 @@ export function InventoryClient({
             onChange={(e) => handleSearchChange(e.target.value)}
             className="pl-4 pr-10 h-12 bg-white border-2 border-gray-300 rounded-xl"
           />
-          <motion.div
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9 }}
-            transition={{ type: "spring", stiffness: 400, damping: 17 }}
-          >
             <Button
               size="icon"
               variant="ghost"
@@ -244,7 +239,7 @@ export function InventoryClient({
             >
               <Search className="h-5 w-5" />
             </Button>
-          </motion.div>
+    
         </div>
 
         <motion.div

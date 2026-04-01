@@ -1,16 +1,3 @@
-/**
- * StockManager.tsx
- * ─────────────────────────────────────────────────────────────────────────────
- * Tabs: Dashboard | Withdrawal | Alerts | Suppliers | Purchase Orders
- *
- * Backend integration notes:
- *  - All API calls live in the `api` object — wire up REST endpoints there.
- *  - PO API calls are in `api.po.*`.
- *  - No localStorage anywhere — all state is React-only.
- *  - `recorded_by` is typed as `string | null` throughout.
- * ─────────────────────────────────────────────────────────────────────────────
- */
-
 import { useState, useEffect, useCallback, useMemo } from "react";
 import type { ReactNode } from "react";
 import {
@@ -20,16 +7,10 @@ import {
   type Transition,
 } from "framer-motion";
 import { Sidebar } from "@/components/Sidebar";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TYPES
-// ─────────────────────────────────────────────────────────────────────────────
-
 type WithdrawalType = "initial" | "supplementary" | "return";
 type StockStatus = "critical" | "low" | "normal";
 type Tab = "dashboard" | "withdrawal" | "alerts" | "suppliers" | "purchases";
 type SupplierField = keyof Omit<Supplier, "supplier_id">;
-
 export type POStatus = "Draft" | "Ordered" | "Received" | "Cancelled";
 
 export interface POItem {
@@ -125,7 +106,9 @@ interface ReconcileRow {
 interface RawMaterialForm {
   name: string;
   category: string;
+  unit: string;
   initialStock: string;
+  expiryDate: string;
   price: string;
   description: string;
 }
@@ -137,39 +120,29 @@ interface RawMaterialForm {
 const RAW_API_URL = (import.meta as { env?: { VITE_API_URL?: string } }).env
   ?.VITE_API_URL;
 
-function isLocalHostname(hostname: string): boolean {
-  return (
-    hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1"
-  );
-}
-
 function resolveApiBase(): string {
   if (!RAW_API_URL) return "/api";
-
   const trimmed = RAW_API_URL.replace(/\/+$/, "");
   if (
     typeof window !== "undefined" &&
-    isLocalHostname(window.location.hostname)
-  ) {
+    (window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1" ||
+      window.location.hostname === "::1")
+  )
     return "/api";
-  }
-
   if (
     typeof window !== "undefined" &&
     window.location.protocol === "https:" &&
     /^http:\/\//i.test(trimmed)
-  ) {
+  )
     return "/api";
-  }
-
   return `${trimmed}/api`;
 }
 
 const API_BASE = resolveApiBase();
-
-function toNumber(value: unknown, fallback = 0): number {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : fallback;
+function toNumber(v: unknown, fb = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fb;
 }
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
@@ -177,17 +150,16 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
-  if (!res.ok) {
-    const msg = await res.text().catch(() => "Unknown error");
-    throw new Error(`API ${res.status}: ${msg}`);
-  }
+  if (!res.ok)
+    throw new Error(
+      `API ${res.status}: ${await res.text().catch(() => "Unknown error")}`,
+    );
   return res.json();
 }
 
 const api = {
   getInventory: () => apiFetch<Product[]>("/inventory"),
   getWithdrawals: () => apiFetch<StockStatusRecord[]>("/stock-status/today"),
-
   postWithdrawal: (body: {
     product_id: number;
     type: WithdrawalType;
@@ -198,7 +170,6 @@ const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-
   postSpoilage: (body: {
     product_id: number;
     quantity: number;
@@ -208,7 +179,6 @@ const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-
   getSuppliers: () => apiFetch<Supplier[]>("/suppliers"),
   postSupplier: (body: Omit<Supplier, "supplier_id">) =>
     apiFetch<Supplier>("/suppliers", {
@@ -217,7 +187,6 @@ const api = {
     }),
   deleteSupplier: (id: number) =>
     apiFetch<{ success: boolean }>(`/suppliers/${id}`, { method: "DELETE" }),
-
   createProduct: (body: {
     name: string;
     price: number;
@@ -230,12 +199,10 @@ const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-
   getActiveBatches: () => apiFetch<Batch[]>("/batches/active"),
   getProductBatches: (product_id: number) =>
     apiFetch<Batch[]>(`/batches/product/${product_id}`),
   getYesterdayReturns: () => apiFetch<Batch[]>("/batches/returned/yesterday"),
-
   withdrawFromBatches: (body: {
     product_id: number;
     qty_needed: number;
@@ -251,7 +218,6 @@ const api = {
         taken: number;
       }>;
     }>("/batches/withdraw", { method: "POST", body: JSON.stringify(body) }),
-
   returnToBatch: (body: {
     batch_id: number;
     return_qty: number;
@@ -261,7 +227,6 @@ const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-
   postBatch: (body: {
     productId: number;
     productName: string;
@@ -273,7 +238,6 @@ const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-
   updateStock: (
     inventory_id: number,
     body: {
@@ -289,7 +253,6 @@ const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
-
   po: {
     getAll: () => apiFetch<PurchaseOrder[]>("/purchase-orders"),
     create: (body: Omit<PurchaseOrder, "id">) =>
@@ -302,20 +265,21 @@ const api = {
         method: "PATCH",
         body: JSON.stringify({ status }),
       }),
-    markReceived: (id: string, receivedBy: string) =>
+    markReceived: (
+      id: string,
+      receivedBy: string,
+      itemExpiryDates?: Record<number, string>,
+    ) =>
       apiFetch<PurchaseOrder>(`/purchase-orders/${id}/receive`, {
         method: "PATCH",
         body: JSON.stringify({
           receivedBy,
           receivedDate: new Date().toISOString().split("T")[0],
+          itemExpiryDates,
         }),
       }),
   },
 };
-
-// ─────────────────────────────────────────────────────────────────────────────
-// CONSTANTS
-// ─────────────────────────────────────────────────────────────────────────────
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "dashboard", label: "Dashboard" },
@@ -359,7 +323,9 @@ const BLANK_SUPPLIER: Omit<Supplier, "supplier_id"> = {
 const BLANK_RAW_MATERIAL: RawMaterialForm = {
   name: "",
   category: "Sauce",
+  unit: "liter",
   initialStock: "",
+  expiryDate: "",
   price: "",
   description: "",
 };
@@ -398,6 +364,16 @@ const WITHDRAWAL_TYPES: WithdrawalType[] = [
   "return",
 ];
 
+const RAW_MATERIAL_UNITS = [
+  "kg",
+  "g",
+  "liter",
+  "ml",
+  "piece",
+  "pack",
+  "bottle",
+] as const;
+
 const STATUS_BADGE: Record<StockStatus, string> = {
   critical: "bg-red-100 text-red-600",
   low: "bg-amber-100 text-amber-600",
@@ -425,17 +401,10 @@ const KPI_ACCENT: Record<string, { border: string; value: string }> = {
   emerald: { border: "border-t-emerald-400", value: "text-emerald-600" },
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MOTION PRESETS
-// ─────────────────────────────────────────────────────────────────────────────
-
-const smoothEase: Transition = {
-  duration: 0.38,
-  ease: [0.25, 0.46, 0.45, 0.94],
-};
+const ease: Transition = { duration: 0.38, ease: [0.25, 0.46, 0.45, 0.94] };
 const pageVariants: Variants = {
   hidden: { opacity: 0, y: 18 },
-  show: { opacity: 1, y: 0, transition: smoothEase },
+  show: { opacity: 1, y: 0, transition: ease },
   exit: { opacity: 0, y: -10, transition: { duration: 0.2 } },
 };
 const staggerVariants: Variants = {
@@ -454,89 +423,66 @@ const itemVariants: Variants = {
   },
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HELPERS
-// ─────────────────────────────────────────────────────────────────────────────
-
-function calcPOTotal(items: POItem[]) {
-  return items.reduce((s, i) => s + i.quantity * i.unitCost, 0);
-}
-
-function isReconcilable(p: Product): boolean {
-  const cat = p.category.toLowerCase();
-  return !(
-    cat.includes("sauce") ||
-    cat.includes("bottle") ||
-    cat.includes("beverage") ||
-    cat.includes("condiment") ||
-    cat.includes("drink")
-  );
-}
-function isWholeChicken(p: Product) {
-  return p.category.toLowerCase().includes("whole chicken");
-}
-function isChoppedChicken(p: Product) {
-  return p.category.toLowerCase().includes("chopped chicken");
-}
-function isChicken(p: Product) {
-  return isWholeChicken(p) || isChoppedChicken(p);
-}
-function isMenuFoodProduct(p: Pick<Product, "category" | "promo">) {
-  const promo = String(p.promo ?? "")
+const calcPOTotal = (items: POItem[]) =>
+  items.reduce((s, i) => s + i.quantity * i.unitCost, 0);
+const isWholeChicken = (p: Product) =>
+  p.category.toLowerCase().includes("whole chicken");
+const isChoppedChicken = (p: Product) =>
+  p.category.toLowerCase().includes("chopped chicken");
+const isChicken = (p: Product) => isWholeChicken(p) || isChoppedChicken(p);
+const isMenuFoodProduct = (p: Pick<Product, "category" | "promo">) =>
+  String(p.promo ?? "")
     .toUpperCase()
-    .trim();
-  const category = String(p.category ?? "")
+    .trim() === "MENU FOOD" ||
+  String(p.category ?? "")
     .toLowerCase()
-    .trim();
-  return promo === "MENU FOOD" || category.includes("menu food");
-}
-function getStockStatus(p: Product): StockStatus {
-  if (p.mainStock <= p.criticalPoint) return "critical";
-  if (p.mainStock <= p.reorderPoint) return "low";
-  return "normal";
-}
-function formatExpiryDate(value?: string | null): string {
-  if (!value) return "No expiry";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "No expiry";
-  return d.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-}
-function formatReceivedDate(value: string): string {
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
-  return d.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-function isExpiringSoon(expiry: string | null): boolean {
-  if (!expiry) return false;
-  const days =
-    (new Date(expiry).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
-  return days <= 3 && days >= 0;
-}
-function isExpired(expiry: string | null): boolean {
-  if (!expiry) return false;
-  return new Date(expiry).getTime() < Date.now();
-}
-function getCategoryStyle(category: string): string {
-  const cat = category.toLowerCase();
-  if (cat.includes("whole chicken"))
+    .trim()
+    .includes("menu food");
+const isReconcilable = (p: Product) =>
+  !/(sauce|bottle|beverage|condiment|drink)/.test(p.category.toLowerCase());
+const getStockStatus = (p: Product): StockStatus =>
+  p.mainStock <= p.criticalPoint
+    ? "critical"
+    : p.mainStock <= p.reorderPoint
+      ? "low"
+      : "normal";
+const formatExpiryDate = (v?: string | null) => {
+  if (!v) return "No expiry";
+  const d = new Date(v);
+  return isNaN(d.getTime())
+    ? "No expiry"
+    : d.toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      });
+};
+const formatReceivedDate = (v: string) => {
+  const d = new Date(v);
+  return isNaN(d.getTime())
+    ? v
+    : d.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      });
+};
+const isExpiringSoon = (e: string | null) => {
+  if (!e) return false;
+  const d = (new Date(e).getTime() - Date.now()) / 86400000;
+  return d <= 3 && d >= 0;
+};
+const isExpired = (e: string | null) =>
+  !!e && new Date(e).getTime() < Date.now();
+const getCategoryStyle = (cat: string) => {
+  const c = cat.toLowerCase();
+  if (c.includes("whole chicken"))
     return "bg-orange-50 text-orange-600 border-orange-100";
-  if (cat.includes("chopped chicken"))
+  if (c.includes("chopped chicken"))
     return "bg-amber-50 text-amber-700 border-amber-100";
-  if (cat.includes("sauce")) return "bg-rose-50 text-rose-500 border-rose-100";
+  if (c.includes("sauce")) return "bg-rose-50 text-rose-500 border-rose-100";
   return "bg-slate-50 text-slate-500 border-slate-100";
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SHARED UI PRIMITIVES
-// ─────────────────────────────────────────────────────────────────────────────
+};
 
 function LoadingSkeleton() {
   return (
@@ -604,11 +550,7 @@ function Toast({
       initial={{ opacity: 0, y: 40 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 40 }}
-      className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-2xl shadow-xl text-sm font-medium ${
-        type === "success"
-          ? "bg-emerald-600 text-white"
-          : "bg-red-500 text-white"
-      }`}
+      className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-2xl shadow-xl text-sm font-medium ${type === "success" ? "bg-emerald-600" : "bg-red-500"} text-white`}
     >
       <span>{type === "success" ? "✓" : "✕"}</span>
       <span>{message}</span>
@@ -659,6 +601,9 @@ function FormField({
   );
 }
 
+const inputCls =
+  "w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm text-slate-800 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-300 focus:border-transparent placeholder-slate-300 transition-all duration-200";
+
 function StyledInput({
   type,
   value,
@@ -676,7 +621,7 @@ function StyledInput({
       value={value}
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
-      className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm text-slate-800 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-300 focus:border-transparent placeholder-slate-300 transition-all duration-200"
+      className={inputCls}
     />
   );
 }
@@ -697,7 +642,7 @@ function StyledSelect({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       disabled={disabled}
-      className="w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm text-slate-800 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-300 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+      className={`${inputCls} disabled:opacity-50 disabled:cursor-not-allowed`}
     >
       {children}
     </select>
@@ -719,11 +664,7 @@ function Btn({
     <button
       onClick={onClick}
       disabled={loading}
-      className={`w-full py-2.5 px-4 rounded-xl text-sm font-semibold transition-all duration-200 shadow-sm disabled:opacity-60 disabled:cursor-not-allowed ${
-        variant === "primary"
-          ? "bg-slate-900 text-white hover:bg-slate-700 shadow-slate-900/20"
-          : "bg-rose-500 text-white hover:bg-rose-600 shadow-rose-500/20"
-      }`}
+      className={`w-full py-2.5 px-4 rounded-xl text-sm font-semibold transition-all duration-200 shadow-sm disabled:opacity-60 disabled:cursor-not-allowed ${variant === "primary" ? "bg-slate-900 text-white hover:bg-slate-700 shadow-slate-900/20" : "bg-rose-500 text-white hover:bg-rose-600 shadow-rose-500/20"}`}
     >
       {children}
     </button>
@@ -752,73 +693,6 @@ function EmptyState({ message }: { message: string }) {
     </div>
   );
 }
-
-function ThresholdEditor({
-  warningValue,
-  criticalValue,
-  onWarningChange,
-  onCriticalChange,
-  onCancel,
-  onSave,
-  saving,
-}: {
-  warningValue: string;
-  criticalValue: string;
-  onWarningChange: (value: string) => void;
-  onCriticalChange: (value: string) => void;
-  onCancel: () => void;
-  onSave: () => void;
-  saving: boolean;
-}) {
-  return (
-    <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        <FormField label="Warning threshold">
-          <StyledInput
-            type="number"
-            value={warningValue}
-            onChange={onWarningChange}
-            placeholder="Set warning stock level"
-          />
-        </FormField>
-        <FormField label="Critical threshold">
-          <StyledInput
-            type="number"
-            value={criticalValue}
-            onChange={onCriticalChange}
-            placeholder="Set critical stock level"
-          />
-        </FormField>
-      </div>
-      <p className="mt-3 text-xs text-slate-500">
-        Critical should stay equal to or lower than warning so alerts escalate
-        correctly.
-      </p>
-      <div className="mt-4 flex flex-wrap justify-end gap-2">
-        <button
-          type="button"
-          onClick={onCancel}
-          disabled={saving}
-          className="rounded-xl border border-slate-200 px-3.5 py-2 text-xs font-semibold text-slate-600 transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          onClick={onSave}
-          disabled={saving}
-          className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {saving ? "Saving..." : "Save thresholds"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// PURCHASE ORDER SUB-COMPONENTS
-// ─────────────────────────────────────────────────────────────────────────────
 
 function POBadge({ status }: { status: POStatus }) {
   const s = PO_STATUS_STYLES[status];
@@ -850,6 +724,29 @@ function CloseIcon() {
   );
 }
 
+function CloseBtn({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="text-gray-400 hover:text-gray-600 transition-colors"
+    >
+      <svg
+        className="w-5 h-5"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M6 18L18 6M6 6l12 12"
+        />
+      </svg>
+    </button>
+  );
+}
+
 function PODetailDrawer({
   order,
   onClose,
@@ -857,7 +754,7 @@ function PODetailDrawer({
 }: {
   order: PurchaseOrder;
   onClose: () => void;
-  onStatusChange: (order: PurchaseOrder, status: POStatus) => void;
+  onStatusChange: (id: string, status: POStatus) => void;
 }) {
   const total = calcPOTotal(order.items);
   const tax = total * 0.12;
@@ -866,7 +763,6 @@ function PODetailDrawer({
     Ordered: "Received",
   };
   const next = nextStatus[order.status];
-
   return (
     <motion.div
       initial={{ x: "100%" }}
@@ -882,15 +778,9 @@ function PODetailDrawer({
         </div>
         <div className="flex items-center gap-3">
           <POBadge status={order.status} />
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
-          >
-            <CloseIcon />
-          </button>
+          <CloseBtn onClick={onClose} />
         </div>
       </div>
-
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
         <div className="bg-gray-50 rounded-xl p-4 space-y-1">
           <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">
@@ -905,7 +795,6 @@ function PODetailDrawer({
             </span>
           </p>
         </div>
-
         <div>
           <p className="text-xs text-gray-400 font-medium uppercase tracking-wide mb-3">
             Order Items
@@ -923,11 +812,6 @@ function PODetailDrawer({
                   <p className="text-xs text-gray-400">
                     {item.category} · {item.quantity} {item.unit}
                   </p>
-                  {item.expiryDate ? (
-                    <p className="text-xs text-amber-600 mt-1">
-                      Expiry: {formatExpiryDate(item.expiryDate)}
-                    </p>
-                  ) : null}
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-semibold text-gray-800">
@@ -941,7 +825,6 @@ function PODetailDrawer({
             ))}
           </div>
         </div>
-
         <div className="bg-gray-50 rounded-xl p-4 space-y-2">
           <div className="flex justify-between text-sm text-gray-500">
             <span>Subtotal</span>
@@ -961,8 +844,7 @@ function PODetailDrawer({
             </span>
           </div>
         </div>
-
-        {order.notes ? (
+        {order.notes && (
           <div>
             <p className="text-xs text-gray-400 font-medium uppercase tracking-wide mb-1">
               Notes
@@ -971,9 +853,8 @@ function PODetailDrawer({
               {order.notes}
             </p>
           </div>
-        ) : null}
-
-        {order.status === "Received" && order.receivedBy ? (
+        )}
+        {order.status === "Received" && order.receivedBy && (
           <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 space-y-1">
             <p className="text-xs text-emerald-600 font-medium uppercase tracking-wide">
               Received
@@ -983,13 +864,12 @@ function PODetailDrawer({
             </p>
             <p className="text-sm text-gray-500">On: {order.receivedDate}</p>
           </div>
-        ) : null}
+        )}
       </div>
-
       {next && (
         <div className="px-6 py-4 border-t border-gray-100">
           <button
-            onClick={() => onStatusChange(order, next)}
+            onClick={() => onStatusChange(order.id, next)}
             className="w-full py-3 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-700 transition-colors"
           >
             {next === "Ordered" ? "Send to Supplier" : "Mark as Received"}
@@ -1012,13 +892,19 @@ function ReceivePOModal({
   onConfirm: (expiryDates: Record<number, string>) => Promise<void>;
 }) {
   const [expiryDates, setExpiryDates] = useState<Record<number, string>>(() =>
-    Object.fromEntries(order.items.map((item) => [item.id, item.expiryDate || ""])),
+    Object.fromEntries(
+      order.items.map((item) => [item.id, item.expiryDate || ""]),
+    ),
   );
 
   const handleConfirm = async () => {
-    const missingItems = order.items.filter((item) => !expiryDates[item.id]?.trim());
+    const missingItems = order.items.filter(
+      (item) => !expiryDates[item.id]?.trim(),
+    );
     if (missingItems.length > 0) {
-      alert("Please set an expiry date for each item before marking the order as received.");
+      alert(
+        "Please set an expiry date for each item before marking the order as received.",
+      );
       return;
     }
     await onConfirm(expiryDates);
@@ -1040,7 +926,9 @@ function ReceivePOModal({
       >
         <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100">
           <div>
-            <h2 className="text-lg font-semibold text-gray-800">Receive Purchase Order</h2>
+            <h2 className="text-lg font-semibold text-gray-800">
+              Receive Purchase Order
+            </h2>
             <p className="text-xs text-gray-400 mt-0.5">
               Set expiry dates now, before stock is added to inventory.
             </p>
@@ -1067,7 +955,9 @@ function ReceivePOModal({
               className="grid grid-cols-[minmax(0,1fr)_180px] gap-4 items-end rounded-xl border border-slate-100 px-4 py-4"
             >
               <div>
-                <p className="text-sm font-semibold text-slate-800">{item.name}</p>
+                <p className="text-sm font-semibold text-slate-800">
+                  {item.name}
+                </p>
                 <p className="text-xs text-slate-500 mt-0.5">
                   {item.category} · {item.quantity} {item.unit}
                 </p>
@@ -1113,16 +1003,11 @@ function ReceivePOModal({
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CREATE PO MODAL — supports prefilled items from stock alerts
-// ─────────────────────────────────────────────────────────────────────────────
-
 interface CreatePOModalProps {
   onClose: () => void;
   onCreate: (po: Omit<PurchaseOrder, "id">) => Promise<void>;
   quickOrderProducts: Product[];
   allProducts: Product[];
-  /** When supplied, the modal pre-populates with this product */
   prefillProduct?: {
     name: string;
     category: string;
@@ -1155,39 +1040,32 @@ function CreatePOModal({
       : { ...EMPTY_PO_ITEM },
   ]);
 
-  const addItem = () => setItems((prev) => [...prev, { ...EMPTY_PO_ITEM }]);
-
-  const addQuickOrderItem = (product: Product) => {
-    const suggestedQty = Math.max(
-      1,
-      Math.ceil(Number(product.reorderPoint) - Number(product.mainStock)),
+  const updateItem = (
+    idx: number,
+    field: keyof Omit<POItem, "id">,
+    value: string | number,
+  ) =>
+    setItems((p) =>
+      p.map((item, i) => (i === idx ? { ...item, [field]: value } : item)),
     );
-
-    setItems((prev) => [
-      ...prev,
+  const removeItem = (idx: number) =>
+    setItems((p) => p.filter((_, i) => i !== idx));
+  const addQuickOrderItem = (product: Product) => {
+    setItems((p) => [
+      ...p,
       {
         name: product.product_name,
         category: product.category,
         unit: product.unit,
-        quantity: suggestedQty,
+        quantity: Math.max(
+          1,
+          Math.ceil(Number(product.reorderPoint) - Number(product.mainStock)),
+        ),
         unitCost: 0,
       },
     ]);
     setShowQuickOrder(false);
   };
-
-  const updateItem = (
-    index: number,
-    field: keyof Omit<POItem, "id">,
-    value: string | number,
-  ) => {
-    setItems((prev) =>
-      prev.map((item, i) => (i === index ? { ...item, [field]: value } : item)),
-    );
-  };
-
-  const removeItem = (index: number) =>
-    setItems((prev) => prev.filter((_, i) => i !== index));
 
   const subtotal = items.reduce(
     (s, i) => s + Number(i.quantity) * Number(i.unitCost),
@@ -1196,8 +1074,7 @@ function CreatePOModal({
 
   const handleSubmit = async () => {
     if (!supplier || !deliveryDate || items.some((i) => !i.name)) return;
-
-    const unmatchedNames = items
+    const unmatched = items
       .map((i) => i.name.trim())
       .filter(
         (name) =>
@@ -1205,33 +1082,30 @@ function CreatePOModal({
             (p) => p.product_name.trim().toLowerCase() === name.toLowerCase(),
           ),
       );
-
-    if (unmatchedNames.length > 0) {
+    if (unmatched.length > 0) {
       alert(
-        `These items don't match any product in inventory:\n• ${unmatchedNames.join("\n• ")}\n\nPlease correct the names before saving.`,
+        `These items don't match any product in inventory:\n• ${unmatched.join("\n• ")}\n\nPlease correct the names before saving.`,
       );
       return;
     }
-
-    const newPO: Omit<PurchaseOrder, "id"> = {
-      supplier,
-      contact,
-      date: new Date().toISOString().split("T")[0],
-      deliveryDate,
-      status: "Draft",
-      notes,
-      items: items.map((item, idx) => ({
-        ...item,
-        id: idx + 1,
-        quantity: Number(item.quantity),
-        unitCost: Number(item.unitCost),
-      })),
-    };
     try {
-      await onCreate(newPO);
+      await onCreate({
+        supplier,
+        contact,
+        date: new Date().toISOString().split("T")[0],
+        deliveryDate,
+        status: "Draft",
+        notes,
+        items: items.map((item, idx) => ({
+          ...item,
+          id: idx + 1,
+          quantity: Number(item.quantity),
+          unitCost: Number(item.unitCost),
+        })),
+      });
       onClose();
     } catch {
-      // keep modal open so user can adjust and retry
+      /* keep open */
     }
   };
 
@@ -1261,40 +1135,29 @@ function CreatePOModal({
               </p>
             )}
           </div>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
-          >
-            <CloseIcon />
-          </button>
+          <CloseBtn onClick={onClose} />
         </div>
-
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-gray-400 font-medium block mb-1">
-                Supplier Name
-              </label>
-              <input
-                value={supplier}
-                onChange={(e) => setSupplier(e.target.value)}
-                placeholder="e.g. Fresh Farms Co."
-                className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200 placeholder-gray-300"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-gray-400 font-medium block mb-1">
-                Contact Number
-              </label>
-              <input
-                value={contact}
-                onChange={(e) => setContact(e.target.value)}
-                placeholder="09XXXXXXXXX"
-                className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200 placeholder-gray-300"
-              />
-            </div>
+            {[
+              ["Supplier Name", supplier, setSupplier, "e.g. Fresh Farms Co."],
+              ["Contact Number", contact, setContact, "09XXXXXXXXX"],
+            ].map(([label, val, setter, ph]) => (
+              <div key={label as string}>
+                <label className="text-xs text-gray-400 font-medium block mb-1">
+                  {label as string}
+                </label>
+                <input
+                  value={val as string}
+                  onChange={(e) =>
+                    (setter as (v: string) => void)(e.target.value)
+                  }
+                  placeholder={ph as string}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200 placeholder-gray-300"
+                />
+              </div>
+            ))}
           </div>
-
           <div>
             <label className="text-xs text-gray-400 font-medium block mb-1">
               Expected Delivery Date
@@ -1306,7 +1169,6 @@ function CreatePOModal({
               className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200"
             />
           </div>
-
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-xs text-gray-400 font-medium uppercase tracking-wide">
@@ -1314,7 +1176,7 @@ function CreatePOModal({
               </label>
               <div className="flex items-center gap-3">
                 <button
-                  onClick={() => setShowQuickOrder((prev) => !prev)}
+                  onClick={() => setShowQuickOrder((p) => !p)}
                   disabled={quickOrderProducts.length === 0}
                   className="text-xs font-semibold text-amber-700 hover:text-amber-800 flex items-center gap-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
@@ -1334,7 +1196,7 @@ function CreatePOModal({
                   Quick Order
                 </button>
                 <button
-                  onClick={addItem}
+                  onClick={() => setItems((p) => [...p, { ...EMPTY_PO_ITEM }])}
                   className="text-xs font-semibold text-gray-600 hover:text-gray-900 flex items-center gap-1 transition-colors"
                 >
                   <svg
@@ -1354,42 +1216,40 @@ function CreatePOModal({
                 </button>
               </div>
             </div>
-
             {showQuickOrder && quickOrderProducts.length > 0 && (
               <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50/60 p-2.5 space-y-2">
                 <p className="text-[11px] font-semibold text-amber-700 uppercase tracking-wide px-0.5">
                   Products Needing Reorder
                 </p>
                 <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
-                  {quickOrderProducts.map((product) => {
-                    const shortage = Math.max(
-                      0,
-                      Number(product.reorderPoint) - Number(product.mainStock),
-                    );
-                    return (
-                      <button
-                        key={product.product_id}
-                        onClick={() => addQuickOrderItem(product)}
-                        className="w-full text-left rounded-lg bg-white border border-amber-100 hover:border-amber-300 px-3 py-2 transition-colors"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-sm font-medium text-slate-800 truncate">
-                            {product.product_name}
-                          </span>
-                          <span className="text-[11px] font-semibold text-amber-700 whitespace-nowrap">
-                            Need {shortage} {product.unit}
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-slate-500 mt-0.5 truncate">
-                          {product.category}
-                        </p>
-                      </button>
-                    );
-                  })}
+                  {quickOrderProducts.map((product) => (
+                    <button
+                      key={product.product_id}
+                      onClick={() => addQuickOrderItem(product)}
+                      className="w-full text-left rounded-lg bg-white border border-amber-100 hover:border-amber-300 px-3 py-2 transition-colors"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-medium text-slate-800 truncate">
+                          {product.product_name}
+                        </span>
+                        <span className="text-[11px] font-semibold text-amber-700 whitespace-nowrap">
+                          Need{" "}
+                          {Math.max(
+                            0,
+                            Number(product.reorderPoint) -
+                              Number(product.mainStock),
+                          )}{" "}
+                          {product.unit}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-0.5 truncate">
+                        {product.category}
+                      </p>
+                    </button>
+                  ))}
                 </div>
               </div>
             )}
-
             <div className="grid grid-cols-12 gap-2 text-xs text-gray-400 font-medium px-1 mb-1">
               <span className="col-span-4">Item</span>
               <span className="col-span-2">Unit</span>
@@ -1397,7 +1257,6 @@ function CreatePOModal({
               <span className="col-span-3">Unit Cost</span>
               <span className="col-span-1" />
             </div>
-
             <div className="space-y-2">
               <AnimatePresence>
                 {items.map((item, idx) => (
@@ -1462,7 +1321,6 @@ function CreatePOModal({
               </AnimatePresence>
             </div>
           </div>
-
           {subtotal > 0 && (
             <div className="bg-gray-50 rounded-xl px-4 py-3 flex justify-between items-center">
               <span className="text-sm text-gray-500">Estimated Subtotal</span>
@@ -1471,7 +1329,6 @@ function CreatePOModal({
               </span>
             </div>
           )}
-
           <div>
             <label className="text-xs text-gray-400 font-medium block mb-1">
               Notes (optional)
@@ -1485,7 +1342,6 @@ function CreatePOModal({
             />
           </div>
         </div>
-
         <div className="px-6 py-4 border-t border-gray-100 flex gap-3">
           <button
             onClick={onClose}
@@ -1505,10 +1361,6 @@ function CreatePOModal({
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// STOCK ALERTS RESTOCK BANNER — shown inside the Purchase Orders tab
-// ─────────────────────────────────────────────────────────────────────────────
-
 function StockAlertRestockBanner({
   criticalItems,
   lowItems,
@@ -1516,11 +1368,11 @@ function StockAlertRestockBanner({
 }: {
   criticalItems: Product[];
   lowItems: Product[];
-  onOrderNow: (product: Product) => void;
+  onOrderNow: (p: Product) => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
-  const totalItems = criticalItems.length + lowItems.length;
-  if (totalItems === 0) return null;
+  const total = criticalItems.length + lowItems.length;
+  if (total === 0) return null;
 
   return (
     <motion.div
@@ -1528,7 +1380,6 @@ function StockAlertRestockBanner({
       animate={{ opacity: 1, y: 0 }}
       className="rounded-2xl overflow-hidden border border-red-200 shadow-sm"
     >
-      {/* Header */}
       <div className="bg-gradient-to-r from-red-50 to-amber-50 px-5 py-3.5 flex items-center justify-between border-b border-red-100">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-xl bg-red-100 flex items-center justify-center flex-shrink-0">
@@ -1548,7 +1399,7 @@ function StockAlertRestockBanner({
           </div>
           <div>
             <p className="text-sm font-bold text-slate-800">
-              {totalItems} item{totalItems > 1 ? "s" : ""} need restocking
+              {total} item{total > 1 ? "s" : ""} need restocking
             </p>
             <p className="text-xs text-slate-500 mt-0.5">
               {criticalItems.length > 0 && (
@@ -1567,17 +1418,13 @@ function StockAlertRestockBanner({
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setCollapsed((c) => !c)}
-            className="text-xs font-semibold text-slate-500 hover:text-slate-700 transition-colors px-2.5 py-1 rounded-lg hover:bg-white/60"
-          >
-            {collapsed ? "Show items" : "Collapse"}
-          </button>
-        </div>
+        <button
+          onClick={() => setCollapsed((c) => !c)}
+          className="text-xs font-semibold text-slate-500 hover:text-slate-700 transition-colors px-2.5 py-1 rounded-lg hover:bg-white/60"
+        >
+          {collapsed ? "Show items" : "Collapse"}
+        </button>
       </div>
-
-      {/* Items grid */}
       <AnimatePresence>
         {!collapsed && (
           <motion.div
@@ -1586,50 +1433,124 @@ function StockAlertRestockBanner({
             exit={{ opacity: 0, height: 0 }}
             className="bg-white"
           >
-            {/* Critical items */}
-            {criticalItems.length > 0 && (
-              <div>
-                <div className="px-5 pt-3 pb-1">
-                  <span className="text-[10px] font-bold text-red-500 uppercase tracking-wider">
-                    🔴 Critical — Order Immediately
-                  </span>
+            {[
+              {
+                items: criticalItems,
+                severity: "critical" as const,
+                label: "🔴 Critical — Order Immediately",
+              },
+              {
+                items: lowItems,
+                severity: "low" as const,
+                label: "🟡 Low Stock — Reorder Soon",
+              },
+            ].map(({ items, severity, label }, gi) =>
+              items.length > 0 ? (
+                <div
+                  key={severity}
+                  className={
+                    gi === 1 && criticalItems.length > 0
+                      ? "border-t border-slate-100"
+                      : ""
+                  }
+                >
+                  <div className="px-5 pt-3 pb-1">
+                    <span
+                      className={`text-[10px] font-bold uppercase tracking-wider ${severity === "critical" ? "text-red-500" : "text-amber-500"}`}
+                    >
+                      {label}
+                    </span>
+                  </div>
+                  <div className="px-4 pb-3 grid grid-cols-1 gap-2">
+                    {items.map((p) => {
+                      const pct = Math.min(
+                        100,
+                        (p.mainStock / Math.max(1, p.reorderPoint)) * 100,
+                      );
+                      const deficit = Math.max(
+                        0,
+                        +(p.reorderPoint - p.mainStock).toFixed(2),
+                      );
+                      return (
+                        <div
+                          key={p.product_id}
+                          className={`flex items-center gap-4 px-4 py-3 rounded-xl border transition-colors ${severity === "critical" ? "bg-red-50/60 border-red-100 hover:bg-red-50" : "bg-amber-50/50 border-amber-100 hover:bg-amber-50"}`}
+                        >
+                          <div
+                            className={`w-2 h-2 rounded-full flex-shrink-0 ${severity === "critical" ? "bg-red-500" : "bg-amber-400"}`}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-sm font-semibold text-slate-800 truncate">
+                                {p.product_name}
+                              </p>
+                              <span
+                                className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${getCategoryStyle(p.category)}`}
+                              >
+                                {p.category}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-400 mt-0.5">
+                              {p.supplier_name}
+                            </p>
+                          </div>
+                          <div className="flex-shrink-0 text-center min-w-[80px]">
+                            <p
+                              className={`text-sm font-bold ${severity === "critical" ? "text-red-600" : "text-amber-600"}`}
+                            >
+                              {p.mainStock}
+                              <span className="text-xs font-normal text-slate-400 ml-0.5">
+                                {p.unit}
+                              </span>
+                            </p>
+                            <div className="w-full bg-slate-100 rounded-full h-1.5 mt-1 overflow-hidden">
+                              <div
+                                className={`h-full rounded-full ${severity === "critical" ? "bg-red-400" : "bg-amber-400"}`}
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                            <p className="text-[10px] text-slate-400 mt-0.5">
+                              of {p.reorderPoint} {p.unit} reorder
+                            </p>
+                          </div>
+                          {deficit > 0 && (
+                            <div className="flex-shrink-0 text-center min-w-[72px]">
+                              <p className="text-[10px] text-slate-400">Need</p>
+                              <p
+                                className={`text-sm font-bold ${severity === "critical" ? "text-red-600" : "text-amber-600"}`}
+                              >
+                                +{deficit}{" "}
+                                <span className="text-xs font-normal text-slate-400">
+                                  {p.unit}
+                                </span>
+                              </p>
+                            </div>
+                          )}
+                          <button
+                            onClick={() => onOrderNow(p)}
+                            className={`flex-shrink-0 flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all duration-200 shadow-sm ${severity === "critical" ? "bg-red-500 text-white hover:bg-red-600 shadow-red-500/25" : "bg-amber-500 text-white hover:bg-amber-600 shadow-amber-500/25"}`}
+                          >
+                            <svg
+                              className="w-3.5 h-3.5"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2.5}
+                                d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"
+                              />
+                            </svg>
+                            Order Now
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-                <div className="px-4 pb-3 grid grid-cols-1 gap-2">
-                  {criticalItems.map((p) => (
-                    <StockAlertRestockRow
-                      key={p.product_id}
-                      product={p}
-                      severity="critical"
-                      onOrderNow={onOrderNow}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Low stock items */}
-            {lowItems.length > 0 && (
-              <div
-                className={
-                  criticalItems.length > 0 ? "border-t border-slate-100" : ""
-                }
-              >
-                <div className="px-5 pt-3 pb-1">
-                  <span className="text-[10px] font-bold text-amber-500 uppercase tracking-wider">
-                    🟡 Low Stock — Reorder Soon
-                  </span>
-                </div>
-                <div className="px-4 pb-3 grid grid-cols-1 gap-2">
-                  {lowItems.map((p) => (
-                    <StockAlertRestockRow
-                      key={p.product_id}
-                      product={p}
-                      severity="low"
-                      onOrderNow={onOrderNow}
-                    />
-                  ))}
-                </div>
-              </div>
+              ) : null,
             )}
           </motion.div>
         )}
@@ -1637,120 +1558,6 @@ function StockAlertRestockBanner({
     </motion.div>
   );
 }
-
-function StockAlertRestockRow({
-  product,
-  severity,
-  onOrderNow,
-}: {
-  product: Product;
-  severity: "critical" | "low";
-  onOrderNow: (product: Product) => void;
-}) {
-  const pct = Math.min(
-    100,
-    (product.mainStock / Math.max(1, product.reorderPoint)) * 100,
-  );
-  const deficit = Math.max(
-    0,
-    +(product.reorderPoint - product.mainStock).toFixed(2),
-  );
-
-  return (
-    <div
-      className={`flex items-center gap-4 px-4 py-3 rounded-xl border transition-colors ${
-        severity === "critical"
-          ? "bg-red-50/60 border-red-100 hover:bg-red-50"
-          : "bg-amber-50/50 border-amber-100 hover:bg-amber-50"
-      }`}
-    >
-      {/* Status dot */}
-      <div
-        className={`w-2 h-2 rounded-full flex-shrink-0 ${severity === "critical" ? "bg-red-500" : "bg-amber-400"}`}
-      />
-
-      {/* Product info */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <p className="text-sm font-semibold text-slate-800 truncate">
-            {product.product_name}
-          </p>
-          <span
-            className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${getCategoryStyle(product.category)}`}
-          >
-            {product.category}
-          </span>
-        </div>
-        <p className="text-xs text-slate-400 mt-0.5">{product.supplier_name}</p>
-      </div>
-
-      {/* Stock levels */}
-      <div className="flex-shrink-0 text-center min-w-[80px]">
-        <p
-          className={`text-sm font-bold ${severity === "critical" ? "text-red-600" : "text-amber-600"}`}
-        >
-          {product.mainStock}
-          <span className="text-xs font-normal text-slate-400 ml-0.5">
-            {product.unit}
-          </span>
-        </p>
-        <div className="w-full bg-slate-100 rounded-full h-1.5 mt-1 overflow-hidden">
-          <div
-            className={`h-full rounded-full ${severity === "critical" ? "bg-red-400" : "bg-amber-400"}`}
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-        <p className="text-[10px] text-slate-400 mt-0.5">
-          of {product.reorderPoint} {product.unit} reorder
-        </p>
-      </div>
-
-      {/* Deficit badge */}
-      {deficit > 0 && (
-        <div className="flex-shrink-0 text-center min-w-[72px]">
-          <p className="text-[10px] text-slate-400">Need</p>
-          <p
-            className={`text-sm font-bold ${severity === "critical" ? "text-red-600" : "text-amber-600"}`}
-          >
-            +{deficit}{" "}
-            <span className="text-xs font-normal text-slate-400">
-              {product.unit}
-            </span>
-          </p>
-        </div>
-      )}
-
-      {/* Order Now button */}
-      <button
-        onClick={() => onOrderNow(product)}
-        className={`flex-shrink-0 flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all duration-200 shadow-sm ${
-          severity === "critical"
-            ? "bg-red-500 text-white hover:bg-red-600 shadow-red-500/25"
-            : "bg-amber-500 text-white hover:bg-amber-600 shadow-amber-500/25"
-        }`}
-      >
-        <svg
-          className="w-3.5 h-3.5"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2.5}
-            d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"
-          />
-        </svg>
-        Order Now
-      </button>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// STOCK MANAGER SUB-COMPONENTS
-// ─────────────────────────────────────────────────────────────────────────────
 
 function YesterdayReturnsBanner({ batches }: { batches: Batch[] }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -1783,18 +1590,12 @@ function YesterdayReturnsBanner({ batches }: { batches: Batch[] }) {
       {!collapsed && (
         <div className="px-5 pb-4 grid grid-cols-3 gap-3">
           {batches.map((b) => {
-            const expiring = isExpiringSoon(b.expiry_date);
-            const expired = isExpired(b.expiry_date);
+            const expiring = isExpiringSoon(b.expiry_date),
+              expired = isExpired(b.expiry_date);
             return (
               <div
                 key={b.batch_id}
-                className={`rounded-xl p-3.5 border ${
-                  expired
-                    ? "bg-red-50 border-red-200"
-                    : expiring
-                      ? "bg-orange-50 border-orange-200"
-                      : "bg-white border-amber-100"
-                }`}
+                className={`rounded-xl p-3.5 border ${expired ? "bg-red-50 border-red-200" : expiring ? "bg-orange-50 border-orange-200" : "bg-white border-amber-100"}`}
               >
                 <div className="flex items-start justify-between mb-2">
                   <p className="text-sm font-semibold text-slate-800">
@@ -1929,14 +1730,13 @@ function FIFOBatchPreview({
             const previewRow = preview.find(
               (p) => p.batch.batch_id === batch.batch_id,
             );
-            const willBeUsed = !!previewRow;
-            const expiring = isExpiringSoon(batch.expiry_date);
-            const expired = isExpired(batch.expiry_date);
-            const isFirst = idx === 0;
+            const expiring = isExpiringSoon(batch.expiry_date),
+              expired = isExpired(batch.expiry_date),
+              isFirst = idx === 0;
             return (
               <div
                 key={batch.batch_id}
-                className={`px-3.5 py-3 flex items-center gap-3 transition-colors ${willBeUsed ? "bg-indigo-50/60" : "bg-white"} ${expired ? "opacity-50" : ""}`}
+                className={`px-3.5 py-3 flex items-center gap-3 transition-colors ${previewRow ? "bg-indigo-50/60" : "bg-white"} ${expired ? "opacity-50" : ""}`}
               >
                 <div
                   className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-bold ${isFirst ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-400"}`}
@@ -1990,7 +1790,7 @@ function FIFOBatchPreview({
                       {unit}
                     </span>
                   </p>
-                  {willBeUsed && previewRow && (
+                  {previewRow && (
                     <p className="text-xs font-semibold text-indigo-600 mt-0.5">
                       −{previewRow.take} {unit} will be pulled
                     </p>
@@ -2022,20 +1822,13 @@ function FIFOBatchPreview({
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MAIN COMPONENT
-// ─────────────────────────────────────────────────────────────────────────────
-
 export default function StockManager() {
   const [tab, setTab] = useState<Tab>("dashboard");
-
-  // ── Stock state ───────────────────────────────────────────────────────────
   const [products, setProducts] = useState<Product[]>([]);
   const [withdrawals, setWithdrawals] = useState<StockStatusRecord[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [activeBatches, setActiveBatches] = useState<Batch[]>([]);
   const [yesterdayReturns, setYesterdayReturns] = useState<Batch[]>([]);
-
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -2043,35 +1836,21 @@ export default function StockManager() {
     message: string;
     type: "success" | "error";
   } | null>(null);
-
-  // ── Withdrawal form state ─────────────────────────────────────────────────
   const [wdProductId, setWdProductId] = useState<number | null>(null);
   const [wdQty, setWdQty] = useState("");
   const [wdType, setWdType] = useState<WithdrawalType>("initial");
-
-  // ── Spoilage form state ───────────────────────────────────────────────────
   const [adjProductId, setAdjProductId] = useState<number | null>(null);
   const [adjQty, setAdjQty] = useState("");
-
-  // ── Search state ──────────────────────────────────────────────────────────
   const [dashboardSearch, setDashboardSearch] = useState("");
   const [supplierSearch, setSupplierSearch] = useState("");
-
-  // ── Supplier form ─────────────────────────────────────────────────────────
   const [showSupplierForm, setShowSupplierForm] = useState(false);
   const [supplierForm, setSupplierForm] =
     useState<Omit<Supplier, "supplier_id">>(BLANK_SUPPLIER);
-
-  // ── Raw material form ─────────────────────────────────────────────────────
   const [showRawMaterialForm, setShowRawMaterialForm] = useState(false);
   const [rawMaterialForm, setRawMaterialForm] =
     useState<RawMaterialForm>(BLANK_RAW_MATERIAL);
-
-  // ── Reconcile ─────────────────────────────────────────────────────────────
   const [showReconcile, setShowReconcile] = useState(false);
   const [reconcileItems, setReconcileItems] = useState<ReconcileRow[]>([]);
-
-  // ── Purchase Order state ──────────────────────────────────────────────────
   const [poOrders, setPoOrders] = useState<PurchaseOrder[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<PurchaseOrder | null>(
     null,
@@ -2079,29 +1858,10 @@ export default function StockManager() {
   const [receivingOrder, setReceivingOrder] = useState<PurchaseOrder | null>(
     null,
   );
-  const [showCreatePO, setShowCreatePO] = useState(false);
   const [poFilterStatus, setPoFilterStatus] = useState<POStatus | "All">("All");
   const [poLoading, setPoLoading] = useState(false);
-  const [editingThresholdInventoryId, setEditingThresholdInventoryId] =
-    useState<number | null>(null);
-  const [thresholdDraft, setThresholdDraft] = useState({
-    warning: "",
-    critical: "",
-  });
-  const [savingThresholdInventoryId, setSavingThresholdInventoryId] = useState<
-    number | null
-  >(null);
-  /**
-   * When set, the CreatePO modal opens pre-filled with this product's details.
-   * null = open blank. undefined = modal closed.
-   */
   const [prefillPOProduct, setPrefillPOProduct] = useState<
-    | {
-        name: string;
-        category: string;
-        unit: string;
-        supplier: string;
-      }
+    | { name: string; category: string; unit: string; supplier: string }
     | null
     | undefined
   >(undefined);
@@ -2109,7 +1869,6 @@ export default function StockManager() {
   const showToast = (message: string, type: "success" | "error") =>
     setToast({ message, type });
 
-  /** Opens the CreatePO modal pre-filled for a specific low/critical product */
   const handleOrderNow = useCallback((product: Product) => {
     setPrefillPOProduct({
       name: product.product_name,
@@ -2119,89 +1878,10 @@ export default function StockManager() {
     });
   }, []);
 
-  /** Opens the CreatePO modal blank */
-  const handleOpenBlankPO = useCallback(() => {
-    setPrefillPOProduct(null);
-  }, []);
-
   const handleClosePOModal = useCallback(() => {
     setPrefillPOProduct(undefined);
   }, []);
 
-  const handleOpenReceivePO = useCallback((order: PurchaseOrder) => {
-    setReceivingOrder(order);
-    setSelectedOrder(null);
-  }, []);
-
-  const handleCloseReceivePO = useCallback(() => {
-    setReceivingOrder(null);
-  }, []);
-
-  const openThresholdEditor = useCallback((product: Product) => {
-    setEditingThresholdInventoryId(product.inventory_id);
-    setThresholdDraft({
-      warning: String(product.reorderPoint),
-      critical: String(product.criticalPoint),
-    });
-  }, []);
-
-  const closeThresholdEditor = useCallback(() => {
-    setEditingThresholdInventoryId(null);
-    setThresholdDraft({ warning: "", critical: "" });
-  }, []);
-
-  const saveThresholds = useCallback(
-    async (product: Product) => {
-      const warning = Number(thresholdDraft.warning);
-      const critical = Number(thresholdDraft.critical);
-
-      if (!Number.isFinite(warning) || warning < 0) {
-        showToast("Warning threshold must be a non-negative number.", "error");
-        return;
-      }
-      if (!Number.isFinite(critical) || critical < 0) {
-        showToast("Critical threshold must be a non-negative number.", "error");
-        return;
-      }
-      if (critical > warning) {
-        showToast(
-          "Critical threshold cannot be higher than warning threshold.",
-          "error",
-        );
-        return;
-      }
-
-      setSavingThresholdInventoryId(product.inventory_id);
-      try {
-        await api.updateStock(product.inventory_id, {
-          reorderPoint: warning,
-          criticalPoint: critical,
-        });
-        setProducts((prev) =>
-          prev.map((item) =>
-            item.inventory_id === product.inventory_id
-              ? { ...item, reorderPoint: warning, criticalPoint: critical }
-              : item,
-          ),
-        );
-        closeThresholdEditor();
-        showToast(
-          `Stock thresholds updated for ${product.product_name}.`,
-          "success",
-        );
-      } catch (err) {
-        showToast(
-          err instanceof Error ? err.message : "Failed to update thresholds.",
-          "error",
-        );
-      } finally {
-        setSavingThresholdInventoryId(null);
-      }
-    },
-    [closeThresholdEditor, thresholdDraft],
-  );
-
-  // ── Fetch all data ────────────────────────────────────────────────────────
   const fetchAll = useCallback(async () => {
     setIsLoading(true);
     setError(null);
@@ -2241,11 +1921,11 @@ export default function StockManager() {
         })
         .filter((p) => {
           const promo = String(p.promo ?? "")
-            .toUpperCase()
-            .trim();
-          const category = String(p.category ?? "")
-            .toLowerCase()
-            .trim();
+              .toUpperCase()
+              .trim(),
+            category = String(p.category ?? "")
+              .toLowerCase()
+              .trim();
           return (
             promo === "SUPPLIES" ||
             promo === "MENU FOOD" ||
@@ -2264,16 +1944,13 @@ export default function StockManager() {
         const key = String(item.product_name ?? "")
           .trim()
           .toLowerCase();
-        const group = groupedByName.get(key) ?? [];
-        group.push(item);
-        groupedByName.set(key, group);
+        groupedByName.set(key, [...(groupedByName.get(key) ?? []), item]);
       }
       const normalizedProducts: Product[] = Array.from(
         groupedByName.values(),
       ).map((group) => {
-        const nonRaw = group.filter((item) => !item.isRawMaterial);
-        const pool = nonRaw.length > 0 ? nonRaw : group;
-        return pool.reduce((latest, current) =>
+        const pool = group.filter((i) => !i.isRawMaterial);
+        return (pool.length > 0 ? pool : group).reduce((latest, current) =>
           toNumber(current.product_id) > toNumber(latest.product_id)
             ? current
             : latest,
@@ -2313,7 +1990,6 @@ export default function StockManager() {
   useEffect(() => {
     fetchAll();
   }, [fetchAll]);
-
   useEffect(() => {
     if (products.length > 0) {
       if (wdProductId === null) setWdProductId(products[0].product_id);
@@ -2321,22 +1997,12 @@ export default function StockManager() {
     }
   }, [products, wdProductId, adjProductId]);
 
-  // ── Derived values ────────────────────────────────────────────────────────
   const lowStock = products.filter(
     (p) => !isMenuFoodProduct(p) && getStockStatus(p) === "low",
   );
   const criticalStock = products.filter(
     (p) => !isMenuFoodProduct(p) && getStockStatus(p) === "critical",
   );
-  const poQuickOrderProducts = useMemo(() => {
-    const uniqueByProductId = new Map<number, Product>();
-    [...criticalStock, ...lowStock].forEach((product) => {
-      if (!uniqueByProductId.has(product.product_id)) {
-        uniqueByProductId.set(product.product_id, product);
-      }
-    });
-    return Array.from(uniqueByProductId.values());
-  }, [criticalStock, lowStock]);
   const attentionItems = useMemo(
     () =>
       products.filter(
@@ -2344,48 +2010,54 @@ export default function StockManager() {
       ),
     [products],
   );
-
-  const selectedProductBatches = useMemo(() => {
-    if (!wdProductId) return [];
-    return activeBatches
-      .filter((b) => b.product_id === wdProductId)
-      .sort(
-        (a, b) =>
-          new Date(a.received_date).getTime() -
-          new Date(b.received_date).getTime(),
-      );
-  }, [activeBatches, wdProductId]);
-
+  const poQuickOrderProducts = useMemo(() => {
+    const m = new Map<number, Product>();
+    [...criticalStock, ...lowStock].forEach((p) => {
+      if (!m.has(p.product_id)) m.set(p.product_id, p);
+    });
+    return Array.from(m.values());
+  }, [criticalStock, lowStock]);
+  const selectedProductBatches = useMemo(
+    () =>
+      !wdProductId
+        ? []
+        : activeBatches
+            .filter((b) => b.product_id === wdProductId)
+            .sort(
+              (a, b) =>
+                new Date(a.received_date).getTime() -
+                new Date(b.received_date).getTime(),
+            ),
+    [activeBatches, wdProductId],
+  );
   const dashboardFilteredProducts = useMemo(() => {
     const q = dashboardSearch.trim().toLowerCase();
-    const stockManagerProducts = products.filter((p) => !isMenuFoodProduct(p));
+    const base = products.filter((p) => !isMenuFoodProduct(p));
     const filtered = !q
-      ? stockManagerProducts
-      : stockManagerProducts.filter(
+      ? base
+      : base.filter(
           (p) =>
             p.product_name.toLowerCase().includes(q) ||
             p.category.toLowerCase().includes(q),
         );
     return [...filtered].sort((a, b) => {
-      const aWithdrawn = toNumber(a.dailyWithdrawn);
-      const bWithdrawn = toNumber(b.dailyWithdrawn);
-      if (aWithdrawn !== bWithdrawn) return bWithdrawn - aWithdrawn;
-      const aPct = a.mainStock / Math.max(1, a.reorderPoint * 2);
-      const bPct = b.mainStock / Math.max(1, b.reorderPoint * 2);
-      return aPct - bPct;
+      const diff = toNumber(b.dailyWithdrawn) - toNumber(a.dailyWithdrawn);
+      return diff !== 0
+        ? diff
+        : a.mainStock / Math.max(1, a.reorderPoint * 2) -
+            b.mainStock / Math.max(1, b.reorderPoint * 2);
     });
   }, [products, dashboardSearch]);
-
   const filteredSuppliers = useMemo(() => {
     const q = supplierSearch.trim().toLowerCase();
-    if (!q) return suppliers;
-    return suppliers.filter(
-      (s) =>
-        s.supplier_name.toLowerCase().includes(q) ||
-        (s.products_supplied ?? "").toLowerCase().includes(q),
-    );
+    return !q
+      ? suppliers
+      : suppliers.filter(
+          (s) =>
+            s.supplier_name.toLowerCase().includes(q) ||
+            (s.products_supplied ?? "").toLowerCase().includes(q),
+        );
   }, [suppliers, supplierSearch]);
-
   const selectedWithdrawalProduct = useMemo(
     () => products.find((p) => p.product_id === wdProductId) ?? null,
     [products, wdProductId],
@@ -2403,7 +2075,6 @@ export default function StockManager() {
         ),
       )
     : 0;
-
   const totalWithdrawn = products.reduce(
     (s, p) => s + toNumber(p.dailyWithdrawn),
     0,
@@ -2420,32 +2091,27 @@ export default function StockManager() {
         : poOrders.filter((o) => o.status === poFilterStatus),
     [poOrders, poFilterStatus],
   );
-  const poStatusFilters: (POStatus | "All")[] = [
-    "All",
-    "Draft",
-    "Ordered",
-    "Received",
-    "Cancelled",
-  ];
-
   // ── PO actions ────────────────────────────────────────────────────────────
   const handlePOStatusChange = useCallback(
-    async (order: PurchaseOrder, status: POStatus) => {
+    async (id: string, status: POStatus) => {
       if (status === "Received") {
-        handleOpenReceivePO(order);
+        const orderToReceive = poOrders.find((order) => order.id === id);
+        if (!orderToReceive) {
+          showToast("Purchase order not found.", "error");
+          return;
+        }
+        setReceivingOrder(orderToReceive);
+        setSelectedOrder(null);
         return;
       }
 
       setPoLoading(true);
       try {
-        const updated = await api.po.updateStatus(order.id, status);
+        const updated = await api.po.updateStatus(id, status);
 
-        setPoOrders((prev) =>
-          prev.map((existingOrder) =>
-            existingOrder.id === order.id ? updated : existingOrder,
-          ),
-        );
-        setSelectedOrder((prev) => (prev?.id === order.id ? updated : prev));
+        setPoOrders((prev) => prev.map((o) => (o.id === id ? updated : o)));
+        setSelectedOrder((prev) => (prev?.id === id ? updated : prev));
+        showToast(`Purchase order moved to ${status}.`, "success");
       } catch (err) {
         showToast(
           err instanceof Error
@@ -2457,8 +2123,12 @@ export default function StockManager() {
         setPoLoading(false);
       }
     },
-    [handleOpenReceivePO],
+    [poOrders],
   );
+
+  const handleCloseReceivePO = useCallback(() => {
+    setReceivingOrder(null);
+  }, []);
 
   const handleConfirmReceivePO = useCallback(
     async (expiryDates: Record<number, string>) => {
@@ -2466,69 +2136,37 @@ export default function StockManager() {
 
       setPoLoading(true);
       try {
-        const updated = await api.po.markReceived(receivingOrder.id, "Staff on Duty");
-        const mergedOrder: PurchaseOrder = {
-          ...updated,
-          items: updated.items.map((item) => ({
-            ...item,
-            expiryDate: expiryDates[item.id] || "",
-          })),
-        };
-
-        const unmatchedItems: string[] = [];
-        const batchCreations = mergedOrder.items.map(async (poItem) => {
-          const match = products.find(
-            (p) =>
-              p.product_name.trim().toLowerCase() ===
-              poItem.name.trim().toLowerCase(),
-          );
-          if (!match) {
-            unmatchedItems.push(poItem.name);
-            return;
-          }
-
-          await api.postBatch({
-            productId: match.product_id,
-            productName: match.product_name,
-            quantity: Number(poItem.quantity),
-            unit: poItem.unit || match.unit,
-            expiresAt: poItem.expiryDate || undefined,
-          });
-
-          const newStock = +(match.mainStock + Number(poItem.quantity)).toFixed(2);
-          await api.updateStock(match.inventory_id, { stock: newStock });
-        });
-
-        await Promise.allSettled(batchCreations);
-        await fetchAll();
+        const updated = await api.po.markReceived(
+          receivingOrder.id,
+          "Staff on Duty",
+          expiryDates,
+        );
         setPoOrders((prev) =>
           prev.map((order) =>
-            order.id === mergedOrder.id ? { ...mergedOrder } : order,
+            order.id === receivingOrder.id ? updated : order,
           ),
         );
-        setSelectedOrder(mergedOrder);
+        setSelectedOrder((prev) =>
+          prev?.id === receivingOrder.id ? updated : prev,
+        );
         setReceivingOrder(null);
-
-        if (unmatchedItems.length > 0) {
-          showToast(
-            `Batches created, but ${unmatchedItems.length} item(s) not found in inventory: ${unmatchedItems.join(", ")}`,
-            "error",
-          );
-        } else {
-          showToast("PO received — new batches added to FIFO queue.", "success");
-        }
+        await fetchAll();
+        showToast(
+          "Purchase order received and stock batches added.",
+          "success",
+        );
       } catch (err) {
         showToast(
           err instanceof Error
             ? err.message
-            : "Failed to update purchase order status.",
+            : "Failed to receive purchase order.",
           "error",
         );
       } finally {
         setPoLoading(false);
       }
     },
-    [fetchAll, products, receivingOrder],
+    [fetchAll, receivingOrder],
   );
 
   const handlePOCreate = useCallback(async (po: Omit<PurchaseOrder, "id">) => {
@@ -2547,7 +2185,6 @@ export default function StockManager() {
     }
   }, []);
 
-  // ── Core withdrawal logic ─────────────────────────────────────────────────
   async function doWithdraw(
     product_id: number,
     qty: number,
@@ -2557,8 +2194,8 @@ export default function StockManager() {
     if (!product) throw new Error("Product not found");
     try {
       if (type === "return") {
-        const productBatches = await api.getProductBatches(product_id);
-        const validBatch = productBatches
+        const batches = await api.getProductBatches(product_id);
+        const validBatch = batches
           .filter((b) => ["active", "withdrawn", "returned"].includes(b.status))
           .sort(
             (a, b) =>
@@ -2608,10 +2245,6 @@ export default function StockManager() {
   async function submitWithdrawal() {
     const qty = parseInt(wdQty);
     if (!qty || qty <= 0 || wdProductId === null) return;
-    if (wdType !== "return" && !Number.isInteger(qty)) {
-      showToast("Withdrawal quantity must be a whole number.", "error");
-      return;
-    }
     const product = products.find((p) => p.product_id === wdProductId);
     if (!product) return;
     if (wdType !== "return" && qty > product.mainStock) {
@@ -2741,10 +2374,7 @@ export default function StockManager() {
         });
       }
       setShowReconcile(false);
-      showToast(
-        `${validItems.length} item(s) reconciled. Returns logged for tomorrow.`,
-        "success",
-      );
+      showToast(`${validItems.length} item(s) reconciled.`, "success");
       await fetchAll();
     } catch (err) {
       showToast(
@@ -2788,10 +2418,6 @@ export default function StockManager() {
     }
   }
 
-  function setSupplierField(field: SupplierField, value: string) {
-    setSupplierForm((prev) => ({ ...prev, [field]: value }));
-  }
-
   async function addRawMaterial() {
     const name = rawMaterialForm.name.trim();
     const qty = Number(rawMaterialForm.initialStock);
@@ -2804,19 +2430,23 @@ export default function StockManager() {
       showToast("Initial stock must be greater than 0.", "error");
       return;
     }
+    if (!rawMaterialForm.expiryDate) {
+      showToast("Please select an expiry date.", "error");
+      return;
+    }
     setSubmitting(true);
     try {
       const normalizedName = name.toLowerCase();
       const existing = products.find(
         (p) => p.product_name.trim().toLowerCase() === normalizedName,
       );
-      const batchUnit = existing?.unit || "piece";
       if (existing) {
         await api.postBatch({
           productId: existing.product_id,
           productName: existing.product_name,
           quantity: qty,
-          unit: batchUnit,
+          unit: rawMaterialForm.unit,
+          expiresAt: rawMaterialForm.expiryDate,
         });
       } else {
         const created = await api.createProduct({
@@ -2831,7 +2461,8 @@ export default function StockManager() {
           productId: created.id,
           productName: name,
           quantity: qty,
-          unit: batchUnit,
+          unit: rawMaterialForm.unit,
+          expiresAt: rawMaterialForm.expiryDate,
         });
       }
       await fetchAll();
@@ -2851,21 +2482,31 @@ export default function StockManager() {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // RENDER
-  // ─────────────────────────────────────────────────────────────────────────
+  const cartIcon = (
+    <svg
+      className="w-3.5 h-3.5"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2.5}
+        d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"
+      />
+    </svg>
+  );
 
   return (
     <>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');`}</style>
-
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap'); @keyframes fadeInRow { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }`}</style>
       <div
         style={{ fontFamily: "'Poppins', sans-serif" }}
         className="min-h-screen bg-[#f5f6fa]"
       >
         <Sidebar />
 
-        {/* ── HEADER ───────────────────────────────────────────────────────── */}
         <header className="bg-white border-b border-slate-100 sticky top-0 z-30 shadow-sm">
           <div className="pl-25 pr-8 py-4 flex items-center justify-between">
             <div>
@@ -2916,8 +2557,6 @@ export default function StockManager() {
               </div>
             </div>
           </div>
-
-          {/* ── TAB BAR ────────────────────────────────────────────────────── */}
           <div className="pb-3 flex items-center justify-center gap-2">
             {TABS.map((t) => {
               const badge =
@@ -2934,24 +2573,12 @@ export default function StockManager() {
                   key={t.id}
                   onClick={() => setTab(t.id)}
                   style={{ fontFamily: "'Poppins', sans-serif" }}
-                  className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium border transition-all duration-200 ${
-                    active
-                      ? "bg-slate-900 text-white border-slate-900 shadow-sm"
-                      : "bg-white text-slate-500 border-slate-200 hover:border-slate-300 hover:text-slate-700"
-                  }`}
+                  className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium border transition-all duration-200 ${active ? "bg-slate-900 text-white border-slate-900 shadow-sm" : "bg-white text-slate-500 border-slate-200 hover:border-slate-300 hover:text-slate-700"}`}
                 >
                   {t.label}
                   {badge > 0 && (
                     <span
-                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none ${
-                        active
-                          ? "bg-white/20 text-white"
-                          : t.id === "withdrawal"
-                            ? "bg-amber-100 text-amber-700"
-                            : t.id === "purchases"
-                              ? "bg-yellow-100 text-yellow-700"
-                              : "bg-red-100 text-red-600"
-                      }`}
+                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none ${active ? "bg-white/20 text-white" : t.id === "withdrawal" ? "bg-amber-100 text-amber-700" : t.id === "purchases" ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-600"}`}
                     >
                       {badge}
                     </span>
@@ -2962,19 +2589,16 @@ export default function StockManager() {
           </div>
         </header>
 
-        {/* ── MAIN ─────────────────────────────────────────────────────────── */}
         <main className="px-8 py-8">
           {error && (
             <div className="mb-6">
               <ErrorBanner message={error} onRetry={fetchAll} />
             </div>
           )}
-
           {isLoading ? (
             <LoadingSkeleton />
           ) : (
             <AnimatePresence mode="wait">
-              {/* ── DASHBOARD ────────────────────────────────────────────────── */}
               {tab === "dashboard" && (
                 <motion.div
                   key="dashboard"
@@ -3025,28 +2649,23 @@ export default function StockManager() {
                           sub: string;
                           accent: string;
                         }[]
-                      ).map((k) => {
-                        const ac = KPI_ACCENT[k.accent];
-                        return (
-                          <motion.div
-                            key={k.label}
-                            variants={itemVariants}
-                            className={`bg-white rounded-2xl p-5 shadow-sm border border-slate-100 border-t-4 ${ac.border}`}
+                      ).map((k) => (
+                        <motion.div
+                          key={k.label}
+                          variants={itemVariants}
+                          className={`bg-white rounded-2xl p-5 shadow-sm border border-slate-100 border-t-4 ${KPI_ACCENT[k.accent].border}`}
+                        >
+                          <p className="text-xs text-slate-400 font-medium">
+                            {k.label}
+                          </p>
+                          <p
+                            className={`text-3xl font-bold mt-1 leading-none ${KPI_ACCENT[k.accent].value}`}
                           >
-                            <p className="text-xs text-slate-400 font-medium">
-                              {k.label}
-                            </p>
-                            <p
-                              className={`text-3xl font-bold mt-1 leading-none ${ac.value}`}
-                            >
-                              {k.value}
-                            </p>
-                            <p className="text-xs text-slate-400 mt-1">
-                              {k.sub}
-                            </p>
-                          </motion.div>
-                        );
-                      })}
+                            {k.value}
+                          </p>
+                          <p className="text-xs text-slate-400 mt-1">{k.sub}</p>
+                        </motion.div>
+                      ))}
                     </motion.div>
 
                     {(wholeChickenProducts.length > 0 ||
@@ -3149,13 +2768,7 @@ export default function StockManager() {
                               ].map((h) => (
                                 <th
                                   key={h}
-                                  className={`py-3 px-4 text-[11px] font-semibold text-slate-400 uppercase tracking-wider ${
-                                    ["Item", "Category"].includes(h)
-                                      ? "text-left"
-                                      : h === "Status"
-                                        ? "text-center"
-                                        : "text-right"
-                                  }`}
+                                  className={`py-3 px-4 text-[11px] font-semibold text-slate-400 uppercase tracking-wider ${["Item", "Category"].includes(h) ? "text-left" : h === "Status" ? "text-center" : "text-right"}`}
                                 >
                                   {h}
                                 </th>
@@ -3164,13 +2777,13 @@ export default function StockManager() {
                           </thead>
                           <tbody>
                             {dashboardFilteredProducts.map((p, i) => {
-                              const status = getStockStatus(p);
-                              const pct = Math.min(
-                                100,
-                                (p.mainStock /
-                                  Math.max(1, p.reorderPoint * 2)) *
+                              const status = getStockStatus(p),
+                                pct = Math.min(
                                   100,
-                              );
+                                  (p.mainStock /
+                                    Math.max(1, p.reorderPoint * 2)) *
+                                    100,
+                                );
                               return (
                                 <tr
                                   key={p.inventory_id}
@@ -3336,7 +2949,6 @@ export default function StockManager() {
                 </motion.div>
               )}
 
-              {/* ── WITHDRAWAL ───────────────────────────────────────────────── */}
               {tab === "withdrawal" && (
                 <motion.div
                   key="withdrawal"
@@ -3356,7 +2968,6 @@ export default function StockManager() {
                         <YesterdayReturnsBanner batches={yesterdayReturns} />
                       </motion.div>
                     )}
-
                     <motion.div
                       variants={itemVariants}
                       className="grid grid-cols-2 gap-6"
@@ -3376,26 +2987,15 @@ export default function StockManager() {
                                 <button
                                   key={t}
                                   onClick={() => setWdType(t)}
-                                  className={`py-2.5 text-xs font-semibold rounded-xl border capitalize transition-all duration-200 ${
-                                    wdType === t
-                                      ? "bg-slate-900 text-white border-slate-900 shadow-md shadow-slate-900/20"
-                                      : "bg-white text-slate-500 border-slate-200 hover:border-slate-300 hover:text-slate-700"
-                                  }`}
+                                  className={`py-2.5 text-xs font-semibold rounded-xl border capitalize transition-all duration-200 ${wdType === t ? "bg-slate-900 text-white border-slate-900 shadow-md shadow-slate-900/20" : "bg-white text-slate-500 border-slate-200 hover:border-slate-300 hover:text-slate-700"}`}
                                 >
                                   {t}
                                 </button>
                               ))}
                             </div>
                           </FormField>
-
                           <div
-                            className={`text-xs px-3 py-2 rounded-xl border ${
-                              wdType === "initial"
-                                ? "bg-indigo-50 text-indigo-600 border-indigo-100"
-                                : wdType === "supplementary"
-                                  ? "bg-sky-50 text-sky-600 border-sky-100"
-                                  : "bg-emerald-50 text-emerald-600 border-emerald-100"
-                            }`}
+                            className={`text-xs px-3 py-2 rounded-xl border ${wdType === "initial" ? "bg-indigo-50 text-indigo-600 border-indigo-100" : wdType === "supplementary" ? "bg-sky-50 text-sky-600 border-sky-100" : "bg-emerald-50 text-emerald-600 border-emerald-100"}`}
                           >
                             {wdType === "initial" &&
                               "Opening withdrawal for today — recorded as the initial pull."}
@@ -3404,7 +3004,6 @@ export default function StockManager() {
                             {wdType === "return" &&
                               "Returning unused/leftover stock back to main storage."}
                           </div>
-
                           <FormField label="Select Item">
                             <StyledSelect
                               value={wdProductId ?? ""}
@@ -3452,15 +3051,10 @@ export default function StockManager() {
                               )}
                             </StyledSelect>
                           </FormField>
-
                           {selectedWithdrawalProduct &&
                             selectedWithdrawalStatus !== "normal" && (
                               <div
-                                className={`text-xs px-3 py-2 rounded-xl border ${
-                                  selectedWithdrawalStatus === "critical"
-                                    ? "bg-red-50 text-red-600 border-red-200"
-                                    : "bg-amber-50 text-amber-600 border-amber-200"
-                                }`}
+                                className={`text-xs px-3 py-2 rounded-xl border ${selectedWithdrawalStatus === "critical" ? "bg-red-50 text-red-600 border-red-200" : "bg-amber-50 text-amber-600 border-amber-200"}`}
                               >
                                 {selectedWithdrawalStatus === "critical"
                                   ? "Critical stock warning"
@@ -3471,17 +3065,14 @@ export default function StockManager() {
                                 {selectedWithdrawalProduct.unit} left).
                               </div>
                             )}
-
-                          {selectedWithdrawalProduct &&
-                            selectedWithdrawalProduct.category
-                              .toLowerCase()
-                              .includes("sauce") && (
-                              <div className="text-xs px-3 py-2 rounded-xl border bg-rose-50 text-rose-500 border-rose-100">
-                                ⚠️ Sauce items are not reconciled at end-of-day.
-                                Once withdrawn, they are considered consumed.
-                              </div>
-                            )}
-
+                          {selectedWithdrawalProduct?.category
+                            .toLowerCase()
+                            .includes("sauce") && (
+                            <div className="text-xs px-3 py-2 rounded-xl border bg-rose-50 text-rose-500 border-rose-100">
+                              ⚠️ Sauce items are not reconciled at end-of-day.
+                              Once withdrawn, they are considered consumed.
+                            </div>
+                          )}
                           <FormField label="Quantity">
                             <StyledInput
                               type="number"
@@ -3490,7 +3081,6 @@ export default function StockManager() {
                               placeholder="Enter amount"
                             />
                           </FormField>
-
                           <Btn
                             onClick={submitWithdrawal}
                             variant="primary"
@@ -3506,7 +3096,6 @@ export default function StockManager() {
                           </Btn>
                         </div>
                       </SectionCard>
-
                       <SectionCard
                         title="Today's Withdrawal Log"
                         subtitle={`${withdrawals.length} entries`}
@@ -3565,7 +3154,6 @@ export default function StockManager() {
                         )}
                       </SectionCard>
                     </motion.div>
-
                     {wdType !== "return" &&
                       selectedProductBatches.length > 0 && (
                         <motion.div variants={itemVariants}>
@@ -3583,7 +3171,6 @@ export default function StockManager() {
                           </SectionCard>
                         </motion.div>
                       )}
-
                     <motion.div variants={itemVariants}>
                       <SectionCard
                         title="Currently Withdrawn"
@@ -3640,7 +3227,6 @@ export default function StockManager() {
                 </motion.div>
               )}
 
-              {/* ── ALERTS ───────────────────────────────────────────────────── */}
               {tab === "alerts" && (
                 <motion.div
                   key="alerts"
@@ -3676,208 +3262,125 @@ export default function StockManager() {
                         </p>
                       </div>
                     </motion.div>
-
                     {lowStock.length === 0 && criticalStock.length === 0 ? (
                       <motion.div variants={itemVariants}>
                         <EmptyState message="All stock levels are within safe range." />
                       </motion.div>
                     ) : (
                       <>
-                        {criticalStock.length > 0 && (
-                          <motion.div variants={itemVariants} className="pt-1">
-                            <p className="text-xs font-semibold text-red-500 uppercase tracking-wider mb-2">
-                              Critical
-                            </p>
-                          </motion.div>
+                        {(
+                          [
+                            {
+                              items: criticalStock,
+                              label: "Critical",
+                              color: "red",
+                            },
+                            {
+                              items: lowStock,
+                              label: "Warning",
+                              color: "amber",
+                            },
+                          ] as {
+                            items: Product[];
+                            label: string;
+                            color: string;
+                          }[]
+                        ).map(({ items, label, color }) =>
+                          items.length > 0 ? (
+                            <div key={label}>
+                              <motion.div
+                                variants={itemVariants}
+                                className="pt-1"
+                              >
+                                <p
+                                  className={`text-xs font-semibold text-${color}-500 uppercase tracking-wider mb-2`}
+                                >
+                                  {label}
+                                </p>
+                              </motion.div>
+                              {items.map((p, i) => {
+                                const status = getStockStatus(p),
+                                  deficit = +(
+                                    p.reorderPoint - p.mainStock
+                                  ).toFixed(2);
+                                return (
+                                  <motion.div
+                                    key={p.inventory_id}
+                                    variants={itemVariants}
+                                    transition={{ delay: i * 0.06 }}
+                                    className={`bg-white rounded-2xl border border-t-4 p-5 flex items-center justify-between shadow-sm mb-3 ${status === "critical" ? "border-red-200 border-t-red-400" : "border-amber-200 border-t-amber-400"}`}
+                                  >
+                                    <div className="flex items-center gap-4">
+                                      <div
+                                        className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${status === "critical" ? "bg-red-50" : "bg-amber-50"}`}
+                                      >
+                                        <span
+                                          className={`text-sm font-bold ${status === "critical" ? "text-red-500" : "text-amber-500"}`}
+                                        >
+                                          !
+                                        </span>
+                                      </div>
+                                      <div>
+                                        <div className="flex items-center gap-2">
+                                          <p className="font-semibold text-slate-800">
+                                            {p.product_name}
+                                          </p>
+                                          <span
+                                            className={`text-[10px] font-medium px-2 py-0.5 rounded-md border ${getCategoryStyle(p.category)}`}
+                                          >
+                                            {p.category}
+                                          </span>
+                                        </div>
+                                        <p className="text-xs text-slate-400 mt-0.5">
+                                          {p.supplier_name}
+                                        </p>
+                                        <p
+                                          className={`text-xs font-medium mt-1 ${status === "critical" ? "text-red-500" : "text-amber-500"}`}
+                                        >
+                                          {deficit > 0
+                                            ? `Need ${deficit} ${p.unit} to reach reorder point`
+                                            : "Below critical threshold"}
+                                        </p>
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-4">
+                                      <div className="text-right">
+                                        <p
+                                          className={`text-2xl font-bold ${status === "critical" ? "text-red-500" : "text-amber-500"}`}
+                                        >
+                                          {p.mainStock}{" "}
+                                          <span className="text-sm font-normal text-slate-400">
+                                            {p.unit}
+                                          </span>
+                                        </p>
+                                        <p className="text-xs text-slate-400 mt-1">
+                                          Reorder at {p.reorderPoint} · Critical
+                                          at {p.criticalPoint}
+                                        </p>
+                                        <span
+                                          className={`inline-block mt-2 text-xs font-semibold px-3 py-1 rounded-full ${STATUS_BADGE[status]}`}
+                                        >
+                                          {status === "critical"
+                                            ? "Restock Now"
+                                            : "Reorder Soon"}
+                                        </span>
+                                      </div>
+                                      <button
+                                        onClick={() => {
+                                          setTab("purchases");
+                                          handleOrderNow(p);
+                                        }}
+                                        className={`flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-white text-xs font-bold transition-all shadow-sm ${status === "critical" ? "bg-red-500 hover:bg-red-600 shadow-red-500/25" : "bg-amber-500 hover:bg-amber-600 shadow-amber-500/25"}`}
+                                      >
+                                        {cartIcon}Order Now
+                                      </button>
+                                    </div>
+                                  </motion.div>
+                                );
+                              })}
+                            </div>
+                          ) : null,
                         )}
-                        {criticalStock.map((p, i) => {
-                          const status = getStockStatus(p);
-                          const deficit = +(
-                            p.reorderPoint - p.mainStock
-                          ).toFixed(2);
-                          return (
-                            <motion.div
-                              key={p.inventory_id}
-                              variants={itemVariants}
-                              transition={{ delay: i * 0.06 }}
-                              className={`bg-white rounded-2xl border border-t-4 p-5 flex items-center justify-between shadow-sm ${
-                                status === "critical"
-                                  ? "border-red-200 border-t-red-400"
-                                  : "border-amber-200 border-t-amber-400"
-                              }`}
-                            >
-                              <div className="flex items-center gap-4">
-                                <div
-                                  className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${status === "critical" ? "bg-red-50" : "bg-amber-50"}`}
-                                >
-                                  <span
-                                    className={`text-sm font-bold ${status === "critical" ? "text-red-500" : "text-amber-500"}`}
-                                  >
-                                    !
-                                  </span>
-                                </div>
-                                <div>
-                                  <div className="flex items-center gap-2">
-                                    <p className="font-semibold text-slate-800">
-                                      {p.product_name}
-                                    </p>
-                                    <span
-                                      className={`text-[10px] font-medium px-2 py-0.5 rounded-md border ${getCategoryStyle(p.category)}`}
-                                    >
-                                      {p.category}
-                                    </span>
-                                  </div>
-                                  <p className="text-xs text-slate-400 mt-0.5">
-                                    {p.supplier_name}
-                                  </p>
-                                  <p
-                                    className={`text-xs font-medium mt-1 ${status === "critical" ? "text-red-500" : "text-amber-500"}`}
-                                  >
-                                    {deficit > 0
-                                      ? `Need ${deficit} ${p.unit} to reach reorder point`
-                                      : "Below critical threshold"}
-                                  </p>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-4">
-                                <div className="text-right">
-                                  <p
-                                    className={`text-2xl font-bold ${status === "critical" ? "text-red-500" : "text-amber-500"}`}
-                                  >
-                                    {p.mainStock}{" "}
-                                    <span className="text-sm font-normal text-slate-400">
-                                      {p.unit}
-                                    </span>
-                                  </p>
-                                  <p className="text-xs text-slate-400 mt-1">
-                                    Reorder at {p.reorderPoint} · Critical at{" "}
-                                    {p.criticalPoint}
-                                  </p>
-                                  <span
-                                    className={`inline-block mt-2 text-xs font-semibold px-3 py-1 rounded-full ${STATUS_BADGE[status]}`}
-                                  >
-                                    {status === "critical"
-                                      ? "Restock Now"
-                                      : "Reorder Soon"}
-                                  </span>
-                                </div>
-                                {/* Order Now button in Alerts tab */}
-                                <button
-                                  onClick={() => {
-                                    setTab("purchases");
-                                    handleOrderNow(p);
-                                  }}
-                                  className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-red-500 text-white text-xs font-bold hover:bg-red-600 transition-all shadow-sm shadow-red-500/25"
-                                >
-                                  <svg
-                                    className="w-3.5 h-3.5"
-                                    fill="none"
-                                    viewBox="0 0 24 24"
-                                    stroke="currentColor"
-                                  >
-                                    <path
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                      strokeWidth={2.5}
-                                      d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"
-                                    />
-                                  </svg>
-                                  Order Now
-                                </button>
-                              </div>
-                            </motion.div>
-                          );
-                        })}
-                        {lowStock.length > 0 && (
-                          <motion.div variants={itemVariants} className="pt-2">
-                            <p className="text-xs font-semibold text-amber-500 uppercase tracking-wider mb-2">
-                              Warning
-                            </p>
-                          </motion.div>
-                        )}
-                        {lowStock.map((p, i) => {
-                          const deficit = +(
-                            p.reorderPoint - p.mainStock
-                          ).toFixed(2);
-                          return (
-                            <motion.div
-                              key={p.inventory_id}
-                              variants={itemVariants}
-                              transition={{
-                                delay: (criticalStock.length + i) * 0.06,
-                              }}
-                              className="bg-white rounded-2xl border border-amber-200 border-t-4 border-t-amber-400 p-5 flex items-center justify-between shadow-sm"
-                            >
-                              <div className="flex items-center gap-4">
-                                <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 bg-amber-50">
-                                  <span className="text-sm font-bold text-amber-500">
-                                    !
-                                  </span>
-                                </div>
-                                <div>
-                                  <div className="flex items-center gap-2">
-                                    <p className="font-semibold text-slate-800">
-                                      {p.product_name}
-                                    </p>
-                                    <span
-                                      className={`text-[10px] font-medium px-2 py-0.5 rounded-md border ${getCategoryStyle(p.category)}`}
-                                    >
-                                      {p.category}
-                                    </span>
-                                  </div>
-                                  <p className="text-xs text-slate-400 mt-0.5">
-                                    {p.supplier_name}
-                                  </p>
-                                  <p className="text-xs font-medium mt-1 text-amber-500">
-                                    {deficit > 0
-                                      ? `Need ${deficit} ${p.unit} to reach reorder point`
-                                      : "Near critical threshold"}
-                                  </p>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-4">
-                                <div className="text-right">
-                                  <p className="text-2xl font-bold text-amber-500">
-                                    {p.mainStock}{" "}
-                                    <span className="text-sm font-normal text-slate-400">
-                                      {p.unit}
-                                    </span>
-                                  </p>
-                                  <p className="text-xs text-slate-400 mt-1">
-                                    Reorder at {p.reorderPoint} · Critical at{" "}
-                                    {p.criticalPoint}
-                                  </p>
-                                  <span className="inline-block mt-2 text-xs font-semibold px-3 py-1 rounded-full bg-amber-100 text-amber-600">
-                                    Reorder Soon
-                                  </span>
-                                </div>
-                                {/* Order Now button in Alerts tab */}
-                                <button
-                                  onClick={() => {
-                                    setTab("purchases");
-                                    handleOrderNow(p);
-                                  }}
-                                  className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-amber-500 text-white text-xs font-bold hover:bg-amber-600 transition-all shadow-sm shadow-amber-500/25"
-                                >
-                                  <svg
-                                    className="w-3.5 h-3.5"
-                                    fill="none"
-                                    viewBox="0 0 24 24"
-                                    stroke="currentColor"
-                                  >
-                                    <path
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                      strokeWidth={2.5}
-                                      d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"
-                                    />
-                                  </svg>
-                                  Order Now
-                                </button>
-                              </div>
-                            </motion.div>
-                          );
-                        })}
                       </>
                     )}
                   </motion.div>
@@ -3931,7 +3434,12 @@ export default function StockManager() {
                                       value={
                                         (supplierForm[key] as string) ?? ""
                                       }
-                                      onChange={(v) => setSupplierField(key, v)}
+                                      onChange={(v) =>
+                                        setSupplierForm((p) => ({
+                                          ...p,
+                                          [key]: v,
+                                        }))
+                                      }
                                       placeholder={placeholder}
                                     />
                                   </FormField>
@@ -4043,7 +3551,6 @@ export default function StockManager() {
                 </motion.div>
               )}
 
-              {/* ── PURCHASE ORDERS ───────────────────────────────────────────── */}
               {tab === "purchases" && (
                 <motion.div
                   key="purchases"
@@ -4058,7 +3565,6 @@ export default function StockManager() {
                     animate="show"
                     className="space-y-5"
                   >
-                    {/* ── KPI row ── */}
                     <motion.div
                       variants={itemVariants}
                       className="grid grid-cols-4 gap-4"
@@ -4117,7 +3623,6 @@ export default function StockManager() {
                       ))}
                     </motion.div>
 
-                    {/* ── Stock Alerts Restock Banner ── */}
                     {(criticalStock.length > 0 || lowStock.length > 0) && (
                       <motion.div variants={itemVariants}>
                         <StockAlertRestockBanner
@@ -4128,28 +3633,31 @@ export default function StockManager() {
                       </motion.div>
                     )}
 
-                    {/* ── Filter bar + New PO button ── */}
                     <motion.div
                       variants={itemVariants}
                       className="flex items-center justify-between"
                     >
                       <div className="flex gap-2 flex-wrap">
-                        {poStatusFilters.map((s) => (
+                        {(
+                          [
+                            "All",
+                            "Draft",
+                            "Ordered",
+                            "Received",
+                            "Cancelled",
+                          ] as (POStatus | "All")[]
+                        ).map((s) => (
                           <button
                             key={s}
                             onClick={() => setPoFilterStatus(s)}
-                            className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                              poFilterStatus === s
-                                ? "bg-slate-900 text-white"
-                                : "bg-white text-slate-500 border border-slate-200 hover:border-slate-300"
-                            }`}
+                            className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${poFilterStatus === s ? "bg-slate-900 text-white" : "bg-white text-slate-500 border border-slate-200 hover:border-slate-300"}`}
                           >
                             {s}
                           </button>
                         ))}
                       </div>
                       <button
-                        onClick={handleOpenBlankPO}
+                        onClick={() => setPrefillPOProduct(null)}
                         className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white text-sm font-medium rounded-xl hover:bg-slate-700 transition-colors"
                       >
                         <svg
@@ -4169,7 +3677,6 @@ export default function StockManager() {
                       </button>
                     </motion.div>
 
-                    {/* ── All products "Order" quick-access section ── */}
                     <motion.div variants={itemVariants}>
                       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
                         <div className="px-5 py-4 border-b border-slate-50 flex items-center justify-between">
@@ -4187,12 +3694,12 @@ export default function StockManager() {
                           {products
                             .filter((p) => !isMenuFoodProduct(p))
                             .map((p, i) => {
-                              const status = getStockStatus(p);
-                              const pct = Math.min(
-                                100,
-                                (p.mainStock / Math.max(1, p.reorderPoint)) *
+                              const status = getStockStatus(p),
+                                pct = Math.min(
                                   100,
-                              );
+                                  (p.mainStock / Math.max(1, p.reorderPoint)) *
+                                    100,
+                                );
                               return (
                                 <motion.div
                                   key={p.product_id}
@@ -4201,12 +3708,9 @@ export default function StockManager() {
                                   transition={{ delay: i * 0.03 }}
                                   className="flex items-center gap-4 px-5 py-3 hover:bg-slate-50/60 transition-colors"
                                 >
-                                  {/* Status dot */}
                                   <span
                                     className={`w-2 h-2 rounded-full flex-shrink-0 ${STATUS_DOT[status]}`}
                                   />
-
-                                  {/* Name + category */}
                                   <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-2">
                                       <p className="text-sm font-semibold text-slate-800 truncate">
@@ -4214,11 +3718,7 @@ export default function StockManager() {
                                       </p>
                                       {status !== "normal" && (
                                         <span
-                                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
-                                            status === "critical"
-                                              ? "bg-red-100 text-red-600"
-                                              : "bg-amber-100 text-amber-600"
-                                          }`}
+                                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${status === "critical" ? "bg-red-100 text-red-600" : "bg-amber-100 text-amber-600"}`}
                                         >
                                           {status === "critical"
                                             ? "Critical"
@@ -4230,8 +3730,6 @@ export default function StockManager() {
                                       {p.supplier_name}
                                     </p>
                                   </div>
-
-                                  {/* Stock level mini bar */}
                                   <div className="flex-shrink-0 w-28 text-right">
                                     <p className="text-xs font-semibold text-slate-600 mb-1">
                                       {p.mainStock}
@@ -4246,26 +3744,11 @@ export default function StockManager() {
                                       />
                                     </div>
                                   </div>
-
-                                  {/* Order button */}
                                   <button
                                     onClick={() => handleOrderNow(p)}
                                     className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-900 hover:text-white hover:border-slate-900 transition-all duration-150"
                                   >
-                                    <svg
-                                      className="w-3 h-3"
-                                      fill="none"
-                                      viewBox="0 0 24 24"
-                                      stroke="currentColor"
-                                    >
-                                      <path
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                        strokeWidth={2.5}
-                                        d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"
-                                      />
-                                    </svg>
-                                    Order
+                                    {cartIcon}Order
                                   </button>
                                 </motion.div>
                               );
@@ -4278,7 +3761,6 @@ export default function StockManager() {
                       </div>
                     </motion.div>
 
-                    {/* ── PO list ── */}
                     <motion.div variants={itemVariants}>
                       <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
                         <div className="px-5 py-4 border-b border-slate-50">
@@ -4306,48 +3788,47 @@ export default function StockManager() {
                           ) : filteredPOs.length === 0 ? (
                             <EmptyState message="No purchase orders found." />
                           ) : (
-                            filteredPOs.map((order, i) => {
-                              const total = calcPOTotal(order.items) * 1.12;
-                              return (
-                                <motion.button
-                                  key={order.id}
-                                  layout
-                                  initial={{ opacity: 0 }}
-                                  animate={{ opacity: 1 }}
-                                  transition={{ delay: i * 0.04 }}
-                                  onClick={() => setSelectedOrder(order)}
-                                  className="grid grid-cols-12 px-5 py-4 w-full text-left hover:bg-slate-50/70 transition-colors items-center"
-                                >
-                                  <span className="col-span-2 text-sm font-semibold text-slate-800">
-                                    {order.id}
-                                  </span>
-                                  <div className="col-span-3">
-                                    <p className="text-sm font-medium text-slate-800">
-                                      {order.supplier}
-                                    </p>
-                                    <p className="text-xs text-slate-400">
-                                      {order.items.length} item
-                                      {order.items.length !== 1 ? "s" : ""}
-                                    </p>
-                                  </div>
-                                  <span className="col-span-2 text-sm text-slate-500">
-                                    {order.date}
-                                  </span>
-                                  <span className="col-span-2 text-sm text-slate-500">
-                                    {order.deliveryDate}
-                                  </span>
-                                  <span className="col-span-2 text-sm font-semibold text-slate-800">
-                                    ₱
-                                    {total.toLocaleString(undefined, {
-                                      maximumFractionDigits: 0,
-                                    })}
-                                  </span>
-                                  <span className="col-span-1">
-                                    <POBadge status={order.status} />
-                                  </span>
-                                </motion.button>
-                              );
-                            })
+                            filteredPOs.map((order, i) => (
+                              <motion.button
+                                key={order.id}
+                                layout
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                transition={{ delay: i * 0.04 }}
+                                onClick={() => setSelectedOrder(order)}
+                                className="grid grid-cols-12 px-5 py-4 w-full text-left hover:bg-slate-50/70 transition-colors items-center"
+                              >
+                                <span className="col-span-2 text-sm font-semibold text-slate-800">
+                                  {order.id}
+                                </span>
+                                <div className="col-span-3">
+                                  <p className="text-sm font-medium text-slate-800">
+                                    {order.supplier}
+                                  </p>
+                                  <p className="text-xs text-slate-400">
+                                    {order.items.length} item
+                                    {order.items.length !== 1 ? "s" : ""}
+                                  </p>
+                                </div>
+                                <span className="col-span-2 text-sm text-slate-500">
+                                  {order.date}
+                                </span>
+                                <span className="col-span-2 text-sm text-slate-500">
+                                  {order.deliveryDate}
+                                </span>
+                                <span className="col-span-2 text-sm font-semibold text-slate-800">
+                                  ₱
+                                  {(
+                                    calcPOTotal(order.items) * 1.12
+                                  ).toLocaleString(undefined, {
+                                    maximumFractionDigits: 0,
+                                  })}
+                                </span>
+                                <span className="col-span-1">
+                                  <POBadge status={order.status} />
+                                </span>
+                              </motion.button>
+                            ))
                           )}
                         </div>
                       </div>
@@ -4389,18 +3870,14 @@ export default function StockManager() {
           )}
         </AnimatePresence>
 
-        {/* ── CREATE PO MODAL — supports both blank and prefilled ── */}
         <AnimatePresence>
-          {(showCreatePO || prefillPOProduct !== undefined) && (
+          {prefillPOProduct !== undefined && (
             <CreatePOModal
-              onClose={() => {
-                setShowCreatePO(false);
-                handleClosePOModal();
-              }}
+              onClose={handleClosePOModal}
               onCreate={handlePOCreate}
               quickOrderProducts={poQuickOrderProducts}
               allProducts={products}
-              prefillProduct={showCreatePO ? null : (prefillPOProduct ?? null)}
+              prefillProduct={prefillPOProduct}
             />
           )}
         </AnimatePresence>
@@ -4458,6 +3935,20 @@ export default function StockManager() {
                       placeholder="e.g. Sauce, Chopped Chicken"
                     />
                   </FormField>
+                  <FormField label="Unit">
+                    <StyledSelect
+                      value={rawMaterialForm.unit}
+                      onChange={(v) =>
+                        setRawMaterialForm((p) => ({ ...p, unit: v }))
+                      }
+                    >
+                      {RAW_MATERIAL_UNITS.map((u) => (
+                        <option key={u} value={u}>
+                          {u}
+                        </option>
+                      ))}
+                    </StyledSelect>
+                  </FormField>
                   <FormField label="Initial Stock">
                     <StyledInput
                       type="number"
@@ -4466,6 +3957,16 @@ export default function StockManager() {
                         setRawMaterialForm((p) => ({ ...p, initialStock: v }))
                       }
                       placeholder="e.g. 20"
+                    />
+                  </FormField>
+                  <FormField label="Expiry Date">
+                    <StyledInput
+                      type="date"
+                      value={rawMaterialForm.expiryDate}
+                      onChange={(v) =>
+                        setRawMaterialForm((p) => ({ ...p, expiryDate: v }))
+                      }
+                      placeholder=""
                     />
                   </FormField>
                   <FormField label="Price (optional)">
@@ -4543,21 +4044,27 @@ export default function StockManager() {
                   </button>
                 </div>
                 <div className="px-6 pt-4 flex items-center gap-4 text-xs text-slate-400">
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-orange-400 inline-block" />{" "}
-                    Whole Chicken
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block" />{" "}
-                    Chopped Chicken{" "}
-                    <span className="ml-1 text-amber-500 font-medium">
-                      (can return as whole)
+                  {[
+                    ["bg-orange-400", "Whole Chicken", ""],
+                    [
+                      "bg-amber-500",
+                      "Chopped Chicken",
+                      "(can return as whole)",
+                    ],
+                    ["bg-slate-400", "Other Meat/Protein", ""],
+                  ].map(([dot, label, sub]) => (
+                    <span key={label} className="flex items-center gap-1.5">
+                      <span
+                        className={`w-2.5 h-2.5 rounded-full ${dot} inline-block`}
+                      />
+                      {label}
+                      {sub && (
+                        <span className="ml-1 text-amber-500 font-medium">
+                          {sub}
+                        </span>
+                      )}
                     </span>
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-slate-400 inline-block" />{" "}
-                    Other Meat/Protein
-                  </span>
+                  ))}
                 </div>
                 <div className="p-6 space-y-3 max-h-[26rem] overflow-y-auto">
                   {reconcileItems.length === 0 ? (
@@ -4567,31 +4074,20 @@ export default function StockManager() {
                   ) : (
                     reconcileItems.map((item, i) => {
                       const isChopped = item.category
-                        .toLowerCase()
-                        .includes("chopped chicken");
-                      const isWhole = item.category
-                        .toLowerCase()
-                        .includes("whole chicken");
-                      const dotColor = isWhole
-                        ? "bg-orange-400"
-                        : isChopped
-                          ? "bg-amber-500"
-                          : "bg-slate-400";
+                          .toLowerCase()
+                          .includes("chopped chicken"),
+                        isWhole = item.category
+                          .toLowerCase()
+                          .includes("whole chicken");
                       return (
                         <div
                           key={item.product_id}
-                          className={`p-4 rounded-2xl border transition-colors ${
-                            isChopped
-                              ? "bg-amber-50/60 border-amber-100"
-                              : isWhole
-                                ? "bg-orange-50/60 border-orange-100"
-                                : "bg-slate-50 border-slate-100"
-                          }`}
+                          className={`p-4 rounded-2xl border transition-colors ${isChopped ? "bg-amber-50/60 border-amber-100" : isWhole ? "bg-orange-50/60 border-orange-100" : "bg-slate-50 border-slate-100"}`}
                         >
                           <div className="flex items-start justify-between mb-3">
                             <div className="flex items-center gap-2">
                               <span
-                                className={`w-2.5 h-2.5 rounded-full flex-shrink-0 mt-0.5 ${dotColor}`}
+                                className={`w-2.5 h-2.5 rounded-full flex-shrink-0 mt-0.5 ${isWhole ? "bg-orange-400" : isChopped ? "bg-amber-500" : "bg-slate-400"}`}
                               />
                               <div>
                                 <p className="text-sm font-semibold text-slate-800">
@@ -4640,45 +4136,23 @@ export default function StockManager() {
                                 <span className="text-[10px] text-amber-600 font-semibold ml-1">
                                   Return as:
                                 </span>
-                                <button
-                                  onClick={() =>
-                                    setReconcileItems((prev) =>
-                                      prev.map((r, j) =>
-                                        j === i
-                                          ? {
-                                              ...r,
-                                              returnDestination: "chopped",
-                                            }
-                                          : r,
-                                      ),
-                                    )
-                                  }
-                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all ${
-                                    item.returnDestination === "chopped"
-                                      ? "bg-amber-500 text-white shadow-sm"
-                                      : "text-slate-400 hover:text-amber-500"
-                                  }`}
-                                >
-                                  Chopped
-                                </button>
-                                <button
-                                  onClick={() =>
-                                    setReconcileItems((prev) =>
-                                      prev.map((r, j) =>
-                                        j === i
-                                          ? { ...r, returnDestination: "whole" }
-                                          : r,
-                                      ),
-                                    )
-                                  }
-                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all ${
-                                    item.returnDestination === "whole"
-                                      ? "bg-orange-500 text-white shadow-sm"
-                                      : "text-slate-400 hover:text-orange-500"
-                                  }`}
-                                >
-                                  Whole
-                                </button>
+                                {(["chopped", "whole"] as const).map((dest) => (
+                                  <button
+                                    key={dest}
+                                    onClick={() =>
+                                      setReconcileItems((prev) =>
+                                        prev.map((r, j) =>
+                                          j === i
+                                            ? { ...r, returnDestination: dest }
+                                            : r,
+                                        ),
+                                      )
+                                    }
+                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all capitalize ${item.returnDestination === dest ? (dest === "chopped" ? "bg-amber-500 text-white shadow-sm" : "bg-orange-500 text-white shadow-sm") : "text-slate-400 hover:text-amber-500"}`}
+                                  >
+                                    {dest}
+                                  </button>
+                                ))}
                               </div>
                             )}
                           </div>
@@ -4743,13 +4217,6 @@ export default function StockManager() {
             />
           )}
         </AnimatePresence>
-
-        <style>{`
-          @keyframes fadeInRow {
-            from { opacity: 0; transform: translateX(-8px); }
-            to   { opacity: 1; transform: translateX(0); }
-          }
-        `}</style>
       </div>
     </>
   );

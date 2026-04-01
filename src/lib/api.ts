@@ -12,24 +12,25 @@ function resolveApiBaseUrl(): string {
   if (!RAW_API_URL) return "/api";
 
   const trimmed = RAW_API_URL.replace(/\/+$/, "");
-  if (
-    typeof window !== "undefined" &&
-    isLocalHostname(window.location.hostname)
-  ) {
-    // In local dev, prefer the Vite proxy over any stale tunnel override.
-    return "/api";
-  }
+
+  const baseWithApi = /\/api$/i.test(trimmed) ? trimmed : `${trimmed}/api`;
 
   if (
     typeof window !== "undefined" &&
     window.location.protocol === "https:" &&
     /^http:\/\//i.test(trimmed)
   ) {
-    // Avoid browser permission/mixed-content failures on secure pages.
-    return "/api";
+    try {
+      const parsed = new URL(trimmed);
+      // Local HTTP APIs are only safe behind a same-origin dev proxy.
+      if (isLocalHostname(parsed.hostname)) return "/api";
+      return baseWithApi.replace(/^http:\/\//i, "https://");
+    } catch {
+      return "/api";
+    }
   }
 
-  return `${trimmed}/api`;
+  return baseWithApi;
 }
 
 const API_BASE_URL = resolveApiBaseUrl();
@@ -85,6 +86,11 @@ export const apiCall = async <T = unknown>(
   const headers: Record<string, string> = {
     ...((fetchOptions.headers as Record<string, string>) || {}),
   };
+
+  // Bypass ngrok's browser warning page so API requests reach your backend.
+  if (/ngrok-free\.(app|dev)|ngrok\.io/i.test(url)) {
+    headers["ngrok-skip-browser-warning"] = "true";
+  }
 
   if (!skipAuth) {
     const token = localStorage.getItem("authToken");

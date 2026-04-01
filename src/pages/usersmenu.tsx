@@ -156,9 +156,6 @@ function FlavorPicker({ maxFlavors, selected, onChange }: { maxFlavors: number; 
   )
 }
 
-/* ─────────────────────────────────────────────
-   VARIANT TOGGLE
-───────────────────────────────────────────── */
 function VariantToggle({ selected, onChange }: { selected: "original" | "spicy"; onChange: (v: "original" | "spicy") => void }) {
   return (
     <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
@@ -186,9 +183,6 @@ function VariantToggle({ selected, onChange }: { selected: "original" | "spicy";
   )
 }
 
-/* ─────────────────────────────────────────────
-   ORDER DRAWER
-───────────────────────────────────────────── */
 function OrderDrawer({ cart, onClose, onRemove, onChangeQty, onClear, onCheckout }: {
   cart: CartItem[]; onClose: () => void; onRemove: (id: number) => void
   onChangeQty: (id: number, delta: number) => void; onClear: () => void; onCheckout: () => void
@@ -301,9 +295,6 @@ function OrderDrawer({ cart, onClose, onRemove, onChangeQty, onClear, onCheckout
   )
 }
 
-/* ─────────────────────────────────────────────
-   CHECKOUT MODAL
-───────────────────────────────────────────── */
 function CheckoutModal({ onClose }: { onClose: () => void }) {
   return (
     <>
@@ -336,9 +327,6 @@ function CheckoutModal({ onClose }: { onClose: () => void }) {
   )
 }
 
-/* ─────────────────────────────────────────────
-   RECIPE CARD
-───────────────────────────────────────────── */
 function RecipeCard({ recipe, isFav, justAdded, flavorSel, variantSel, onToggleFav, onAddToCart, onFlavorChange, onVariantChange }: {
   recipe: Recipe; isFav: boolean; justAdded: boolean; flavorSel: string[]
   variantSel: "original" | "spicy"; onToggleFav: () => void; onAddToCart: () => void
@@ -418,9 +406,6 @@ function RecipeCard({ recipe, isFav, justAdded, flavorSel, variantSel, onToggleF
   )
 }
 
-/* ─────────────────────────────────────────────
-   MAIN
-───────────────────────────────────────────── */
 export default function Delicacy() {
   const [activeCategory, setActiveCategory] = useState("Chicken")
   const [activeMeal,     setActiveMeal]     = useState("Lunch")
@@ -441,11 +426,7 @@ export default function Delicacy() {
   const displayed  = allInCategory.filter(r => r.mealTypes.includes(activeMeal))
   const totalItems = cart.reduce((s, i) => s + i.quantity, 0)
 
-  /* ──────────────────────────────────────────
-     Deep-link: ?item=<name>
-     Robust: case-insensitive + trimmed match,
-     falls back to partial match if needed.
-  ─────────────────────────────────────────── */
+
   useEffect(() => {
     const params    = new URLSearchParams(window.location.search)
     const itemSlug  = params.get("item")
