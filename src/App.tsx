@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import { useState, useEffect } from "react";
-import React from "react"; // ✅ add this
+import React from "react";
+import { NotificationProvider } from "@/lib/NotificationContext"; // ← add this
 import AdminDashboard from "./pages/index";
 import Order from "./pages/Order";
 import Inventory from "./pages/inventory";
@@ -27,7 +28,7 @@ function ProtectedRoute({
   isAuth,
   userRole,
 }: {
-  element: React.ReactElement; // ✅ changed from JSX.Element
+  element: React.ReactElement;
   allowedRoles: Role[];
   isAuth: boolean;
   userRole: Role;
@@ -79,7 +80,7 @@ export default function App() {
 
   const protect = (
     element: React.ReactElement,
-    allowedRoles: Role[], // ✅ changed
+    allowedRoles: Role[],
   ) => (
     <ProtectedRoute
       element={element}
@@ -90,54 +91,56 @@ export default function App() {
   );
 
   return (
-    <Routes>
-      {/* ── Public ───────────────────────────── */}
-      <Route path="/login" element={<Login />} />
-      <Route path="/aboutthecrunch" element={<AboutTheCrunch />} />
-      <Route path="/usersmenu" element={<UsersMenu />} />
-      <Route path="/" element={<Products />} />
+    <NotificationProvider>  {/* ← wrap here */}
+      <Routes>
+        {/* ── Public ───────────────────────────── */}
+        <Route path="/login" element={<Login />} />
+        <Route path="/aboutthecrunch" element={<AboutTheCrunch />} />
+        <Route path="/usersmenu" element={<UsersMenu />} />
+        <Route path="/" element={<Products />} />
 
-      {/* ── Administrator only ───────────────── */}
-      <Route
-        path="/dashboard"
-        element={protect(<AdminDashboard />, ["administrator"])}
-      />
-      <Route path="/menu" element={protect(<Menu />, ["administrator"])} />
-      <Route
-        path="/products"
-        element={protect(<Products />, ["administrator"])}
-      />
-      <Route
-        path="/users"
-        element={protect(<StaffAccounts />, ["administrator"])}
-      />
-      <Route
-        path="/sales-reports"
-        element={protect(<SalesReports />, ["administrator"])}
-      />
+        {/* ── Administrator only ───────────────── */}
+        <Route
+          path="/dashboard"
+          element={protect(<AdminDashboard />, ["administrator"])}
+        />
+        <Route path="/menu" element={protect(<Menu />, ["administrator"])} />
+        <Route
+          path="/products"
+          element={protect(<Products />, ["administrator"])}
+        />
+        <Route
+          path="/users"
+          element={protect(<StaffAccounts />, ["administrator"])}
+        />
+        <Route
+          path="/sales-reports"
+          element={protect(<SalesReports />, ["administrator"])}
+        />
 
-      {/* ── Admin + Cashier + Cook ───────────── */}
-      <Route
-        path="/orders"
-        element={protect(<Order />, ["administrator", "cashier", "cook"])}
-      />
+        {/* ── Admin + Cashier + Cook ───────────── */}
+        <Route
+          path="/orders"
+          element={protect(<Order />, ["administrator", "cashier", "cook"])}
+        />
 
-      {/* ── Admin + Inventory Manager ────────── */}
-      <Route
-        path="/inventory"
-        element={protect(<Inventory />, ["administrator", "inventory_manager"])}
-      />
-      <Route
-        path="/stockmanager"
-        element={protect(<StockManager />, [
-          "administrator",
-          "inventory_manager",
-        ])}
-      />
+        {/* ── Admin + Inventory Manager ────────── */}
+        <Route
+          path="/inventory"
+          element={protect(<Inventory />, ["administrator", "inventory_manager"])}
+        />
+        <Route
+          path="/stockmanager"
+          element={protect(<StockManager />, [
+            "administrator",
+            "inventory_manager",
+          ])}
+        />
 
-      {/* ── Fallbacks ────────────────────────── */}
-      <Route path="/unauthorized" element={<Unauthorized />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+        {/* ── Fallbacks ────────────────────────── */}
+        <Route path="/unauthorized" element={<Unauthorized />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </NotificationProvider>
   );
 }

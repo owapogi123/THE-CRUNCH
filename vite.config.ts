@@ -3,9 +3,9 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 
-export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), "");
-  const apiTarget = env.VITE_PROXY_TARGET || "http://localhost:5000";
+export default defineConfig(({ mode }: { mode: string }) => {
+  const env = loadEnv(mode, process.cwd(), "VITE");
+  const apiTarget: string = env.VITE_PROXY_TARGET || "http://localhost:5000";
 
   return {
     plugins: [react(), tailwindcss()],
@@ -27,6 +27,9 @@ export default defineConfig(({ mode }) => {
           secure: false,
           rewrite: (path) => path.replace(/^\/api/, "/api"),
           ws: true,
+          headers: {
+            "ngrok-skip-browser-warning": "true",  // ← ADDED
+          },
         },
       },
     },
@@ -44,6 +47,9 @@ export default defineConfig(({ mode }) => {
           target: apiTarget,
           changeOrigin: true,
           secure: false,
+          headers: {
+            "ngrok-skip-browser-warning": "true",  // ← ADDED
+          },
         },
       },
     },

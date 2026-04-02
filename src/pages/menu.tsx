@@ -1,679 +1,680 @@
-import { useState, useEffect } from "react";
-import { Search, ShoppingBag, Trash2, Check, X } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Sidebar } from "@/components/Sidebar";
+import { useState, useCallback } from "react";
+import { Search, ShoppingBag, Trash2, Check, X, ChevronRight, Minus, Plus, UtensilsCrossed } from "lucide-react";
 import { api } from "../lib/api";
-import chickenImg from "../assets/img/chicken.jpg";
+
+// ─── TYPES ────────────────────────────────────────────────────────────────────
 
 interface MenuItem {
   id: number;
   name: string;
   price: number;
-  image: string;
   category: string;
-  remainingStock?: number;
+  remainingStock: number;
+  image?: string | null;
 }
 
-interface CartItem {
-  id: number;
-  name: string;
-  price: number;
-  image: string;
+interface CartItem extends MenuItem {
   quantity: number;
 }
 
-function mapProducts(data: any[]): MenuItem[] {
-  const dedupedMap = new Map<string, any>();
-  for (const p of data || []) {
+interface OrderPayload {
+  items: {
+    product_id: number;
+    qty: number;
+    subtotal: number;
+    name: string;
+    price: number;
+  }[];
+  total: number;
+  order_type: "dine-in" | "take-out";
+  payment_method: "cash" | "e-payment";
+}
+
+interface OrderResponse {
+  orderNumber?: string;
+}
+
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+
+const CARD_COLORS: string[] = [
+  "#FEF3C7", "#D1FAE5", "#DBEAFE", "#FCE7F3",
+  "#EDE9FE", "#FEE2E2", "#F0FDF4", "#FFF7ED",
+];
+
+function cardColor(id: number): string {
+  return CARD_COLORS[id % CARD_COLORS.length];
+}
+
+function isMenuFood(item: MenuItem): boolean {
+  return item.category.toUpperCase().includes("MENU FOOD");
+}
+
+export function mapProducts(data: Record<string, unknown>[]): MenuItem[] {
+  const dedupedMap = new Map<string, Record<string, unknown>>();
+  for (const p of data ?? []) {
     if (p.isRawMaterial) continue;
-    const key = String(p.product_name ?? p.name ?? "")
-      .trim()
-      .toLowerCase();
+    const key = String(p.product_name ?? p.name ?? "").trim().toLowerCase();
     const existing = dedupedMap.get(key);
     if (
       !existing ||
-      Number(p.product_id ?? p.id ?? 0) >
-        Number(existing.product_id ?? existing.id ?? 0)
+      Number(p.product_id ?? p.id ?? 0) > Number(existing.product_id ?? existing.id ?? 0)
     ) {
       dedupedMap.set(key, p);
     }
   }
-  return Array.from(dedupedMap.values()).map((p: any) => ({
+  return Array.from(dedupedMap.values()).map((p) => ({
     id: Number(p.product_id ?? p.id),
     name: String(p.product_name ?? p.name ?? `Product #${p.id}`),
     price: Number(p.price ?? 0),
-    image: String(p.image ?? chickenImg),
     category: String(p.category ?? "UNCATEGORIZED").toUpperCase(),
-    // Stock mirrors dailyWithdrawn — what kitchen pulled out and is available to sell
     remainingStock: Number(p.dailyWithdrawn ?? 0),
+    image: p.image ? String(p.image) : null,
   }));
 }
 
-export default function MenuPage() {
-  const [selectedCategory, setSelectedCategory] = useState<string>("ALL ITEMS");
-  const [searchQuery, setSearchQuery] = useState<string>("");
-  const [cart, setCart] = useState<CartItem[]>([]);
-  const [products, setProducts] = useState<MenuItem[]>([]);
-  const [orderType, setOrderType] = useState<"dine-in" | "take-out">("dine-in");
-  const [paymentMethod, setPaymentMethod] = useState<"cash" | "e-payment">(
-    "cash",
-  );
-  const [showSuccessModal, setShowSuccessModal] = useState(false);
-  const [paidAmount, setPaidAmount] = useState(0);
-  const [orderNumber, setOrderNumber] = useState("");
-  const [savedCart, setSavedCart] = useState<CartItem[]>([]);
+// ─── SUB-COMPONENTS ───────────────────────────────────────────────────────────
 
-  useEffect(() => {
-    api
-      .get<any[]>("/inventory")
-      .then((data) => setProducts(mapProducts(data || [])))
-      .catch(console.error);
-  }, []);
+interface ProductCardProps {
+  item: MenuItem;
+  onAdd: (item: MenuItem) => void;
+  isPopping: boolean;
+}
 
-  const categoryNames = [
-    "ALL ITEMS",
-    ...Array.from(new Set(products.map((p) => p.category).filter(Boolean))),
-  ];
-
-  const isMenuFood = (item: MenuItem) =>
-    item.category.toUpperCase().includes("MENU FOOD");
-
-  const addToCart = (item: MenuItem) => {
-    const remaining = Number(item.remainingStock ?? 0);
-    if (remaining <= 0 && !isMenuFood(item)) {
-      alert("Out of stock");
-      return;
-    }
-    const existingItem = cart.find((c) => c.id === item.id);
-    if (existingItem) {
-      const nextQty = existingItem.quantity + 1;
-      if (nextQty > remaining && !isMenuFood(item)) return;
-      setCart(
-        cart.map((c) => (c.id === item.id ? { ...c, quantity: nextQty } : c)),
-      );
-    } else {
-      setCart([...cart, { ...item, quantity: 1 }]);
-    }
-  };
-
-  const removeFromCart = (itemId: number) =>
-    setCart(cart.filter((c) => c.id !== itemId));
-
-  const updateQuantity = (itemId: number, change: number) => {
-    const product = products.find((p) => p.id === itemId);
-    const remaining = Number(product?.remainingStock ?? 0);
-    const menuFood = product ? isMenuFood(product) : false;
-    setCart((prev) =>
-      prev
-        .map((item) => {
-          if (item.id !== itemId) return item;
-          const nextQty = Math.max(0, item.quantity + change);
-          if (nextQty > remaining && !menuFood) return item;
-          return { ...item, quantity: nextQty };
-        })
-        .filter((item) => item.quantity > 0),
-    );
-  };
-
-  const handlePayment = async () => {
-    if (cart.length === 0) return alert("Cart is empty");
-    const total = cart.reduce(
-      (sum, item) => sum + item.price * item.quantity,
-      0,
-    );
-    const items = cart.map((item) => ({
-      product_id: item.id,
-      qty: item.quantity,
-      subtotal: item.price * item.quantity,
-      name: item.name,
-      price: item.price,
-    }));
-
-    try {
-      const response = await api.post<any>("/orders", {
-        items,
-        total,
-        order_type: orderType,
-        payment_method: paymentMethod,
-      });
-
-      setSavedCart([...cart]);
-      setPaidAmount(total);
-      setOrderNumber(
-        String(
-          response?.orderNumber ??
-            `#${Math.floor(10000 + Math.random() * 90000)}`,
-        ),
-      );
-      setShowSuccessModal(true);
-
-      // Optimistic deduction so UI updates immediately
-      setProducts((prev) =>
-        prev.map((p) => {
-          const ordered = cart.find((c) => c.id === p.id);
-          if (!ordered) return p;
-          return {
-            ...p,
-            remainingStock: Math.max(
-              0,
-              (p.remainingStock ?? 0) - ordered.quantity,
-            ),
-          };
-        }),
-      );
-
-      // Refresh from server — dailyWithdrawn already reflects the sale
-      const refreshed = await api.get<any[]>("/inventory");
-      setProducts(mapProducts(refreshed || []));
-    } catch (error) {
-      console.error(error);
-      alert("Failed to submit order");
-    }
-  };
-
-  const handleCloseModal = () => {
-    setShowSuccessModal(false);
-    setCart([]);
-    setSavedCart([]);
-    setPaymentMethod("cash");
-    setOrderType("dine-in");
-  };
-
-  const filteredItems = products.filter((item) => {
-    const matchesCategory =
-      selectedCategory === "ALL ITEMS" || item.category === selectedCategory;
-    const matchesSearch = item.name
-      .toLowerCase()
-      .includes(searchQuery.toLowerCase());
-    return matchesCategory && matchesSearch;
-  });
-
-  const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
-  const totalPrice = cart.reduce(
-    (sum, item) => sum + item.price * item.quantity,
-    0,
-  );
+function ProductCard({ item, onAdd, isPopping }: ProductCardProps) {
+  const isOut = item.remainingStock <= 0 && !isMenuFood(item);
+  const bg = cardColor(item.id);
 
   return (
-    <div
-      className="flex h-screen bg-gradient-to-br from-gray-50 via-gray-100 to-gray-50"
-      style={{ fontFamily: "Poppins, sans-serif" }}
+    <button
+      onClick={() => { if (!isOut) onAdd(item); }}
+      disabled={isOut}
+      style={{
+        fontFamily: "inherit",
+        transform: isPopping ? "scale(0.94)" : "scale(1)",
+        transition: "transform 0.15s cubic-bezier(.34,1.56,.64,1), box-shadow 0.2s, opacity 0.2s",
+        opacity: isOut ? 0.55 : 1,
+        cursor: isOut ? "not-allowed" : "pointer",
+      }}
+      className="group relative bg-white rounded-2xl overflow-hidden border border-gray-100 text-left w-full flex flex-col hover:shadow-lg hover:border-gray-200"
     >
-      <Sidebar />
-      <div className="flex-1 flex flex-col">
-        <motion.div
-          className="bg-white shadow-sm px-8 py-6 border-b border-gray-200"
-          initial={{ y: -20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ duration: 0.3 }}
-        >
-          <div className="flex items-center justify-between ml-16">
-            <div>
-              <p className="text-xs text-gray-500 mb-1">
-                Menu / Manage Cashier
-              </p>
-              <h1 className="text-2xl font-bold text-gray-800">Cashier View</h1>
-            </div>
-          </div>
-        </motion.div>
+      {/* Image area */}
+      <div
+        className="w-full aspect-square flex items-center justify-center"
+        style={{ background: isOut ? "#F3F4F6" : bg }}
+      >
+        <UtensilsCrossed
+          className="w-10 h-10"
+          style={{ color: isOut ? "#D1D5DB" : "#92400E", opacity: 0.4 }}
+        />
+      </div>
 
-        <div className="flex-1 flex overflow-hidden">
-          <div className="flex-1 p-8 overflow-y-auto">
-            <motion.div
-              className="relative mb-8"
-              initial={{ y: 20, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              transition={{ delay: 0.1 }}
+      {/* Info */}
+      <div className="p-3">
+        <p className="text-xs font-semibold text-gray-800 leading-snug line-clamp-2 mb-1">
+          {item.name}
+        </p>
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-bold text-gray-900">₱{item.price}</span>
+          {!isMenuFood(item) && (
+            <span
+              className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+              style={{
+                background: isOut ? "#FEE2E2" : "#DCFCE7",
+                color: isOut ? "#EF4444" : "#16A34A",
+              }}
             >
-              <input
-                type="text"
-                placeholder="Search Menu"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full max-w-md px-5 py-3 pl-12 rounded-xl border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 shadow-sm text-sm"
-              />
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-            </motion.div>
-
-            <motion.div
-              className="mb-8"
-              initial={{ y: 20, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              transition={{ delay: 0.15 }}
-            >
-              <h2 className="text-sm font-bold text-gray-700 mb-4 uppercase tracking-wide">
-                Categories
-              </h2>
-              <div className="flex flex-wrap gap-2">
-                {categoryNames.map((categoryName) => (
-                  <button
-                    key={categoryName}
-                    onClick={() => setSelectedCategory(categoryName)}
-                    className="relative px-5 py-2 text-sm font-medium rounded-full transition-colors duration-200 focus:outline-none"
-                    style={{
-                      color:
-                        selectedCategory === categoryName
-                          ? "#2563eb"
-                          : "#6b7280",
-                    }}
-                  >
-                    {selectedCategory === categoryName && (
-                      <motion.span
-                        layoutId="categoryPill"
-                        className="absolute inset-0 rounded-full bg-blue-50 border border-blue-200"
-                        transition={{
-                          type: "spring",
-                          stiffness: 350,
-                          damping: 30,
-                        }}
-                      />
-                    )}
-                    <span className="relative z-10">{categoryName}</span>
-                  </button>
-                ))}
-              </div>
-            </motion.div>
-
-            <motion.div className="grid grid-cols-4 gap-5" layout>
-              <AnimatePresence mode="popLayout">
-                {filteredItems.map((item, index) =>
-                  (() => {
-                    const stock = Number(item.remainingStock ?? 0);
-                    const isOutOfStock = stock <= 0 && !isMenuFood(item);
-                    return (
-                      <motion.button
-                        key={item.id}
-                        onClick={() => addToCart(item)}
-                        disabled={isOutOfStock}
-                        className={`bg-white rounded-2xl overflow-hidden shadow-sm border group transition-all ${isOutOfStock ? "border-red-200 opacity-70 cursor-not-allowed" : "border-gray-100"}`}
-                        layout
-                        initial={{ opacity: 0, y: 12 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0 }}
-                        transition={{ duration: 0.2, delay: 0.03 * index }}
-                        whileHover={
-                          isOutOfStock
-                            ? undefined
-                            : {
-                                y: -4,
-                                boxShadow: "0 8px 20px rgba(0,0,0,0.08)",
-                                transition: { duration: 0.2 },
-                              }
-                        }
-                        whileTap={
-                          isOutOfStock ? undefined : { scale: 0.97, y: 0 }
-                        }
-                      >
-                        <div className="aspect-square bg-gray-50 flex items-center justify-center overflow-hidden">
-                          <img
-                            src={item.image}
-                            alt={item.name}
-                            className={`w-full h-full object-cover ${isOutOfStock ? "grayscale" : ""}`}
-                            onError={(e) => {
-                              e.currentTarget.src = chickenImg;
-                            }}
-                          />
-                        </div>
-                        <div className="p-4">
-                          <div className="mb-2 flex items-center justify-center gap-2">
-                            <p className="text-xs font-semibold text-gray-800 text-center line-clamp-2">
-                              {item.name}
-                            </p>
-                            {isOutOfStock && (
-                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-600">
-                                OUT OF STOCK
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-gray-900 font-bold text-center text-base">
-                            ₱{item.price}
-                          </p>
-                          {!isMenuFood(item) && (
-                            <p
-                              className={`text-xs mt-1 text-center ${isOutOfStock ? "text-red-500 font-semibold" : "text-gray-500"}`}
-                            >
-                              Stock: {stock}
-                            </p>
-                          )}
-                        </div>
-                      </motion.button>
-                    );
-                  })(),
-                )}
-              </AnimatePresence>
-            </motion.div>
-          </div>
-
-          <motion.div
-            className="w-96 bg-white shadow-xl p-6 flex flex-col border-l border-gray-200"
-            initial={{ x: 384, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            transition={{ type: "spring", damping: 25, stiffness: 200 }}
-          >
-            <h2 className="text-xl font-bold text-gray-800 mb-6">Order List</h2>
-            <AnimatePresence mode="wait">
-              {cart.length === 0 ? (
-                <motion.div
-                  key="empty"
-                  className="flex-1 flex flex-col items-center justify-center text-center p-8"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                >
-                  <ShoppingBag className="w-16 h-16 text-gray-300 mb-4" />
-                  <p className="text-gray-400 font-medium">No items in cart</p>
-                  <p className="text-gray-400 text-sm mt-1">
-                    Add items from the menu
-                  </p>
-                </motion.div>
-              ) : (
-                <motion.div
-                  key="cart"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  className="flex flex-col h-full"
-                >
-                  <div className="flex-1 overflow-y-auto space-y-3 mb-6">
-                    <AnimatePresence mode="popLayout">
-                      {cart.map((item) => (
-                        <motion.div
-                          key={item.id}
-                          layout
-                          initial={{ opacity: 0, x: -16 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          exit={{ opacity: 0, x: 16 }}
-                          transition={{ duration: 0.2 }}
-                          className="flex items-center gap-3 bg-gray-50 rounded-xl p-3 border border-gray-100"
-                        >
-                          <div className="w-16 h-16 rounded-lg overflow-hidden shadow-sm">
-                            <img
-                              src={item.image}
-                              alt={item.name}
-                              className="w-full h-full object-cover"
-                            />
-                          </div>
-                          <div className="flex-1">
-                            <p className="font-semibold text-gray-800 text-sm">
-                              {item.name}
-                            </p>
-                            <p className="text-gray-900 font-bold text-base mt-0.5">
-                              ₱{item.price}
-                            </p>
-                            <div className="flex items-center gap-2 mt-2">
-                              <motion.button
-                                onClick={() => updateQuantity(item.id, -1)}
-                                className="w-6 h-6 rounded-md bg-gray-200 hover:bg-gray-300 flex items-center justify-center"
-                                whileTap={{ scale: 0.9 }}
-                              >
-                                <span className="text-gray-700 font-bold text-sm">
-                                  −
-                                </span>
-                              </motion.button>
-                              <motion.span
-                                className="text-sm font-semibold text-gray-700 min-w-[20px] text-center"
-                                key={item.quantity}
-                                initial={{ scale: 1.2 }}
-                                animate={{ scale: 1 }}
-                                transition={{ duration: 0.15 }}
-                              >
-                                {item.quantity}
-                              </motion.span>
-                              <motion.button
-                                onClick={() => updateQuantity(item.id, 1)}
-                                className="w-6 h-6 rounded-md bg-gray-200 hover:bg-gray-300 flex items-center justify-center"
-                                whileTap={{ scale: 0.9 }}
-                              >
-                                <span className="text-gray-700 font-bold text-sm">
-                                  +
-                                </span>
-                              </motion.button>
-                            </div>
-                          </div>
-                          <motion.button
-                            onClick={() => removeFromCart(item.id)}
-                            className="w-8 h-8 rounded-lg bg-gray-100 hover:bg-red-50 flex items-center justify-center group"
-                            whileTap={{ scale: 0.9 }}
-                          >
-                            <Trash2 className="w-4 h-4 text-gray-400 group-hover:text-red-500 transition-colors" />
-                          </motion.button>
-                        </motion.div>
-                      ))}
-                    </AnimatePresence>
-                  </div>
-                  <motion.div
-                    className="border-t border-gray-200 pt-5 space-y-4"
-                    layout
-                  >
-                    <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
-                      <div className="flex justify-between items-center text-sm mb-2">
-                        <span className="text-gray-600 font-medium">
-                          Total Items:
-                        </span>
-                        <span className="font-bold text-gray-800">
-                          {totalItems}
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-600 font-medium">
-                          Total Price:
-                        </span>
-                        <span className="font-bold text-gray-800 text-xl">
-                          ₱{totalPrice}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <select
-                        value={orderType}
-                        onChange={(e) =>
-                          setOrderType(e.target.value as "dine-in" | "take-out")
-                        }
-                        className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                      >
-                        <option value="dine-in">Dine In</option>
-                        <option value="take-out">Take Out</option>
-                      </select>
-                      <select
-                        value={paymentMethod}
-                        onChange={(e) =>
-                          setPaymentMethod(
-                            e.target.value as "cash" | "e-payment",
-                          )
-                        }
-                        className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                      >
-                        <option value="cash">Cash</option>
-                        <option value="e-payment">E-Payment</option>
-                      </select>
-                    </div>
-                    <motion.button
-                      onClick={() => {
-                        void handlePayment();
-                      }}
-                      className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold text-lg shadow-md"
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.98 }}
-                    >
-                      PAY ₱{totalPrice}
-                    </motion.button>
-                  </motion.div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </motion.div>
+              {isOut ? "OUT" : item.remainingStock}
+            </span>
+          )}
         </div>
       </div>
 
-      <AnimatePresence>
-        {showSuccessModal && (
-          <>
-            <motion.div
-              className="fixed inset-0 bg-black/40 backdrop-blur-md z-[100]"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-            />
-            <div className="fixed inset-0 flex items-center justify-center z-[101] p-4">
-              <motion.div
-                className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full relative overflow-hidden"
-                initial={{ scale: 0.95, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.95, opacity: 0 }}
-                transition={{ duration: 0.2 }}
-              >
-                <motion.button
-                  onClick={handleCloseModal}
-                  className="absolute top-6 right-6 w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 z-10"
-                  whileTap={{ scale: 0.9 }}
-                >
-                  <X className="w-5 h-5 text-gray-600" />
-                </motion.button>
-                <div className="flex">
-                  <div className="w-2/5 bg-gray-50 p-12 flex flex-col items-center justify-center">
-                    <motion.div
-                      className="w-24 h-24 rounded-full flex items-center justify-center mb-8"
-                      style={{
-                        background:
-                          "linear-gradient(135deg, #10b981 0%, #059669 100%)",
-                      }}
-                      initial={{ scale: 0 }}
-                      animate={{ scale: 1 }}
-                      transition={{
-                        type: "spring",
-                        damping: 15,
-                        stiffness: 200,
-                        delay: 0.1,
-                      }}
-                    >
-                      <Check
-                        className="w-12 h-12 text-white"
-                        strokeWidth={3.5}
-                      />
-                    </motion.div>
-                    <motion.h2
-                      className="text-2xl font-bold text-center mb-4 text-gray-800"
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: 0.2 }}
-                    >
-                      Your order is on its way!
-                    </motion.h2>
-                    <motion.p
-                      className="text-center text-gray-600 text-sm mb-8"
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: 0.25 }}
-                    >
-                      We've processed your payment and your receipt will be
-                      printed shortly.
-                    </motion.p>
-                    <motion.div
-                      className="w-full space-y-3"
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: 0.3 }}
-                    >
-                      <motion.button
-                        onClick={handleCloseModal}
-                        className="w-full py-3 rounded-xl font-semibold text-base text-white"
-                        style={{
-                          background:
-                            "linear-gradient(135deg, #10b981 0%, #059669 100%)",
-                        }}
-                        whileHover={{ scale: 1.02 }}
-                        whileTap={{ scale: 0.98 }}
-                      >
-                        Got It
-                      </motion.button>
-                      <motion.button
-                        onClick={handleCloseModal}
-                        className="w-full py-3 rounded-xl font-semibold text-base text-gray-700 bg-white border border-gray-200"
-                        whileHover={{ scale: 1.02 }}
-                        whileTap={{ scale: 0.98 }}
-                      >
-                        Submit another Order
-                      </motion.button>
-                    </motion.div>
-                  </div>
-                  <motion.div
-                    className="flex-1 p-12 bg-white"
-                    initial={{ opacity: 0, x: 16 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: 0.15 }}
-                  >
-                    <h3 className="text-xl font-bold text-gray-800 mb-8">
-                      Order Summary
-                    </h3>
-                    <div className="space-y-6 mb-8">
-                      <div>
-                        <p className="text-sm text-gray-600 mb-1">
-                          Order Number
-                        </p>
-                        <p className="text-base font-semibold text-gray-900">
-                          {orderNumber}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-gray-600 mb-1">Date</p>
-                        <p className="text-base font-semibold text-gray-900">
-                          {new Date().toLocaleDateString("en-US", {
-                            weekday: "long",
-                            year: "numeric",
-                            month: "long",
-                            day: "numeric",
-                          })}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="space-y-3 mb-6 max-h-60 overflow-y-auto pr-2">
-                      {savedCart.map((item, index) => (
-                        <motion.div
-                          key={item.id}
-                          className="flex justify-between items-center py-2.5 border-b border-gray-100 last:border-0"
-                          initial={{ opacity: 0, x: 12 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          transition={{ delay: 0.1 + 0.04 * index }}
-                        >
-                          <div className="flex items-center gap-3">
-                            <span className="text-sm font-medium text-gray-900">
-                              {item.name}
-                            </span>
-                            <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
-                              x{item.quantity}
-                            </span>
-                          </div>
-                          <span className="text-sm font-semibold text-gray-900">
-                            ₱{item.price * item.quantity}
-                          </span>
-                        </motion.div>
-                      ))}
-                    </div>
-                    <div className="border-t-2 border-gray-200 pt-4 space-y-3">
-                      <div className="flex justify-between items-center">
-                        <span className="text-sm text-gray-600">
-                          {savedCart.reduce((s, i) => s + i.quantity, 0)} Items
-                        </span>
-                        <span className="text-base font-semibold text-gray-900">
-                          ₱{paidAmount}
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center pt-2">
-                        <span className="text-base font-semibold text-gray-700">
-                          Total Amount
-                        </span>
-                        <span className="text-2xl font-bold text-emerald-600">
-                          ₱{paidAmount}
-                        </span>
-                      </div>
-                    </div>
-                  </motion.div>
-                </div>
-              </motion.div>
-            </div>
-          </>
-        )}
-      </AnimatePresence>
+      {/* Hover overlay */}
+      {!isOut && (
+        <div
+          className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+          style={{ background: "rgba(15,23,42,0.06)" }}
+        >
+          <div
+            className="w-8 h-8 rounded-full flex items-center justify-center"
+            style={{ background: "rgba(255,255,255,0.9)" }}
+          >
+            <Plus className="w-4 h-4 text-gray-700" />
+          </div>
+        </div>
+      )}
+    </button>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface CartRowProps {
+  item: CartItem;
+  onRemove: (id: number) => void;
+  onQty: (id: number, delta: number) => void;
+}
+
+function CartRow({ item, onRemove, onQty }: CartRowProps) {
+  return (
+    <div
+      className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 bg-gray-50"
+      style={{ animation: "slideIn 0.18s cubic-bezier(.34,1.56,.64,1)" }}
+    >
+      <div
+        className="w-10 h-10 rounded-lg flex-shrink-0 flex items-center justify-center"
+        style={{ background: cardColor(item.id) }}
+      >
+        <UtensilsCrossed className="w-4 h-4 text-amber-800 opacity-50" />
+      </div>
+
+      <div className="flex-1 min-w-0">
+        <p className="text-xs font-semibold text-gray-800 truncate">{item.name}</p>
+        <p className="text-xs font-bold text-gray-500 mt-0.5">₱{item.price}</p>
+
+        <div className="flex items-center gap-1.5 mt-1">
+          <button
+            onClick={() => onQty(item.id, -1)}
+            className="w-6 h-6 rounded-lg bg-white border border-gray-200 flex items-center justify-center hover:bg-gray-100 transition-colors"
+          >
+            <Minus className="w-3 h-3 text-gray-500" />
+          </button>
+          <span className="w-5 text-center text-xs font-bold text-gray-800">{item.quantity}</span>
+          <button
+            onClick={() => onQty(item.id, 1)}
+            className="w-6 h-6 rounded-lg bg-white border border-gray-200 flex items-center justify-center hover:bg-gray-100 transition-colors"
+          >
+            <Plus className="w-3 h-3 text-gray-500" />
+          </button>
+        </div>
+      </div>
+
+      <span className="text-xs font-bold text-gray-800 w-12 text-right">
+        ₱{item.price * item.quantity}
+      </span>
+
+      <button
+        onClick={() => onRemove(item.id)}
+        className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-red-50 transition-colors"
+      >
+        <Trash2 className="w-3.5 h-3.5 text-gray-300 hover:text-red-400 transition-colors" />
+      </button>
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface SuccessModalProps {
+  show: boolean;
+  onClose: () => void;
+  orderNumber: string;
+  savedCart: CartItem[];
+  paidAmount: number;
+}
+
+function SuccessModal({ show, onClose, orderNumber, savedCart, paidAmount }: SuccessModalProps) {
+  if (!show) return null;
+
+  const date = new Date().toLocaleDateString("en-US", {
+    month: "short", day: "numeric", year: "numeric",
+  });
+
+  return (
+    <>
+      <div
+        className="fixed inset-0 z-50"
+        style={{
+          background: "rgba(0,0,0,0.45)",
+          backdropFilter: "blur(4px)",
+          animation: "fadeIn 0.2s ease",
+        }}
+        onClick={onClose}
+      />
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center p-4"
+        style={{ pointerEvents: "none" }}
+      >
+        <div
+          className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden relative"
+          style={{
+            animation: "scaleIn 0.22s cubic-bezier(.34,1.56,.64,1)",
+            pointerEvents: "all",
+          }}
+        >
+          <button
+            onClick={onClose}
+            className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-xl bg-gray-100 hover:bg-gray-200 transition-colors z-10"
+          >
+            <X className="w-4 h-4 text-gray-500" />
+          </button>
+
+          <div className="flex">
+            {/* Left */}
+            <div
+              className="w-2/5 p-8 flex flex-col items-center justify-center"
+              style={{ background: "linear-gradient(160deg, #052e16 0%, #14532d 50%, #166534 100%)" }}
+            >
+              <div
+                className="w-16 h-16 rounded-full flex items-center justify-center mb-4"
+                style={{
+                  background: "rgba(255,255,255,0.15)",
+                  animation: "popIn 0.35s 0.1s cubic-bezier(.34,1.56,.64,1) both",
+                }}
+              >
+                <Check className="w-8 h-8 text-white" strokeWidth={2.5} />
+              </div>
+              <h2 className="text-white font-bold text-lg text-center mb-1">Order Placed!</h2>
+              <p className="text-green-300 text-xs text-center mb-6">Payment processed.</p>
+              <p className="text-green-200 text-[11px] text-center font-mono mb-5">{orderNumber}</p>
+
+              <button
+                onClick={onClose}
+                className="w-full py-2.5 rounded-xl text-sm font-bold text-green-900 mb-2 hover:opacity-90 transition-opacity"
+                style={{ background: "#4ade80" }}
+              >
+                Got It
+              </button>
+              <button
+                onClick={onClose}
+                className="w-full py-2.5 rounded-xl text-sm font-semibold border border-white/20 text-white/80 hover:bg-white/10 transition-colors"
+              >
+                New Order
+              </button>
+            </div>
+
+            {/* Right */}
+            <div className="flex-1 p-8">
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="text-sm font-bold text-gray-800">Order Summary</h3>
+                <span className="text-xs text-gray-400">{date}</span>
+              </div>
+              <div className="w-full h-px bg-gray-100 mb-4" />
+
+              <div className="space-y-2 max-h-52 overflow-y-auto mb-4 pr-1">
+                {savedCart.map((item) => (
+                  <div key={item.id} className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-700">{item.name}</span>
+                      <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
+                        ×{item.quantity}
+                      </span>
+                    </div>
+                    <span className="text-xs font-semibold text-gray-800">
+                      ₱{item.price * item.quantity}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="border-t-2 border-dashed border-gray-100 pt-4 flex items-center justify-between">
+                <span className="text-sm text-gray-500 font-medium">Total Paid</span>
+                <span className="text-2xl font-bold text-green-600">₱{paidAmount}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ─── MAIN PAGE ────────────────────────────────────────────────────────────────
+
+export default function CashierView() {
+  const [products, setProducts] = useState<MenuItem[]>([]);
+  const [selectedCat, setSelectedCat] = useState<string>("ALL");
+  const [search, setSearch] = useState<string>("");
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [orderType, setOrderType] = useState<"dine-in" | "take-out">("dine-in");
+  const [paymentMethod, setPaymentMethod] = useState<"cash" | "e-payment">("cash");
+  const [poppingId, setPoppingId] = useState<number | null>(null);
+  const [showSuccess, setShowSuccess] = useState<boolean>(false);
+  const [savedCart, setSavedCart] = useState<CartItem[]>([]);
+  const [paidAmount, setPaidAmount] = useState<number>(0);
+  const [orderNumber, setOrderNumber] = useState<string>("");
+  const [isPlacingOrder, setIsPlacingOrder] = useState<boolean>(false);
+
+  // Fetch inventory on mount
+  // useEffect(() => {
+  //   api.get<Record<string, unknown>[]>("/inventory")
+  //     .then((data) => setProducts(mapProducts(data ?? [])))
+  //     .catch(console.error);
+  // }, []);
+
+  // ── Derived ──
+  const categories: string[] = [
+    "ALL",
+    ...Array.from(new Set(products.map((p) => p.category))),
+  ];
+
+  const filtered: MenuItem[] = products.filter((p) => {
+    const catMatch = selectedCat === "ALL" || p.category === selectedCat;
+    const searchMatch = p.name.toLowerCase().includes(search.toLowerCase());
+    return catMatch && searchMatch;
+  });
+
+  const totalQty: number = cart.reduce((s, i) => s + i.quantity, 0);
+  const totalPrice: number = cart.reduce((s, i) => s + i.price * i.quantity, 0);
+
+  // ── Cart actions ──
+  const addToCart = useCallback((item: MenuItem) => {
+    const stock = item.remainingStock;
+    if (stock <= 0 && !isMenuFood(item)) return;
+
+    setPoppingId(item.id);
+    setTimeout(() => setPoppingId(null), 200);
+
+    setCart((prev) => {
+      const existing = prev.find((c) => c.id === item.id);
+      if (existing) {
+        const next = existing.quantity + 1;
+        if (next > stock && !isMenuFood(item)) return prev;
+        return prev.map((c) => c.id === item.id ? { ...c, quantity: next } : c);
+      }
+      return [...prev, { ...item, quantity: 1 }];
+    });
+  }, []);
+
+  const removeFromCart = (id: number): void => {
+    setCart((prev) => prev.filter((c) => c.id !== id));
+  };
+
+  const updateQty = (id: number, delta: number): void => {
+    const product = products.find((p) => p.id === id);
+    const stock = product?.remainingStock ?? 0;
+    const menuFood = product ? isMenuFood(product) : false;
+
+    setCart((prev) =>
+      prev
+        .map((c) => {
+          if (c.id !== id) return c;
+          const next = Math.max(0, c.quantity + delta);
+          if (next > stock && !menuFood) return c;
+          return { ...c, quantity: next };
+        })
+        .filter((c) => c.quantity > 0)
+    );
+  };
+
+  // ── Payment ──
+  const handlePayment = async (): Promise<void> => {
+    if (cart.length === 0 || isPlacingOrder) return;
+    setIsPlacingOrder(true);
+
+    const total = cart.reduce((s, i) => s + i.price * i.quantity, 0);
+    const payload: OrderPayload = {
+      items: cart.map((i) => ({
+        product_id: i.id,
+        qty: i.quantity,
+        subtotal: i.price * i.quantity,
+        name: i.name,
+        price: i.price,
+      })),
+      total,
+      order_type: orderType,
+      payment_method: paymentMethod,
+    };
+
+    try {
+      const response = await api.post<OrderResponse>("/orders", payload);
+      const num = response?.orderNumber ?? `#${Math.floor(10000 + Math.random() * 90000)}`;
+
+      setSavedCart([...cart]);
+      setPaidAmount(total);
+      setOrderNumber(num);
+      setShowSuccess(true);
+
+      // Optimistic stock deduction
+      setProducts((prev) =>
+        prev.map((p) => {
+          const ordered = cart.find((c) => c.id === p.id);
+          if (!ordered || isMenuFood(p)) return p;
+          return { ...p, remainingStock: Math.max(0, p.remainingStock - ordered.quantity) };
+        })
+      );
+
+      // Re-fetch fresh inventory
+      // const fresh = await api.get<Record<string, unknown>[]>("/inventory");
+      // setProducts(mapProducts(fresh ?? []));
+    } catch (err) {
+      console.error("Order failed:", err);
+      alert("Failed to submit order. Please try again.");
+    } finally {
+      setIsPlacingOrder(false);
+    }
+  };
+
+  const handleCloseModal = (): void => {
+    setShowSuccess(false);
+    setCart([]);
+    setSavedCart([]);
+    setOrderType("dine-in");
+    setPaymentMethod("cash");
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  return (
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
+        * { box-sizing: border-box; }
+        body, .cashier-root { font-family: 'DM Sans', sans-serif; }
+
+        @keyframes slideIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fadeIn  { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes scaleIn {
+          from { opacity: 0; transform: scale(0.93) translateY(12px); }
+          to   { opacity: 1; transform: scale(1)    translateY(0); }
+        }
+        @keyframes popIn {
+          from { opacity: 0; transform: scale(0.5); }
+          to   { opacity: 1; transform: scale(1); }
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .pill-active   { background: #0f172a; color: #fff; border-color: #0f172a; }
+        .pill-inactive { background: #fff; color: #6b7280; border-color: #e5e7eb; }
+        .pill-inactive:hover { border-color: #9ca3af; color: #374151; }
+
+        .pay-btn {
+          background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%);
+          color: white;
+          transition: transform 0.12s, box-shadow 0.15s, opacity 0.15s;
+        }
+        .pay-btn:hover:not(:disabled) {
+          transform: translateY(-1px);
+          box-shadow: 0 8px 24px rgba(15,23,42,0.25);
+        }
+        .pay-btn:active:not(:disabled) { transform: scale(0.98) translateY(0); }
+        .pay-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #e5e7eb; border-radius: 4px; }
+      `}</style>
+
+      <div className="cashier-root flex h-screen bg-gray-50 overflow-hidden">
+
+        {/* ── Main panel ── */}
+        <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+
+          {/* Header */}
+          <div className="bg-white border-b border-gray-100 px-6 py-4 flex items-center justify-between">
+            <div>
+              <p className="text-[11px] text-gray-400 font-medium tracking-wide uppercase">
+                Menu · Cashier
+              </p>
+              <h1 className="text-lg font-bold text-gray-900 mt-0.5">Cashier View</h1>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-gray-400">
+              <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+              Online
+            </div>
+          </div>
+
+          {/* Menu area */}
+          <div className="flex-1 overflow-y-auto p-5">
+
+            {/* Search */}
+            <div className="relative mb-4 max-w-xs">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" />
+              <input
+                type="text"
+                placeholder="Search items…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full pl-9 pr-4 py-2.5 text-sm rounded-xl border border-gray-200 bg-white text-gray-700 placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:border-transparent"
+              />
+            </div>
+
+            {/* Category pills */}
+            <div className="flex flex-wrap gap-2 mb-5">
+              {categories.map((cat) => (
+                <button
+                  key={cat}
+                  onClick={() => setSelectedCat(cat)}
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-all ${
+                    selectedCat === cat ? "pill-active" : "pill-inactive"
+                  }`}
+                >
+                  {cat === "ALL" ? "All Items" : cat}
+                </button>
+              ))}
+            </div>
+
+            {/* Product grid */}
+            <div
+              className="grid gap-3"
+              style={{ gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))" }}
+            >
+              {filtered.map((item, idx) => (
+                <div
+                  key={item.id}
+                  style={{ animation: `slideIn 0.2s ${idx * 0.03}s both` }}
+                >
+                  <ProductCard
+                    item={item}
+                    onAdd={addToCart}
+                    isPopping={poppingId === item.id}
+                  />
+                </div>
+              ))}
+
+              {filtered.length === 0 && (
+                <p className="col-span-full text-center text-sm text-gray-400 py-16">
+                  No items found.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* ── Cart ── */}
+        <div
+          className="bg-white border-l border-gray-100 flex flex-col"
+          style={{ width: 320, flexShrink: 0 }}
+        >
+          {/* Cart header */}
+          <div className="px-5 pt-5 pb-3 border-b border-gray-50 flex items-center justify-between">
+            <h2 className="text-sm font-bold text-gray-900">Order List</h2>
+            {totalQty > 0 && (
+              <span
+                className="text-xs font-bold px-2 py-0.5 rounded-full"
+                style={{ background: "#0f172a", color: "#fff" }}
+              >
+                {totalQty}
+              </span>
+            )}
+          </div>
+
+          {/* Cart items */}
+          <div className="flex-1 overflow-y-auto px-5 py-3 space-y-2">
+            {cart.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center text-center pb-8" style={{ animation: "fadeIn 0.3s ease" }}>
+                <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-3" style={{ background: "#F8FAFC" }}>
+                  <ShoppingBag className="w-7 h-7 text-gray-200" />
+                </div>
+                <p className="text-sm font-medium text-gray-400">Cart is empty</p>
+                <p className="text-xs text-gray-300 mt-1">Tap an item to add</p>
+              </div>
+            ) : (
+              cart.map((item) => (
+                <CartRow key={item.id} item={item} onRemove={removeFromCart} onQty={updateQty} />
+              ))
+            )}
+          </div>
+
+          {/* Summary + Pay */}
+          {cart.length > 0 && (
+            <div className="px-5 py-4 border-t border-gray-100" style={{ animation: "slideIn 0.18s ease" }}>
+              <div className="rounded-xl p-3.5 mb-3" style={{ background: "#F8FAFC", border: "1px solid #F1F5F9" }}>
+                <div className="flex justify-between text-xs text-gray-400 mb-1.5">
+                  <span>Items</span>
+                  <span>{totalQty}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-gray-600">Total</span>
+                  <span className="text-xl font-bold text-gray-900">₱{totalPrice}</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                <select
+                  value={orderType}
+                  onChange={(e) => setOrderType(e.target.value as "dine-in" | "take-out")}
+                  className="border border-gray-200 rounded-xl px-2.5 py-2 text-xs bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-slate-300"
+                >
+                  <option value="dine-in">Dine In</option>
+                  <option value="take-out">Take Out</option>
+                </select>
+                <select
+                  value={paymentMethod}
+                  onChange={(e) => setPaymentMethod(e.target.value as "cash" | "e-payment")}
+                  className="border border-gray-200 rounded-xl px-2.5 py-2 text-xs bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-slate-300"
+                >
+                  <option value="cash">Cash</option>
+                  <option value="e-payment">E-Payment</option>
+                </select>
+              </div>
+
+              <button
+                onClick={() => { void handlePayment(); }}
+                disabled={isPlacingOrder || cart.length === 0}
+                className="pay-btn w-full py-3.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2"
+              >
+                {isPlacingOrder ? (
+                  <>
+                    <div
+                      className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full"
+                      style={{ animation: "spin 0.7s linear infinite" }}
+                    />
+                    Processing…
+                  </>
+                ) : (
+                  <>
+                    Pay ₱{totalPrice}
+                    <ChevronRight className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Success Modal */}
+      <SuccessModal
+        show={showSuccess}
+        onClose={handleCloseModal}
+        orderNumber={orderNumber}
+        savedCart={savedCart}
+        paidAmount={paidAmount}
+      />
+    </>
   );
 }

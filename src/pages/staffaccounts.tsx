@@ -1,257 +1,297 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 
-interface Account {
-  id: string;
-  name: string;
-  handle: string;
-  avatar: string | null;
-  email?: string;
-  role: 'admin' | 'staff';
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type Role   = "admin" | "cashier" | "cook" | "staff" | "inventory_manager";
+type Status = "active" | "inactive";
+
+interface Employee {
+  id:     string;
+  name:   string;
+  email:  string;
+  role:   Role;
+  status: Status;
 }
 
-const initials = (name: string) =>
-  name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+interface FormState {
+  name:  string;
+  email: string;
+  role:  Role;
+}
 
-const MOCK_ACCOUNTS: Account[] = [
-  { id: '1', name: 'Joshua Paco', handle: '@joshuapaco', avatar: null, email: 'josh@thecrunch.com', role: 'admin' },
-  { id: '2', name: 'Shad Isles',  handle: '@shadisles',  avatar: null, email: 'shad@thecrunch.com', role: 'staff' },
-];
+// ── Constants ─────────────────────────────────────────────────────────────────
 
-// TODO: wire these up to your backend
-const api = {
-  fetchAccounts: async (): Promise<Account[]> => MOCK_ACCOUNTS,
-  createAccount: async (data: { name: string; email: string; role: 'admin' | 'staff' }): Promise<Account> => ({
-    id: String(Date.now()), handle: '@' + data.name.toLowerCase().replace(' ', ''), avatar: null, ...data,
-  }),
-  signOut: async () => { /* POST /auth/signout */ },
+const ROLES: Role[] = ["admin", "cashier", "cook", "staff", "inventory_manager"];
+
+const ROLE_LABEL: Record<Role, string> = {
+  admin:             "Admin",
+  cashier:           "Cashier",
+  cook:              "Cook",
+  staff:             "Staff",
+  inventory_manager: "Inventory Mgr",
 };
 
-function Avatar({ account, size = 56 }: { account: Account; size?: number }) {
-  return (
-    <div style={{ position: 'relative', flexShrink: 0 }}>
-      {account.avatar ? (
-        <img src={account.avatar} alt={account.name}
-          style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', display: 'block', border: '2px solid #f0f0f0' }} />
-      ) : (
-        <div style={{ width: size, height: size, borderRadius: '50%', background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.3, fontWeight: 700, color: '#fff', border: '2px solid #f0f0f0' }}>
-          {initials(account.name)}
-        </div>
-      )}
-      <div style={{ position: 'absolute', bottom: 1, right: 1, width: 10, height: 10, borderRadius: '50%', background: '#22c55e', border: '2px solid #fff' }} />
-    </div>
-  );
+const AVATAR_PALETTE: [string, string][] = [
+  ["#fde8e8", "#c0392b"],
+  ["#e8f8ee", "#27ae60"],
+  ["#fef6e4", "#f39c12"],
+  ["#eaf3fb", "#2980b9"],
+  ["#f0eef8", "#6c5ce7"],
+];
+
+const INITIAL_EMPLOYEES: Employee[] = [
+  { id: "EMP-001", name: "Joshua Paco",   email: "josh@thecrunch.com",  role: "admin",             status: "active"   },
+  { id: "EMP-002", name: "Shad Isles",    email: "shad@thecrunch.com",  role: "cashier",           status: "active"   },
+  { id: "EMP-003", name: "Maria Santos",  email: "maria@thecrunch.com", role: "cook",              status: "active"   },
+  { id: "EMP-004", name: "Carlo Reyes",   email: "carlo@thecrunch.com", role: "staff",             status: "inactive" },
+  { id: "EMP-005", name: "Ana Dela Cruz", email: "ana@thecrunch.com",   role: "inventory_manager", status: "active"   },
+];
+
+const DEFAULT_FORM: FormState = { name: "", email: "", role: "staff" };
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function getAvatarColor(name: string): [string, string] {
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) % AVATAR_PALETTE.length;
+  return AVATAR_PALETTE[h];
 }
 
-function MenuRow({ icon, label, sublabel, onClick, danger = false }: {
-  icon: React.ReactNode; label: string; sublabel?: string; onClick: () => void; danger?: boolean;
-}) {
-  const [hovered, setHovered] = useState(false);
-  return (
-    <motion.button whileTap={{ scale: 0.98 }} onClick={onClick}
-      onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
-      style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 14, padding: '13px 16px', borderRadius: 14, border: 'none', background: hovered ? (danger ? '#fef2f2' : '#f9fafb') : 'transparent', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', transition: 'background 0.18s' }}
-    >
-      <div style={{ color: hovered ? (danger ? '#ef4444' : '#111') : '#9ca3af', transition: 'color 0.18s', flexShrink: 0, display: 'flex' }}>{icon}</div>
-      <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 14, fontWeight: 500, color: hovered && danger ? '#ef4444' : '#111', transition: 'color 0.18s', lineHeight: 1.3 }}>{label}</div>
-        {sublabel && <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 1 }}>{sublabel}</div>}
-      </div>
-      {!danger && <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="#d1d5db" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>}
-    </motion.button>
-  );
+function getInitials(name: string): string {
+  return name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2);
 }
 
-function CreateAccountModal({ onClose, onCreate }: {
-  onClose: () => void;
-  onCreate: (data: { name: string; email: string; role: 'admin' | 'staff' }) => Promise<void>;
-}) {
-  const [form, setForm] = useState({ name: '', email: '', role: 'staff' as 'admin' | 'staff' });
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-
-  const handleSubmit = async () => {
-    if (!form.name.trim() || !form.email.trim()) return setError('Name and email are required.');
-    setLoading(true);
-    try {
-      await onCreate(form);
-      onClose();
-    } catch {
-      setError('Failed to create account. Try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const field = (label: string, key: keyof typeof form, type = 'text') => (
-    <div style={{ marginBottom: 14 }}>
-      <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 4 }}>{label}</label>
-      <input
-        type={type}
-        value={form[key]}
-        onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
-        style={{ width: '100%', padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: 10, fontSize: 14, fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }}
-      />
-    </div>
-  );
-
-  return (
-    <>
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}
-        style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.3)', zIndex: 300, backdropFilter: 'blur(4px)' }} />
-      <motion.div initial={{ opacity: 0, scale: 0.92, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 10 }}
-        transition={{ type: 'spring', stiffness: 260, damping: 22 }}
-        style={{ position: 'fixed', top: '30%', left: '40%', transform: 'translate(-50%,-50%)', zIndex: 400, background: '#fff', borderRadius: 24, padding: '36px', maxWidth: 360, width: '90%', boxShadow: '0 24px 64px rgba(0,0,0,0.12)' }}
-      >
-        <h3 style={{ fontSize: 18, fontWeight: 700, color: '#111', margin: '0 0 20px' }}>Create Employee Account</h3>
-
-        {field('Full Name', 'name')}
-        {field('Email', 'email', 'email')}
-
-        <div style={{ marginBottom: 14 }}>
-          <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 4 }}>Role</label>
-          <select value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value as 'admin' | 'staff' }))}
-            style={{ width: '100%', padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: 10, fontSize: 14, fontFamily: 'inherit', outline: 'none', background: '#fff' }}>
-            <option value="staff">Staff</option>
-            <option value="admin">Admin</option>
-          </select>
-        </div>
-
-        {error && <p style={{ fontSize: 12, color: '#ef4444', margin: '0 0 12px' }}>{error}</p>}
-
-        <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
-          <button onClick={onClose} style={{ flex: 1, background: '#f3f4f6', color: '#111', border: 'none', borderRadius: 12, padding: '13px', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
-          <button onClick={handleSubmit} disabled={loading}
-            style={{ flex: 1, background: '#111', color: '#fff', border: 'none', borderRadius: 12, padding: '13px', fontSize: 14, fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: loading ? 0.6 : 1 }}>
-            {loading ? 'Creating…' : 'Create'}
-          </button>
-        </div>
-      </motion.div>
-    </>
-  );
-}
-
-function SignOutModal({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: () => void }) {
-  return (
-    <>
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onCancel}
-        style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.3)', zIndex: 300, backdropFilter: 'blur(4px)' }} />
-      <motion.div initial={{ opacity: 0, scale: 0.9, y: 24 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.94, y: 12 }}
-        transition={{ type: 'spring', stiffness: 260, damping: 22 }}
-        style={{ position: 'fixed', top: '30%', left: '40%', transform: 'translate(-50%,-50%)', zIndex: 400, background: '#fff', borderRadius: 24, padding: '36px', maxWidth: 320, width: '90%', boxShadow: '0 24px 64px rgba(0,0,0,0.12)', textAlign: 'center' }}
-      >
-        <h3 style={{ fontSize: 18, fontWeight: 700, color: '#111', margin: '0 0 8px' }}>Sign out?</h3>
-        <p style={{ fontSize: 13, color: '#9ca3af', margin: '0 0 28px', lineHeight: 1.6 }}>You'll need to sign back in to access your account.</p>
-        <div style={{ display: 'flex', gap: 10 }}>
-          <button onClick={onCancel} style={{ flex: 1, background: '#f3f4f6', color: '#111', border: 'none', borderRadius: 12, padding: '13px', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
-          <button onClick={onConfirm} style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none', borderRadius: 12, padding: '13px', fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>Sign out</button>
-        </div>
-      </motion.div>
-    </>
-  );
-}
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export default function StaffAccounts() {
-  const navigate = useNavigate();
+  const [employees, setEmployees] = useState<Employee[]>(INITIAL_EMPLOYEES);
+  const [counter,   setCounter]   = useState<number>(6);
+  const [showModal, setShowModal] = useState<boolean>(false);
+  const [form,      setForm]      = useState<FormState>(DEFAULT_FORM);
+  const [error,     setError]     = useState<string>("");
 
-  // TODO: replace with real auth context — currentUser comes from your auth provider
-  const [accounts, setAccounts] = useState<Account[]>(MOCK_ACCOUNTS);
-  const currentUser = accounts[0]; // ← swap with useAuth() or similar
-  const isAdmin = currentUser?.role === 'admin';
+  const activeCount = employees.filter((e) => e.status === "active").length;
 
-  const [modal, setModal] = useState<'create' | 'signout' | null>(null);
+  const stats = [
+    { label: "Total",    value: employees.length               },
+    { label: "Active",   value: activeCount                    },
+    { label: "Inactive", value: employees.length - activeCount },
+    ...ROLES
+      .filter((r) => employees.some((e) => e.role === r))
+      .map((r) => ({
+        label: ROLE_LABEL[r],
+        value: employees.filter((e) => e.role === r).length,
+      })),
+  ];
 
-  const handleCreate = async (data: { name: string; email: string; role: 'admin' | 'staff' }) => {
-    const newAccount = await api.createAccount(data);
-    setAccounts(prev => [...prev, newAccount]);
+  const handleAdd = (): void => {
+    if (!form.name.trim() || !form.email.trim()) {
+      setError("Name and email are required.");
+      return;
+    }
+    const id = `EMP-${String(counter).padStart(3, "0")}`;
+    setEmployees((prev) => [...prev, { ...form, id, status: "active" }]);
+    setCounter((c) => c + 1);
+    setForm(DEFAULT_FORM);
+    setError("");
+    setShowModal(false);
   };
 
-  const handleSignOut = async () => {
-    await api.signOut();
-    navigate('/login');
+  const closeModal = (): void => {
+    setShowModal(false);
+    setForm(DEFAULT_FORM);
+    setError("");
   };
 
-  if (!currentUser) return null;
-
-  const IconUser     = () => <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><circle cx="12" cy="8" r="4"/><path strokeLinecap="round" d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>;
-  const IconPlus     = () => <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" d="M12 5v14M5 12h14"/></svg>;
-  const IconSignOut  = () => <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h6a2 2 0 012 2v1"/></svg>;
+  const handleRemove = (index: number): void => {
+    setEmployees((prev) => prev.filter((_, i) => i !== index));
+  };
 
   return (
-    <div style={{ fontFamily: "'Poppins', sans-serif", minHeight: '100vh', background: '#f5f5f7', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
-      <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+    <div style={{ minHeight: "100vh", background: "#fff", padding: "32px 36px", fontFamily: "'Poppins', sans-serif", color: "#1a202c" }}>
 
-      <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        style={{ width: '100%', maxWidth: 420, background: '#fff', borderRadius: 28, overflow: 'hidden', boxShadow: '0 4px 32px rgba(0,0,0,0.08)' }}
-      >
-        {/* HEADER */}
-        <div style={{ padding: '28px 28px 24px', borderBottom: '1px solid #f3f4f6' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <Avatar account={currentUser} size={60} />
-            <div style={{ flex: 1 }}>
-              <h2 style={{ fontSize: 18, fontWeight: 700, color: '#111', margin: '0 0 2px' }}>{currentUser.name}</h2>
-              <p style={{ fontSize: 13, color: '#9ca3af', margin: 0 }}>{currentUser.handle}</p>
-            </div>
-            {isAdmin && (
-              <span style={{ fontSize: 10, fontWeight: 700, color: '#6366f1', background: '#eef2ff', border: '1px solid #c7d2fe', borderRadius: 20, padding: '3px 10px', letterSpacing: '0.05em' }}>
-                ADMIN
-              </span>
+      {/* Poppins font */}
+      <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 24 }}>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#1a202c", lineHeight: 1.2 }}>Staff Accounts</div>
+          <div style={{ fontSize: 12, fontWeight: 400, color: "#a0aec0", marginTop: 3 }}>Manage employee access and roles</div>
+        </div>
+        <button
+          style={{ display: "flex", alignItems: "center", gap: 6, background: "#1a202c", color: "#fff", border: "none", borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 600, fontFamily: "'Poppins', sans-serif", cursor: "pointer", whiteSpace: "nowrap" }}
+          onClick={() => setShowModal(true)}
+        >
+          + Add Employee
+        </button>
+      </div>
+
+      {/* Stats */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 28, marginBottom: 24, paddingBottom: 20, borderBottom: "1px solid #f0f4f8" }}>
+        {stats.map((s, i) => (
+          <motion.div
+            key={s.label}
+            style={{ display: "flex", flexDirection: "column", gap: 4 }}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.22, delay: i * 0.04 }}
+          >
+            <div style={{ fontSize: 11, fontWeight: 600, color: "#a0aec0", textTransform: "uppercase", letterSpacing: "0.07em" }}>{s.label}</div>
+            <div style={{ fontSize: 22, fontWeight: 500, color: "#2d3748", lineHeight: 1 }}>{s.value}</div>
+          </motion.div>
+        ))}
+      </div>
+
+      {/* Table */}
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #e2e8f0", overflow: "hidden" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr>
+              {["#", "Employee", "Role", "Email", "ID", "Status", ""].map((h) => (
+                <th key={h} style={{ padding: "12px 18px", textAlign: "left", fontSize: 11, fontWeight: 600, color: "#a0aec0", letterSpacing: "0.07em", textTransform: "uppercase", borderBottom: "1px solid #e2e8f0" }}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {employees.length === 0 ? (
+              <tr>
+                <td colSpan={7} style={{ textAlign: "center", padding: "64px 20px", fontSize: 13, color: "#cbd5e0" }}>
+                  No employees yet. Add one above.
+                </td>
+              </tr>
+            ) : (
+              <AnimatePresence initial={false}>
+                {employees.map((emp, i) => {
+                  const [avBg, avFg] = getAvatarColor(emp.name);
+                  const isActive     = emp.status === "active";
+                  return (
+                    <motion.tr
+                      key={emp.id}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.15 }}
+                      style={{ borderBottom: "1px solid #f0f4f8" }}
+                    >
+                      <td style={{ padding: "13px 18px", verticalAlign: "middle", fontSize: 12, color: "#cbd5e0", width: 32 }}>{i + 1}</td>
+                      <td style={{ padding: "13px 18px", verticalAlign: "middle" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <div style={{ width: 32, height: 32, borderRadius: "50%", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, flexShrink: 0, background: avBg, color: avFg }}>
+                            {getInitials(emp.name)}
+                          </div>
+                          <span style={{ fontWeight: 600, color: "#2d3748", fontSize: 13 }}>{emp.name}</span>
+                        </div>
+                      </td>
+                      <td style={{ padding: "13px 18px", verticalAlign: "middle" }}>
+                        <span style={{ display: "inline-block", fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "#f0f4f8", color: "#4a5568", whiteSpace: "nowrap" }}>
+                          {ROLE_LABEL[emp.role]}
+                        </span>
+                      </td>
+                      <td style={{ padding: "13px 18px", verticalAlign: "middle", fontSize: 12, color: "#a0aec0" }}>{emp.email}</td>
+                      <td style={{ padding: "13px 18px", verticalAlign: "middle", fontSize: 11, color: "#cbd5e0", fontFamily: "monospace" }}>{emp.id}</td>
+                      <td style={{ padding: "13px 18px", verticalAlign: "middle" }}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 500, color: isActive ? "#276749" : "#a0aec0" }}>
+                          <span style={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0, background: isActive ? "#38a169" : "#cbd5e0" }} />
+                          {isActive ? "Active" : "Inactive"}
+                        </span>
+                      </td>
+                      <td style={{ padding: "13px 18px", verticalAlign: "middle" }}>
+                        <button
+                          style={{ background: "none", border: "1px solid #fed7d7", borderRadius: 7, padding: "5px 13px", fontSize: 11, fontWeight: 500, fontFamily: "'Poppins', sans-serif", color: "#fc8181", cursor: "pointer" }}
+                          onClick={() => handleRemove(i)}
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </motion.tr>
+                  );
+                })}
+              </AnimatePresence>
             )}
-          </div>
-        </div>
-        <div style={{ padding: '16px 20px', borderBottom: '1px solid #f3f4f6' }}>
-          <p style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', letterSpacing: '0.1em', textTransform: 'uppercase', margin: '0 0 10px 8px' }}>
-            Employees ({accounts.length})
-          </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {accounts.map((account, i) => (
-              <motion.div key={account.id} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.06 }}
-                style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 14, background: account.id === currentUser.id ? '#f9fafb' : 'transparent' }}
-              >
-                <Avatar account={account} size={44} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: '#111', display: 'flex', alignItems: 'center', gap: 6 }}>
-                    {account.name}
-                    {account.id === currentUser.id && (
-                      <span style={{ fontSize: 10, color: '#6b7280', background: '#f3f4f6', borderRadius: 20, padding: '2px 8px' }}>You</span>
-                    )}
-                  </div>
-                  <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 1 }}>{account.handle}</div>
-                </div>
-                <span style={{ fontSize: 10, fontWeight: 600, color: account.role === 'admin' ? '#6366f1' : '#9ca3af', background: account.role === 'admin' ? '#eef2ff' : '#f9fafb', borderRadius: 20, padding: '2px 8px' }}>
-                  {account.role}
-                </span>
-              </motion.div>
-            ))}
-          </div>
-        </div>
+          </tbody>
+        </table>
+      </div>
 
-        <div style={{ padding: '12px 20px' }}>
-          <MenuRow icon={<IconUser />} label="My Profile" sublabel={currentUser.handle} onClick={() => {/* open profile modal */}} />
-
-          {/* Admin-only: Create Account */}
-          {isAdmin && (
-            <MenuRow icon={<IconPlus />} label="Create Employee Account" sublabel="Admin only" onClick={() => setModal('create')} />
-          )}
-
-          <div style={{ height: 1, background: '#f3f4f6', margin: '8px 0' }} />
-
-          <MenuRow icon={<IconSignOut />} label="Sign out" onClick={() => setModal('signout')} danger />
-        </div>
-
-        {/* FOOTER */}
-        <div style={{ padding: '16px 28px', borderTop: '1px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: 14, fontWeight: 600, color: '#111' }}>The Crunch</span>
-          <span style={{ fontSize: 12, color: '#d1d5db' }}>v12.8.1</span>
-        </div>
-      </motion.div>
-
-      {/* MODALS */}
+      {/* Modal */}
       <AnimatePresence>
-        {modal === 'create'  && <CreateAccountModal onClose={() => setModal(null)} onCreate={handleCreate} />}
-        {modal === 'signout' && <SignOutModal onConfirm={handleSignOut} onCancel={() => setModal(null)} />}
+        {showModal && (
+          <motion.div
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.18)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: 20, backdropFilter: "blur(2px)" }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            onClick={(e) => { if (e.target === e.currentTarget) closeModal(); }}
+          >
+            <motion.div
+              style={{ background: "#fff", borderRadius: 16, padding: 28, width: "100%", maxWidth: 360, boxShadow: "0 8px 40px rgba(0,0,0,0.10)", border: "1px solid #e2e8f0" }}
+              initial={{ opacity: 0, scale: 0.97, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.97, y: 8 }}
+              transition={{ duration: 0.18 }}
+            >
+              <div style={{ fontSize: 16, fontWeight: 700, color: "#1a202c", marginBottom: 20 }}>Add Employee</div>
+
+              <div style={{ marginBottom: 13 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#718096", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" }}>Full Name</label>
+                <input
+                  style={{ width: "100%", padding: "9px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "'Poppins', sans-serif", background: "#f8f9fa", color: "#2d3748", outline: "none" }}
+                  type="text"
+                  value={form.name}
+                  placeholder="e.g. Maria Santos"
+                  onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                />
+              </div>
+
+              <div style={{ marginBottom: 13 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#718096", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" }}>Email</label>
+                <input
+                  style={{ width: "100%", padding: "9px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "'Poppins', sans-serif", background: "#f8f9fa", color: "#2d3748", outline: "none" }}
+                  type="email"
+                  value={form.email}
+                  placeholder="e.g. maria@thecrunch.com"
+                  onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+                />
+              </div>
+
+              <div style={{ marginBottom: 13 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#718096", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" }}>Role</label>
+                <select
+                  style={{ width: "100%", padding: "9px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "'Poppins', sans-serif", background: "#f8f9fa", color: "#2d3748", outline: "none" }}
+                  value={form.role}
+                  onChange={(e) => setForm((f) => ({ ...f, role: e.target.value as Role }))}
+                >
+                  {ROLES.map((r) => (
+                    <option key={r} value={r}>{ROLE_LABEL[r]}</option>
+                  ))}
+                </select>
+              </div>
+
+              {error && <p style={{ fontSize: 11, color: "#e53e3e", margin: "4px 0 6px" }}>{error}</p>}
+
+              <div style={{ display: "flex", gap: 8, marginTop: 20 }}>
+                <button
+                  style={{ flex: 1, background: "#f8f9fa", color: "#718096", border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, fontSize: 13, fontWeight: 600, fontFamily: "'Poppins', sans-serif", cursor: "pointer" }}
+                  onClick={closeModal}
+                >
+                  Cancel
+                </button>
+                <button
+                  style={{ flex: 1, background: "#1a202c", color: "#fff", border: "none", borderRadius: 8, padding: 10, fontSize: 13, fontWeight: 700, fontFamily: "'Poppins', sans-serif", cursor: "pointer" }}
+                  onClick={handleAdd}
+                >
+                  Add Employee
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
       </AnimatePresence>
+
     </div>
   );
 }

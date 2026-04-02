@@ -7,10 +7,14 @@ import {
   type Transition,
 } from "framer-motion";
 import { Sidebar } from "@/components/Sidebar";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
+
 type WithdrawalType = "initial" | "supplementary" | "return";
 type StockStatus = "critical" | "low" | "normal";
 type Tab = "dashboard" | "withdrawal" | "alerts" | "suppliers" | "purchases";
-type SupplierField = keyof Omit<Supplier, "supplier_id">;
 export type POStatus = "Draft" | "Ordered" | "Received" | "Cancelled";
 
 export interface POItem {
@@ -117,30 +121,9 @@ interface RawMaterialForm {
 // API
 // ─────────────────────────────────────────────────────────────────────────────
 
-const RAW_API_URL = (import.meta as { env?: { VITE_API_URL?: string } }).env
-  ?.VITE_API_URL;
+const API_BASE = "/api";
 
-function resolveApiBase(): string {
-  if (!RAW_API_URL) return "/api";
-  const trimmed = RAW_API_URL.replace(/\/+$/, "");
-  if (
-    typeof window !== "undefined" &&
-    (window.location.hostname === "localhost" ||
-      window.location.hostname === "127.0.0.1" ||
-      window.location.hostname === "::1")
-  )
-    return "/api";
-  if (
-    typeof window !== "undefined" &&
-    window.location.protocol === "https:" &&
-    /^http:\/\//i.test(trimmed)
-  )
-    return "/api";
-  return `${trimmed}/api`;
-}
-
-const API_BASE = resolveApiBase();
-function toNumber(v: unknown, fb = 0) {
+function toNumber(v: unknown, fb = 0): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : fb;
 }
@@ -281,6 +264,10 @@ const api = {
   },
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────────────────
+
 const TABS: { id: Tab; label: string }[] = [
   { id: "dashboard", label: "Dashboard" },
   { id: "withdrawal", label: "Withdrawal" },
@@ -331,7 +318,7 @@ const BLANK_RAW_MATERIAL: RawMaterialForm = {
 };
 
 const SUPPLIER_FIELDS: {
-  key: SupplierField;
+  key: keyof Omit<Supplier, "supplier_id">;
   label: string;
   placeholder: string;
 }[] = [
@@ -423,29 +410,33 @@ const itemVariants: Variants = {
   },
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
 const calcPOTotal = (items: POItem[]) =>
   items.reduce((s, i) => s + i.quantity * i.unitCost, 0);
+
 const isWholeChicken = (p: Product) =>
   p.category.toLowerCase().includes("whole chicken");
 const isChoppedChicken = (p: Product) =>
   p.category.toLowerCase().includes("chopped chicken");
 const isChicken = (p: Product) => isWholeChicken(p) || isChoppedChicken(p);
+
 const isMenuFoodProduct = (p: Pick<Product, "category" | "promo">) =>
-  String(p.promo ?? "")
-    .toUpperCase()
-    .trim() === "MENU FOOD" ||
-  String(p.category ?? "")
-    .toLowerCase()
-    .trim()
-    .includes("menu food");
+  String(p.promo ?? "").toUpperCase().trim() === "MENU FOOD" ||
+  String(p.category ?? "").toLowerCase().trim().includes("menu food");
+
 const isReconcilable = (p: Product) =>
   !/(sauce|bottle|beverage|condiment|drink)/.test(p.category.toLowerCase());
+
 const getStockStatus = (p: Product): StockStatus =>
   p.mainStock <= p.criticalPoint
     ? "critical"
     : p.mainStock <= p.reorderPoint
       ? "low"
       : "normal";
+
 const formatExpiryDate = (v?: string | null) => {
   if (!v) return "No expiry";
   const d = new Date(v);
@@ -457,6 +448,7 @@ const formatExpiryDate = (v?: string | null) => {
         day: "numeric",
       });
 };
+
 const formatReceivedDate = (v: string) => {
   const d = new Date(v);
   return isNaN(d.getTime())
@@ -467,13 +459,16 @@ const formatReceivedDate = (v: string) => {
         year: "numeric",
       });
 };
+
 const isExpiringSoon = (e: string | null) => {
   if (!e) return false;
   const d = (new Date(e).getTime() - Date.now()) / 86400000;
   return d <= 3 && d >= 0;
 };
+
 const isExpired = (e: string | null) =>
   !!e && new Date(e).getTime() < Date.now();
+
 const getCategoryStyle = (cat: string) => {
   const c = cat.toLowerCase();
   if (c.includes("whole chicken"))
@@ -483,6 +478,10 @@ const getCategoryStyle = (cat: string) => {
   if (c.includes("sauce")) return "bg-rose-50 text-rose-500 border-rose-100";
   return "bg-slate-50 text-slate-500 border-slate-100";
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared UI Components
+// ─────────────────────────────────────────────────────────────────────────────
 
 function LoadingSkeleton() {
   return (
@@ -664,7 +663,11 @@ function Btn({
     <button
       onClick={onClick}
       disabled={loading}
-      className={`w-full py-2.5 px-4 rounded-xl text-sm font-semibold transition-all duration-200 shadow-sm disabled:opacity-60 disabled:cursor-not-allowed ${variant === "primary" ? "bg-slate-900 text-white hover:bg-slate-700 shadow-slate-900/20" : "bg-rose-500 text-white hover:bg-rose-600 shadow-rose-500/20"}`}
+      className={`w-full py-2.5 px-4 rounded-xl text-sm font-semibold transition-all duration-200 shadow-sm disabled:opacity-60 disabled:cursor-not-allowed ${
+        variant === "primary"
+          ? "bg-slate-900 text-white hover:bg-slate-700 shadow-slate-900/20"
+          : "bg-rose-500 text-white hover:bg-rose-600 shadow-rose-500/20"
+      }`}
     >
       {children}
     </button>
@@ -706,24 +709,6 @@ function POBadge({ status }: { status: POStatus }) {
   );
 }
 
-function CloseIcon() {
-  return (
-    <svg
-      className="w-5 h-5"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={2}
-        d="M6 18L18 6M6 6l12 12"
-      />
-    </svg>
-  );
-}
-
 function CloseBtn({ onClick }: { onClick: () => void }) {
   return (
     <button
@@ -747,6 +732,10 @@ function CloseBtn({ onClick }: { onClick: () => void }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Feature Components
+// ─────────────────────────────────────────────────────────────────────────────
+
 function PODetailDrawer({
   order,
   onClose,
@@ -763,6 +752,7 @@ function PODetailDrawer({
     Ordered: "Received",
   };
   const next = nextStatus[order.status];
+
   return (
     <motion.div
       initial={{ x: "100%" }}
@@ -885,11 +875,13 @@ function ReceivePOModal({
   loading,
   onClose,
   onConfirm,
+  onShowToast,
 }: {
   order: PurchaseOrder;
   loading: boolean;
   onClose: () => void;
   onConfirm: (expiryDates: Record<number, string>) => Promise<void>;
+  onShowToast: (message: string, type: "success" | "error") => void;
 }) {
   const [expiryDates, setExpiryDates] = useState<Record<number, string>>(() =>
     Object.fromEntries(
@@ -902,8 +894,9 @@ function ReceivePOModal({
       (item) => !expiryDates[item.id]?.trim(),
     );
     if (missingItems.length > 0) {
-      alert(
+      onShowToast(
         "Please set an expiry date for each item before marking the order as received.",
+        "error",
       );
       return;
     }
@@ -933,14 +926,8 @@ function ReceivePOModal({
               Set expiry dates now, before stock is added to inventory.
             </p>
           </div>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
-          >
-            <CloseIcon />
-          </button>
+          <CloseBtn onClick={onClose} />
         </div>
-
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
           <div className="rounded-xl bg-slate-50 border border-slate-100 px-4 py-3">
             <p className="text-sm font-semibold text-slate-800">{order.id}</p>
@@ -948,7 +935,6 @@ function ReceivePOModal({
               {order.supplier} · Expected delivery {order.deliveryDate}
             </p>
           </div>
-
           {order.items.map((item) => (
             <div
               key={item.id}
@@ -981,7 +967,6 @@ function ReceivePOModal({
             </div>
           ))}
         </div>
-
         <div className="px-6 py-4 border-t border-gray-100 flex gap-3">
           <button
             onClick={onClose}
@@ -1014,6 +999,7 @@ interface CreatePOModalProps {
     unit: string;
     supplier: string;
   } | null;
+  onShowToast: (message: string, type: "success" | "error") => void;
 }
 
 function CreatePOModal({
@@ -1022,6 +1008,7 @@ function CreatePOModal({
   quickOrderProducts,
   allProducts,
   prefillProduct,
+  onShowToast,
 }: CreatePOModalProps) {
   const [supplier, setSupplier] = useState(prefillProduct?.supplier ?? "");
   const [contact, setContact] = useState("");
@@ -1048,8 +1035,10 @@ function CreatePOModal({
     setItems((p) =>
       p.map((item, i) => (i === idx ? { ...item, [field]: value } : item)),
     );
+
   const removeItem = (idx: number) =>
     setItems((p) => p.filter((_, i) => i !== idx));
+
   const addQuickOrderItem = (product: Product) => {
     setItems((p) => [
       ...p,
@@ -1059,7 +1048,7 @@ function CreatePOModal({
         unit: product.unit,
         quantity: Math.max(
           1,
-          Math.ceil(Number(product.reorderPoint) - Number(product.mainStock)),
+          Math.ceil(toNumber(product.reorderPoint) - toNumber(product.mainStock)),
         ),
         unitCost: 0,
       },
@@ -1068,12 +1057,13 @@ function CreatePOModal({
   };
 
   const subtotal = items.reduce(
-    (s, i) => s + Number(i.quantity) * Number(i.unitCost),
+    (s, i) => s + toNumber(i.quantity) * toNumber(i.unitCost),
     0,
   );
 
   const handleSubmit = async () => {
-    if (!supplier || !deliveryDate || items.some((i) => !i.name)) return;
+    if (!supplier.trim() || !deliveryDate || items.some((i) => !i.name.trim()))
+      return;
     const unmatched = items
       .map((i) => i.name.trim())
       .filter(
@@ -1083,8 +1073,9 @@ function CreatePOModal({
           ),
       );
     if (unmatched.length > 0) {
-      alert(
-        `These items don't match any product in inventory:\n• ${unmatched.join("\n• ")}\n\nPlease correct the names before saving.`,
+      onShowToast(
+        `These items don't match any product in inventory: ${unmatched.join(", ")}. Please correct the names before saving.`,
+        "error",
       );
       return;
     }
@@ -1099,13 +1090,13 @@ function CreatePOModal({
         items: items.map((item, idx) => ({
           ...item,
           id: idx + 1,
-          quantity: Number(item.quantity),
-          unitCost: Number(item.unitCost),
+          quantity: toNumber(item.quantity),
+          unitCost: toNumber(item.unitCost),
         })),
       });
       onClose();
     } catch {
-      /* keep open */
+      // error is shown via onShowToast in the parent
     }
   };
 
@@ -1139,20 +1130,20 @@ function CreatePOModal({
         </div>
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
           <div className="grid grid-cols-2 gap-3">
-            {[
-              ["Supplier Name", supplier, setSupplier, "e.g. Fresh Farms Co."],
-              ["Contact Number", contact, setContact, "09XXXXXXXXX"],
-            ].map(([label, val, setter, ph]) => (
-              <div key={label as string}>
+            {(
+              [
+                ["Supplier Name", supplier, setSupplier, "e.g. Fresh Farms Co."],
+                ["Contact Number", contact, setContact, "09XXXXXXXXX"],
+              ] as [string, string, (v: string) => void, string][]
+            ).map(([label, val, setter, ph]) => (
+              <div key={label}>
                 <label className="text-xs text-gray-400 font-medium block mb-1">
-                  {label as string}
+                  {label}
                 </label>
                 <input
-                  value={val as string}
-                  onChange={(e) =>
-                    (setter as (v: string) => void)(e.target.value)
-                  }
-                  placeholder={ph as string}
+                  value={val}
+                  onChange={(e) => setter(e.target.value)}
+                  placeholder={ph}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200 placeholder-gray-300"
                 />
               </div>
@@ -1236,8 +1227,8 @@ function CreatePOModal({
                           Need{" "}
                           {Math.max(
                             0,
-                            Number(product.reorderPoint) -
-                              Number(product.mainStock),
+                            toNumber(product.reorderPoint) -
+                              toNumber(product.mainStock),
                           )}{" "}
                           {product.unit}
                         </span>
@@ -1433,18 +1424,20 @@ function StockAlertRestockBanner({
             exit={{ opacity: 0, height: 0 }}
             className="bg-white"
           >
-            {[
-              {
-                items: criticalItems,
-                severity: "critical" as const,
-                label: "🔴 Critical — Order Immediately",
-              },
-              {
-                items: lowItems,
-                severity: "low" as const,
-                label: "🟡 Low Stock — Reorder Soon",
-              },
-            ].map(({ items, severity, label }, gi) =>
+            {(
+              [
+                {
+                  items: criticalItems,
+                  severity: "critical" as const,
+                  label: "🔴 Critical — Order Immediately",
+                },
+                {
+                  items: lowItems,
+                  severity: "low" as const,
+                  label: "🟡 Low Stock — Reorder Soon",
+                },
+              ]
+            ).map(({ items, severity, label }, gi) =>
               items.length > 0 ? (
                 <div
                   key={severity}
@@ -1474,7 +1467,11 @@ function StockAlertRestockBanner({
                       return (
                         <div
                           key={p.product_id}
-                          className={`flex items-center gap-4 px-4 py-3 rounded-xl border transition-colors ${severity === "critical" ? "bg-red-50/60 border-red-100 hover:bg-red-50" : "bg-amber-50/50 border-amber-100 hover:bg-amber-50"}`}
+                          className={`flex items-center gap-4 px-4 py-3 rounded-xl border transition-colors ${
+                            severity === "critical"
+                              ? "bg-red-50/60 border-red-100 hover:bg-red-50"
+                              : "bg-amber-50/50 border-amber-100 hover:bg-amber-50"
+                          }`}
                         >
                           <div
                             className={`w-2 h-2 rounded-full flex-shrink-0 ${severity === "critical" ? "bg-red-500" : "bg-amber-400"}`}
@@ -1528,7 +1525,11 @@ function StockAlertRestockBanner({
                           )}
                           <button
                             onClick={() => onOrderNow(p)}
-                            className={`flex-shrink-0 flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all duration-200 shadow-sm ${severity === "critical" ? "bg-red-500 text-white hover:bg-red-600 shadow-red-500/25" : "bg-amber-500 text-white hover:bg-amber-600 shadow-amber-500/25"}`}
+                            className={`flex-shrink-0 flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all duration-200 shadow-sm ${
+                              severity === "critical"
+                                ? "bg-red-500 text-white hover:bg-red-600 shadow-red-500/25"
+                                : "bg-amber-500 text-white hover:bg-amber-600 shadow-amber-500/25"
+                            }`}
                           >
                             <svg
                               className="w-3.5 h-3.5"
@@ -1562,6 +1563,7 @@ function StockAlertRestockBanner({
 function YesterdayReturnsBanner({ batches }: { batches: Batch[] }) {
   const [collapsed, setCollapsed] = useState(false);
   if (batches.length === 0) return null;
+
   return (
     <motion.div
       initial={{ opacity: 0, y: -8 }}
@@ -1590,12 +1592,18 @@ function YesterdayReturnsBanner({ batches }: { batches: Batch[] }) {
       {!collapsed && (
         <div className="px-5 pb-4 grid grid-cols-3 gap-3">
           {batches.map((b) => {
-            const expiring = isExpiringSoon(b.expiry_date),
-              expired = isExpired(b.expiry_date);
+            const expiring = isExpiringSoon(b.expiry_date);
+            const expired = isExpired(b.expiry_date);
             return (
               <div
                 key={b.batch_id}
-                className={`rounded-xl p-3.5 border ${expired ? "bg-red-50 border-red-200" : expiring ? "bg-orange-50 border-orange-200" : "bg-white border-amber-100"}`}
+                className={`rounded-xl p-3.5 border ${
+                  expired
+                    ? "bg-red-50 border-red-200"
+                    : expiring
+                      ? "bg-orange-50 border-orange-200"
+                      : "bg-white border-amber-100"
+                }`}
               >
                 <div className="flex items-start justify-between mb-2">
                   <p className="text-sm font-semibold text-slate-800">
@@ -1700,6 +1708,7 @@ function FIFOBatchPreview({
         !isExpired(b.expiry_date),
     )
     .reduce((s, b) => s + b.remaining_qty, 0);
+
   const insufficient = qtyNeeded > 0 && qtyNeeded > totalAvailable;
   if (batches.length === 0) return null;
 
@@ -1730,9 +1739,9 @@ function FIFOBatchPreview({
             const previewRow = preview.find(
               (p) => p.batch.batch_id === batch.batch_id,
             );
-            const expiring = isExpiringSoon(batch.expiry_date),
-              expired = isExpired(batch.expiry_date),
-              isFirst = idx === 0;
+            const expiring = isExpiringSoon(batch.expiry_date);
+            const expired = isExpired(batch.expiry_date);
+            const isFirst = idx === 0;
             return (
               <div
                 key={batch.batch_id}
@@ -1822,6 +1831,10 @@ function FIFOBatchPreview({
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Main Component
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function StockManager() {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [products, setProducts] = useState<Product[]>([]);
@@ -1852,12 +1865,8 @@ export default function StockManager() {
   const [showReconcile, setShowReconcile] = useState(false);
   const [reconcileItems, setReconcileItems] = useState<ReconcileRow[]>([]);
   const [poOrders, setPoOrders] = useState<PurchaseOrder[]>([]);
-  const [selectedOrder, setSelectedOrder] = useState<PurchaseOrder | null>(
-    null,
-  );
-  const [receivingOrder, setReceivingOrder] = useState<PurchaseOrder | null>(
-    null,
-  );
+  const [selectedOrder, setSelectedOrder] = useState<PurchaseOrder | null>(null);
+  const [receivingOrder, setReceivingOrder] = useState<PurchaseOrder | null>(null);
   const [poFilterStatus, setPoFilterStatus] = useState<POStatus | "All">("All");
   const [poLoading, setPoLoading] = useState(false);
   const [prefillPOProduct, setPrefillPOProduct] = useState<
@@ -1866,8 +1875,11 @@ export default function StockManager() {
     | undefined
   >(undefined);
 
-  const showToast = (message: string, type: "success" | "error") =>
-    setToast({ message, type });
+  const showToast = useCallback(
+    (message: string, type: "success" | "error") =>
+      setToast({ message, type }),
+    [],
+  );
 
   const handleOrderNow = useCallback((product: Product) => {
     setPrefillPOProduct({
@@ -1899,33 +1911,27 @@ export default function StockManager() {
         ]);
 
       const candidateProducts: Product[] = inv
-        .map((p) => {
-          const rawMaterialFlag =
-            Number((p as { isRawMaterial?: unknown }).isRawMaterial) === 1;
-          return {
-            ...p,
-            inventory_id: toNumber(p.inventory_id),
-            product_id: toNumber(p.product_id),
-            mainStock: toNumber(p.mainStock),
-            quantity: toNumber(p.quantity),
-            item_purchased: toNumber(p.item_purchased),
-            reorderPoint: toNumber(p.reorderPoint),
-            criticalPoint: toNumber(p.criticalPoint),
-            dailyWithdrawn: toNumber(p.dailyWithdrawn),
-            returned: toNumber(p.returned),
-            wasted: toNumber(p.wasted),
-            expiryDate: p.expiryDate ? String(p.expiryDate) : null,
-            promo: typeof p.promo === "string" ? p.promo : "",
-            isRawMaterial: rawMaterialFlag || p.promo === "RAW_MATERIAL",
-          };
-        })
+        .map((p) => ({
+          ...p,
+          inventory_id: toNumber(p.inventory_id),
+          product_id: toNumber(p.product_id),
+          mainStock: toNumber(p.mainStock),
+          quantity: toNumber(p.quantity),
+          item_purchased: toNumber(p.item_purchased),
+          reorderPoint: toNumber(p.reorderPoint),
+          criticalPoint: toNumber(p.criticalPoint),
+          dailyWithdrawn: toNumber(p.dailyWithdrawn),
+          returned: toNumber(p.returned),
+          wasted: toNumber(p.wasted),
+          expiryDate: p.expiryDate ? String(p.expiryDate) : null,
+          promo: typeof p.promo === "string" ? p.promo : "",
+          isRawMaterial:
+            toNumber((p as { isRawMaterial?: unknown }).isRawMaterial) === 1 ||
+            p.promo === "RAW_MATERIAL",
+        }))
         .filter((p) => {
-          const promo = String(p.promo ?? "")
-              .toUpperCase()
-              .trim(),
-            category = String(p.category ?? "")
-              .toLowerCase()
-              .trim();
+          const promo = String(p.promo ?? "").toUpperCase().trim();
+          const category = String(p.category ?? "").toLowerCase().trim();
           return (
             promo === "SUPPLIES" ||
             promo === "MENU FOOD" ||
@@ -1941,9 +1947,7 @@ export default function StockManager() {
 
       const groupedByName = new Map<string, Product[]>();
       for (const item of candidateProducts) {
-        const key = String(item.product_name ?? "")
-          .trim()
-          .toLowerCase();
+        const key = String(item.product_name ?? "").trim().toLowerCase();
         groupedByName.set(key, [...(groupedByName.get(key) ?? []), item]);
       }
       const normalizedProducts: Product[] = Array.from(
@@ -1990,12 +1994,15 @@ export default function StockManager() {
   useEffect(() => {
     fetchAll();
   }, [fetchAll]);
+
   useEffect(() => {
     if (products.length > 0) {
       if (wdProductId === null) setWdProductId(products[0].product_id);
       if (adjProductId === null) setAdjProductId(products[0].product_id);
     }
   }, [products, wdProductId, adjProductId]);
+
+  // ── Derived state ──────────────────────────────────────────────────────────
 
   const lowStock = products.filter(
     (p) => !isMenuFoodProduct(p) && getStockStatus(p) === "low",
@@ -2083,7 +2090,6 @@ export default function StockManager() {
   const totalReturned = products.reduce((s, p) => s + toNumber(p.returned), 0);
   const wholeChickenProducts = products.filter(isWholeChicken);
   const choppedChickenProducts = products.filter(isChoppedChicken);
-
   const filteredPOs = useMemo(
     () =>
       poFilterStatus === "All"
@@ -2091,7 +2097,9 @@ export default function StockManager() {
         : poOrders.filter((o) => o.status === poFilterStatus),
     [poOrders, poFilterStatus],
   );
-  // ── PO actions ────────────────────────────────────────────────────────────
+
+  // ── PO actions ─────────────────────────────────────────────────────────────
+
   const handlePOStatusChange = useCallback(
     async (id: string, status: POStatus) => {
       if (status === "Received") {
@@ -2104,11 +2112,9 @@ export default function StockManager() {
         setSelectedOrder(null);
         return;
       }
-
       setPoLoading(true);
       try {
         const updated = await api.po.updateStatus(id, status);
-
         setPoOrders((prev) => prev.map((o) => (o.id === id ? updated : o)));
         setSelectedOrder((prev) => (prev?.id === id ? updated : prev));
         showToast(`Purchase order moved to ${status}.`, "success");
@@ -2123,7 +2129,7 @@ export default function StockManager() {
         setPoLoading(false);
       }
     },
-    [poOrders],
+    [poOrders, showToast],
   );
 
   const handleCloseReceivePO = useCallback(() => {
@@ -2133,11 +2139,11 @@ export default function StockManager() {
   const handleConfirmReceivePO = useCallback(
     async (expiryDates: Record<number, string>) => {
       if (!receivingOrder) return;
-
       setPoLoading(true);
       try {
         const updated = await api.po.markReceived(
           receivingOrder.id,
+          // TODO: replace with authenticated user from your auth context
           "Staff on Duty",
           expiryDates,
         );
@@ -2151,10 +2157,7 @@ export default function StockManager() {
         );
         setReceivingOrder(null);
         await fetchAll();
-        showToast(
-          "Purchase order received and stock batches added.",
-          "success",
-        );
+        showToast("Purchase order received and stock batches added.", "success");
       } catch (err) {
         showToast(
           err instanceof Error
@@ -2166,24 +2169,31 @@ export default function StockManager() {
         setPoLoading(false);
       }
     },
-    [fetchAll, receivingOrder],
+    [fetchAll, receivingOrder, showToast],
   );
 
-  const handlePOCreate = useCallback(async (po: Omit<PurchaseOrder, "id">) => {
-    setPoLoading(true);
-    try {
-      const created = await api.po.create(po);
-      setPoOrders((prev) => [created, ...prev]);
-    } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : "Failed to create purchase order.",
-        "error",
-      );
-      throw err;
-    } finally {
-      setPoLoading(false);
-    }
-  }, []);
+  const handlePOCreate = useCallback(
+    async (po: Omit<PurchaseOrder, "id">) => {
+      setPoLoading(true);
+      try {
+        const created = await api.po.create(po);
+        setPoOrders((prev) => [created, ...prev]);
+      } catch (err) {
+        showToast(
+          err instanceof Error
+            ? err.message
+            : "Failed to create purchase order.",
+          "error",
+        );
+        throw err;
+      } finally {
+        setPoLoading(false);
+      }
+    },
+    [showToast],
+  );
+
+  // ── Stock actions ──────────────────────────────────────────────────────────
 
   async function doWithdraw(
     product_id: number,
@@ -2192,52 +2202,29 @@ export default function StockManager() {
   ) {
     const product = products.find((p) => p.product_id === product_id);
     if (!product) throw new Error("Product not found");
-    try {
-      if (type === "return") {
-        const batches = await api.getProductBatches(product_id);
-        const validBatch = batches
-          .filter((b) => ["active", "withdrawn", "returned"].includes(b.status))
-          .sort(
-            (a, b) =>
-              new Date(b.received_date).getTime() -
-              new Date(a.received_date).getTime(),
-          )[0];
-        if (!validBatch) throw new Error("No batch found to return to.");
-        await api.returnToBatch({
-          batch_id: validBatch.batch_id,
-          return_qty: qty,
-          recorded_by: null,
-        });
-      } else {
-        await api.withdrawFromBatches({
-          product_id,
-          qty_needed: qty,
-          type,
-          recorded_by: null,
-        });
-      }
-    } catch {
-      const newRecord = await api.postWithdrawal({
-        product_id,
-        type,
-        quantity: qty,
+
+    if (type === "return") {
+      const batches = await api.getProductBatches(product_id);
+      const validBatch = batches
+        .filter((b) => ["active", "withdrawn", "returned"].includes(b.status))
+        .sort(
+          (a, b) =>
+            new Date(b.received_date).getTime() -
+            new Date(a.received_date).getTime(),
+        )[0];
+      if (!validBatch) throw new Error("No batch found to return to.");
+      await api.returnToBatch({
+        batch_id: validBatch.batch_id,
+        return_qty: qty,
         recorded_by: null,
       });
-      setWithdrawals((prev) => [newRecord, ...prev]);
-      const updatedStock =
-        type === "return"
-          ? +(product.mainStock + qty).toFixed(2)
-          : Math.max(0, +(product.mainStock - qty).toFixed(2));
-      await api.updateStock(product.inventory_id, {
-        stock: updatedStock,
-        daily_withdrawn:
-          type === "return"
-            ? Math.max(0, +(product.dailyWithdrawn - qty).toFixed(2))
-            : +(product.dailyWithdrawn + qty).toFixed(2),
-        returned:
-          type === "return"
-            ? +(product.returned + qty).toFixed(2)
-            : product.returned,
+    } else {
+      // Errors surface to submitWithdrawal's catch → shown via toast
+      await api.withdrawFromBatches({
+        product_id,
+        qty_needed: qty,
+        type,
+        recorded_by: null,
       });
     }
   }
@@ -2345,7 +2332,8 @@ export default function StockManager() {
         );
         if (!sourceProduct) continue;
         const returnAsWhole =
-          isChoppedChicken(sourceProduct) && item.returnDestination === "whole";
+          isChoppedChicken(sourceProduct) &&
+          item.returnDestination === "whole";
         const targetProductId = returnAsWhole
           ? ((
               products.find(
@@ -2498,6 +2486,8 @@ export default function StockManager() {
     </svg>
   );
 
+  // ── Render ─────────────────────────────────────────────────────────────────
+
   return (
     <>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap'); @keyframes fadeInRow { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }`}</style>
@@ -2573,12 +2563,24 @@ export default function StockManager() {
                   key={t.id}
                   onClick={() => setTab(t.id)}
                   style={{ fontFamily: "'Poppins', sans-serif" }}
-                  className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium border transition-all duration-200 ${active ? "bg-slate-900 text-white border-slate-900 shadow-sm" : "bg-white text-slate-500 border-slate-200 hover:border-slate-300 hover:text-slate-700"}`}
+                  className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium border transition-all duration-200 ${
+                    active
+                      ? "bg-slate-900 text-white border-slate-900 shadow-sm"
+                      : "bg-white text-slate-500 border-slate-200 hover:border-slate-300 hover:text-slate-700"
+                  }`}
                 >
                   {t.label}
                   {badge > 0 && (
                     <span
-                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none ${active ? "bg-white/20 text-white" : t.id === "withdrawal" ? "bg-amber-100 text-amber-700" : t.id === "purchases" ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-600"}`}
+                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none ${
+                        active
+                          ? "bg-white/20 text-white"
+                          : t.id === "withdrawal"
+                            ? "bg-amber-100 text-amber-700"
+                            : t.id === "purchases"
+                              ? "bg-yellow-100 text-yellow-700"
+                              : "bg-red-100 text-red-600"
+                      }`}
                     >
                       {badge}
                     </span>
@@ -2768,7 +2770,13 @@ export default function StockManager() {
                               ].map((h) => (
                                 <th
                                   key={h}
-                                  className={`py-3 px-4 text-[11px] font-semibold text-slate-400 uppercase tracking-wider ${["Item", "Category"].includes(h) ? "text-left" : h === "Status" ? "text-center" : "text-right"}`}
+                                  className={`py-3 px-4 text-[11px] font-semibold text-slate-400 uppercase tracking-wider ${
+                                    ["Item", "Category"].includes(h)
+                                      ? "text-left"
+                                      : h === "Status"
+                                        ? "text-center"
+                                        : "text-right"
+                                  }`}
                                 >
                                   {h}
                                 </th>
@@ -2777,13 +2785,13 @@ export default function StockManager() {
                           </thead>
                           <tbody>
                             {dashboardFilteredProducts.map((p, i) => {
-                              const status = getStockStatus(p),
-                                pct = Math.min(
+                              const status = getStockStatus(p);
+                              const pct = Math.min(
+                                100,
+                                (p.mainStock /
+                                  Math.max(1, p.reorderPoint * 2)) *
                                   100,
-                                  (p.mainStock /
-                                    Math.max(1, p.reorderPoint * 2)) *
-                                    100,
-                                );
+                              );
                               return (
                                 <tr
                                   key={p.inventory_id}
@@ -2987,7 +2995,11 @@ export default function StockManager() {
                                 <button
                                   key={t}
                                   onClick={() => setWdType(t)}
-                                  className={`py-2.5 text-xs font-semibold rounded-xl border capitalize transition-all duration-200 ${wdType === t ? "bg-slate-900 text-white border-slate-900 shadow-md shadow-slate-900/20" : "bg-white text-slate-500 border-slate-200 hover:border-slate-300 hover:text-slate-700"}`}
+                                  className={`py-2.5 text-xs font-semibold rounded-xl border capitalize transition-all duration-200 ${
+                                    wdType === t
+                                      ? "bg-slate-900 text-white border-slate-900 shadow-md shadow-slate-900/20"
+                                      : "bg-white text-slate-500 border-slate-200 hover:border-slate-300 hover:text-slate-700"
+                                  }`}
                                 >
                                   {t}
                                 </button>
@@ -2995,7 +3007,13 @@ export default function StockManager() {
                             </div>
                           </FormField>
                           <div
-                            className={`text-xs px-3 py-2 rounded-xl border ${wdType === "initial" ? "bg-indigo-50 text-indigo-600 border-indigo-100" : wdType === "supplementary" ? "bg-sky-50 text-sky-600 border-sky-100" : "bg-emerald-50 text-emerald-600 border-emerald-100"}`}
+                            className={`text-xs px-3 py-2 rounded-xl border ${
+                              wdType === "initial"
+                                ? "bg-indigo-50 text-indigo-600 border-indigo-100"
+                                : wdType === "supplementary"
+                                  ? "bg-sky-50 text-sky-600 border-sky-100"
+                                  : "bg-emerald-50 text-emerald-600 border-emerald-100"
+                            }`}
                           >
                             {wdType === "initial" &&
                               "Opening withdrawal for today — recorded as the initial pull."}
@@ -3043,8 +3061,8 @@ export default function StockManager() {
                                         key={p.product_id}
                                         value={p.product_id}
                                       >
-                                        {p.product_name} ({p.mainStock} {p.unit}
-                                        )
+                                        {p.product_name} ({p.mainStock}{" "}
+                                        {p.unit})
                                       </option>
                                     ))}
                                 </optgroup>
@@ -3054,7 +3072,11 @@ export default function StockManager() {
                           {selectedWithdrawalProduct &&
                             selectedWithdrawalStatus !== "normal" && (
                               <div
-                                className={`text-xs px-3 py-2 rounded-xl border ${selectedWithdrawalStatus === "critical" ? "bg-red-50 text-red-600 border-red-200" : "bg-amber-50 text-amber-600 border-amber-200"}`}
+                                className={`text-xs px-3 py-2 rounded-xl border ${
+                                  selectedWithdrawalStatus === "critical"
+                                    ? "bg-red-50 text-red-600 border-red-200"
+                                    : "bg-amber-50 text-amber-600 border-amber-200"
+                                }`}
                               >
                                 {selectedWithdrawalStatus === "critical"
                                   ? "Critical stock warning"
@@ -3280,11 +3302,7 @@ export default function StockManager() {
                               label: "Warning",
                               color: "amber",
                             },
-                          ] as {
-                            items: Product[];
-                            label: string;
-                            color: string;
-                          }[]
+                          ] as { items: Product[]; label: string; color: string }[]
                         ).map(({ items, label, color }) =>
                           items.length > 0 ? (
                             <div key={label}>
@@ -3299,16 +3317,20 @@ export default function StockManager() {
                                 </p>
                               </motion.div>
                               {items.map((p, i) => {
-                                const status = getStockStatus(p),
-                                  deficit = +(
-                                    p.reorderPoint - p.mainStock
-                                  ).toFixed(2);
+                                const status = getStockStatus(p);
+                                const deficit = +(
+                                  p.reorderPoint - p.mainStock
+                                ).toFixed(2);
                                 return (
                                   <motion.div
                                     key={p.inventory_id}
                                     variants={itemVariants}
                                     transition={{ delay: i * 0.06 }}
-                                    className={`bg-white rounded-2xl border border-t-4 p-5 flex items-center justify-between shadow-sm mb-3 ${status === "critical" ? "border-red-200 border-t-red-400" : "border-amber-200 border-t-amber-400"}`}
+                                    className={`bg-white rounded-2xl border border-t-4 p-5 flex items-center justify-between shadow-sm mb-3 ${
+                                      status === "critical"
+                                        ? "border-red-200 border-t-red-400"
+                                        : "border-amber-200 border-t-amber-400"
+                                    }`}
                                   >
                                     <div className="flex items-center gap-4">
                                       <div
@@ -3370,7 +3392,11 @@ export default function StockManager() {
                                           setTab("purchases");
                                           handleOrderNow(p);
                                         }}
-                                        className={`flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-white text-xs font-bold transition-all shadow-sm ${status === "critical" ? "bg-red-500 hover:bg-red-600 shadow-red-500/25" : "bg-amber-500 hover:bg-amber-600 shadow-amber-500/25"}`}
+                                        className={`flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-white text-xs font-bold transition-all shadow-sm ${
+                                          status === "critical"
+                                            ? "bg-red-500 hover:bg-red-600 shadow-red-500/25"
+                                            : "bg-amber-500 hover:bg-amber-600 shadow-amber-500/25"
+                                        }`}
                                       >
                                         {cartIcon}Order Now
                                       </button>
@@ -3650,7 +3676,11 @@ export default function StockManager() {
                           <button
                             key={s}
                             onClick={() => setPoFilterStatus(s)}
-                            className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${poFilterStatus === s ? "bg-slate-900 text-white" : "bg-white text-slate-500 border border-slate-200 hover:border-slate-300"}`}
+                            className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                              poFilterStatus === s
+                                ? "bg-slate-900 text-white"
+                                : "bg-white text-slate-500 border border-slate-200 hover:border-slate-300"
+                            }`}
                           >
                             {s}
                           </button>
@@ -3694,12 +3724,12 @@ export default function StockManager() {
                           {products
                             .filter((p) => !isMenuFoodProduct(p))
                             .map((p, i) => {
-                              const status = getStockStatus(p),
-                                pct = Math.min(
+                              const status = getStockStatus(p);
+                              const pct = Math.min(
+                                100,
+                                (p.mainStock / Math.max(1, p.reorderPoint)) *
                                   100,
-                                  (p.mainStock / Math.max(1, p.reorderPoint)) *
-                                    100,
-                                );
+                              );
                               return (
                                 <motion.div
                                   key={p.product_id}
@@ -3718,7 +3748,11 @@ export default function StockManager() {
                                       </p>
                                       {status !== "normal" && (
                                         <span
-                                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${status === "critical" ? "bg-red-100 text-red-600" : "bg-amber-100 text-amber-600"}`}
+                                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                                            status === "critical"
+                                              ? "bg-red-100 text-red-600"
+                                              : "bg-amber-100 text-amber-600"
+                                          }`}
                                         >
                                           {status === "critical"
                                             ? "Critical"
@@ -3840,6 +3874,7 @@ export default function StockManager() {
           )}
         </main>
 
+        {/* PO Detail Drawer */}
         <AnimatePresence>
           {selectedOrder && (
             <>
@@ -3859,6 +3894,7 @@ export default function StockManager() {
           )}
         </AnimatePresence>
 
+        {/* Receive PO Modal */}
         <AnimatePresence>
           {receivingOrder && (
             <ReceivePOModal
@@ -3866,10 +3902,12 @@ export default function StockManager() {
               loading={poLoading}
               onClose={handleCloseReceivePO}
               onConfirm={handleConfirmReceivePO}
+              onShowToast={showToast}
             />
           )}
         </AnimatePresence>
 
+        {/* Create PO Modal */}
         <AnimatePresence>
           {prefillPOProduct !== undefined && (
             <CreatePOModal
@@ -3878,10 +3916,12 @@ export default function StockManager() {
               quickOrderProducts={poQuickOrderProducts}
               allProducts={products}
               prefillProduct={prefillPOProduct}
+              onShowToast={showToast}
             />
           )}
         </AnimatePresence>
 
+        {/* Add Raw Material Modal */}
         <AnimatePresence>
           {showRawMaterialForm && (
             <motion.div
@@ -4012,6 +4052,7 @@ export default function StockManager() {
           )}
         </AnimatePresence>
 
+        {/* End-of-Day Reconciliation Modal */}
         <AnimatePresence>
           {showReconcile && (
             <motion.div
@@ -4074,20 +4115,32 @@ export default function StockManager() {
                   ) : (
                     reconcileItems.map((item, i) => {
                       const isChopped = item.category
-                          .toLowerCase()
-                          .includes("chopped chicken"),
-                        isWhole = item.category
-                          .toLowerCase()
-                          .includes("whole chicken");
+                        .toLowerCase()
+                        .includes("chopped chicken");
+                      const isWhole = item.category
+                        .toLowerCase()
+                        .includes("whole chicken");
                       return (
                         <div
                           key={item.product_id}
-                          className={`p-4 rounded-2xl border transition-colors ${isChopped ? "bg-amber-50/60 border-amber-100" : isWhole ? "bg-orange-50/60 border-orange-100" : "bg-slate-50 border-slate-100"}`}
+                          className={`p-4 rounded-2xl border transition-colors ${
+                            isChopped
+                              ? "bg-amber-50/60 border-amber-100"
+                              : isWhole
+                                ? "bg-orange-50/60 border-orange-100"
+                                : "bg-slate-50 border-slate-100"
+                          }`}
                         >
                           <div className="flex items-start justify-between mb-3">
                             <div className="flex items-center gap-2">
                               <span
-                                className={`w-2.5 h-2.5 rounded-full flex-shrink-0 mt-0.5 ${isWhole ? "bg-orange-400" : isChopped ? "bg-amber-500" : "bg-slate-400"}`}
+                                className={`w-2.5 h-2.5 rounded-full flex-shrink-0 mt-0.5 ${
+                                  isWhole
+                                    ? "bg-orange-400"
+                                    : isChopped
+                                      ? "bg-amber-500"
+                                      : "bg-slate-400"
+                                }`}
                               />
                               <div>
                                 <p className="text-sm font-semibold text-slate-800">
@@ -4148,7 +4201,13 @@ export default function StockManager() {
                                         ),
                                       )
                                     }
-                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all capitalize ${item.returnDestination === dest ? (dest === "chopped" ? "bg-amber-500 text-white shadow-sm" : "bg-orange-500 text-white shadow-sm") : "text-slate-400 hover:text-amber-500"}`}
+                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all capitalize ${
+                                      item.returnDestination === dest
+                                        ? dest === "chopped"
+                                          ? "bg-amber-500 text-white shadow-sm"
+                                          : "bg-orange-500 text-white shadow-sm"
+                                        : "text-slate-400 hover:text-amber-500"
+                                    }`}
                                   >
                                     {dest}
                                   </button>
@@ -4208,6 +4267,7 @@ export default function StockManager() {
           )}
         </AnimatePresence>
 
+        {/* Toast */}
         <AnimatePresence>
           {toast && (
             <Toast

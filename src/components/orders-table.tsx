@@ -27,7 +27,8 @@ export function OrdersTable({ orders = [] }: OrdersTableProps) {
   const [currentPage, setCurrentPage] = useState(1)
 
   const totalPages = Math.max(1, Math.ceil(orders.length / PAGE_SIZE))
-  const paginated = orders.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+  const sorted = [...orders].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+  const paginated = sorted.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
 
   const statusBadgeClass = (status: string) =>
     status === "Completed"
