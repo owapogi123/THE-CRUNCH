@@ -372,7 +372,7 @@ export default function AboutTheCrunch() {
                 onClick={() => navigate('/usersmenu')}
                 style={{ background: '#f5c842', color: '#111', border: 'none', borderRadius: 12, padding: '15px 36px', fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: PP, letterSpacing: '0.02em', transition: 'background 0.2s' }}
               >
-                See the Menu →
+                See the Menu
               </motion.button>
             </Reveal>
           </div>
