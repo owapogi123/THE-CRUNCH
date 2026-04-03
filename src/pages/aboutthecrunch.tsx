@@ -78,9 +78,45 @@ const stats = [
 
 const PP = "'Poppins', sans-serif";
 
+// ─── Helper: same logic as Products.tsx ──────────────────────────────────────
+function getIsAuthenticated(): boolean {
+  const token = localStorage.getItem('authToken')
+  const flag  = localStorage.getItem('isAuthenticated') === 'true'
+  if (!token || !flag) {
+    localStorage.removeItem('authToken')
+    localStorage.removeItem('isAuthenticated')
+    localStorage.removeItem('userName')
+    localStorage.removeItem('userRole')
+    localStorage.removeItem('userId')
+    return false
+  }
+  return true
+}
+
 export default function AboutTheCrunch() {
   const navigate = useNavigate();
   const [scrolled, setScrolled] = useState(false);
+
+  // ── Auth state — mirrors Products.tsx ────────────────────────────────────
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => getIsAuthenticated())
+
+  useEffect(() => {
+    setIsAuthenticated(getIsAuthenticated())
+    const sync = () => setIsAuthenticated(getIsAuthenticated())
+    window.addEventListener('authChange', sync)
+    return () => window.removeEventListener('authChange', sync)
+  }, [])
+
+  const handleLogout = () => {
+    localStorage.removeItem('authToken')
+    localStorage.removeItem('isAuthenticated')
+    localStorage.removeItem('userName')
+    localStorage.removeItem('userRole')
+    localStorage.removeItem('userId')
+    window.dispatchEvent(new Event('authChange'))
+    navigate('/login')
+  }
+  // ─────────────────────────────────────────────────────────────────────────
 
   const heroRef = useRef<HTMLElement>(null);
   const { scrollYProgress } = useScroll({ target: heroRef, offset: ['start start', 'end start'] });
@@ -150,23 +186,37 @@ export default function AboutTheCrunch() {
 
           <div style={{ width: 1, height: 16, background: 'rgba(240,237,232,0.12)', margin: '0 8px' }} />
 
-          <motion.button
-            whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
-            onClick={() => navigate('/login')}
-            style={{ background: 'none', border: '1px solid rgba(240,237,232,0.18)', borderRadius: 9, padding: '8px 18px', fontSize: 13, fontWeight: 600, color: '#f0ede8', cursor: 'pointer', fontFamily: PP, letterSpacing: '0.02em', transition: 'background 0.2s', marginRight: 6 }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(240,237,232,0.08)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
-          >
-            Login
-          </motion.button>
+          {/* ── Auth-aware buttons ── */}
+          {isAuthenticated ? (
+            <motion.button
+              whileHover={{ scale: 1.02, backgroundColor: '#e6b800' }}
+              whileTap={{ scale: 0.97 }}
+              onClick={handleLogout}
+              style={{ background: '#f5c842', border: 'none', borderRadius: 9, padding: '9px 22px', fontSize: 13, fontWeight: 700, color: '#111', cursor: 'pointer', fontFamily: PP, transition: 'background 0.2s' }}
+            >
+              Log Out
+            </motion.button>
+          ) : (
+            <>
+              <motion.button
+                whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
+                onClick={() => navigate('/login')}
+                style={{ background: 'none', border: '1px solid rgba(240,237,232,0.18)', borderRadius: 9, padding: '8px 18px', fontSize: 13, fontWeight: 600, color: '#f0ede8', cursor: 'pointer', fontFamily: PP, letterSpacing: '0.02em', transition: 'background 0.2s', marginRight: 6 }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(240,237,232,0.08)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
+              >
+                Log In
+              </motion.button>
 
-          <motion.button
-            whileHover={{ scale: 1.03, backgroundColor: '#e6b800' }} whileTap={{ scale: 0.97 }}
-            onClick={() => navigate('/usersmenu')}
-            style={{ background: '#f5c842', border: 'none', borderRadius: 9, padding: '9px 22px', fontSize: 13, fontWeight: 700, color: '#111', cursor: 'pointer', fontFamily: PP, letterSpacing: '0.02em', transition: 'background 0.2s' }}
-          >
-            Order Now
-          </motion.button>
+              <motion.button
+                whileHover={{ scale: 1.03, backgroundColor: '#e6b800' }} whileTap={{ scale: 0.97 }}
+                onClick={() => navigate('/login?tab=signup')}
+                style={{ background: '#f5c842', border: 'none', borderRadius: 9, padding: '9px 22px', fontSize: 13, fontWeight: 700, color: '#111', cursor: 'pointer', fontFamily: PP, letterSpacing: '0.02em', transition: 'background 0.2s' }}
+              >
+                Sign Up
+              </motion.button>
+            </>
+          )}
         </div>
       </motion.nav>
 
@@ -186,7 +236,6 @@ export default function AboutTheCrunch() {
           <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(8,6,4,0.97) 0%, rgba(8,6,4,0.52) 45%, rgba(8,6,4,0.08) 100%)' }} />
           <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(75deg, rgba(8,6,4,0.65) 0%, transparent 55%)' }} />
         </motion.div>
-
 
         <div style={{ position: 'absolute', inset: 0, backgroundImage: "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E\")", pointerEvents: 'none', zIndex: 2 }} />
 
@@ -247,6 +296,7 @@ export default function AboutTheCrunch() {
             </motion.button>
           </motion.div>
         </motion.div>
+
         <motion.div
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1.6 }}
           style={{ position: 'absolute', bottom: 40, right: '6vw', zIndex: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}
@@ -261,6 +311,7 @@ export default function AboutTheCrunch() {
           />
         </motion.div>
       </section>
+
       <div style={{ background: '#f5c842', padding: '32px 6vw', position: 'relative', zIndex: 2 }}>
         <div style={{ maxWidth: 1200, margin: '0 auto', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)' }}>
           {stats.map((s, i) => (
@@ -277,12 +328,11 @@ export default function AboutTheCrunch() {
           ))}
         </div>
       </div>
+
       <section id="about-vision" style={{ padding: '128px 6vw', background: '#0e0c0a', position: 'relative', overflow: 'hidden' }}>
         <div style={{ position: 'absolute', top: '15%', left: '-8%', width: 640, height: 640, borderRadius: '50%', background: 'radial-gradient(circle, rgba(245,200,66,0.048) 0%, transparent 65%)', pointerEvents: 'none' }} />
 
         <div style={{ maxWidth: 1200, margin: '0 auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 88, alignItems: 'center' }}>
-
-          {/* Image col */}
           <Reveal variants={fadeLeft}>
             <div style={{ position: 'relative' }}>
               <div style={{ position: 'absolute', inset: -18, borderRadius: 42, border: '1px solid rgba(245,200,66,0.1)', pointerEvents: 'none' }} />
@@ -312,6 +362,7 @@ export default function AboutTheCrunch() {
               </motion.div>
             </div>
           </Reveal>
+
           <Reveal variants={fadeRight}>
             <Label>What We Are</Label>
             <h2 style={{
@@ -339,6 +390,7 @@ export default function AboutTheCrunch() {
           </Reveal>
         </div>
       </section>
+
       <section style={{ background: '#151210', padding: '128px 6vw', position: 'relative', overflow: 'hidden' }}>
         <div style={{ position: 'absolute', top: -100, right: -100, width: 520, height: 520, borderRadius: '50%', background: 'radial-gradient(circle, rgba(245,200,66,0.055) 0%, transparent 65%)', pointerEvents: 'none' }} />
         <div style={{ position: 'absolute', bottom: -120, left: '18%', width: 440, height: 440, borderRadius: '50%', background: 'radial-gradient(circle, rgba(245,200,66,0.038) 0%, transparent 65%)', pointerEvents: 'none' }} />
@@ -378,6 +430,7 @@ export default function AboutTheCrunch() {
           </div>
         </div>
       </section>
+
       <section style={{ padding: '128px 6vw', background: '#0e0c0a' }}>
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <Reveal>
@@ -431,8 +484,6 @@ export default function AboutTheCrunch() {
         />
         <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to right, rgba(8,6,4,0.9) 0%, rgba(8,6,4,0.6) 52%, rgba(8,6,4,0.12) 100%)' }} />
         <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(8,6,4,0.48) 0%, transparent 60%)' }} />
-
-        {/* Decorative rings */}
         <div style={{ position: 'absolute', right: '9%', top: '50%', transform: 'translateY(-50%)', width: 330, height: 330, borderRadius: '50%', border: '1px solid rgba(245,200,66,0.1)', pointerEvents: 'none' }} />
         <div style={{ position: 'absolute', right: '6.5%', top: '50%', transform: 'translateY(-50%)', width: 440, height: 440, borderRadius: '50%', border: '1px solid rgba(245,200,66,0.055)', pointerEvents: 'none' }} />
 
