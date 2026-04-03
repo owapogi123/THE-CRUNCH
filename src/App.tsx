@@ -49,13 +49,12 @@ function ProtectedRoute({
 function Unauthorized() {
   const role = localStorage.getItem("userRole");
 
-  // Redirect to their home instead of blank page
   const roleHomeMap: Record<string, string> = {
-    administrator: "/dashboard",
-    cashier: "/menu",
-    cook: "/cook/orders",
+    administrator:     "/dashboard",
+    cashier:           "/menu",
+    cook:              "/cook/orders",
     inventory_manager: "/inventory",
-    customer: "/usersmenu",
+    customer:          "/products",
   };
 
   return (
@@ -109,66 +108,60 @@ export default function App() {
 
   return (
     <Routes>
-      {/* ── Public (Customer) ──────────────────────────────────── */}
-      <Route path="/" element={<Products />} />
+      {/* ── Public ─────────────────────────────────────────────── */}
+      {/* "/" redirects to "/products" so auth state is consistent  */}
+      <Route path="/" element={<Navigate to="/products" replace />} />
       <Route path="/login" element={<Login />} />
       <Route path="/aboutthecrunch" element={<AboutTheCrunch />} />
-      <Route path="/usersmenu" element={<UsersMenu />} />
 
-      {/* ── Administrator only ─────────────────────────────────── */}
-      {/* Dashboard, Sales, Inventory, Menu, Users, Reports        */}
-      <Route
-        path="/dashboard"
-        element={protect(<AdminDashboard />, [
-          "administrator",
-          "inventory_manager",
-        ])}
-      />
-
-      <Route
-        path="/sales-reports"
-        element={protect(<SalesReports />, ["administrator"])}
-      />
-
-      <Route
-        path="/menu"
-        element={protect(<Menu />, ["administrator", "cashier"])}
-      />
-
+      {/* ── Customer landing page ──────────────────────────────── */}
+      {/* Guests get redirected to /login, logged-in users see page */}
       <Route
         path="/products"
         element={protect(<Products />, ["administrator", "customer"])}
       />
 
+      {/* ── Customer menu ──────────────────────────────────────── */}
+      <Route
+        path="/usersmenu"
+        element={protect(<UsersMenu />, ["administrator", "customer"])}
+      />
+
+      {/* ── Administrator only ─────────────────────────────────── */}
+      <Route
+        path="/dashboard"
+        element={protect(<AdminDashboard />, ["administrator", "inventory_manager"])}
+      />
+      <Route
+        path="/sales-reports"
+        element={protect(<SalesReports />, ["administrator"])}
+      />
+      <Route
+        path="/menu"
+        element={protect(<Menu />, ["administrator", "cashier"])}
+      />
       <Route
         path="/users"
         element={protect(<StaffAccounts />, ["administrator"])}
       />
 
       {/* ── Administrator + Inventory Manager ─────────────────── */}
-      {/* Inventory dashboard, stock manager, low stock alerts     */}
       <Route
         path="/inventory"
         element={protect(<Inventory />, ["administrator", "inventory_manager"])}
       />
-
       <Route
         path="/stockmanager"
-        element={protect(<StockManager />, [
-          "administrator",
-          "inventory_manager",
-        ])}
+        element={protect(<StockManager />, ["administrator", "inventory_manager"])}
       />
 
-      {/* ── Administrator + Cashier ────────────────────────────── */}
-      {/* Orders, payments, receipts, transaction history          */}
+      {/* ── Administrator + Cashier + Cook ────────────────────── */}
       <Route
         path="/orders"
         element={protect(<Order />, ["administrator", "cashier", "cook"])}
       />
 
       {/* ── Cook only ──────────────────────────────────────────── */}
-      {/* Order queue, order status updates, notifications         */}
       <Route
         path="/cook/orders"
         element={protect(<Order />, ["administrator", "cook"])}

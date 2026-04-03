@@ -379,20 +379,39 @@ function DrinkSizeBadge() {
   )
 }
 
+// ─── Helper: check if user is genuinely authenticated ────────────────────────
+function getIsAuthenticated(): boolean {
+  const token = localStorage.getItem('authToken')
+  const flag  = localStorage.getItem('isAuthenticated') === 'true'
+  // Both the token AND the flag must be present; if not, wipe stale data
+  if (!token || !flag) {
+    localStorage.removeItem('authToken')
+    localStorage.removeItem('isAuthenticated')
+    localStorage.removeItem('userName')
+    localStorage.removeItem('userRole')
+    localStorage.removeItem('userId')
+    return false
+  }
+  return true
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function Products() {
   const navigate = useNavigate()
 
-  const [isAuthenticated, setIsAuthenticated] = useState(
-    () => localStorage.getItem('isAuthenticated') === 'true'
-  )
+  // ── FIX: require BOTH authToken AND isAuthenticated flag ──────────────────
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => getIsAuthenticated())
 
   useEffect(() => {
-    const sync = () => setIsAuthenticated(localStorage.getItem('isAuthenticated') === 'true')
+    // Re-run the check on mount (clears any stale localStorage from dev/testing)
+    setIsAuthenticated(getIsAuthenticated())
+
+    const sync = () => setIsAuthenticated(getIsAuthenticated())
     window.addEventListener('authChange', sync)
     return () => window.removeEventListener('authChange', sync)
   }, [])
+  // ──────────────────────────────────────────────────────────────────────────
 
   const handleLogout = () => {
     localStorage.removeItem('authToken')
@@ -510,7 +529,6 @@ export default function Products() {
               </motion.button>
             ) : (
               <>
-                {/* Log In → opens login tab (default) */}
                 <motion.button
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.97 }}
@@ -520,7 +538,6 @@ export default function Products() {
                   Log In
                 </motion.button>
 
-                {/* Sign Up → opens sign-up tab directly via ?tab=signup */}
                 <motion.button
                   whileHover={{ scale: 1.02, backgroundColor: '#e6b800' }}
                   whileTap={{ scale: 0.97 }}
