@@ -110,7 +110,7 @@ export default function App() {
   return (
     <Routes>
       {/* ── Public (Customer) ──────────────────────────────────── */}
-      <Route path="/" element={<AboutTheCrunch />} />
+      <Route path="/" element={<Products />} />
       <Route path="/login" element={<Login />} />
       <Route path="/aboutthecrunch" element={<AboutTheCrunch />} />
       <Route path="/usersmenu" element={<UsersMenu />} />
@@ -137,7 +137,7 @@ export default function App() {
 
       <Route
         path="/products"
-        element={protect(<Products />, ["administrator"])}
+        element={protect(<Products />, ["administrator", "customer"])}
       />
 
       <Route
