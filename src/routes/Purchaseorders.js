@@ -377,7 +377,7 @@ router.patch("/:id/status", async (req, res) => {
 
 router.patch("/:id/receive", async (req, res) => {
   const poId = req.params.id;
-  const { receivedBy = "Staff on Duty", receivedDate } = req.body;
+  const { receivedBy = "Staff on Duty", receivedDate, itemExpiryDates = {} } = req.body;
 
   const recDate = toDateString(receivedDate) || toDateString(new Date());
 
@@ -448,13 +448,14 @@ router.patch("/:id/receive", async (req, res) => {
 
       const productId = matchedProduct.product_id;
       const unit = item.unit || "kg";
+      const itemExpiryDate = toDateString(itemExpiryDates?.[item.item_id]);
 
       // Insert a new batch (FIFO).
       const [batchResult] = await conn.query(
         `INSERT INTO batches
            (product_id, quantity, remaining_qty, unit, received_date, expiry_date, notes)
-         VALUES (?, ?, ?, ?, ?, NULL, ?)`,
-        [productId, qty, qty, unit, recDate, `PO: ${poId}`],
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [productId, qty, qty, unit, recDate, itemExpiryDate, `PO: ${poId}`],
       );
 
       // Update Inventory stock.

@@ -28,7 +28,7 @@ router.post("/register", async (req, res) => {
       "inventory_manager",
       "customer",
     ];
-    const userRole = allowedRoles.includes(role) ? role : "customer";
+    const userRole = "customer";
 
     // Check if email or username already exists
     const [existing] = await db.query(
