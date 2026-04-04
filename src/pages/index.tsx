@@ -163,8 +163,7 @@ function filterOrdersByReportPeriod(
     }
     if (period === "monthly") {
       return (
-        d.getMonth() === now.getMonth() &&
-        d.getFullYear() === now.getFullYear()
+        d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
       );
     }
     if (period === "yearly") {
@@ -316,7 +315,21 @@ function computeChartData(
   };
 
   if (period === "daily") {
-    const hours = ["9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21"];
+    const hours = [
+      "9",
+      "10",
+      "11",
+      "12",
+      "13",
+      "14",
+      "15",
+      "16",
+      "17",
+      "18",
+      "19",
+      "20",
+      "21",
+    ];
     return hours.map((h) => ({
       day: `${parseInt(h) > 12 ? parseInt(h) - 12 : h}${parseInt(h) >= 12 ? "pm" : "am"}`,
       thisWeek: getValue(currentOrders, h),
@@ -334,7 +347,11 @@ function computeChartData(
 
   if (period === "monthly") {
     const now = new Date();
-    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const daysInMonth = new Date(
+      now.getFullYear(),
+      now.getMonth() + 1,
+      0,
+    ).getDate();
     return Array.from({ length: daysInMonth }, (_, i) => ({
       day: String(i + 1),
       thisWeek: getValue(currentOrders, String(i + 1)),
@@ -343,7 +360,20 @@ function computeChartData(
   }
 
   // yearly
-  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const monthNames = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
   return monthNames.map((m, i) => ({
     day: m,
     thisWeek: getValue(currentOrders, String(i)),
@@ -505,7 +535,8 @@ function TopItemsChart({ items }: TopItemsProps) {
 
 export default function AdminDashboard() {
   const [orders, setOrders] = useState<Order[]>([]);
-  const [selectedPeriod, setSelectedPeriod] = useState<SalesReportPeriod>("monthly");
+  const [selectedPeriod, setSelectedPeriod] =
+    useState<SalesReportPeriod>("monthly");
   const [salesView, setSalesView] = useState<"sales" | "orders">("sales");
   const [isLoadingOrders, setIsLoadingOrders] = useState(true);
   const [ordersError, setOrdersError] = useState<string | null>(null);
@@ -541,17 +572,36 @@ export default function AdminDashboard() {
       ? ((cancelledOrders / totalOrders) * 100).toFixed(1)
       : "0.0";
 
-  const topItems = useMemo(() => computeTopItems(filteredOrders), [filteredOrders]);
-  const orderTypes = useMemo(() => computeOrderTypes(filteredOrders), [filteredOrders]);
-  const paymentBreakdown = useMemo(() => computePaymentBreakdown(filteredOrders), [filteredOrders]);
-  const heatmapCells = useMemo(() => computeHeatmap(filteredOrders), [filteredOrders]);
+  const topItems = useMemo(
+    () => computeTopItems(filteredOrders),
+    [filteredOrders],
+  );
+  const orderTypes = useMemo(
+    () => computeOrderTypes(filteredOrders),
+    [filteredOrders],
+  );
+  const paymentBreakdown = useMemo(
+    () => computePaymentBreakdown(filteredOrders),
+    [filteredOrders],
+  );
+  const heatmapCells = useMemo(
+    () => computeHeatmap(filteredOrders),
+    [filteredOrders],
+  );
 
   const chartData = useMemo(
-    () => computeChartData(filteredOrders, previousOrders, selectedPeriod, salesView),
+    () =>
+      computeChartData(
+        filteredOrders,
+        previousOrders,
+        selectedPeriod,
+        salesView,
+      ),
     [filteredOrders, previousOrders, selectedPeriod, salesView],
   );
 
-  const periodLabel = PERIOD_LABELS.find((p) => p.value === selectedPeriod)?.label ?? "";
+  const periodLabel =
+    PERIOD_LABELS.find((p) => p.value === selectedPeriod)?.label ?? "";
 
   const yAxisFormatter = (v: number) =>
     salesView === "sales"
@@ -677,16 +727,19 @@ export default function AdminDashboard() {
             </Card>
           )}
 
-          {!ordersError && !isLoadingOrders && orders.length > 0 && filteredOrders.length === 0 && (
-            <Card className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-6 shadow-sm">
-              <p className="text-sm font-semibold text-amber-800">
-                No orders match the selected period
-              </p>
-              <p className="text-xs text-amber-700 mt-1">
-                Try selecting a different period to view sales data.
-              </p>
-            </Card>
-          )}
+          {!ordersError &&
+            !isLoadingOrders &&
+            orders.length > 0 &&
+            filteredOrders.length === 0 && (
+              <Card className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-6 shadow-sm">
+                <p className="text-sm font-semibold text-amber-800">
+                  No orders match the selected period
+                </p>
+                <p className="text-xs text-amber-700 mt-1">
+                  Try selecting a different period to view sales data.
+                </p>
+              </Card>
+            )}
 
           {/* KPI Cards */}
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4 mb-8">
@@ -698,7 +751,9 @@ export default function AdminDashboard() {
             />
             <KpiCard
               label="Total Sales"
-              value={isLoadingOrders ? "..." : `₱${totalSales.toLocaleString()}`}
+              value={
+                isLoadingOrders ? "..." : `₱${totalSales.toLocaleString()}`
+              }
               trend="Live"
               up={null}
             />
@@ -738,7 +793,8 @@ export default function AdminDashboard() {
                       Order & Sales Review
                     </h2>
                     <p className="text-xs text-gray-400 mt-0.5">
-                      {periodLabel} — compared to previous {periodLabel.toLowerCase()}
+                      {periodLabel} — compared to previous{" "}
+                      {periodLabel.toLowerCase()}
                     </p>
                   </div>
                   <div className="flex gap-0 bg-[#F0EBE6] rounded-xl p-1">
@@ -761,11 +817,15 @@ export default function AdminDashboard() {
                 <div className="flex gap-4 mb-3 text-xs">
                   <span className="flex items-center gap-1.5">
                     <span className="w-3 h-2 rounded-sm inline-block bg-[#7C2D2D]" />
-                    <span className="text-gray-500">This {periodLabel.toLowerCase()}</span>
+                    <span className="text-gray-500">
+                      This {periodLabel.toLowerCase()}
+                    </span>
                   </span>
                   <span className="flex items-center gap-1.5">
                     <span className="w-3 h-2 rounded-sm inline-block bg-gray-300" />
-                    <span className="text-gray-500">Previous {periodLabel.toLowerCase()}</span>
+                    <span className="text-gray-500">
+                      Previous {periodLabel.toLowerCase()}
+                    </span>
                   </span>
                 </div>
 
@@ -841,13 +901,18 @@ export default function AdminDashboard() {
                               key={entry.category}
                               fill={
                                 PAYMENT_COLORS[entry.category] ??
-                                ORDER_TYPE_COLORS[index % ORDER_TYPE_COLORS.length]
+                                ORDER_TYPE_COLORS[
+                                  index % ORDER_TYPE_COLORS.length
+                                ]
                               }
                             />
                           ))}
                         </Pie>
                         <Tooltip
-                          formatter={(value: number, name: string) => [value, name]}
+                          formatter={(value: number, name: string) => [
+                            value,
+                            name,
+                          ]}
                           contentStyle={{
                             borderRadius: 12,
                             border: "none",
@@ -868,12 +933,18 @@ export default function AdminDashboard() {
                               style={{
                                 backgroundColor:
                                   PAYMENT_COLORS[entry.category] ??
-                                  ORDER_TYPE_COLORS[index % ORDER_TYPE_COLORS.length],
+                                  ORDER_TYPE_COLORS[
+                                    index % ORDER_TYPE_COLORS.length
+                                  ],
                               }}
                             />
-                            <span className="text-gray-600">{entry.category}</span>
+                            <span className="text-gray-600">
+                              {entry.category}
+                            </span>
                           </div>
-                          <span className="font-medium text-gray-800">{entry.pct}%</span>
+                          <span className="font-medium text-gray-800">
+                            {entry.pct}%
+                          </span>
                         </div>
                       ))}
                     </div>
@@ -947,7 +1018,9 @@ export default function AdminDashboard() {
                       {orderTypes.map((entry, index) => (
                         <Cell
                           key={entry.type}
-                          fill={ORDER_TYPE_COLORS[index % ORDER_TYPE_COLORS.length]}
+                          fill={
+                            ORDER_TYPE_COLORS[index % ORDER_TYPE_COLORS.length]
+                          }
                         />
                       ))}
                     </Bar>

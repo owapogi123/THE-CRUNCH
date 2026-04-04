@@ -1,5 +1,15 @@
 import { useState, useCallback, useEffect } from "react";
-import { Search, ShoppingBag, Trash2, Check, X, ChevronRight, Minus, Plus, UtensilsCrossed } from "lucide-react";
+import {
+  Search,
+  ShoppingBag,
+  Trash2,
+  Check,
+  X,
+  ChevronRight,
+  Minus,
+  Plus,
+  UtensilsCrossed,
+} from "lucide-react";
 import { api } from "../lib/api";
 import { Sidebar } from "@/components/Sidebar";
 
@@ -27,7 +37,7 @@ interface OrderPayload {
     price: number;
   }[];
   total: number;
-  order_type: "dine-in" | "take-out";
+  order_type: "dine-in" | "take-out" | "delivery";
   payment_method: "cash" | "e-payment";
 }
 
@@ -38,8 +48,14 @@ interface OrderResponse {
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 
 const CARD_COLORS: string[] = [
-  "#FEF3C7", "#D1FAE5", "#DBEAFE", "#FCE7F3",
-  "#EDE9FE", "#FEE2E2", "#F0FDF4", "#FFF7ED",
+  "#FEF3C7",
+  "#D1FAE5",
+  "#DBEAFE",
+  "#FCE7F3",
+  "#EDE9FE",
+  "#FEE2E2",
+  "#F0FDF4",
+  "#FFF7ED",
 ];
 
 const cardColor = (id: number): string => CARD_COLORS[id % CARD_COLORS.length];
@@ -51,11 +67,14 @@ function mapProducts(data: Record<string, unknown>[]): MenuItem[] {
   const dedupedMap = new Map<string, Record<string, unknown>>();
   for (const p of data ?? []) {
     if (p.isRawMaterial) continue;
-    const key = String(p.product_name ?? p.name ?? "").trim().toLowerCase();
+    const key = String(p.product_name ?? p.name ?? "")
+      .trim()
+      .toLowerCase();
     const existing = dedupedMap.get(key);
     if (
       !existing ||
-      Number(p.product_id ?? p.id ?? 0) > Number(existing.product_id ?? existing.id ?? 0)
+      Number(p.product_id ?? p.id ?? 0) >
+        Number(existing.product_id ?? existing.id ?? 0)
     ) {
       dedupedMap.set(key, p);
     }
@@ -74,10 +93,10 @@ function mapProducts(data: Record<string, unknown>[]): MenuItem[] {
 
 const ANIM = {
   slideIn: "slideIn 0.18s cubic-bezier(.34,1.56,.64,1)",
-  fadeIn:  "fadeIn 0.3s ease",
+  fadeIn: "fadeIn 0.3s ease",
   scaleIn: "scaleIn 0.22s cubic-bezier(.34,1.56,.64,1)",
-  popIn:   "popIn 0.35s 0.1s cubic-bezier(.34,1.56,.64,1) both",
-  spin:    "spin 0.7s linear infinite",
+  popIn: "popIn 0.35s 0.1s cubic-bezier(.34,1.56,.64,1) both",
+  spin: "spin 0.7s linear infinite",
 } as const;
 
 // Keyframes injected once at module level — a single minimal <style> just for @keyframes,
@@ -95,7 +114,10 @@ const KEYFRAMES = `
 `;
 
 // Injected once outside the component so it never re-renders
-if (typeof document !== "undefined" && !document.getElementById("cashier-keyframes")) {
+if (
+  typeof document !== "undefined" &&
+  !document.getElementById("cashier-keyframes")
+) {
   const tag = document.createElement("style");
   tag.id = "cashier-keyframes";
   tag.textContent = KEYFRAMES;
@@ -116,12 +138,15 @@ function ProductCard({ item, onAdd, isPopping }: ProductCardProps) {
 
   return (
     <button
-      onClick={() => { if (!isOut) onAdd(item); }}
+      onClick={() => {
+        if (!isOut) onAdd(item);
+      }}
       disabled={isOut}
       style={{
         fontFamily: "'DM Sans', sans-serif",
         transform: isPopping ? "scale(0.94)" : "scale(1)",
-        transition: "transform 0.15s cubic-bezier(.34,1.56,.64,1), box-shadow 0.2s, opacity 0.2s",
+        transition:
+          "transform 0.15s cubic-bezier(.34,1.56,.64,1), box-shadow 0.2s, opacity 0.2s",
         opacity: isOut ? 0.55 : 1,
         cursor: isOut ? "not-allowed" : "pointer",
       }}
@@ -196,7 +221,9 @@ function CartRow({ item, onRemove, onQty }: CartRowProps) {
       </div>
 
       <div className="flex-1 min-w-0">
-        <p className="text-xs font-semibold text-gray-800 truncate">{item.name}</p>
+        <p className="text-xs font-semibold text-gray-800 truncate">
+          {item.name}
+        </p>
         <p className="text-xs font-bold text-gray-500 mt-0.5">₱{item.price}</p>
 
         <div className="flex items-center gap-1.5 mt-1">
@@ -206,7 +233,9 @@ function CartRow({ item, onRemove, onQty }: CartRowProps) {
           >
             <Minus className="w-3 h-3 text-gray-500" />
           </button>
-          <span className="w-5 text-center text-xs font-bold text-gray-800">{item.quantity}</span>
+          <span className="w-5 text-center text-xs font-bold text-gray-800">
+            {item.quantity}
+          </span>
           <button
             onClick={() => onQty(item.id, 1)}
             className="w-6 h-6 rounded-lg bg-white border border-gray-200 flex items-center justify-center hover:bg-gray-100 transition-colors"
@@ -240,18 +269,30 @@ interface SuccessModalProps {
   paidAmount: number;
 }
 
-function SuccessModal({ show, onClose, orderNumber, savedCart, paidAmount }: SuccessModalProps) {
+function SuccessModal({
+  show,
+  onClose,
+  orderNumber,
+  savedCart,
+  paidAmount,
+}: SuccessModalProps) {
   if (!show) return null;
 
   const date = new Date().toLocaleDateString("en-US", {
-    month: "short", day: "numeric", year: "numeric",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
   });
 
   return (
     <>
       <div
         className="fixed inset-0 z-50"
-        style={{ background: "rgba(0,0,0,0.45)", backdropFilter: "blur(4px)", animation: ANIM.fadeIn }}
+        style={{
+          background: "rgba(0,0,0,0.45)",
+          backdropFilter: "blur(4px)",
+          animation: ANIM.fadeIn,
+        }}
         onClick={onClose}
       />
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
@@ -270,17 +311,29 @@ function SuccessModal({ show, onClose, orderNumber, savedCart, paidAmount }: Suc
             {/* Left */}
             <div
               className="w-2/5 p-8 flex flex-col items-center justify-center"
-              style={{ background: "linear-gradient(160deg, #052e16 0%, #14532d 50%, #166534 100%)" }}
+              style={{
+                background:
+                  "linear-gradient(160deg, #052e16 0%, #14532d 50%, #166534 100%)",
+              }}
             >
               <div
                 className="w-16 h-16 rounded-full flex items-center justify-center mb-4"
-                style={{ background: "rgba(255,255,255,0.15)", animation: ANIM.popIn }}
+                style={{
+                  background: "rgba(255,255,255,0.15)",
+                  animation: ANIM.popIn,
+                }}
               >
                 <Check className="w-8 h-8 text-white" strokeWidth={2.5} />
               </div>
-              <h2 className="text-white font-bold text-lg text-center mb-1">Order Placed!</h2>
-              <p className="text-green-300 text-xs text-center mb-6">Payment processed.</p>
-              <p className="text-green-200 text-[11px] text-center font-mono mb-5">{orderNumber}</p>
+              <h2 className="text-white font-bold text-lg text-center mb-1">
+                Order Placed!
+              </h2>
+              <p className="text-green-300 text-xs text-center mb-6">
+                Payment processed.
+              </p>
+              <p className="text-green-200 text-[11px] text-center font-mono mb-5">
+                {orderNumber}
+              </p>
 
               <button
                 onClick={onClose}
@@ -301,14 +354,19 @@ function SuccessModal({ show, onClose, orderNumber, savedCart, paidAmount }: Suc
             {/* Right */}
             <div className="flex-1 p-8">
               <div className="flex items-center justify-between mb-1">
-                <h3 className="text-sm font-bold text-gray-800">Order Summary</h3>
+                <h3 className="text-sm font-bold text-gray-800">
+                  Order Summary
+                </h3>
                 <span className="text-xs text-gray-400">{date}</span>
               </div>
               <div className="w-full h-px bg-gray-100 mb-4" />
 
               <div className="space-y-2 max-h-52 overflow-y-auto mb-4 pr-1">
                 {savedCart.map((item) => (
-                  <div key={item.id} className="flex items-center justify-between">
+                  <div
+                    key={item.id}
+                    className="flex items-center justify-between"
+                  >
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-gray-700">{item.name}</span>
                       <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
@@ -323,8 +381,12 @@ function SuccessModal({ show, onClose, orderNumber, savedCart, paidAmount }: Suc
               </div>
 
               <div className="border-t-2 border-dashed border-gray-100 pt-4 flex items-center justify-between">
-                <span className="text-sm text-gray-500 font-medium">Total Paid</span>
-                <span className="text-2xl font-bold text-green-600">₱{paidAmount}</span>
+                <span className="text-sm text-gray-500 font-medium">
+                  Total Paid
+                </span>
+                <span className="text-2xl font-bold text-green-600">
+                  ₱{paidAmount}
+                </span>
               </div>
             </div>
           </div>
@@ -337,37 +399,50 @@ function SuccessModal({ show, onClose, orderNumber, savedCart, paidAmount }: Suc
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 
 export default function CashierView() {
-  const [products, setProducts]             = useState<MenuItem[]>([]);
-  const [isLoadingProducts, setIsLoading]   = useState<boolean>(false);
-  const [productsError, setProductsError]   = useState<string>("");
-  const [selectedCat, setSelectedCat]       = useState<string>("ALL");
-  const [search, setSearch]                 = useState<string>("");
-  const [cart, setCart]                     = useState<CartItem[]>([]);
-  const [orderType, setOrderType]           = useState<"dine-in" | "take-out">("dine-in");
-  const [paymentMethod, setPaymentMethod]   = useState<"cash" | "e-payment">("cash");
-  const [poppingId, setPoppingId]           = useState<number | null>(null);
-  const [showSuccess, setShowSuccess]       = useState<boolean>(false);
-  const [savedCart, setSavedCart]           = useState<CartItem[]>([]);
-  const [paidAmount, setPaidAmount]         = useState<number>(0);
-  const [orderNumber, setOrderNumber]       = useState<string>("");
+  const [products, setProducts] = useState<MenuItem[]>([]);
+  const [isLoadingProducts, setIsLoading] = useState<boolean>(false);
+  const [productsError, setProductsError] = useState<string>("");
+  const [selectedCat, setSelectedCat] = useState<string>("ALL");
+  const [search, setSearch] = useState<string>("");
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [orderType, setOrderType] = useState<
+    "dine-in" | "take-out" | "delivery"
+  >("dine-in");
+  const [paymentMethod, setPaymentMethod] = useState<"cash" | "e-payment">(
+    "cash",
+  );
+  const [poppingId, setPoppingId] = useState<number | null>(null);
+  const [showSuccess, setShowSuccess] = useState<boolean>(false);
+  const [savedCart, setSavedCart] = useState<CartItem[]>([]);
+  const [paidAmount, setPaidAmount] = useState<number>(0);
+  const [orderNumber, setOrderNumber] = useState<string>("");
   const [isPlacingOrder, setIsPlacingOrder] = useState<boolean>(false);
+  const [riderPickupTime, setRiderPickupTime] = useState<string>("");
 
   useEffect(() => {
     setIsLoading(true);
-    api.get<Record<string, unknown>[]>("/inventory")
-      .then((data) => { setProducts(mapProducts(data ?? [])); setProductsError(""); })
+    api
+      .get<Record<string, unknown>[]>("/inventory")
+      .then((data) => {
+        setProducts(mapProducts(data ?? []));
+        setProductsError("");
+      })
       .catch(() => setProductsError("Failed to load menu items."))
       .finally(() => setIsLoading(false));
   }, []);
 
-  const categories: string[] = ["ALL", ...Array.from(new Set(products.map((p) => p.category)))];
+  const categories: string[] = [
+    "ALL",
+    ...Array.from(new Set(products.map((p) => p.category))),
+  ];
 
-  const filtered: MenuItem[] = products.filter((p) =>
-    (selectedCat === "ALL" || p.category === selectedCat) &&
-    p.name.toLowerCase().includes(search.toLowerCase())
+  const filtered: MenuItem[] = products.filter(
+    (p) =>
+      (selectedCat === "ALL" || p.category === selectedCat) &&
+      p.name.toLowerCase().includes(search.toLowerCase()),
   );
 
-  const totalQty   = cart.reduce((s, i) => s + i.quantity, 0);
+  const totalQty = cart.reduce((s, i) => s + i.quantity, 0);
   const totalPrice = cart.reduce((s, i) => s + i.price * i.quantity, 0);
 
   const addToCart = useCallback((item: MenuItem) => {
@@ -379,7 +454,9 @@ export default function CashierView() {
       if (existing) {
         const next = existing.quantity + 1;
         if (next > item.remainingStock && !isMenuFood(item)) return prev;
-        return prev.map((c) => c.id === item.id ? { ...c, quantity: next } : c);
+        return prev.map((c) =>
+          c.id === item.id ? { ...c, quantity: next } : c,
+        );
       }
       return [...prev, { ...item, quantity: 1 }];
     });
@@ -389,8 +466,8 @@ export default function CashierView() {
     setCart((prev) => prev.filter((c) => c.id !== id));
 
   const updateQty = (id: number, delta: number): void => {
-    const product  = products.find((p) => p.id === id);
-    const stock    = product?.remainingStock ?? 0;
+    const product = products.find((p) => p.id === id);
+    const stock = product?.remainingStock ?? 0;
     const menuFood = product ? isMenuFood(product) : false;
     setCart((prev) =>
       prev
@@ -400,7 +477,7 @@ export default function CashierView() {
           if (next > stock && !menuFood) return c;
           return { ...c, quantity: next };
         })
-        .filter((c) => c.quantity > 0)
+        .filter((c) => c.quantity > 0),
     );
   };
 
@@ -424,7 +501,9 @@ export default function CashierView() {
 
     try {
       const response = await api.post<OrderResponse>("/orders", payload);
-      const num = response?.orderNumber ?? `#${Math.floor(10000 + Math.random() * 90000)}`;
+      const num =
+        response?.orderNumber ??
+        `#${Math.floor(10000 + Math.random() * 90000)}`;
       setSavedCart([...cart]);
       setPaidAmount(total);
       setOrderNumber(num);
@@ -433,8 +512,11 @@ export default function CashierView() {
         prev.map((p) => {
           const ordered = cart.find((c) => c.id === p.id);
           if (!ordered || isMenuFood(p)) return p;
-          return { ...p, remainingStock: Math.max(0, p.remainingStock - ordered.quantity) };
-        })
+          return {
+            ...p,
+            remainingStock: Math.max(0, p.remainingStock - ordered.quantity),
+          };
+        }),
       );
     } catch (err) {
       console.error("Order failed:", err);
@@ -471,14 +553,15 @@ export default function CashierView() {
       >
         {/* ── Main panel ── */}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden pl-20">
-
           {/* Header */}
           <div className="bg-white border-b border-gray-100 px-6 py-4 flex items-center justify-between">
             <div>
               <p className="text-[11px] text-gray-400 font-medium tracking-wide uppercase">
                 Menu · Cashier
               </p>
-              <h1 className="text-lg font-bold text-gray-900 mt-0.5">Cashier View</h1>
+              <h1 className="text-lg font-bold text-gray-900 mt-0.5">
+                Cashier View
+              </h1>
             </div>
             <div className="flex items-center gap-2 text-xs text-gray-400">
               <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
@@ -488,7 +571,6 @@ export default function CashierView() {
 
           {/* Menu area */}
           <div className="flex-1 overflow-y-auto p-5">
-
             {/* Search */}
             <div className="relative mb-4 max-w-xs">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" />
@@ -510,19 +592,31 @@ export default function CashierView() {
                   className="px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-all"
                   style={
                     selectedCat === cat
-                      ? { background: "#0f172a", color: "#fff", borderColor: "#0f172a" }
-                      : { background: "#fff", color: "#6b7280", borderColor: "#e5e7eb" }
+                      ? {
+                          background: "#0f172a",
+                          color: "#fff",
+                          borderColor: "#0f172a",
+                        }
+                      : {
+                          background: "#fff",
+                          color: "#6b7280",
+                          borderColor: "#e5e7eb",
+                        }
                   }
                   onMouseEnter={(e) => {
                     if (selectedCat !== cat) {
-                      (e.currentTarget as HTMLButtonElement).style.borderColor = "#9ca3af";
-                      (e.currentTarget as HTMLButtonElement).style.color = "#374151";
+                      (e.currentTarget as HTMLButtonElement).style.borderColor =
+                        "#9ca3af";
+                      (e.currentTarget as HTMLButtonElement).style.color =
+                        "#374151";
                     }
                   }}
                   onMouseLeave={(e) => {
                     if (selectedCat !== cat) {
-                      (e.currentTarget as HTMLButtonElement).style.borderColor = "#e5e7eb";
-                      (e.currentTarget as HTMLButtonElement).style.color = "#6b7280";
+                      (e.currentTarget as HTMLButtonElement).style.borderColor =
+                        "#e5e7eb";
+                      (e.currentTarget as HTMLButtonElement).style.color =
+                        "#6b7280";
                     }
                   }}
                 >
@@ -534,7 +628,9 @@ export default function CashierView() {
             {/* Product grid */}
             <div
               className="grid gap-3"
-              style={{ gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))" }}
+              style={{
+                gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+              }}
             >
               {isLoadingProducts && (
                 <p className="col-span-full text-center text-sm text-gray-400 py-16">
@@ -546,16 +642,27 @@ export default function CashierView() {
                   {productsError}
                 </p>
               )}
-              {!isLoadingProducts && !productsError && filtered.map((item, idx) => (
-                <div key={item.id} style={{ animation: `slideIn 0.2s ${idx * 0.03}s both` }}>
-                  <ProductCard item={item} onAdd={addToCart} isPopping={poppingId === item.id} />
-                </div>
-              ))}
-              {!isLoadingProducts && !productsError && filtered.length === 0 && (
-                <p className="col-span-full text-center text-sm text-gray-400 py-16">
-                  No items found.
-                </p>
-              )}
+              {!isLoadingProducts &&
+                !productsError &&
+                filtered.map((item, idx) => (
+                  <div
+                    key={item.id}
+                    style={{ animation: `slideIn 0.2s ${idx * 0.03}s both` }}
+                  >
+                    <ProductCard
+                      item={item}
+                      onAdd={addToCart}
+                      isPopping={poppingId === item.id}
+                    />
+                  </div>
+                ))}
+              {!isLoadingProducts &&
+                !productsError &&
+                filtered.length === 0 && (
+                  <p className="col-span-full text-center text-sm text-gray-400 py-16">
+                    No items found.
+                  </p>
+                )}
             </div>
           </div>
         </div>
@@ -586,12 +693,19 @@ export default function CashierView() {
                 <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-3 bg-slate-50">
                   <ShoppingBag className="w-7 h-7 text-gray-200" />
                 </div>
-                <p className="text-sm font-medium text-gray-400">Cart is empty</p>
+                <p className="text-sm font-medium text-gray-400">
+                  Cart is empty
+                </p>
                 <p className="text-xs text-gray-300 mt-1">Tap an item to add</p>
               </div>
             ) : (
               cart.map((item) => (
-                <CartRow key={item.id} item={item} onRemove={removeFromCart} onQty={updateQty} />
+                <CartRow
+                  key={item.id}
+                  item={item}
+                  onRemove={removeFromCart}
+                  onQty={updateQty}
+                />
               ))
             )}
           </div>
@@ -611,22 +725,31 @@ export default function CashierView() {
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-gray-600">Total</span>
-                  <span className="text-xl font-bold text-gray-900">₱{totalPrice}</span>
+                  <span className="text-xl font-bold text-gray-900">
+                    ₱{totalPrice}
+                  </span>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2 mb-3">
                 <select
                   value={orderType}
-                  onChange={(e) => setOrderType(e.target.value as "dine-in" | "take-out")}
+                  onChange={(e) =>
+                    setOrderType(
+                      e.target.value as "dine-in" | "take-out" | "delivery",
+                    )
+                  }
                   className="border border-gray-200 rounded-xl px-2.5 py-2 text-xs bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-slate-300"
                 >
                   <option value="dine-in">Dine In</option>
                   <option value="take-out">Take Out</option>
+                  <option value="delivery">Delivery</option>
                 </select>
                 <select
                   value={paymentMethod}
-                  onChange={(e) => setPaymentMethod(e.target.value as "cash" | "e-payment")}
+                  onChange={(e) =>
+                    setPaymentMethod(e.target.value as "cash" | "e-payment")
+                  }
                   className="border border-gray-200 rounded-xl px-2.5 py-2 text-xs bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-slate-300"
                 >
                   <option value="cash">Cash</option>
@@ -635,26 +758,34 @@ export default function CashierView() {
               </div>
 
               <button
-                onClick={() => { void handlePayment(); }}
+                onClick={() => {
+                  void handlePayment();
+                }}
                 disabled={isPlacingOrder || cart.length === 0}
                 className="w-full py-3.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2"
                 style={payBtnStyle}
                 onMouseEnter={(e) => {
                   if (!isPlacingOrder && cart.length > 0) {
-                    (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-1px)";
-                    (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 8px 24px rgba(15,23,42,0.25)";
+                    (e.currentTarget as HTMLButtonElement).style.transform =
+                      "translateY(-1px)";
+                    (e.currentTarget as HTMLButtonElement).style.boxShadow =
+                      "0 8px 24px rgba(15,23,42,0.25)";
                   }
                 }}
                 onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.transform = "translateY(0)";
-                  (e.currentTarget as HTMLButtonElement).style.boxShadow = "none";
+                  (e.currentTarget as HTMLButtonElement).style.transform =
+                    "translateY(0)";
+                  (e.currentTarget as HTMLButtonElement).style.boxShadow =
+                    "none";
                 }}
                 onMouseDown={(e) => {
                   if (!isPlacingOrder && cart.length > 0)
-                    (e.currentTarget as HTMLButtonElement).style.transform = "scale(0.98)";
+                    (e.currentTarget as HTMLButtonElement).style.transform =
+                      "scale(0.98)";
                 }}
                 onMouseUp={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-1px)";
+                  (e.currentTarget as HTMLButtonElement).style.transform =
+                    "translateY(-1px)";
                 }}
               >
                 {isPlacingOrder ? (
