@@ -7,6 +7,7 @@ async function ensureBatchesTable() {
     CREATE TABLE IF NOT EXISTS batches (
       batch_id INT PRIMARY KEY AUTO_INCREMENT,
       product_id INT NOT NULL,
+      delivery_batch_id VARCHAR(50),
       quantity DECIMAL(10,2) NOT NULL,
       remaining_qty DECIMAL(10,2) NOT NULL,
       unit VARCHAR(20) DEFAULT 'kg',
@@ -24,7 +25,17 @@ async function ensureBatchesTable() {
   // Legacy compatibility: old schema uses id/productId/receivedAt/expiresAt and has no remaining_qty.
   const [columns] = await db.query(`SHOW COLUMNS FROM batches`);
   const fieldSet = new Set(columns.map((c) => c.Field));
-  const isLegacySchema = fieldSet.has("productId") || fieldSet.has("receivedAt") || !fieldSet.has("product_id");
+
+  if (!fieldSet.has("delivery_batch_id")) {
+    await db.query(
+      "ALTER TABLE batches ADD COLUMN delivery_batch_id VARCHAR(50)",
+    );
+  }
+
+  const isLegacySchema =
+    fieldSet.has("productId") ||
+    fieldSet.has("receivedAt") ||
+    !fieldSet.has("product_id");
 
   if (!isLegacySchema) return;
 
@@ -36,6 +47,7 @@ async function ensureBatchesTable() {
     CREATE TABLE batches_new (
       batch_id INT PRIMARY KEY AUTO_INCREMENT,
       product_id INT NOT NULL,
+      delivery_batch_id VARCHAR(50),
       quantity DECIMAL(10,2) NOT NULL,
       remaining_qty DECIMAL(10,2) NOT NULL,
       unit VARCHAR(20) DEFAULT 'kg',
@@ -81,12 +93,64 @@ async function ensureBatchesTable() {
   `);
 
   // Swap tables atomically: keep old table as backup.
-  await db.query(`RENAME TABLE batches TO ${legacyBackupTable}, batches_new TO batches`);
+  await db.query(
+    `RENAME TABLE batches TO ${legacyBackupTable}, batches_new TO batches`,
+  );
 }
 
 function toNumber(value, fallback = 0) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
+}
+
+async function reconcileDefaultBatchForStock(conn, productId) {
+  const [[inventoryRow]] = await conn.query(
+    `SELECT COALESCE(Stock, 0) AS stock
+     FROM Inventory
+     WHERE Product_ID = ?
+     LIMIT 1`,
+    [productId],
+  );
+
+  const inventoryStock = toNumber(inventoryRow?.stock);
+  if (inventoryStock <= 0) {
+    return { created: false, addedQty: 0 };
+  }
+
+  const [batchRows] = await conn.query(
+    `SELECT COALESCE(SUM(remaining_qty), 0) AS batch_stock
+     FROM batches
+     WHERE product_id = ?
+       AND status IN ('active', 'returned')
+       AND remaining_qty > 0
+       AND (expiry_date IS NULL OR expiry_date >= CURDATE())`,
+    [productId],
+  );
+
+  const batchStock = toNumber(batchRows[0]?.batch_stock);
+  const missingQty = +(inventoryStock - batchStock).toFixed(2);
+
+  if (missingQty <= 0) {
+    return { created: false, addedQty: 0 };
+  }
+
+  const [[lastBatchRow]] = await conn.query(
+    `SELECT unit
+     FROM batches
+     WHERE product_id = ?
+     ORDER BY batch_id DESC
+     LIMIT 1`,
+    [productId],
+  );
+
+  await conn.query(
+    `INSERT INTO batches
+       (product_id, quantity, remaining_qty, unit, received_date, expiry_date, status, returned_qty, notes)
+     VALUES (?, ?, ?, ?, CURDATE(), NULL, 'active', 0, 'AUTO_DEFAULT')`,
+    [productId, missingQty, missingQty, lastBatchRow?.unit || "kg"],
+  );
+
+  return { created: true, addedQty: missingQty };
 }
 
 // GET all batches for a product
@@ -105,7 +169,7 @@ router.get("/product/:product_id", async (req, res) => {
        JOIN products p ON b.product_id = p.id
        WHERE b.product_id = ?
        ORDER BY b.received_date ASC`,
-      [productId]
+      [productId],
     );
 
     res.json(rows);
@@ -127,7 +191,7 @@ router.get("/returned/yesterday", async (_req, res) => {
        WHERE b.status = 'returned'
          AND b.returned_qty > 0
          AND DATE(b.updated_at) = CURDATE() - INTERVAL 1 DAY
-       ORDER BY b.received_date ASC`
+       ORDER BY b.received_date ASC`,
     );
 
     res.json(rows);
@@ -149,7 +213,7 @@ router.get("/active", async (_req, res) => {
        WHERE b.status IN ('active', 'returned')
          AND b.remaining_qty > 0
          AND (b.expiry_date IS NULL OR b.expiry_date >= CURDATE())
-       ORDER BY CASE WHEN b.status = 'returned' THEN 0 ELSE 1 END, b.received_date ASC, b.batch_id ASC`
+       ORDER BY CASE WHEN b.status = 'returned' THEN 0 ELSE 1 END, b.received_date ASC, b.batch_id ASC`,
     );
 
     res.json(rows);
@@ -177,7 +241,7 @@ router.post("/default", async (req, res) => {
     // Ensure product exists in `products` for FK integrity of batches.product_id -> products.id.
     const [productRows] = await conn.query(
       `SELECT id FROM products WHERE id = ? LIMIT 1`,
-      [productId]
+      [productId],
     );
 
     if (!productRows.length) {
@@ -186,12 +250,14 @@ router.post("/default", async (req, res) => {
          FROM Menu
          WHERE Product_ID = ?
          LIMIT 1`,
-        [productId]
+        [productId],
       );
 
       if (!menuRows.length) {
         await conn.rollback();
-        return res.status(404).json({ error: "Product not found in Menu/products" });
+        return res
+          .status(404)
+          .json({ error: "Product not found in Menu/products" });
       }
 
       const menu = menuRows[0];
@@ -201,7 +267,13 @@ router.post("/default", async (req, res) => {
          ON DUPLICATE KEY UPDATE
            name = VALUES(name),
            price = VALUES(price)`,
-        [productId, menu.Product_Name || `Product ${productId}`, toNumber(menu.Price), toNumber(menu.stock), null]
+        [
+          productId,
+          menu.Product_Name || `Product ${productId}`,
+          toNumber(menu.Price),
+          toNumber(menu.stock),
+          null,
+        ],
       );
     }
 
@@ -212,7 +284,7 @@ router.post("/default", async (req, res) => {
        FROM Menu m
        WHERE m.Product_ID = ?
          AND NOT EXISTS (SELECT 1 FROM Inventory i WHERE i.Product_ID = m.Product_ID)`,
-      [productId]
+      [productId],
     );
 
     const [existing] = await conn.query(
@@ -221,7 +293,7 @@ router.post("/default", async (req, res) => {
          AND notes = 'AUTO_DEFAULT'
        ORDER BY batch_id DESC
        LIMIT 1`,
-      [productId]
+      [productId],
     );
 
     if (existing.length > 0) {
@@ -238,35 +310,45 @@ router.post("/default", async (req, res) => {
        LEFT JOIN Inventory i ON i.Product_ID = m.Product_ID
        WHERE m.Product_ID = ?
        LIMIT 1`,
-      [productId]
+      [productId],
     );
 
     if (!inventoryRows.length) {
       await conn.rollback();
-      return res.status(404).json({ error: "Inventory row not found for product" });
+      return res
+        .status(404)
+        .json({ error: "Inventory row not found for product" });
     }
 
     const stockQty = toNumber(inventoryRows[0].stock);
     if (stockQty <= 0) {
       await conn.rollback();
-      return res.status(400).json({ error: "Cannot create default batch for zero stock" });
+      return res
+        .status(400)
+        .json({ error: "Cannot create default batch for zero stock" });
     }
 
     const [lastUnitRows] = await conn.query(
       `SELECT unit FROM batches WHERE product_id = ? ORDER BY batch_id DESC LIMIT 1`,
-      [productId]
+      [productId],
     );
-    const unit = lastUnitRows.length > 0 && lastUnitRows[0].unit ? String(lastUnitRows[0].unit) : "kg";
+    const unit =
+      lastUnitRows.length > 0 && lastUnitRows[0].unit
+        ? String(lastUnitRows[0].unit)
+        : "kg";
 
     const [insertResult] = await conn.query(
       `INSERT INTO batches
          (product_id, quantity, remaining_qty, unit, received_date, expiry_date, status, returned_qty, notes)
        VALUES (?, ?, ?, ?, CURDATE(), NULL, 'active', 0, 'AUTO_DEFAULT')`,
-      [productId, stockQty, stockQty, unit]
+      [productId, stockQty, stockQty, unit],
     );
 
     await conn.commit();
-    res.status(201).json({ message: "Default batch created", batch_id: insertResult.insertId });
+    res.status(201).json({
+      message: "Default batch created",
+      batch_id: insertResult.insertId,
+    });
   } catch (err) {
     if (conn) await conn.rollback();
     console.error("Error creating default batch:", err);
@@ -278,13 +360,16 @@ router.post("/default", async (req, res) => {
 
 // POST add a new batch
 router.post("/", async (req, res) => {
-  const { product_id, quantity, unit, received_date, expiry_date, notes } = req.body;
+  const { product_id, quantity, unit, received_date, expiry_date, notes } =
+    req.body;
 
   const productId = toNumber(product_id);
   const qty = toNumber(quantity);
 
   if (!productId || qty <= 0 || !received_date) {
-    return res.status(400).json({ error: "product_id, quantity and received_date are required" });
+    return res
+      .status(400)
+      .json({ error: "product_id, quantity and received_date are required" });
   }
 
   let conn;
@@ -306,7 +391,7 @@ router.post("/", async (req, res) => {
         received_date,
         expiry_date || null,
         notes || null,
-      ]
+      ],
     );
 
     // Keep inventory/menu/products aligned with your current stock flow.
@@ -314,26 +399,28 @@ router.post("/", async (req, res) => {
       `UPDATE Inventory
        SET Stock = COALESCE(Stock, 0) + ?, Last_Update = NOW()
        WHERE Product_ID = ?`,
-      [qty, productId]
+      [qty, productId],
     );
 
     await conn.query(
       `UPDATE Menu
        SET Stock = COALESCE(Stock, 0) + ?
        WHERE Product_ID = ?`,
-      [qty, productId]
+      [qty, productId],
     );
 
     await conn.query(
       `UPDATE products
        SET quantity = COALESCE(quantity, 0) + ?
        WHERE id = ?`,
-      [qty, productId]
+      [qty, productId],
     );
 
     await conn.commit();
 
-    res.status(201).json({ batch_id: result.insertId, message: "Batch added successfully" });
+    res
+      .status(201)
+      .json({ batch_id: result.insertId, message: "Batch added successfully" });
   } catch (err) {
     if (conn) await conn.rollback();
     console.error("Error adding batch:", err);
@@ -343,15 +430,23 @@ router.post("/", async (req, res) => {
   }
 });
 
-// POST withdraw using FIFO
+// POST withdraw using FIFO or FEFO
 router.post("/withdraw", async (req, res) => {
-  const { product_id, qty_needed, recorded_by, type = "initial" } = req.body;
+  const {
+    product_id,
+    qty_needed,
+    recorded_by,
+    type = "initial",
+    strategy = "fifo",
+  } = req.body;
 
   const productId = toNumber(product_id);
   const qtyNeeded = toNumber(qty_needed);
 
   if (!productId || qtyNeeded <= 0) {
-    return res.status(400).json({ error: "product_id and qty_needed are required" });
+    return res
+      .status(400)
+      .json({ error: "product_id and qty_needed are required" });
   }
 
   let conn;
@@ -361,6 +456,24 @@ router.post("/withdraw", async (req, res) => {
     conn = await db.getConnection();
     await conn.beginTransaction();
 
+    await reconcileDefaultBatchForStock(conn, productId);
+
+    const normalizedStrategy =
+      String(strategy || "fifo").toLowerCase() === "fefo" ? "fefo" : "fifo";
+
+    const orderClause =
+      normalizedStrategy === "fefo"
+        ? `ORDER BY
+             CASE WHEN status = 'returned' THEN 0 ELSE 1 END,
+             CASE WHEN expiry_date IS NULL THEN 1 ELSE 0 END,
+             expiry_date ASC,
+             received_date ASC,
+             batch_id ASC`
+        : `ORDER BY
+             CASE WHEN status = 'returned' THEN 0 ELSE 1 END,
+             received_date ASC,
+             batch_id ASC`;
+
     const [batches] = await conn.query(
       `SELECT *
        FROM batches
@@ -368,14 +481,19 @@ router.post("/withdraw", async (req, res) => {
          AND status IN ('active', 'returned')
          AND remaining_qty > 0
          AND (expiry_date IS NULL OR expiry_date >= CURDATE())
-       ORDER BY CASE WHEN status = 'returned' THEN 0 ELSE 1 END, received_date ASC, batch_id ASC`,
-      [productId]
+       ${orderClause}`,
+      [productId],
     );
 
-    const totalAvailable = batches.reduce((sum, b) => sum + toNumber(b.remaining_qty), 0);
+    const totalAvailable = batches.reduce(
+      (sum, b) => sum + toNumber(b.remaining_qty),
+      0,
+    );
     if (totalAvailable < qtyNeeded) {
       await conn.rollback();
-      return res.status(400).json({ error: `Insufficient stock. Available: ${totalAvailable}` });
+      return res
+        .status(400)
+        .json({ error: `Insufficient stock. Available: ${totalAvailable}` });
     }
 
     let remaining = qtyNeeded;
@@ -392,7 +510,7 @@ router.post("/withdraw", async (req, res) => {
         `UPDATE batches
          SET remaining_qty = ?, status = ?
          WHERE batch_id = ?`,
-        [newRemQty, newStatus, batch.batch_id]
+        [newRemQty, newStatus, batch.batch_id],
       );
 
       usedBatches.push({
@@ -408,7 +526,12 @@ router.post("/withdraw", async (req, res) => {
     await conn.query(
       `INSERT INTO Stock_Status (Product_ID, Type, Quantity, Status_Date, RecordedBy)
        VALUES (?, ?, ?, NOW(), ?)`,
-      [productId, String(type).toLowerCase(), qtyNeeded, Number.isInteger(recorded_by) ? recorded_by : null]
+      [
+        productId,
+        String(type).toLowerCase(),
+        qtyNeeded,
+        Number.isInteger(recorded_by) ? recorded_by : null,
+      ],
     );
 
     await conn.query(
@@ -417,21 +540,21 @@ router.post("/withdraw", async (req, res) => {
            Daily_Withdrawn = COALESCE(Daily_Withdrawn, 0) + ?,
            Last_Update = NOW()
        WHERE Product_ID = ?`,
-      [qtyNeeded, qtyNeeded, productId]
+      [qtyNeeded, qtyNeeded, productId],
     );
 
     await conn.query(
       `UPDATE Menu
        SET Stock = GREATEST(COALESCE(Stock, 0) - ?, 0)
        WHERE Product_ID = ?`,
-      [qtyNeeded, productId]
+      [qtyNeeded, productId],
     );
 
     await conn.query(
       `UPDATE products
        SET quantity = GREATEST(COALESCE(quantity, 0) - ?, 0)
        WHERE id = ?`,
-      [qtyNeeded, productId]
+      [qtyNeeded, productId],
     );
 
     await conn.commit();
@@ -474,7 +597,10 @@ router.put("/:batch_id", async (req, res) => {
     conn = await db.getConnection();
     await conn.beginTransaction();
 
-    const [rows] = await conn.query(`SELECT * FROM batches WHERE batch_id = ?`, [batchId]);
+    const [rows] = await conn.query(
+      `SELECT * FROM batches WHERE batch_id = ?`,
+      [batchId],
+    );
     if (!rows.length) {
       await conn.rollback();
       return res.status(404).json({ error: "Batch not found" });
@@ -536,7 +662,10 @@ router.put("/:batch_id", async (req, res) => {
     }
 
     values.push(batchId);
-    await conn.query(`UPDATE batches SET ${updates.join(", ")} WHERE batch_id = ?`, values);
+    await conn.query(
+      `UPDATE batches SET ${updates.join(", ")} WHERE batch_id = ?`,
+      values,
+    );
 
     // Keep Inventory/Menu/products stock aligned when remaining qty is edited.
     if (remaining_qty !== undefined) {
@@ -549,26 +678,29 @@ router.put("/:batch_id", async (req, res) => {
           `UPDATE Inventory
            SET Stock = GREATEST(COALESCE(Stock, 0) + ?, 0), Last_Update = NOW()
            WHERE Product_ID = ?`,
-          [delta, current.product_id]
+          [delta, current.product_id],
         );
 
         await conn.query(
           `UPDATE Menu
            SET Stock = GREATEST(COALESCE(Stock, 0) + ?, 0)
            WHERE Product_ID = ?`,
-          [delta, current.product_id]
+          [delta, current.product_id],
         );
 
         await conn.query(
           `UPDATE products
            SET quantity = GREATEST(COALESCE(quantity, 0) + ?, 0)
            WHERE id = ?`,
-          [delta, current.product_id]
+          [delta, current.product_id],
         );
       }
     }
 
-    const [updatedRows] = await conn.query(`SELECT * FROM batches WHERE batch_id = ?`, [batchId]);
+    const [updatedRows] = await conn.query(
+      `SELECT * FROM batches WHERE batch_id = ?`,
+      [batchId],
+    );
     await conn.commit();
     res.json({ message: "Batch updated", batch: updatedRows[0] });
   } catch (err) {
@@ -588,7 +720,9 @@ router.post("/return", async (req, res) => {
   const returnQty = toNumber(return_qty);
 
   if (!batchId || returnQty <= 0) {
-    return res.status(400).json({ error: "batch_id and return_qty are required" });
+    return res
+      .status(400)
+      .json({ error: "batch_id and return_qty are required" });
   }
 
   let conn;
@@ -600,7 +734,7 @@ router.post("/return", async (req, res) => {
 
     const [batches] = await conn.query(
       `SELECT * FROM batches WHERE batch_id = ?`,
-      [batchId]
+      [batchId],
     );
 
     if (!batches.length) {
@@ -616,13 +750,17 @@ router.post("/return", async (req, res) => {
            returned_qty = COALESCE(returned_qty, 0) + ?,
            status = 'returned'
        WHERE batch_id = ?`,
-      [returnQty, returnQty, batchId]
+      [returnQty, returnQty, batchId],
     );
 
     await conn.query(
       `INSERT INTO Stock_Status (Product_ID, Type, Quantity, Status_Date, RecordedBy)
        VALUES (?, 'return', ?, NOW(), ?)`,
-      [batch.product_id, returnQty, Number.isInteger(recorded_by) ? recorded_by : null]
+      [
+        batch.product_id,
+        returnQty,
+        Number.isInteger(recorded_by) ? recorded_by : null,
+      ],
     );
 
     await conn.query(
@@ -632,21 +770,21 @@ router.post("/return", async (req, res) => {
            Returned = COALESCE(Returned, 0) + ?,
            Last_Update = NOW()
        WHERE Product_ID = ?`,
-      [returnQty, returnQty, returnQty, batch.product_id]
+      [returnQty, returnQty, returnQty, batch.product_id],
     );
 
     await conn.query(
       `UPDATE Menu
        SET Stock = COALESCE(Stock, 0) + ?
        WHERE Product_ID = ?`,
-      [returnQty, batch.product_id]
+      [returnQty, batch.product_id],
     );
 
     await conn.query(
       `UPDATE products
        SET quantity = COALESCE(quantity, 0) + ?
        WHERE id = ?`,
-      [returnQty, batch.product_id]
+      [returnQty, batch.product_id],
     );
 
     await conn.commit();

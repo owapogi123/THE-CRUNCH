@@ -102,16 +102,28 @@ async function ensureTables() {
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS purchase_order_items (
-      item_id   INT          PRIMARY KEY AUTO_INCREMENT,
-      po_id     VARCHAR(12)  NOT NULL,
-      name      VARCHAR(255) NOT NULL,
-      category  VARCHAR(100) DEFAULT '',
-      unit      VARCHAR(50)  DEFAULT '',
-      quantity  DECIMAL(10,2) NOT NULL DEFAULT 0,
-      unit_cost DECIMAL(10,2) NOT NULL DEFAULT 0,
+      item_id              INT          PRIMARY KEY AUTO_INCREMENT,
+      po_id                VARCHAR(12)  NOT NULL,
+      name                 VARCHAR(255) NOT NULL,
+      category             VARCHAR(100) DEFAULT '',
+      unit                 VARCHAR(50)  DEFAULT '',
+      quantity             DECIMAL(10,2) NOT NULL DEFAULT 0,
+      unit_cost            DECIMAL(10,2) NOT NULL DEFAULT 0,
+      expected_expiry_date DATE         DEFAULT NULL,
       FOREIGN KEY (po_id) REFERENCES purchase_orders(po_id) ON DELETE CASCADE
     )
   `);
+
+  // Runtime migration: add expected_expiry_date if missing (existing DBs).
+  {
+    const [cols] = await db.query(`SHOW COLUMNS FROM purchase_order_items`);
+    const fieldSet = new Set(cols.map((c) => c.Field));
+    if (!fieldSet.has("expected_expiry_date")) {
+      await db.query(
+        `ALTER TABLE purchase_order_items ADD COLUMN expected_expiry_date DATE DEFAULT NULL`,
+      );
+    }
+  }
 }
 
 // ─── shape helpers ───────────────────────────────────────────────────────────
@@ -138,6 +150,7 @@ function shapePO(row, items = []) {
       unit: i.unit || "",
       quantity: toNumber(i.quantity),
       unitCost: toNumber(i.unit_cost),
+      expectedExpiryDate: toDateString(i.expected_expiry_date) || undefined,
     })),
   };
 }
@@ -270,8 +283,8 @@ router.post("/", async (req, res) => {
       if (!item.name || !item.name.trim()) continue;
       await conn.query(
         `INSERT INTO purchase_order_items
-           (po_id, name, category, unit, quantity, unit_cost)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+           (po_id, name, category, unit, quantity, unit_cost, expected_expiry_date)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
           poId,
           item.name.trim(),
@@ -279,6 +292,8 @@ router.post("/", async (req, res) => {
           (item.unit || "").trim(),
           toNumber(item.quantity),
           toNumber(item.unitCost ?? item.unit_cost),
+          toDateString(item.expectedExpiryDate ?? item.expected_expiry_date) ||
+            null,
         ],
       );
     }
@@ -377,7 +392,11 @@ router.patch("/:id/status", async (req, res) => {
 
 router.patch("/:id/receive", async (req, res) => {
   const poId = req.params.id;
-  const { receivedBy = "Staff on Duty", receivedDate, itemExpiryDates = {} } = req.body;
+  const {
+    receivedBy = "Staff on Duty",
+    receivedDate,
+    itemExpiryDates = {},
+  } = req.body;
 
   const recDate = toDateString(receivedDate) || toDateString(new Date());
 
@@ -426,36 +445,92 @@ router.patch("/:id/receive", async (req, res) => {
       [poId],
     );
 
-    // For each line item, try to match a product and create a batch.
+    // For each line item, resolve a product and create a batch.
     for (const item of items) {
       const qty = toNumber(item.quantity);
       if (qty <= 0) continue;
 
-      // Try to find a matching product by name (case-insensitive).
+      let productId = null;
+
       const [[matchedProduct]] = await conn.query(
-        `SELECT p.id AS product_id, p.name
+        `SELECT p.id AS product_id
          FROM products p
          WHERE LOWER(TRIM(p.name)) = LOWER(TRIM(?))
          LIMIT 1`,
         [item.name],
       );
 
-      if (!matchedProduct) {
-        // No matching product found — skip batch creation for this item.
-        // The PO is still marked received; staff can manually add stock.
+      if (matchedProduct) {
+        productId = matchedProduct.product_id;
+      } else {
+        const [[matchedMenu]] = await conn.query(
+          `SELECT m.Product_ID AS product_id,
+                  m.Product_Name AS product_name,
+                  COALESCE(m.Price, 0) AS price,
+                  COALESCE(m.Stock, 0) AS stock
+           FROM Menu m
+           WHERE LOWER(TRIM(m.Product_Name)) = LOWER(TRIM(?))
+           LIMIT 1`,
+          [item.name],
+        );
+
+        if (matchedMenu) {
+          productId = matchedMenu.product_id;
+
+          // batches.product_id points at products.id, so sync a products row
+          // if this item currently only exists in Menu.
+          await conn.query(
+            `INSERT INTO products (id, name, price, quantity, description)
+             VALUES (?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+               name = VALUES(name),
+               price = VALUES(price)`,
+            [
+              matchedMenu.product_id,
+              matchedMenu.product_name || item.name,
+              toNumber(matchedMenu.price),
+              toNumber(matchedMenu.stock),
+              null,
+            ],
+          );
+        }
+      }
+
+      if (!productId) {
+        console.warn(
+          `[PO Receive] ${poId}: No product match for "${item.name}" - skipping`,
+        );
         continue;
       }
 
-      const productId = matchedProduct.product_id;
       const unit = item.unit || "kg";
       const itemExpiryDate = toDateString(itemExpiryDates?.[item.item_id]);
+
+      await conn.query(
+        `INSERT INTO Inventory (Product_ID, Quantity, Stock, Item_Purchased)
+         SELECT m.Product_ID, COALESCE(m.Stock, 0), COALESCE(m.Stock, 0), m.Product_Name
+         FROM Menu m
+         WHERE m.Product_ID = ?
+           AND NOT EXISTS (
+             SELECT 1 FROM Inventory i WHERE i.Product_ID = m.Product_ID
+           )`,
+        [productId],
+      );
 
       // Insert a new batch (FIFO).
       const [batchResult] = await conn.query(
         `INSERT INTO batches
            (product_id, quantity, remaining_qty, unit, received_date, expiry_date, notes)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [productId, qty, qty, unit, recDate, itemExpiryDate, `PO: ${poId}`],
+        [
+          productId,
+          qty,
+          qty,
+          unit,
+          recDate,
+          itemExpiryDate || null,
+          `PO: ${poId}`,
+        ],
       );
 
       // Update Inventory stock.
@@ -480,7 +555,7 @@ router.patch("/:id/receive", async (req, res) => {
       );
 
       console.log(
-        `[PO Receive] ${poId}: Created batch #${batchResult.insertId} for product ${productId} (${item.name}) — ${qty} ${unit}`,
+        `[PO Receive] ${poId}: Created batch #${batchResult.insertId} for product ${productId} (${item.name}) - ${qty} ${unit}, expiry: ${itemExpiryDate || "none"}`,
       );
     }
 

@@ -1,23 +1,28 @@
-require('dotenv').config();
-const mysql = require('mysql2/promise');
+require("dotenv").config();
+const mysql = require("mysql2/promise");
 
-const DB_HOST = process.env.DB_HOST || 'localhost';
-const DB_USER = process.env.DB_USER || 'root';
-const DB_PASSWORD = process.env.DB_PASSWORD || '';
-const DB_NAME = process.env.DB_NAME || 'pos_system';
+const DB_HOST = process.env.DB_HOST || "localhost";
+const DB_USER = process.env.DB_USER || "root";
+const DB_PASSWORD = process.env.DB_PASSWORD || "";
+const DB_NAME = process.env.DB_NAME || "pos_system";
 const DB_PORT = process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306;
 
 async function ensureColumn(connection, tableName, columnName, definitionSql) {
-    const [rows] = await connection.query(`SHOW COLUMNS FROM \`${tableName}\` LIKE ?`, [columnName]);
-    if (rows.length === 0) {
-        await connection.query(`ALTER TABLE \`${tableName}\` ADD COLUMN ${definitionSql}`);
-        console.log(`Added column ${columnName} to ${tableName}`);
-    }
+  const [rows] = await connection.query(
+    `SHOW COLUMNS FROM \`${tableName}\` LIKE ?`,
+    [columnName],
+  );
+  if (rows.length === 0) {
+    await connection.query(
+      `ALTER TABLE \`${tableName}\` ADD COLUMN ${definitionSql}`,
+    );
+    console.log(`Added column ${columnName} to ${tableName}`);
+  }
 }
 
 async function setup() {
   let connection;
-    const shouldReset = process.argv.includes('--reset');
+  const shouldReset = process.argv.includes("--reset");
   try {
     connection = await mysql.createConnection({
       host: DB_HOST,
@@ -27,7 +32,9 @@ async function setup() {
       multipleStatements: true,
     });
 
-    console.log(`Connected to MySQL server ${DB_HOST}:${DB_PORT} as ${DB_USER}`);
+    console.log(
+      `Connected to MySQL server ${DB_HOST}:${DB_PORT} as ${DB_USER}`,
+    );
 
     // Create database if it doesn't exist
     await connection.query(`CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\``);
@@ -37,35 +44,37 @@ async function setup() {
     await connection.query(`USE \`${DB_NAME}\``);
 
     // Drop tables if they exist (order chosen to satisfy foreign keys)
-        const dropStatements = [
-            'DROP TABLE IF EXISTS purchase_order_items;',
-            'DROP TABLE IF EXISTS purchase_orders;',
-            'DROP TABLE IF EXISTS po_counter;',
-      'DROP TABLE IF EXISTS Order_Tracking;',
-      'DROP TABLE IF EXISTS Kitchen;',
-      'DROP TABLE IF EXISTS Receipt;',
-      'DROP TABLE IF EXISTS Payments;',
-      'DROP TABLE IF EXISTS Order_Item;',
-      'DROP TABLE IF EXISTS Orders;',
-      'DROP TABLE IF EXISTS Stock_Status;',
-      'DROP TABLE IF EXISTS Suppliers;',
-      'DROP TABLE IF EXISTS Inventory;',
-    'DROP TABLE IF EXISTS Batches;',
-      'DROP TABLE IF EXISTS Menu;',
-      'DROP TABLE IF EXISTS Categories;',
-      'DROP TABLE IF EXISTS Reports;',
-      'DROP TABLE IF EXISTS Customers;',
-      'DROP TABLE IF EXISTS Cook;',
-      'DROP TABLE IF EXISTS Cashier;',
-      'DROP TABLE IF EXISTS Admin;'
-    ].join('\n');
+    const dropStatements = [
+      "DROP TABLE IF EXISTS purchase_order_items;",
+      "DROP TABLE IF EXISTS purchase_orders;",
+      "DROP TABLE IF EXISTS po_counter;",
+      "DROP TABLE IF EXISTS Order_Tracking;",
+      "DROP TABLE IF EXISTS Kitchen;",
+      "DROP TABLE IF EXISTS Receipt;",
+      "DROP TABLE IF EXISTS Payments;",
+      "DROP TABLE IF EXISTS Order_Item;",
+      "DROP TABLE IF EXISTS Orders;",
+      "DROP TABLE IF EXISTS Stock_Status;",
+      "DROP TABLE IF EXISTS Suppliers;",
+      "DROP TABLE IF EXISTS Inventory;",
+      "DROP TABLE IF EXISTS Batches;",
+      "DROP TABLE IF EXISTS Menu;",
+      "DROP TABLE IF EXISTS Categories;",
+      "DROP TABLE IF EXISTS Reports;",
+      "DROP TABLE IF EXISTS Customers;",
+      "DROP TABLE IF EXISTS Cook;",
+      "DROP TABLE IF EXISTS Cashier;",
+      "DROP TABLE IF EXISTS Admin;",
+    ].join("\n");
 
-        if (shouldReset) {
-            await connection.query(dropStatements);
-            console.log('Existing tables dropped (reset mode).');
-        } else {
-            console.log('Safe setup mode: existing tables/data kept. Use --reset to drop tables.');
-        }
+    if (shouldReset) {
+      await connection.query(dropStatements);
+      console.log("Existing tables dropped (reset mode).");
+    } else {
+      console.log(
+        "Safe setup mode: existing tables/data kept. Use --reset to drop tables.",
+      );
+    }
 
     // Create tables
     const createStatements = `
@@ -123,6 +132,7 @@ CREATE TABLE IF NOT EXISTS Inventory (
 CREATE TABLE IF NOT EXISTS Batches (
     id VARCHAR(36) PRIMARY KEY,
     productId INT,
+    delivery_batch_id VARCHAR(50),
     quantity INT NOT NULL,
     unit VARCHAR(50),
     receivedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -255,16 +265,31 @@ CREATE TABLE IF NOT EXISTS purchase_order_items (
 `;
 
     await connection.query(createStatements);
-    console.log('Tables created.');
+    console.log("Tables created.");
 
     // Ensure Inventory has stock movement summary columns.
-    await ensureColumn(connection, 'Inventory', 'Daily_Withdrawn', '`Daily_Withdrawn` DECIMAL(10,2) DEFAULT 0');
-    await ensureColumn(connection, 'Inventory', 'Returned', '`Returned` DECIMAL(10,2) DEFAULT 0');
-    await ensureColumn(connection, 'Inventory', 'Wasted', '`Wasted` DECIMAL(10,2) DEFAULT 0');
+    await ensureColumn(
+      connection,
+      "Inventory",
+      "Daily_Withdrawn",
+      "`Daily_Withdrawn` DECIMAL(10,2) DEFAULT 0",
+    );
+    await ensureColumn(
+      connection,
+      "Inventory",
+      "Returned",
+      "`Returned` DECIMAL(10,2) DEFAULT 0",
+    );
+    await ensureColumn(
+      connection,
+      "Inventory",
+      "Wasted",
+      "`Wasted` DECIMAL(10,2) DEFAULT 0",
+    );
 
-    console.log('Database setup completed successfully.');
+    console.log("Database setup completed successfully.");
   } catch (err) {
-    console.error('Database setup failed:', err);
+    console.error("Database setup failed:", err);
     process.exitCode = 1;
   } finally {
     if (connection) await connection.end();

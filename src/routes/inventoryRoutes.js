@@ -74,6 +74,7 @@ async function ensureBatchTable() {
     CREATE TABLE IF NOT EXISTS Batches (
       batch_id INT PRIMARY KEY AUTO_INCREMENT,
       product_id INT,
+      delivery_batch_id VARCHAR(50),
       quantity DECIMAL(10,2) NOT NULL,
       remaining_qty DECIMAL(10,2) NOT NULL,
       unit VARCHAR(50),
@@ -87,6 +88,12 @@ async function ensureBatchTable() {
       FOREIGN KEY (product_id) REFERENCES Menu(Product_ID)
     );
   `);
+
+  if (!(await hasColumn("Batches", "delivery_batch_id"))) {
+    await db.query(
+      "ALTER TABLE Batches ADD COLUMN delivery_batch_id VARCHAR(50)",
+    );
+  }
 }
 
 // GET /api/inventory
@@ -185,7 +192,14 @@ router.put("/:inventory_id", async (req, res) => {
       return res.status(400).json({ message: "Invalid inventory_id" });
     }
 
-    const { stock, daily_withdrawn, returned, wasted, reorderPoint, criticalPoint } = req.body;
+    const {
+      stock,
+      daily_withdrawn,
+      returned,
+      wasted,
+      reorderPoint,
+      criticalPoint,
+    } = req.body;
     const fields = [];
     const values = [];
 
@@ -241,7 +255,8 @@ router.put("/:inventory_id", async (req, res) => {
       }
       if (nextCriticalPoint > nextReorderPoint) {
         return res.status(400).json({
-          message: "Critical threshold cannot be greater than warning threshold",
+          message:
+            "Critical threshold cannot be greater than warning threshold",
         });
       }
 
