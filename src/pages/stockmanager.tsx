@@ -4338,10 +4338,56 @@ export default function StockManager() {
                                             {p.unit}
                                           </span>
                                         </p>
-                                        <p className="text-xs text-slate-400 mt-1">
-                                          Reorder at {p.reorderPoint} · Critical
-                                          at {p.criticalPoint}
-                                        </p>
+                                        <div className="flex items-center gap-2 mt-1 text-xs text-slate-400">
+                                          <span>Reorder:</span>
+                                          <input
+                                            type="number"
+                                            defaultValue={p.reorderPoint}
+                                            className="w-16 border border-slate-200 rounded-lg px-2 py-0.5 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                                            onBlur={(e) => {
+                                              const val = Number(
+                                                e.target.value,
+                                              );
+                                              if (
+                                                val > 0 &&
+                                                val !== p.reorderPoint
+                                              ) {
+                                                api
+                                                  .updateStock(p.inventory_id, {
+                                                    stock: p.mainStock,
+                                                    reorderPoint: val,
+                                                    criticalPoint:
+                                                      p.criticalPoint,
+                                                  })
+                                                  .then(fetchAll);
+                                              }
+                                            }}
+                                          />
+                                          <span>Critical:</span>
+                                          <input
+                                            type="number"
+                                            defaultValue={p.criticalPoint}
+                                            className="w-16 border border-slate-200 rounded-lg px-2 py-0.5 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                                            onBlur={(e) => {
+                                              const val = Number(
+                                                e.target.value,
+                                              );
+                                              if (
+                                                val > 0 &&
+                                                val !== p.criticalPoint
+                                              ) {
+                                                api
+                                                  .updateStock(p.inventory_id, {
+                                                    stock: p.mainStock,
+                                                    reorderPoint:
+                                                      p.reorderPoint,
+                                                    criticalPoint: val,
+                                                  })
+                                                  .then(fetchAll);
+                                              }
+                                            }}
+                                          />
+                                        </div>
                                         <span
                                           className={`inline-block mt-2 text-xs font-semibold px-3 py-1 rounded-full ${STATUS_BADGE[status]}`}
                                         >
