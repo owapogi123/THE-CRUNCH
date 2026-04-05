@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { api } from "../lib/api";
 import { Sidebar } from "@/components/Sidebar";
+import { useNotifications } from "@/lib/NotificationContext";
 
 // ─── TYPES ────────────────────────────────────────────────────────────────────
 

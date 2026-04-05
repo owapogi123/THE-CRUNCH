@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { api } from "../lib/api";
 import { Sidebar } from "@/components/Sidebar";
+import { useNotifications } from "@/lib/NotificationContext";
 
 interface OrderItem {
   quantity: number;

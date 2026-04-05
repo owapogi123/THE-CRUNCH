@@ -7,6 +7,7 @@ import {
   type Transition,
 } from "framer-motion";
 import { Sidebar } from "@/components/Sidebar";
+import { useNotifications } from "@/lib/NotificationContext";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -2354,10 +2355,6 @@ export default function StockManager() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [toast, setToast] = useState<{
-    message: string;
-    type: "success" | "error";
-  } | null>(null);
   const [wdProductId, setWdProductId] = useState<number | null>(null);
   const [wdQty, setWdQty] = useState("");
   const [wdType, setWdType] = useState<WithdrawalType>("initial");
@@ -2405,10 +2402,17 @@ export default function StockManager() {
     new Date().getFullYear(),
   );
 
-  const showToast = useCallback(
-    (message: string, type: "success" | "error") => setToast({ message, type }),
-    [],
-  );
+ const { addNotification } = useNotifications();
+const showToast = useCallback(
+  (message: string, type: "success" | "error") => {
+    addNotification({
+      id: crypto.randomUUID(),
+      label: message,
+      type,
+    });
+  },
+  [addNotification],
+);
 
   const handleOrderNow = useCallback((product: Product) => {
     setPrefillPOProduct({
@@ -5579,17 +5583,6 @@ export default function StockManager() {
                 </div>
               </motion.div>
             </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Toast */}
-        <AnimatePresence>
-          {toast && (
-            <Toast
-              message={toast.message}
-              type={toast.type}
-              onClose={() => setToast(null)}
-            />
           )}
         </AnimatePresence>
       </div>

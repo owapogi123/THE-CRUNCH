@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react"
 import { useNavigate } from "react-router-dom"
 import { motion, AnimatePresence } from "framer-motion"
+import { useNotifications } from "@/lib/NotificationContext";
 
 const SP  = { type: "spring" as const, stiffness: 340, damping: 30 }
 const SPG = { type: "spring" as const, stiffness: 200, damping: 24 }

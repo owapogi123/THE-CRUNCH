@@ -7,6 +7,7 @@ import { Sidebar } from "@/components/Sidebar"
 import { api, apiCall } from "@/lib/api"
 import { motion, AnimatePresence } from "framer-motion"
 import { Package, RefreshCw, Archive } from "lucide-react"
+import { useNotifications } from "@/lib/NotificationContext";
 
 // ─── Real-time clock hook ─────────────────────────────────────────────────────
 
@@ -78,6 +79,16 @@ function loadLS<T>(key: string, fallback: T): T {
 function saveLS<T>(key: string, value: T): void {
   if (typeof window === "undefined") return
   try { localStorage.setItem(key, JSON.stringify(value)) } catch { /* silent */ }
+}
+
+// ─── Notification helper ──────────────────────────────────────────────────────
+
+function notify(
+  addNotification: ReturnType<typeof useNotifications>["addNotification"],
+  label: string,
+  type: "success" | "error" | "warning" | "info" = "info"
+) {
+  addNotification({ id: `${Date.now()}-${Math.random()}`, label, type })
 }
 
 // ─── Badge helpers ────────────────────────────────────────────────────────────
@@ -257,6 +268,7 @@ const primaryBtnClass = "bg-white text-gray-700 border border-gray-200 cursor-po
 // ─── Purchase Orders ──────────────────────────────────────────────────────────
 
 function PurchaseOrders() {
+  const { addNotification } = useNotifications()
   const [pos,        setPOs]        = useState<PurchaseOrder[]>(() => loadLS("sm_pos", []))
   const [showCreate, setShowCreate] = useState(false)
   const [viewPO,     setViewPO]     = useState<PurchaseOrder | null>(null)
@@ -276,9 +288,14 @@ function PurchaseOrders() {
   const total = poItems.reduce((s, it) => s + (parseFloat(it.qty) || 0) * (parseFloat(it.cost) || 0), 0)
 
   function submitPO() {
-    if (!poDate) return alert("Please set a date.")
+    if (!poDate) {
+      notify(addNotification, "Please set a date.", "warning")
+      return
+    }
     setPOs(p => [{ id: "PO-" + String(p.length + 1).padStart(3, "0"), supplier: poSupplier, branch: poBranch, date: poDate, items: poItems, status: "Pending", total }, ...p])
-    setShowCreate(false); resetForm()
+    setShowCreate(false)
+    resetForm()
+    notify(addNotification, "Purchase order created successfully.", "success")
   }
 
   const filtered = pos.filter(p => {
@@ -336,8 +353,14 @@ function PurchaseOrders() {
               <div className="flex gap-[5px]">
                 <button className={ghostBtnClass} onClick={() => setViewPO(po)}>View</button>
                 {po.status === "Pending" && <>
-                  <button className={okBtnClass}     onClick={() => setPOs(p => p.map(x => x.id === po.id ? { ...x, status: "Received"  as POStatus } : x))}>Receive</button>
-                  <button className={dangerBtnClass} onClick={() => setPOs(p => p.map(x => x.id === po.id ? { ...x, status: "Cancelled" as POStatus } : x))}>Cancel</button>
+                  <button className={okBtnClass} onClick={() => {
+                    setPOs(p => p.map(x => x.id === po.id ? { ...x, status: "Received" as POStatus } : x))
+                    notify(addNotification, `${po.id} marked as Received.`, "success")
+                  }}>Receive</button>
+                  <button className={dangerBtnClass} onClick={() => {
+                    setPOs(p => p.map(x => x.id === po.id ? { ...x, status: "Cancelled" as POStatus } : x))
+                    notify(addNotification, `${po.id} has been cancelled.`, "warning")
+                  }}>Cancel</button>
                 </>}
               </div>
             </td>
@@ -417,6 +440,7 @@ function PurchaseOrders() {
 // ─── Stock In ─────────────────────────────────────────────────────────────────
 
 function StockIn() {
+  const { addNotification } = useNotifications()
   const [records,   setRecords]   = useState<StockInRecord[]>(() => loadLS("sm_stockin", []))
   const [showModal, setShowModal] = useState(false)
   const [search,    setSearch]    = useState("")
@@ -430,9 +454,14 @@ function StockIn() {
 
   function resetForm() { setSiPoRef(""); setSiBranch(BRANCHES[0]); setSiDate(""); setSiRecBy(""); setSiItems([{ name: ITEMS[0], qty: "", unit: "kg" }]) }
   function submitSI() {
-    if (!siDate || !siRecBy) return alert("Please fill all required fields.")
+    if (!siDate || !siRecBy) {
+      notify(addNotification, "Please fill all required fields.", "warning")
+      return
+    }
     setRecords(p => [{ id: "SI-" + String(p.length + 1).padStart(3, "0"), poRef: siPoRef, branch: siBranch, date: siDate, receivedBy: siRecBy, items: siItems }, ...p])
-    setShowModal(false); resetForm()
+    setShowModal(false)
+    resetForm()
+    notify(addNotification, "Stock-in record saved successfully.", "success")
   }
 
   const filtered = records.filter(r => { const s = search.toLowerCase(); return r.id.toLowerCase().includes(s) || r.branch.toLowerCase().includes(s) || r.receivedBy.toLowerCase().includes(s) })
@@ -522,6 +551,7 @@ function StockIn() {
 // ─── Stock Transfer ───────────────────────────────────────────────────────────
 
 function StockTransfer() {
+  const { addNotification } = useNotifications()
   const [transfers, setTransfers] = useState<Transfer[]>(() => loadLS("sm_transfers", []))
   const [showModal, setShowModal] = useState(false)
   const [filter,    setFilter]    = useState("All")
@@ -536,10 +566,18 @@ function StockTransfer() {
 
   function resetForm() { setTrFrom(BRANCHES[0]); setTrTo(BRANCHES[1]); setTrItem(ITEMS[0]); setTrQty(""); setTrUnit(SM_UNITS[0]); setTrDate("") }
   function submitTR() {
-    if (!trQty || !trDate) return alert("Please fill all required fields.")
-    if (trFrom === trTo)   return alert("Source and destination must be different.")
+    if (!trQty || !trDate) {
+      notify(addNotification, "Please fill all required fields.", "warning")
+      return
+    }
+    if (trFrom === trTo) {
+      notify(addNotification, "Source and destination branch must be different.", "warning")
+      return
+    }
     setTransfers(p => [{ id: "TR-" + String(p.length + 1).padStart(3, "0"), from: trFrom, to: trTo, item: trItem, qty: trQty, unit: trUnit, date: trDate, status: "Pending", approvedBy: "—" }, ...p])
-    setShowModal(false); resetForm()
+    setShowModal(false)
+    resetForm()
+    notify(addNotification, "Transfer request submitted and pending approval.", "success")
   }
 
   const filtered = transfers.filter(t => filter === "All" || t.status === filter)
@@ -587,8 +625,14 @@ function StockTransfer() {
             <td className="px-[14px] py-[11px]">
               {t.status === "Pending" && (
                 <div className="flex gap-[5px]">
-                  <button className={okBtnClass}     onClick={() => setTransfers(p => p.map(x => x.id === t.id ? { ...x, status: "Completed" as TRStatus, approvedBy: "Owner" } : x))}>Approve</button>
-                  <button className={dangerBtnClass} onClick={() => setTransfers(p => p.map(x => x.id === t.id ? { ...x, status: "Cancelled" as TRStatus } : x))}>Cancel</button>
+                  <button className={okBtnClass} onClick={() => {
+                    setTransfers(p => p.map(x => x.id === t.id ? { ...x, status: "Completed" as TRStatus, approvedBy: "Owner" } : x))
+                    notify(addNotification, `${t.id} approved and completed.`, "success")
+                  }}>Approve</button>
+                  <button className={dangerBtnClass} onClick={() => {
+                    setTransfers(p => p.map(x => x.id === t.id ? { ...x, status: "Cancelled" as TRStatus } : x))
+                    notify(addNotification, `${t.id} has been cancelled.`, "warning")
+                  }}>Cancel</button>
                 </div>
               )}
             </td>
@@ -626,6 +670,7 @@ function StockTransfer() {
 // ─── Stock Adjustment ─────────────────────────────────────────────────────────
 
 function StockAdjustment() {
+  const { addNotification } = useNotifications()
   const [adjustments, setAdjustments] = useState<Adjustment[]>(() => loadLS("sm_adjustments", []))
   const [showModal,   setShowModal]   = useState(false)
   const [filter,      setFilter]      = useState("All")
@@ -641,9 +686,14 @@ function StockAdjustment() {
 
   function resetForm() { setAdjBranch(BRANCHES[0]); setAdjItem(ITEMS[0]); setAdjQty(""); setAdjUnit(SM_UNITS[0]); setAdjReason(REASONS[0]); setAdjDate(""); setAdjBy("") }
   function submitAdj() {
-    if (!adjQty || !adjDate || !adjBy) return alert("Please fill all required fields.")
+    if (!adjQty || !adjDate || !adjBy) {
+      notify(addNotification, "Please fill all required fields.", "warning")
+      return
+    }
     setAdjustments(p => [{ id: "ADJ-" + String(p.length + 1).padStart(3, "0"), branch: adjBranch, item: adjItem, qty: parseFloat(adjQty) * -1, unit: adjUnit, reason: adjReason, date: adjDate, by: adjBy }, ...p])
-    setShowModal(false); resetForm()
+    setShowModal(false)
+    resetForm()
+    notify(addNotification, "Stock adjustment recorded.", "success")
   }
 
   const filtered = adjustments.filter(a => filter === "All" || a.reason === filter)
@@ -844,6 +894,7 @@ interface MgmtProduct {
 const UNIT_OPTIONS = ["piece", "kg", "g", "liter", "ml", "bottle", "box", "bag", "pack", "dozen"] as const
 
 function InventoryManagementTab() {
+  const { addNotification } = useNotifications()
   const [products,    setProducts]    = useState<MgmtProduct[]>([])
   const [loading,     setLoading]     = useState(true)
   const [saving,      setSaving]      = useState(false)
@@ -908,6 +959,7 @@ function InventoryManagementTab() {
       }
     } catch (error) {
       console.error("Failed to load products:", error)
+      notify(addNotification, "Failed to load products. Please try refreshing.", "error")
     } finally {
       setLoading(false)
     }
@@ -924,7 +976,10 @@ function InventoryManagementTab() {
   }
 
   async function handleAdd() {
-    if (!fName.trim() || !fCat.trim() || !fPrice.trim()) return alert("Please fill Name, Category, and Price.")
+    if (!fName.trim() || !fCat.trim() || !fPrice.trim()) {
+      notify(addNotification, "Please fill in Name, Category, and Price.", "warning")
+      return
+    }
     try {
       setSaving(true)
       await api.post("/products", {
@@ -939,9 +994,10 @@ function InventoryManagementTab() {
       await loadProducts()
       setShowAdd(false)
       resetAddForm()
+      notify(addNotification, `"${fName.trim()}" added successfully.`, "success")
     } catch (error) {
       console.error("Failed to add product:", error)
-      alert(`Failed to add product: ${error instanceof Error ? error.message : "Unknown error"}`)
+      notify(addNotification, `Failed to add product: ${error instanceof Error ? error.message : "Unknown error"}`, "error")
     } finally {
       setSaving(false)
     }
@@ -949,7 +1005,10 @@ function InventoryManagementTab() {
 
   async function handleEdit() {
     if (!editProduct) return
-    if (!eName.trim() || !eCat.trim() || !ePrice.trim()) return alert("Please fill Name, Category, and Price.")
+    if (!eName.trim() || !eCat.trim() || !ePrice.trim()) {
+      notify(addNotification, "Please fill in Name, Category, and Price.", "warning")
+      return
+    }
     try {
       setSaving(true)
       await apiCall(`/products/${editProduct.id}`, {
@@ -964,10 +1023,11 @@ function InventoryManagementTab() {
         }),
       })
       await loadProducts()
+      notify(addNotification, `"${eName.trim()}" updated successfully.`, "success")
       setEditProduct(null)
     } catch (error) {
       console.error("Failed to update product:", error)
-      alert(`Failed to update: ${error instanceof Error ? error.message : "Unknown error"}`)
+      notify(addNotification, `Failed to update: ${error instanceof Error ? error.message : "Unknown error"}`, "error")
     } finally {
       setSaving(false)
     }
@@ -979,9 +1039,10 @@ function InventoryManagementTab() {
       await apiCall(`/products/${id}`, { method: "DELETE" })
       await loadProducts()
       setDeleteId(null)
+      notify(addNotification, "Product deleted successfully.", "success")
     } catch (error) {
       console.error("Failed to delete product:", error)
-      alert(`Failed to delete: ${error instanceof Error ? error.message : "Unknown error"}`)
+      notify(addNotification, `Failed to delete: ${error instanceof Error ? error.message : "Unknown error"}`, "error")
     } finally {
       setSaving(false)
     }
@@ -999,7 +1060,7 @@ function InventoryManagementTab() {
       setProducts(prev => prev.map(p => p.id === id ? { ...p, stock: newStock } : p))
     } catch (error) {
       console.error("Failed to update stock:", error)
-      alert(`Failed to update stock: ${error instanceof Error ? error.message : "Unknown error"}`)
+      notify(addNotification, `Failed to update stock: ${error instanceof Error ? error.message : "Unknown error"}`, "error")
     }
   }
 
@@ -1257,6 +1318,7 @@ function InventoryManagementTab() {
 
 export default function Inventory() {
   const now              = useNow()
+  const { addNotification } = useNotifications()
   const [pageTab,        setPageTab]        = useState<PageTab>("inventory")
   const [loading,        setLoading]        = useState(true)
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([])
@@ -1307,8 +1369,12 @@ export default function Inventory() {
           }))
         )
       }
-    } catch (error) { console.error("Failed to load inventory:", error) }
-    finally         { if (showLoader) setLoading(false) }
+    } catch (error) {
+      console.error("Failed to load inventory:", error)
+      notify(addNotification, "Failed to load inventory. Please try again.", "error")
+    } finally {
+      if (showLoader) setLoading(false)
+    }
   }
 
   useEffect(() => { loadInventory() }, [])
@@ -1339,10 +1405,10 @@ export default function Inventory() {
       }
       setInventoryItems(prev => [optimisticItem, ...prev])
       void loadInventory(false)
-      alert("Product added successfully!")
+      notify(addNotification, "Product added successfully!", "success")
     } catch (error) {
       console.error("Failed to add product:", error)
-      alert(`Failed to add product: ${error instanceof Error ? error.message : "Unknown error"}`)
+      notify(addNotification, `Failed to add product: ${error instanceof Error ? error.message : "Unknown error"}`, "error")
     }
   }
 
@@ -1350,10 +1416,10 @@ export default function Inventory() {
     try {
       await apiCall(`/products/${productId}`, { method: "DELETE" })
       setInventoryItems(prev => prev.filter(item => item.id !== productId))
-      alert("Product deleted successfully!")
+      notify(addNotification, "Product deleted successfully!", "success")
     } catch (error) {
       console.error("Failed to delete product:", error)
-      alert(`Failed to delete product: ${error instanceof Error ? error.message : "Unknown error"}`)
+      notify(addNotification, `Failed to delete product: ${error instanceof Error ? error.message : "Unknown error"}`, "error")
     }
   }
 
@@ -1418,27 +1484,27 @@ export default function Inventory() {
 
         <AnimatePresence mode="wait">
 
-          {/* ── Inventory tab (unchanged) */}
+          {/* ── Inventory tab */}
           {pageTab === "inventory" && (
             <motion.div key="inventory" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.22 }}>
 
               <div className="grid grid-cols-3 gap-5 mb-8">
                 {[
-                  { label: "Total Products", value: inventoryItems.length, icon: <Package   className="w-5 h-5" />, colorCls: "bg-blue-50 text-blue-600 border-blue-100"         },
-                  { label: "Total Stock",    value: totalStock,             icon: <Archive   className="w-5 h-5" />, colorCls: "bg-emerald-50 text-emerald-600 border-emerald-100" },
-                  { label: "Active Batches", value: totalBatches,           icon: <RefreshCw className="w-5 h-5" />, colorCls: "bg-orange-50 text-orange-600 border-orange-100"    },
+                  { label: "Total Products", value: inventoryItems.length, icon: <Package   className="w-[18px] h-[18px]" />, iconBg: "bg-blue-50",    iconColor: "text-blue-500"    },
+                  { label: "Total Stock",    value: totalStock,             icon: <Archive   className="w-[18px] h-[18px]" />, iconBg: "bg-emerald-50", iconColor: "text-emerald-500" },
+                  { label: "Active Batches", value: totalBatches,           icon: <RefreshCw className="w-[18px] h-[18px]" />, iconBg: "bg-orange-50",  iconColor: "text-orange-500"  },
                 ].map((stat, i) => (
                   <motion.div
                     key={stat.label}
                     initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}
                     className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 flex items-center gap-4"
                   >
-                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center border ${stat.colorCls}`}>
+                    <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${stat.iconBg} ${stat.iconColor}`}>
                       {stat.icon}
                     </div>
                     <div>
-                      <p className="text-2xl font-bold text-gray-900">{stat.value}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">{stat.label}</p>
+                      <p className="text-[26px] font-bold text-gray-900 leading-none">{stat.value}</p>
+                      <p className="text-[12px] text-gray-400 mt-1 font-medium">{stat.label}</p>
                     </div>
                   </motion.div>
                 ))}
