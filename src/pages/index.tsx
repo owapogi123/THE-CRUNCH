@@ -4,7 +4,6 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Sidebar } from "@/components/Sidebar";
-import { useNotifications } from "@/lib/NotificationContext";
 import { OrdersTable } from "@/components/orders-table";
 import {
   LineChart,

@@ -13,7 +13,6 @@ import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { api } from "../lib/api";
 import { Sidebar } from "@/components/Sidebar";
-import { useNotifications } from "@/lib/NotificationContext";
 
 interface OrderItem {
   quantity: number;
@@ -168,48 +167,6 @@ export default function Order() {
   const [historyPage, setHistoryPage] = useState(1);
 
   const HISTORY_PAGE_SIZE = 12;
-
-  const parseOrders = (rows: RawOrder[]): OrderCard[] => {
-    const grouped: Record<string, OrderCard> = {};
-
-    rows.forEach((r) => {
-      const id = String(r.id ?? r.orderId ?? "");
-      if (!id) return;
-
-      const rawStatus = String(r.status ?? "").toLowerCase();
-      const isPreparing =
-        rawStatus === "preparing" || rawStatus === "in progress";
-      const isReady = rawStatus === "ready";
-      const orderStatus = (r.order_type ?? r.orderType ?? "dine-in") as
-        | "dine-in"
-        | "take-out"
-        | "delivery";
-
-      if (!grouped[id]) {
-        grouped[id] = {
-          id,
-          orderNumber: r.orderNumber ?? `#${id}`,
-          tableNumber: 0,
-          status: orderStatus,
-          orderType: orderStatus,
-          items: [],
-          isPreparing,
-          isReady,
-          isFinished: false,
-          startedAt: r.startedAt ? new Date(r.startedAt).getTime() : undefined,
-        };
-      }
-
-      if (r.productId ?? r.productName) {
-        grouped[id].items.push({
-          quantity: Number(r.quantity) || 1,
-          name: r.productName ?? `Product #${r.productId}`,
-        });
-      }
-    });
-
-    return Object.values(grouped);
-  };
 
   const parseHistory = (rows: RawOrder[]): HistoryEntry[] => {
     const grouped: Record<string, HistoryEntry> = {};

@@ -1,84 +1,165 @@
 "use client";
 
-import { useState, useEffect } from "react"
-import { InventoryClient } from "@/components/ui/inventoryClient"
-import type { Batch, InventoryItem, UnitType } from "@/components/ui/inventoryClient"
-import { Sidebar } from "@/components/Sidebar"
-import { api, apiCall } from "@/lib/api"
-import { motion, AnimatePresence } from "framer-motion"
-import { Package, RefreshCw, Archive } from "lucide-react"
+import { useState, useEffect } from "react";
+import { InventoryClient } from "@/components/ui/inventoryClient";
+import type {
+  Batch,
+  InventoryItem,
+  UnitType,
+} from "@/components/ui/inventoryClient";
+import { Sidebar } from "@/components/Sidebar";
+import { api, apiCall } from "@/lib/api";
+import { motion, AnimatePresence } from "framer-motion";
+import { Package, RefreshCw, Archive } from "lucide-react";
 import { useNotifications } from "@/lib/NotificationContext";
 
 // ─── Real-time clock hook ─────────────────────────────────────────────────────
 
 function useNow() {
-  const [now, setNow] = useState(new Date())
+  const [now, setNow] = useState(new Date());
   useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 1000)
-    return () => clearInterval(id)
-  }, [])
-  return now
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return now;
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type PageTab  = "inventory" | "management" | "movement"
-type POStatus = "Pending" | "Received" | "Cancelled"
-type TRStatus = "Pending" | "Completed" | "Cancelled"
-type LogType  = "Stock In" | "Transfer" | "Adjustment"
+type PageTab = "inventory" | "management" | "movement";
+type POStatus = "Pending" | "Received" | "Cancelled";
+type TRStatus = "Pending" | "Completed" | "Cancelled";
+type LogType = "Stock In" | "Transfer" | "Adjustment";
 
-interface POItem        { name: string; qty: string; unit: string; cost: string }
-interface PurchaseOrder { id: string; supplier: string; branch: string; date: string; items: POItem[]; status: POStatus; total: number }
-interface StockInRecord { id: string; poRef: string; branch: string; date: string; receivedBy: string; items: Array<{ name: string; qty: string; unit: string }> }
-interface Transfer      { id: string; from: string; to: string; item: string; qty: string; unit: string; date: string; status: TRStatus; approvedBy: string }
-interface Adjustment    { id: string; branch: string; item: string; qty: number; unit: string; reason: string; date: string; by: string }
-interface StockLog      { id: string; date: string; type: LogType; item: string; qty: string; branch: string; by: string; ref: string }
+interface POItem {
+  name: string;
+  qty: string;
+  unit: string;
+  cost: string;
+}
+interface PurchaseOrder {
+  id: string;
+  supplier: string;
+  branch: string;
+  date: string;
+  items: POItem[];
+  status: POStatus;
+  total: number;
+}
+interface StockInRecord {
+  id: string;
+  poRef: string;
+  branch: string;
+  date: string;
+  receivedBy: string;
+  items: Array<{ name: string; qty: string; unit: string }>;
+}
+interface Transfer {
+  id: string;
+  from: string;
+  to: string;
+  item: string;
+  qty: string;
+  unit: string;
+  date: string;
+  status: TRStatus;
+  approvedBy: string;
+}
+interface Adjustment {
+  id: string;
+  branch: string;
+  item: string;
+  qty: number;
+  unit: string;
+  reason: string;
+  date: string;
+  by: string;
+}
+interface StockLog {
+  id: string;
+  date: string;
+  type: LogType;
+  item: string;
+  qty: string;
+  branch: string;
+  by: string;
+  ref: string;
+}
 
 interface ApiInventoryRow {
-  id?: number
-  product_id?: number
-  inventory_id?: number
-  name?: string
-  product_name?: string
-  category?: string
-  image?: string
-  stock?: number
-  quantity?: number
-  price?: number | string
-  unit?: UnitType | string
-  batches?: Batch[]
-  promo?: string
-  isRawMaterial?: number | boolean
-  description?: string
+  id?: number;
+  product_id?: number;
+  inventory_id?: number;
+  name?: string;
+  product_name?: string;
+  category?: string;
+  image?: string;
+  stock?: number;
+  quantity?: number;
+  price?: number | string;
+  unit?: UnitType | string;
+  batches?: Batch[];
+  promo?: string;
+  isRawMaterial?: number | boolean;
+  description?: string;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const BRANCHES  = ["Branch A", "Branch B", "Branch C"] as const
-const SUPPLIERS = ["Metro Farms", "Sunrise Supplies", "FreshVeg Co.", "Golden Grains"] as const
-const SM_UNITS  = ["kg", "pcs", "liters", "boxes", "bags"] as const
-const ITEMS     = ["Chicken Breast", "Beef", "Rice", "All-Purpose Flour", "Cooking Oil", "Tomatoes", "Garlic", "Soy Sauce"] as const
-const REASONS   = ["Spoilage", "Damaged", "Theft", "Correction", "Wastage", "Other"] as const
+const BRANCHES = ["Branch A", "Branch B", "Branch C"] as const;
+const SUPPLIERS = [
+  "Metro Farms",
+  "Sunrise Supplies",
+  "FreshVeg Co.",
+  "Golden Grains",
+] as const;
+const SM_UNITS = ["kg", "pcs", "liters", "boxes", "bags"] as const;
+const ITEMS = [
+  "Chicken Breast",
+  "Beef",
+  "Rice",
+  "All-Purpose Flour",
+  "Cooking Oil",
+  "Tomatoes",
+  "Garlic",
+  "Soy Sauce",
+] as const;
+const REASONS = [
+  "Spoilage",
+  "Damaged",
+  "Theft",
+  "Correction",
+  "Wastage",
+  "Other",
+] as const;
 
 const SM_TABS = [
-  { key: "po",         label: "Purchase Orders" },
-  { key: "stockin",    label: "Stock In"        },
-  { key: "transfer",   label: "Transfer"        },
-  { key: "adjustment", label: "Adjustment"      },
-  { key: "logs",       label: "Logs"            },
-] as const
-type SMTabKey = typeof SM_TABS[number]["key"]
+  { key: "po", label: "Purchase Orders" },
+  { key: "stockin", label: "Stock In" },
+  { key: "transfer", label: "Transfer" },
+  { key: "adjustment", label: "Adjustment" },
+  { key: "logs", label: "Logs" },
+] as const;
+type SMTabKey = (typeof SM_TABS)[number]["key"];
 
 // ─── localStorage helpers ─────────────────────────────────────────────────────
 
 function loadLS<T>(key: string, fallback: T): T {
-  if (typeof window === "undefined") return fallback
-  try { const raw = localStorage.getItem(key); return raw ? (JSON.parse(raw) as T) : fallback }
-  catch { return fallback }
+  if (typeof window === "undefined") return fallback;
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
 }
 function saveLS<T>(key: string, value: T): void {
-  if (typeof window === "undefined") return
-  try { localStorage.setItem(key, JSON.stringify(value)) } catch { /* silent */ }
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* silent */
+  }
 }
 
 // ─── Notification helper ──────────────────────────────────────────────────────
@@ -86,55 +167,75 @@ function saveLS<T>(key: string, value: T): void {
 function notify(
   addNotification: ReturnType<typeof useNotifications>["addNotification"],
   label: string,
-  type: "success" | "error" | "warning" | "info" = "info"
+  type: "success" | "error" | "warning" | "info" = "info",
 ) {
-  addNotification({ id: `${Date.now()}-${Math.random()}`, label, type })
+  addNotification({ id: `${Date.now()}-${Math.random()}`, label, type });
 }
 
 // ─── Badge helpers ────────────────────────────────────────────────────────────
 
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
-    Received:  "bg-green-50 text-green-700",
+    Received: "bg-green-50 text-green-700",
     Completed: "bg-green-50 text-green-700",
-    Pending:   "bg-yellow-50 text-yellow-700",
+    Pending: "bg-yellow-50 text-yellow-700",
     Cancelled: "bg-red-50 text-red-600",
-  }
-  const cls = styles[status] ?? "bg-gray-100 text-gray-500"
+  };
+  const cls = styles[status] ?? "bg-gray-100 text-gray-500";
   return (
-    <span className={`inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${cls}`}>
+    <span
+      className={`inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${cls}`}
+    >
       {status}
     </span>
-  )
+  );
 }
 
 function TypeBadge({ type }: { type: string }) {
   const styles: Record<string, string> = {
-    "Stock In":   "bg-green-50 text-green-700",
-    "Transfer":   "bg-blue-50 text-blue-700",
-    "Adjustment": "bg-red-50 text-red-600",
-  }
-  const cls = styles[type] ?? "bg-gray-100 text-gray-500"
+    "Stock In": "bg-green-50 text-green-700",
+    Transfer: "bg-blue-50 text-blue-700",
+    Adjustment: "bg-red-50 text-red-600",
+  };
+  const cls = styles[type] ?? "bg-gray-100 text-gray-500";
   return (
-    <span className={`inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${cls}`}>
+    <span
+      className={`inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${cls}`}
+    >
       {type}
     </span>
-  )
+  );
 }
 
 // ─── Shared SM UI ─────────────────────────────────────────────────────────────
 
-function SMModal({ title, onClose, children, footer }: { title: string; onClose: () => void; children: React.ReactNode; footer?: React.ReactNode }) {
+function SMModal({
+  title,
+  onClose,
+  children,
+  footer,
+}: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+}) {
   return (
     <div
       className="fixed inset-0 z-[400] flex items-center justify-center p-5 backdrop-blur-sm"
-      style={{ background: "rgba(17,24,39,0.28)", animation: "fadeIn 0.18s ease" }}
+      style={{
+        background: "rgba(17,24,39,0.28)",
+        animation: "fadeIn 0.18s ease",
+      }}
       onClick={onClose}
     >
       <div
         className="bg-white rounded-2xl w-full max-w-[480px] overflow-hidden"
-        style={{ boxShadow: "0 20px 60px rgba(0,0,0,0.1)", animation: "slideUp 0.22s cubic-bezier(.4,0,.2,1)" }}
-        onClick={e => e.stopPropagation()}
+        style={{
+          boxShadow: "0 20px 60px rgba(0,0,0,0.1)",
+          animation: "slideUp 0.22s cubic-bezier(.4,0,.2,1)",
+        }}
+        onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-between items-center px-[22px] py-[17px] border-b border-gray-50">
           <span className="font-bold text-[14px] text-gray-900">{title}</span>
@@ -159,10 +260,16 @@ function SMModal({ title, onClose, children, footer }: { title: string; onClose:
         @keyframes slideUp { from { opacity:0; transform:translateY(12px) scale(0.97) } to { opacity:1; transform:translateY(0) scale(1) } }
       `}</style>
     </div>
-  )
+  );
 }
 
-function FormGroup({ label, children }: { label: string; children: React.ReactNode }) {
+function FormGroup({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="mb-[14px]">
       <label className="block text-[11px] font-bold text-gray-500 mb-[5px] uppercase tracking-[0.5px]">
@@ -170,31 +277,54 @@ function FormGroup({ label, children }: { label: string; children: React.ReactNo
       </label>
       {children}
     </div>
-  )
+  );
 }
 
-const inputClass = "w-full px-[11px] py-2 border-[1.5px] border-gray-200 rounded-lg text-[12.5px] font-[Poppins,sans-serif] text-gray-900 outline-none bg-white transition-all focus:border-gray-400 focus:shadow-[0_0_0_3px_rgba(107,114,128,0.08)] box-border"
+const inputClass =
+  "w-full px-[11px] py-2 border-[1.5px] border-gray-200 rounded-lg text-[12.5px] font-[Poppins,sans-serif] text-gray-900 outline-none bg-white transition-all focus:border-gray-400 focus:shadow-[0_0_0_3px_rgba(107,114,128,0.08)] box-border";
 
-interface FormInputProps extends React.InputHTMLAttributes<HTMLInputElement> { label: string }
+interface FormInputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+  label: string;
+}
 function FormInput({ label, ...rest }: FormInputProps) {
   return (
     <FormGroup label={label}>
       <input className={inputClass} {...rest} />
     </FormGroup>
-  )
+  );
 }
 
-function FormSelect({ label, opts, value, onChange }: { label: string; opts: ReadonlyArray<string>; value: string; onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void }) {
+function FormSelect({
+  label,
+  opts,
+  value,
+  onChange,
+}: {
+  label: string;
+  opts: ReadonlyArray<string>;
+  value: string;
+  onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
+}) {
   return (
     <FormGroup label={label}>
       <select className={inputClass} value={value} onChange={onChange}>
-        {opts.map(o => <option key={o}>{o}</option>)}
+        {opts.map((o) => (
+          <option key={o}>{o}</option>
+        ))}
       </select>
     </FormGroup>
-  )
+  );
 }
 
-function SectionHeader({ title, sub, cta }: { title: string; sub: string; cta?: React.ReactNode }) {
+function SectionHeader({
+  title,
+  sub,
+  cta,
+}: {
+  title: string;
+  sub: string;
+  cta?: React.ReactNode;
+}) {
   return (
     <div className="flex justify-between items-end mb-[14px]">
       <div>
@@ -203,17 +333,28 @@ function SectionHeader({ title, sub, cta }: { title: string; sub: string; cta?: 
       </div>
       {cta}
     </div>
-  )
+  );
 }
 
-function DataTable({ cols, rows, emptyHint }: { cols: string[]; rows: React.ReactNode[]; emptyHint: string }) {
+function DataTable({
+  cols,
+  rows,
+  emptyHint,
+}: {
+  cols: string[];
+  rows: React.ReactNode[];
+  emptyHint: string;
+}) {
   return (
     <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
       <table className="w-full border-collapse">
         <thead>
           <tr className="border-b-[1.5px] border-gray-50">
-            {cols.map(c => (
-              <th key={c} className="px-[14px] py-[10px] text-left text-[10.5px] font-bold text-gray-400 uppercase tracking-[0.6px]">
+            {cols.map((c) => (
+              <th
+                key={c}
+                className="px-[14px] py-[10px] text-left text-[10.5px] font-bold text-gray-400 uppercase tracking-[0.6px]"
+              >
                 {c}
               </th>
             ))}
@@ -224,98 +365,190 @@ function DataTable({ cols, rows, emptyHint }: { cols: string[]; rows: React.Reac
             <tr>
               <td colSpan={cols.length}>
                 <div className="text-center py-[42px]">
-                  <div className="text-[13px] text-gray-400">No records yet</div>
-                  <div className="text-[11px] text-gray-300 mt-[3px]">{emptyHint}</div>
+                  <div className="text-[13px] text-gray-400">
+                    No records yet
+                  </div>
+                  <div className="text-[11px] text-gray-300 mt-[3px]">
+                    {emptyHint}
+                  </div>
                 </div>
               </td>
             </tr>
-          ) : rows}
+          ) : (
+            rows
+          )}
         </tbody>
       </table>
     </div>
-  )
+  );
 }
 
-function StatCard({ label, value, meta, color }: { label: string; value: number | string; meta?: string; color: "blue" | "green" | "yellow" | "red" }) {
+function StatCard({
+  label,
+  value,
+  meta,
+  color,
+}: {
+  label: string;
+  value: number | string;
+  meta?: string;
+  color: "blue" | "green" | "yellow" | "red";
+}) {
   const colorMap = {
-    green:  { border: "#16a34a", text: "#16a34a" },
+    green: { border: "#16a34a", text: "#16a34a" },
     yellow: { border: "#ca8a04", text: "#ca8a04" },
-    red:    { border: "#dc2626", text: "#dc2626" },
-    blue:   { border: "#4f46e5", text: "#4f46e5" },
-  }
-  const c = colorMap[color]
+    red: { border: "#dc2626", text: "#dc2626" },
+    blue: { border: "#4f46e5", text: "#4f46e5" },
+  };
+  const c = colorMap[color];
   return (
     <div
       className="bg-white rounded-xl px-[18px] py-[15px] border border-gray-100 hover:shadow-md transition-shadow"
       style={{ borderTop: `3px solid ${c.border}` }}
     >
-      <div className="text-[10px] font-bold uppercase tracking-[0.6px] mb-[7px]" style={{ color: c.text }}>
+      <div
+        className="text-[10px] font-bold uppercase tracking-[0.6px] mb-[7px]"
+        style={{ color: c.text }}
+      >
         {label}
       </div>
-      <div className="text-[24px] font-extrabold leading-none" style={{ color: c.text }}>
+      <div
+        className="text-[24px] font-extrabold leading-none"
+        style={{ color: c.text }}
+      >
         {value}
       </div>
       {meta && <div className="text-[11px] mt-1 text-gray-400">{meta}</div>}
     </div>
-  )
+  );
 }
 
-const ghostBtnClass   = "bg-gray-100 text-gray-700 border-none cursor-pointer font-[Poppins,sans-serif] font-semibold text-[11.5px] rounded-[7px] px-[11px] py-1 hover:opacity-80 transition-opacity"
-const okBtnClass      = "bg-green-50 text-green-700 border-none cursor-pointer font-[Poppins,sans-serif] font-semibold text-[11.5px] rounded-[7px] px-[11px] py-1 hover:opacity-80 transition-opacity"
-const dangerBtnClass  = "bg-red-50 text-red-600 border-none cursor-pointer font-[Poppins,sans-serif] font-semibold text-[11.5px] rounded-[7px] px-[11px] py-1 hover:opacity-80 transition-opacity"
-const primaryBtnClass = "bg-white text-gray-700 border border-gray-200 cursor-pointer font-[Poppins,sans-serif] font-semibold text-[12.5px] rounded-[9px] px-[18px] py-2 hover:bg-gray-50 hover:border-gray-400 hover:text-gray-900 transition-all"
+const ghostBtnClass =
+  "bg-gray-100 text-gray-700 border-none cursor-pointer font-[Poppins,sans-serif] font-semibold text-[11.5px] rounded-[7px] px-[11px] py-1 hover:opacity-80 transition-opacity";
+const okBtnClass =
+  "bg-green-50 text-green-700 border-none cursor-pointer font-[Poppins,sans-serif] font-semibold text-[11.5px] rounded-[7px] px-[11px] py-1 hover:opacity-80 transition-opacity";
+const dangerBtnClass =
+  "bg-red-50 text-red-600 border-none cursor-pointer font-[Poppins,sans-serif] font-semibold text-[11.5px] rounded-[7px] px-[11px] py-1 hover:opacity-80 transition-opacity";
+const primaryBtnClass =
+  "bg-white text-gray-700 border border-gray-200 cursor-pointer font-[Poppins,sans-serif] font-semibold text-[12.5px] rounded-[9px] px-[18px] py-2 hover:bg-gray-50 hover:border-gray-400 hover:text-gray-900 transition-all";
 
 // ─── Purchase Orders ──────────────────────────────────────────────────────────
 
 function PurchaseOrders() {
-  const { addNotification } = useNotifications()
-  const [pos,        setPOs]        = useState<PurchaseOrder[]>(() => loadLS("sm_pos", []))
-  const [showCreate, setShowCreate] = useState(false)
-  const [viewPO,     setViewPO]     = useState<PurchaseOrder | null>(null)
-  const [search,     setSearch]     = useState("")
-  const [filter,     setFilter]     = useState("All")
-  const [poSupplier, setPoSupplier] = useState<string>(SUPPLIERS[0])
-  const [poBranch,   setPoBranch]   = useState<string>(BRANCHES[0])
-  const [poDate,     setPoDate]     = useState("")
-  const [poItems,    setPoItems]    = useState<POItem[]>([{ name: ITEMS[0], qty: "", unit: "kg", cost: "" }])
+  const { addNotification } = useNotifications();
+  const [pos, setPOs] = useState<PurchaseOrder[]>(() => loadLS("sm_pos", []));
+  const [showCreate, setShowCreate] = useState(false);
+  const [viewPO, setViewPO] = useState<PurchaseOrder | null>(null);
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("All");
+  const [poSupplier, setPoSupplier] = useState<string>(SUPPLIERS[0]);
+  const [poBranch, setPoBranch] = useState<string>(BRANCHES[0]);
+  const [poDate, setPoDate] = useState("");
+  const [poItems, setPoItems] = useState<POItem[]>([
+    { name: ITEMS[0], qty: "", unit: "kg", cost: "" },
+  ]);
 
-  useEffect(() => { saveLS("sm_pos", pos) }, [pos])
+  useEffect(() => {
+    saveLS("sm_pos", pos);
+  }, [pos]);
 
-  function resetForm() { setPoSupplier(SUPPLIERS[0]); setPoBranch(BRANCHES[0]); setPoDate(""); setPoItems([{ name: ITEMS[0], qty: "", unit: "kg", cost: "" }]) }
-  function addPoItem() { setPoItems(p => [...p, { name: ITEMS[0], qty: "", unit: "kg", cost: "" }]) }
-  function removePoItem(i: number) { setPoItems(p => p.filter((_, x) => x !== i)) }
-  function updatePoItem(i: number, field: keyof POItem, val: string) { setPoItems(p => p.map((it, x) => x !== i ? it : { ...it, [field]: val })) }
-  const total = poItems.reduce((s, it) => s + (parseFloat(it.qty) || 0) * (parseFloat(it.cost) || 0), 0)
+  function resetForm() {
+    setPoSupplier(SUPPLIERS[0]);
+    setPoBranch(BRANCHES[0]);
+    setPoDate("");
+    setPoItems([{ name: ITEMS[0], qty: "", unit: "kg", cost: "" }]);
+  }
+  function addPoItem() {
+    setPoItems((p) => [
+      ...p,
+      { name: ITEMS[0], qty: "", unit: "kg", cost: "" },
+    ]);
+  }
+  function removePoItem(i: number) {
+    setPoItems((p) => p.filter((_, x) => x !== i));
+  }
+  function updatePoItem(i: number, field: keyof POItem, val: string) {
+    setPoItems((p) =>
+      p.map((it, x) => (x !== i ? it : { ...it, [field]: val })),
+    );
+  }
+  const total = poItems.reduce(
+    (s, it) => s + (parseFloat(it.qty) || 0) * (parseFloat(it.cost) || 0),
+    0,
+  );
 
   function submitPO() {
     if (!poDate) {
-      notify(addNotification, "Please set a date.", "warning")
-      return
+      notify(addNotification, "Please set a date.", "warning");
+      return;
     }
-    setPOs(p => [{ id: "PO-" + String(p.length + 1).padStart(3, "0"), supplier: poSupplier, branch: poBranch, date: poDate, items: poItems, status: "Pending", total }, ...p])
-    setShowCreate(false)
-    resetForm()
-    notify(addNotification, "Purchase order created successfully.", "success")
+    setPOs((p) => [
+      {
+        id: "PO-" + String(p.length + 1).padStart(3, "0"),
+        supplier: poSupplier,
+        branch: poBranch,
+        date: poDate,
+        items: poItems,
+        status: "Pending",
+        total,
+      },
+      ...p,
+    ]);
+    setShowCreate(false);
+    resetForm();
+    notify(addNotification, "Purchase order created successfully.", "success");
   }
 
-  const filtered = pos.filter(p => {
-    const s = search.toLowerCase()
-    return (p.id.toLowerCase().includes(s) || p.supplier.toLowerCase().includes(s) || p.branch.toLowerCase().includes(s)) && (filter === "All" || p.status === filter)
-  })
+  const filtered = pos.filter((p) => {
+    const s = search.toLowerCase();
+    return (
+      (p.id.toLowerCase().includes(s) ||
+        p.supplier.toLowerCase().includes(s) ||
+        p.branch.toLowerCase().includes(s)) &&
+      (filter === "All" || p.status === filter)
+    );
+  });
 
   return (
     <div>
       <div className="grid grid-cols-4 gap-3 mb-5">
-        <StatCard label="Total POs"  value={pos.length}                                       meta="All time"  color="blue"   />
-        <StatCard label="Pending"    value={pos.filter(p => p.status === "Pending").length}   meta="Awaiting"  color="yellow" />
-        <StatCard label="Received"   value={pos.filter(p => p.status === "Received").length}  meta="Completed" color="green"  />
-        <StatCard label="Cancelled"  value={pos.filter(p => p.status === "Cancelled").length} meta="Voided"    color="red"    />
+        <StatCard
+          label="Total POs"
+          value={pos.length}
+          meta="All time"
+          color="blue"
+        />
+        <StatCard
+          label="Pending"
+          value={pos.filter((p) => p.status === "Pending").length}
+          meta="Awaiting"
+          color="yellow"
+        />
+        <StatCard
+          label="Received"
+          value={pos.filter((p) => p.status === "Received").length}
+          meta="Completed"
+          color="green"
+        />
+        <StatCard
+          label="Cancelled"
+          value={pos.filter((p) => p.status === "Cancelled").length}
+          meta="Voided"
+          color="red"
+        />
       </div>
 
       <SectionHeader
         title="Purchase Orders"
         sub="Manage supplier orders across all branches"
-        cta={<button className={primaryBtnClass} onClick={() => setShowCreate(true)}>+ New PO</button>}
+        cta={
+          <button
+            className={primaryBtnClass}
+            onClick={() => setShowCreate(true)}
+          >
+            + New PO
+          </button>
+        }
       />
 
       <div className="flex items-center gap-2 mb-[14px] flex-wrap">
@@ -324,10 +557,10 @@ function PurchaseOrders() {
             className="w-full px-3 py-2 border-[1.5px] border-gray-200 rounded-[9px] text-[12.5px] font-[Poppins,sans-serif] text-gray-700 outline-none bg-white transition-all focus:border-gray-400 box-border"
             placeholder="Search PO number, supplier, branch…"
             value={search}
-            onChange={e => setSearch(e.target.value)}
+            onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        {["All", "Pending", "Received", "Cancelled"].map(f => (
+        {["All", "Pending", "Received", "Cancelled"].map((f) => (
           <button
             key={f}
             onClick={() => setFilter(f)}
@@ -339,29 +572,86 @@ function PurchaseOrders() {
       </div>
 
       <DataTable
-        cols={["PO #", "Supplier", "Branch", "Date", "Total", "Status", "Actions"]}
+        cols={[
+          "PO #",
+          "Supplier",
+          "Branch",
+          "Date",
+          "Total",
+          "Status",
+          "Actions",
+        ]}
         emptyHint="Create a purchase order to get started."
-        rows={filtered.map(po => (
-          <tr key={po.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors last:border-b-0">
-            <td className="px-[14px] py-[11px] text-[12.5px] font-bold text-gray-900">{po.id}</td>
-            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">{po.supplier}</td>
-            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">{po.branch}</td>
-            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">{po.date}</td>
-            <td className="px-[14px] py-[11px] text-[12.5px] font-bold text-green-700">₱{po.total.toLocaleString()}</td>
-            <td className="px-[14px] py-[11px]"><StatusBadge status={po.status} /></td>
+        rows={filtered.map((po) => (
+          <tr
+            key={po.id}
+            className="border-b border-gray-50 hover:bg-gray-50 transition-colors last:border-b-0"
+          >
+            <td className="px-[14px] py-[11px] text-[12.5px] font-bold text-gray-900">
+              {po.id}
+            </td>
+            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">
+              {po.supplier}
+            </td>
+            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">
+              {po.branch}
+            </td>
+            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">
+              {po.date}
+            </td>
+            <td className="px-[14px] py-[11px] text-[12.5px] font-bold text-green-700">
+              ₱{po.total.toLocaleString()}
+            </td>
+            <td className="px-[14px] py-[11px]">
+              <StatusBadge status={po.status} />
+            </td>
             <td className="px-[14px] py-[11px]">
               <div className="flex gap-[5px]">
-                <button className={ghostBtnClass} onClick={() => setViewPO(po)}>View</button>
-                {po.status === "Pending" && <>
-                  <button className={okBtnClass} onClick={() => {
-                    setPOs(p => p.map(x => x.id === po.id ? { ...x, status: "Received" as POStatus } : x))
-                    notify(addNotification, `${po.id} marked as Received.`, "success")
-                  }}>Receive</button>
-                  <button className={dangerBtnClass} onClick={() => {
-                    setPOs(p => p.map(x => x.id === po.id ? { ...x, status: "Cancelled" as POStatus } : x))
-                    notify(addNotification, `${po.id} has been cancelled.`, "warning")
-                  }}>Cancel</button>
-                </>}
+                <button className={ghostBtnClass} onClick={() => setViewPO(po)}>
+                  View
+                </button>
+                {po.status === "Pending" && (
+                  <>
+                    <button
+                      className={okBtnClass}
+                      onClick={() => {
+                        setPOs((p) =>
+                          p.map((x) =>
+                            x.id === po.id
+                              ? { ...x, status: "Received" as POStatus }
+                              : x,
+                          ),
+                        );
+                        notify(
+                          addNotification,
+                          `${po.id} marked as Received.`,
+                          "success",
+                        );
+                      }}
+                    >
+                      Receive
+                    </button>
+                    <button
+                      className={dangerBtnClass}
+                      onClick={() => {
+                        setPOs((p) =>
+                          p.map((x) =>
+                            x.id === po.id
+                              ? { ...x, status: "Cancelled" as POStatus }
+                              : x,
+                          ),
+                        );
+                        notify(
+                          addNotification,
+                          `${po.id} has been cancelled.`,
+                          "warning",
+                        );
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </>
+                )}
               </div>
             </td>
           </tr>
@@ -371,29 +661,92 @@ function PurchaseOrders() {
       {showCreate && (
         <SMModal
           title="Create Purchase Order"
-          onClose={() => { setShowCreate(false); resetForm() }}
+          onClose={() => {
+            setShowCreate(false);
+            resetForm();
+          }}
           footer={
             <>
-              <button className={ghostBtnClass}   onClick={() => { setShowCreate(false); resetForm() }}>Discard</button>
-              <button className={primaryBtnClass} onClick={submitPO}>Submit PO</button>
+              <button
+                className={ghostBtnClass}
+                onClick={() => {
+                  setShowCreate(false);
+                  resetForm();
+                }}
+              >
+                Discard
+              </button>
+              <button className={primaryBtnClass} onClick={submitPO}>
+                Submit PO
+              </button>
             </>
           }
         >
-          <FormSelect label="Supplier" opts={SUPPLIERS} value={poSupplier} onChange={e => setPoSupplier(e.target.value)} />
-          <FormSelect label="Branch"   opts={BRANCHES}  value={poBranch}   onChange={e => setPoBranch(e.target.value)} />
-          <FormInput  label="Expected Date" type="date" value={poDate} onChange={e => setPoDate(e.target.value)} />
-          <label className="block text-[11px] font-bold text-gray-500 mb-[6px] uppercase tracking-[0.5px]">Order Items</label>
+          <FormSelect
+            label="Supplier"
+            opts={SUPPLIERS}
+            value={poSupplier}
+            onChange={(e) => setPoSupplier(e.target.value)}
+          />
+          <FormSelect
+            label="Branch"
+            opts={BRANCHES}
+            value={poBranch}
+            onChange={(e) => setPoBranch(e.target.value)}
+          />
+          <FormInput
+            label="Expected Date"
+            type="date"
+            value={poDate}
+            onChange={(e) => setPoDate(e.target.value)}
+          />
+          <label className="block text-[11px] font-bold text-gray-500 mb-[6px] uppercase tracking-[0.5px]">
+            Order Items
+          </label>
           {poItems.map((item, i) => (
-            <div key={i} className="grid gap-[6px] mb-[7px] items-end" style={{ gridTemplateColumns: "2fr 1fr 1fr 1fr auto" }}>
-              <select className={inputClass} value={item.name} onChange={e => updatePoItem(i, "name", e.target.value)}>
-                {ITEMS.map(it => <option key={it}>{it}</option>)}
+            <div
+              key={i}
+              className="grid gap-[6px] mb-[7px] items-end"
+              style={{ gridTemplateColumns: "2fr 1fr 1fr 1fr auto" }}
+            >
+              <select
+                className={inputClass}
+                value={item.name}
+                onChange={(e) => updatePoItem(i, "name", e.target.value)}
+              >
+                {ITEMS.map((it) => (
+                  <option key={it}>{it}</option>
+                ))}
               </select>
-              <input  className={inputClass} placeholder="Qty"  type="number" value={item.qty}  onChange={e => updatePoItem(i, "qty",  e.target.value)} />
-              <select className={inputClass} value={item.unit}  onChange={e => updatePoItem(i, "unit", e.target.value)}>
-                {SM_UNITS.map(u => <option key={u}>{u}</option>)}
+              <input
+                className={inputClass}
+                placeholder="Qty"
+                type="number"
+                value={item.qty}
+                onChange={(e) => updatePoItem(i, "qty", e.target.value)}
+              />
+              <select
+                className={inputClass}
+                value={item.unit}
+                onChange={(e) => updatePoItem(i, "unit", e.target.value)}
+              >
+                {SM_UNITS.map((u) => (
+                  <option key={u}>{u}</option>
+                ))}
               </select>
-              <input  className={inputClass} placeholder="Cost" type="number" value={item.cost} onChange={e => updatePoItem(i, "cost", e.target.value)} />
-              <button onClick={() => removePoItem(i)} className="bg-red-50 text-red-600 border-none rounded-[7px] px-[9px] py-[6px] cursor-pointer text-[13px] font-bold hover:opacity-75 transition-opacity">×</button>
+              <input
+                className={inputClass}
+                placeholder="Cost"
+                type="number"
+                value={item.cost}
+                onChange={(e) => updatePoItem(i, "cost", e.target.value)}
+              />
+              <button
+                onClick={() => removePoItem(i)}
+                className="bg-red-50 text-red-600 border-none rounded-[7px] px-[9px] py-[6px] cursor-pointer text-[13px] font-bold hover:opacity-75 transition-opacity"
+              >
+                ×
+              </button>
             </div>
           ))}
           <button
@@ -403,8 +756,12 @@ function PurchaseOrders() {
             + Add another item
           </button>
           <div className="mt-3 px-[13px] py-[10px] bg-gray-50 rounded-[9px] flex justify-between items-center">
-            <span className="text-[12px] text-gray-500 font-semibold">Total Amount</span>
-            <span className="font-extrabold text-green-700 text-[15px]">₱{total.toLocaleString()}</span>
+            <span className="text-[12px] text-gray-500 font-semibold">
+              Total Amount
+            </span>
+            <span className="font-extrabold text-green-700 text-[15px]">
+              ₱{total.toLocaleString()}
+            </span>
           </div>
         </SMModal>
       )}
@@ -413,72 +770,155 @@ function PurchaseOrders() {
         <SMModal
           title={`${viewPO.id} — Details`}
           onClose={() => setViewPO(null)}
-          footer={<button className={ghostBtnClass} onClick={() => setViewPO(null)}>Close</button>}
+          footer={
+            <button className={ghostBtnClass} onClick={() => setViewPO(null)}>
+              Close
+            </button>
+          }
         >
           <div className="grid grid-cols-2 gap-[9px] mb-4">
-            {([["Supplier", viewPO.supplier], ["Branch", viewPO.branch], ["Date", viewPO.date], ["Status", viewPO.status]] as [string, string][]).map(([k, v]) => (
-              <div key={k} className="bg-gray-50 rounded-[9px] px-[13px] py-[10px]">
-                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-[0.5px]">{k}</div>
-                <div className="text-[13px] font-semibold text-gray-900 mt-[3px]">{v}</div>
+            {(
+              [
+                ["Supplier", viewPO.supplier],
+                ["Branch", viewPO.branch],
+                ["Date", viewPO.date],
+                ["Status", viewPO.status],
+              ] as [string, string][]
+            ).map(([k, v]) => (
+              <div
+                key={k}
+                className="bg-gray-50 rounded-[9px] px-[13px] py-[10px]"
+              >
+                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-[0.5px]">
+                  {k}
+                </div>
+                <div className="text-[13px] font-semibold text-gray-900 mt-[3px]">
+                  {v}
+                </div>
               </div>
             ))}
           </div>
-          <label className="block text-[11px] font-bold text-gray-500 mb-2 uppercase tracking-[0.5px]">Items Ordered</label>
+          <label className="block text-[11px] font-bold text-gray-500 mb-2 uppercase tracking-[0.5px]">
+            Items Ordered
+          </label>
           {viewPO.items.map((it, i) => (
-            <div key={i} className="flex justify-between py-[9px] border-b border-gray-50 text-[13px] last:border-b-0">
+            <div
+              key={i}
+              className="flex justify-between py-[9px] border-b border-gray-50 text-[13px] last:border-b-0"
+            >
               <span className="text-gray-700">{it.name}</span>
-              <span className="text-gray-500 font-semibold">{it.qty} {it.unit}</span>
+              <span className="text-gray-500 font-semibold">
+                {it.qty} {it.unit}
+              </span>
             </div>
           ))}
-          <div className="mt-[14px] text-right font-extrabold text-green-700 text-[15px]">₱{viewPO.total.toLocaleString()}</div>
+          <div className="mt-[14px] text-right font-extrabold text-green-700 text-[15px]">
+            ₱{viewPO.total.toLocaleString()}
+          </div>
         </SMModal>
       )}
     </div>
-  )
+  );
 }
 
 // ─── Stock In ─────────────────────────────────────────────────────────────────
 
 function StockIn() {
-  const { addNotification } = useNotifications()
-  const [records,   setRecords]   = useState<StockInRecord[]>(() => loadLS("sm_stockin", []))
-  const [showModal, setShowModal] = useState(false)
-  const [search,    setSearch]    = useState("")
-  const [siPoRef,   setSiPoRef]   = useState("")
-  const [siBranch,  setSiBranch]  = useState<string>(BRANCHES[0])
-  const [siDate,    setSiDate]    = useState("")
-  const [siRecBy,   setSiRecBy]   = useState("")
-  const [siItems,   setSiItems]   = useState<Array<{ name: string; qty: string; unit: string }>>([{ name: ITEMS[0], qty: "", unit: "kg" }])
+  const { addNotification } = useNotifications();
+  const [records, setRecords] = useState<StockInRecord[]>(() =>
+    loadLS("sm_stockin", []),
+  );
+  const [showModal, setShowModal] = useState(false);
+  const [search, setSearch] = useState("");
+  const [siPoRef, setSiPoRef] = useState("");
+  const [siBranch, setSiBranch] = useState<string>(BRANCHES[0]);
+  const [siDate, setSiDate] = useState("");
+  const [siRecBy, setSiRecBy] = useState("");
+  const [siItems, setSiItems] = useState<
+    Array<{ name: string; qty: string; unit: string }>
+  >([{ name: ITEMS[0], qty: "", unit: "kg" }]);
 
-  useEffect(() => { saveLS("sm_stockin", records) }, [records])
+  useEffect(() => {
+    saveLS("sm_stockin", records);
+  }, [records]);
 
-  function resetForm() { setSiPoRef(""); setSiBranch(BRANCHES[0]); setSiDate(""); setSiRecBy(""); setSiItems([{ name: ITEMS[0], qty: "", unit: "kg" }]) }
+  function resetForm() {
+    setSiPoRef("");
+    setSiBranch(BRANCHES[0]);
+    setSiDate("");
+    setSiRecBy("");
+    setSiItems([{ name: ITEMS[0], qty: "", unit: "kg" }]);
+  }
   function submitSI() {
     if (!siDate || !siRecBy) {
-      notify(addNotification, "Please fill all required fields.", "warning")
-      return
+      notify(addNotification, "Please fill all required fields.", "warning");
+      return;
     }
-    setRecords(p => [{ id: "SI-" + String(p.length + 1).padStart(3, "0"), poRef: siPoRef, branch: siBranch, date: siDate, receivedBy: siRecBy, items: siItems }, ...p])
-    setShowModal(false)
-    resetForm()
-    notify(addNotification, "Stock-in record saved successfully.", "success")
+    setRecords((p) => [
+      {
+        id: "SI-" + String(p.length + 1).padStart(3, "0"),
+        poRef: siPoRef,
+        branch: siBranch,
+        date: siDate,
+        receivedBy: siRecBy,
+        items: siItems,
+      },
+      ...p,
+    ]);
+    setShowModal(false);
+    resetForm();
+    notify(addNotification, "Stock-in record saved successfully.", "success");
   }
 
-  const filtered = records.filter(r => { const s = search.toLowerCase(); return r.id.toLowerCase().includes(s) || r.branch.toLowerCase().includes(s) || r.receivedBy.toLowerCase().includes(s) })
+  const filtered = records.filter((r) => {
+    const s = search.toLowerCase();
+    return (
+      r.id.toLowerCase().includes(s) ||
+      r.branch.toLowerCase().includes(s) ||
+      r.receivedBy.toLowerCase().includes(s)
+    );
+  });
 
   return (
     <div>
       <div className="grid grid-cols-4 gap-3 mb-5">
-        <StatCard label="Total Deliveries" value={records.length}                                meta="All time"   color="blue"   />
-        <StatCard label="This Month"        value={records.length}                                meta="March 2026" color="green"  />
-        <StatCard label="Branches Covered"  value={new Set(records.map(r => r.branch)).size}     meta="Unique"     color="yellow" />
-        <StatCard label="Linked to PO"      value={records.filter(r => r.poRef !== "").length}   meta="With ref"   color="blue"   />
+        <StatCard
+          label="Total Deliveries"
+          value={records.length}
+          meta="All time"
+          color="blue"
+        />
+        <StatCard
+          label="This Month"
+          value={records.length}
+          meta="March 2026"
+          color="green"
+        />
+        <StatCard
+          label="Branches Covered"
+          value={new Set(records.map((r) => r.branch)).size}
+          meta="Unique"
+          color="yellow"
+        />
+        <StatCard
+          label="Linked to PO"
+          value={records.filter((r) => r.poRef !== "").length}
+          meta="With ref"
+          color="blue"
+        />
       </div>
 
       <SectionHeader
         title="Stock In"
         sub="Record incoming deliveries and stock arrivals"
-        cta={<button className={primaryBtnClass} onClick={() => setShowModal(true)}>+ Record Stock In</button>}
+        cta={
+          <button
+            className={primaryBtnClass}
+            onClick={() => setShowModal(true)}
+          >
+            + Record Stock In
+          </button>
+        }
       />
 
       <div className="flex items-center gap-2 mb-[14px]">
@@ -487,23 +927,47 @@ function StockIn() {
             className="w-full px-3 py-2 border-[1.5px] border-gray-200 rounded-[9px] text-[12.5px] font-[Poppins,sans-serif] text-gray-700 outline-none bg-white transition-all focus:border-gray-400 box-border"
             placeholder="Search SI number, branch, received by…"
             value={search}
-            onChange={e => setSearch(e.target.value)}
+            onChange={(e) => setSearch(e.target.value)}
           />
         </div>
       </div>
 
       <DataTable
-        cols={["SI #", "PO Reference", "Branch", "Date", "Received By", "Items"]}
+        cols={[
+          "SI #",
+          "PO Reference",
+          "Branch",
+          "Date",
+          "Received By",
+          "Items",
+        ]}
         emptyHint="Record a delivery to get started."
-        rows={filtered.map(r => (
-          <tr key={r.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors last:border-b-0">
-            <td className="px-[14px] py-[11px] text-[12.5px] font-bold text-gray-900">{r.id}</td>
-            <td className={`px-[14px] py-[11px] text-[12.5px] ${r.poRef ? "text-indigo-600 font-semibold" : "text-gray-400"}`}>{r.poRef || "—"}</td>
-            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">{r.branch}</td>
-            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">{r.date}</td>
-            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">{r.receivedBy}</td>
+        rows={filtered.map((r) => (
+          <tr
+            key={r.id}
+            className="border-b border-gray-50 hover:bg-gray-50 transition-colors last:border-b-0"
+          >
+            <td className="px-[14px] py-[11px] text-[12.5px] font-bold text-gray-900">
+              {r.id}
+            </td>
+            <td
+              className={`px-[14px] py-[11px] text-[12.5px] ${r.poRef ? "text-indigo-600 font-semibold" : "text-gray-400"}`}
+            >
+              {r.poRef || "—"}
+            </td>
+            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">
+              {r.branch}
+            </td>
+            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">
+              {r.date}
+            </td>
+            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">
+              {r.receivedBy}
+            </td>
             <td className="px-[14px] py-[11px] text-[12.5px] text-gray-500 max-w-[200px] overflow-hidden text-ellipsis whitespace-nowrap">
-              {r.items.map(it => `${it.name} (${it.qty} ${it.unit})`).join(", ")}
+              {r.items
+                .map((it) => `${it.name} (${it.qty} ${it.unit})`)
+                .join(", ")}
             </td>
           </tr>
         ))}
@@ -512,32 +976,109 @@ function StockIn() {
       {showModal && (
         <SMModal
           title="Record Stock In"
-          onClose={() => { setShowModal(false); resetForm() }}
+          onClose={() => {
+            setShowModal(false);
+            resetForm();
+          }}
           footer={
             <>
-              <button className={ghostBtnClass}   onClick={() => { setShowModal(false); resetForm() }}>Discard</button>
-              <button className={primaryBtnClass} onClick={submitSI}>Save Record</button>
+              <button
+                className={ghostBtnClass}
+                onClick={() => {
+                  setShowModal(false);
+                  resetForm();
+                }}
+              >
+                Discard
+              </button>
+              <button className={primaryBtnClass} onClick={submitSI}>
+                Save Record
+              </button>
             </>
           }
         >
-          <FormInput  label="PO Reference (optional)" placeholder="e.g. PO-002" value={siPoRef}  onChange={e => setSiPoRef(e.target.value)} />
-          <FormSelect label="Branch"                   opts={BRANCHES}            value={siBranch} onChange={e => setSiBranch(e.target.value)} />
-          <FormInput  label="Date Received" type="date" value={siDate} onChange={e => setSiDate(e.target.value)} />
-          <FormInput  label="Received By" placeholder="Staff name" value={siRecBy} onChange={e => setSiRecBy(e.target.value)} />
-          <label className="block text-[11px] font-bold text-gray-500 mb-[6px] uppercase tracking-[0.5px]">Items Received</label>
+          <FormInput
+            label="PO Reference (optional)"
+            placeholder="e.g. PO-002"
+            value={siPoRef}
+            onChange={(e) => setSiPoRef(e.target.value)}
+          />
+          <FormSelect
+            label="Branch"
+            opts={BRANCHES}
+            value={siBranch}
+            onChange={(e) => setSiBranch(e.target.value)}
+          />
+          <FormInput
+            label="Date Received"
+            type="date"
+            value={siDate}
+            onChange={(e) => setSiDate(e.target.value)}
+          />
+          <FormInput
+            label="Received By"
+            placeholder="Staff name"
+            value={siRecBy}
+            onChange={(e) => setSiRecBy(e.target.value)}
+          />
+          <label className="block text-[11px] font-bold text-gray-500 mb-[6px] uppercase tracking-[0.5px]">
+            Items Received
+          </label>
           {siItems.map((item, i) => (
-            <div key={i} className="grid gap-[6px] mb-[7px] items-end" style={{ gridTemplateColumns: "2fr 1fr 1fr" }}>
-              <select className={inputClass} value={item.name} onChange={e => setSiItems(p => p.map((it, x) => x !== i ? it : { ...it, name: e.target.value }))}>
-                {ITEMS.map(it => <option key={it}>{it}</option>)}
+            <div
+              key={i}
+              className="grid gap-[6px] mb-[7px] items-end"
+              style={{ gridTemplateColumns: "2fr 1fr 1fr" }}
+            >
+              <select
+                className={inputClass}
+                value={item.name}
+                onChange={(e) =>
+                  setSiItems((p) =>
+                    p.map((it, x) =>
+                      x !== i ? it : { ...it, name: e.target.value },
+                    ),
+                  )
+                }
+              >
+                {ITEMS.map((it) => (
+                  <option key={it}>{it}</option>
+                ))}
               </select>
-              <input  className={inputClass} placeholder="Qty" type="number" value={item.qty}  onChange={e => setSiItems(p => p.map((it, x) => x !== i ? it : { ...it, qty:  e.target.value }))} />
-              <select className={inputClass} value={item.unit} onChange={e => setSiItems(p => p.map((it, x) => x !== i ? it : { ...it, unit: e.target.value }))}>
-                {SM_UNITS.map(u => <option key={u}>{u}</option>)}
+              <input
+                className={inputClass}
+                placeholder="Qty"
+                type="number"
+                value={item.qty}
+                onChange={(e) =>
+                  setSiItems((p) =>
+                    p.map((it, x) =>
+                      x !== i ? it : { ...it, qty: e.target.value },
+                    ),
+                  )
+                }
+              />
+              <select
+                className={inputClass}
+                value={item.unit}
+                onChange={(e) =>
+                  setSiItems((p) =>
+                    p.map((it, x) =>
+                      x !== i ? it : { ...it, unit: e.target.value },
+                    ),
+                  )
+                }
+              >
+                {SM_UNITS.map((u) => (
+                  <option key={u}>{u}</option>
+                ))}
               </select>
             </div>
           ))}
           <button
-            onClick={() => setSiItems(p => [...p, { name: ITEMS[0], qty: "", unit: "kg" }])}
+            onClick={() =>
+              setSiItems((p) => [...p, { name: ITEMS[0], qty: "", unit: "kg" }])
+            }
             className="w-full mt-0.5 border-[1.5px] border-dashed border-gray-300 text-gray-400 bg-transparent rounded-lg py-[7px] text-[12px] font-semibold cursor-pointer hover:border-gray-400 hover:text-gray-600 transition-colors font-[Poppins,sans-serif]"
           >
             + Add another item
@@ -545,60 +1086,118 @@ function StockIn() {
         </SMModal>
       )}
     </div>
-  )
+  );
 }
 
 // ─── Stock Transfer ───────────────────────────────────────────────────────────
 
 function StockTransfer() {
-  const { addNotification } = useNotifications()
-  const [transfers, setTransfers] = useState<Transfer[]>(() => loadLS("sm_transfers", []))
-  const [showModal, setShowModal] = useState(false)
-  const [filter,    setFilter]    = useState("All")
-  const [trFrom,    setTrFrom]    = useState<string>(BRANCHES[0])
-  const [trTo,      setTrTo]      = useState<string>(BRANCHES[1])
-  const [trItem,    setTrItem]    = useState<string>(ITEMS[0])
-  const [trQty,     setTrQty]     = useState("")
-  const [trUnit,    setTrUnit]    = useState<string>(SM_UNITS[0])
-  const [trDate,    setTrDate]    = useState("")
+  const { addNotification } = useNotifications();
+  const [transfers, setTransfers] = useState<Transfer[]>(() =>
+    loadLS("sm_transfers", []),
+  );
+  const [showModal, setShowModal] = useState(false);
+  const [filter, setFilter] = useState("All");
+  const [trFrom, setTrFrom] = useState<string>(BRANCHES[0]);
+  const [trTo, setTrTo] = useState<string>(BRANCHES[1]);
+  const [trItem, setTrItem] = useState<string>(ITEMS[0]);
+  const [trQty, setTrQty] = useState("");
+  const [trUnit, setTrUnit] = useState<string>(SM_UNITS[0]);
+  const [trDate, setTrDate] = useState("");
 
-  useEffect(() => { saveLS("sm_transfers", transfers) }, [transfers])
+  useEffect(() => {
+    saveLS("sm_transfers", transfers);
+  }, [transfers]);
 
-  function resetForm() { setTrFrom(BRANCHES[0]); setTrTo(BRANCHES[1]); setTrItem(ITEMS[0]); setTrQty(""); setTrUnit(SM_UNITS[0]); setTrDate("") }
+  function resetForm() {
+    setTrFrom(BRANCHES[0]);
+    setTrTo(BRANCHES[1]);
+    setTrItem(ITEMS[0]);
+    setTrQty("");
+    setTrUnit(SM_UNITS[0]);
+    setTrDate("");
+  }
   function submitTR() {
     if (!trQty || !trDate) {
-      notify(addNotification, "Please fill all required fields.", "warning")
-      return
+      notify(addNotification, "Please fill all required fields.", "warning");
+      return;
     }
     if (trFrom === trTo) {
-      notify(addNotification, "Source and destination branch must be different.", "warning")
-      return
+      notify(
+        addNotification,
+        "Source and destination branch must be different.",
+        "warning",
+      );
+      return;
     }
-    setTransfers(p => [{ id: "TR-" + String(p.length + 1).padStart(3, "0"), from: trFrom, to: trTo, item: trItem, qty: trQty, unit: trUnit, date: trDate, status: "Pending", approvedBy: "—" }, ...p])
-    setShowModal(false)
-    resetForm()
-    notify(addNotification, "Transfer request submitted and pending approval.", "success")
+    setTransfers((p) => [
+      {
+        id: "TR-" + String(p.length + 1).padStart(3, "0"),
+        from: trFrom,
+        to: trTo,
+        item: trItem,
+        qty: trQty,
+        unit: trUnit,
+        date: trDate,
+        status: "Pending",
+        approvedBy: "—",
+      },
+      ...p,
+    ]);
+    setShowModal(false);
+    resetForm();
+    notify(
+      addNotification,
+      "Transfer request submitted and pending approval.",
+      "success",
+    );
   }
 
-  const filtered = transfers.filter(t => filter === "All" || t.status === filter)
+  const filtered = transfers.filter(
+    (t) => filter === "All" || t.status === filter,
+  );
 
   return (
     <div>
       <div className="grid grid-cols-4 gap-3 mb-5">
-        <StatCard label="Total Transfers"  value={transfers.length}                                        color="blue"   />
-        <StatCard label="Pending Approval" value={transfers.filter(t => t.status === "Pending").length}   meta="Needs Action" color="yellow" />
-        <StatCard label="Completed"        value={transfers.filter(t => t.status === "Completed").length} color="green"  />
-        <StatCard label="Cancelled"        value={transfers.filter(t => t.status === "Cancelled").length} color="red"    />
+        <StatCard
+          label="Total Transfers"
+          value={transfers.length}
+          color="blue"
+        />
+        <StatCard
+          label="Pending Approval"
+          value={transfers.filter((t) => t.status === "Pending").length}
+          meta="Needs Action"
+          color="yellow"
+        />
+        <StatCard
+          label="Completed"
+          value={transfers.filter((t) => t.status === "Completed").length}
+          color="green"
+        />
+        <StatCard
+          label="Cancelled"
+          value={transfers.filter((t) => t.status === "Cancelled").length}
+          color="red"
+        />
       </div>
 
       <SectionHeader
         title="Stock Transfer"
         sub="Move stock between branches with owner approval"
-        cta={<button className={primaryBtnClass} onClick={() => setShowModal(true)}>+ New Transfer</button>}
+        cta={
+          <button
+            className={primaryBtnClass}
+            onClick={() => setShowModal(true)}
+          >
+            + New Transfer
+          </button>
+        }
       />
 
       <div className="flex items-center gap-2 mb-[14px] flex-wrap">
-        {["All", "Pending", "Completed", "Cancelled"].map(f => (
+        {["All", "Pending", "Completed", "Cancelled"].map((f) => (
           <button
             key={f}
             onClick={() => setFilter(f)}
@@ -610,29 +1209,94 @@ function StockTransfer() {
       </div>
 
       <DataTable
-        cols={["TR #", "From", "To", "Item", "Qty", "Date", "Status", "Approved By", "Actions"]}
+        cols={[
+          "TR #",
+          "From",
+          "To",
+          "Item",
+          "Qty",
+          "Date",
+          "Status",
+          "Approved By",
+          "Actions",
+        ]}
         emptyHint="No transfers recorded yet."
-        rows={filtered.map(t => (
-          <tr key={t.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors last:border-b-0">
-            <td className="px-[14px] py-[11px] text-[12.5px] font-bold text-gray-900">{t.id}</td>
-            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">{t.from}</td>
-            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">{t.to}</td>
-            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">{t.item}</td>
-            <td className="px-[14px] py-[11px] text-[12.5px] font-semibold text-gray-900">{t.qty} {t.unit}</td>
-            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">{t.date}</td>
-            <td className="px-[14px] py-[11px]"><StatusBadge status={t.status} /></td>
-            <td className={`px-[14px] py-[11px] text-[12.5px] ${t.approvedBy === "—" ? "text-gray-400" : "text-gray-700"}`}>{t.approvedBy}</td>
+        rows={filtered.map((t) => (
+          <tr
+            key={t.id}
+            className="border-b border-gray-50 hover:bg-gray-50 transition-colors last:border-b-0"
+          >
+            <td className="px-[14px] py-[11px] text-[12.5px] font-bold text-gray-900">
+              {t.id}
+            </td>
+            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">
+              {t.from}
+            </td>
+            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">
+              {t.to}
+            </td>
+            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">
+              {t.item}
+            </td>
+            <td className="px-[14px] py-[11px] text-[12.5px] font-semibold text-gray-900">
+              {t.qty} {t.unit}
+            </td>
+            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">
+              {t.date}
+            </td>
+            <td className="px-[14px] py-[11px]">
+              <StatusBadge status={t.status} />
+            </td>
+            <td
+              className={`px-[14px] py-[11px] text-[12.5px] ${t.approvedBy === "—" ? "text-gray-400" : "text-gray-700"}`}
+            >
+              {t.approvedBy}
+            </td>
             <td className="px-[14px] py-[11px]">
               {t.status === "Pending" && (
                 <div className="flex gap-[5px]">
-                  <button className={okBtnClass} onClick={() => {
-                    setTransfers(p => p.map(x => x.id === t.id ? { ...x, status: "Completed" as TRStatus, approvedBy: "Owner" } : x))
-                    notify(addNotification, `${t.id} approved and completed.`, "success")
-                  }}>Approve</button>
-                  <button className={dangerBtnClass} onClick={() => {
-                    setTransfers(p => p.map(x => x.id === t.id ? { ...x, status: "Cancelled" as TRStatus } : x))
-                    notify(addNotification, `${t.id} has been cancelled.`, "warning")
-                  }}>Cancel</button>
+                  <button
+                    className={okBtnClass}
+                    onClick={() => {
+                      setTransfers((p) =>
+                        p.map((x) =>
+                          x.id === t.id
+                            ? {
+                                ...x,
+                                status: "Completed" as TRStatus,
+                                approvedBy: "Owner",
+                              }
+                            : x,
+                        ),
+                      );
+                      notify(
+                        addNotification,
+                        `${t.id} approved and completed.`,
+                        "success",
+                      );
+                    }}
+                  >
+                    Approve
+                  </button>
+                  <button
+                    className={dangerBtnClass}
+                    onClick={() => {
+                      setTransfers((p) =>
+                        p.map((x) =>
+                          x.id === t.id
+                            ? { ...x, status: "Cancelled" as TRStatus }
+                            : x,
+                        ),
+                      );
+                      notify(
+                        addNotification,
+                        `${t.id} has been cancelled.`,
+                        "warning",
+                      );
+                    }}
+                  >
+                    Cancel
+                  </button>
                 </div>
               )}
             </td>
@@ -643,78 +1307,175 @@ function StockTransfer() {
       {showModal && (
         <SMModal
           title="New Stock Transfer"
-          onClose={() => { setShowModal(false); resetForm() }}
+          onClose={() => {
+            setShowModal(false);
+            resetForm();
+          }}
           footer={
             <>
-              <button className={ghostBtnClass}   onClick={() => { setShowModal(false); resetForm() }}>Discard</button>
-              <button className={primaryBtnClass} onClick={submitTR}>Submit Transfer</button>
+              <button
+                className={ghostBtnClass}
+                onClick={() => {
+                  setShowModal(false);
+                  resetForm();
+                }}
+              >
+                Discard
+              </button>
+              <button className={primaryBtnClass} onClick={submitTR}>
+                Submit Transfer
+              </button>
             </>
           }
         >
           <div className="grid grid-cols-2 gap-[10px]">
-            <FormSelect label="From Branch" opts={BRANCHES} value={trFrom} onChange={e => setTrFrom(e.target.value)} />
-            <FormSelect label="To Branch"   opts={BRANCHES} value={trTo}   onChange={e => setTrTo(e.target.value)} />
+            <FormSelect
+              label="From Branch"
+              opts={BRANCHES}
+              value={trFrom}
+              onChange={(e) => setTrFrom(e.target.value)}
+            />
+            <FormSelect
+              label="To Branch"
+              opts={BRANCHES}
+              value={trTo}
+              onChange={(e) => setTrTo(e.target.value)}
+            />
           </div>
-          <FormSelect label="Item" opts={ITEMS} value={trItem} onChange={e => setTrItem(e.target.value)} />
+          <FormSelect
+            label="Item"
+            opts={ITEMS}
+            value={trItem}
+            onChange={(e) => setTrItem(e.target.value)}
+          />
           <div className="grid grid-cols-2 gap-[10px]">
-            <FormInput  label="Quantity" type="number" placeholder="e.g. 20" value={trQty}  onChange={e => setTrQty(e.target.value)} />
-            <FormSelect label="Unit"     opts={SM_UNITS}                      value={trUnit} onChange={e => setTrUnit(e.target.value)} />
+            <FormInput
+              label="Quantity"
+              type="number"
+              placeholder="e.g. 20"
+              value={trQty}
+              onChange={(e) => setTrQty(e.target.value)}
+            />
+            <FormSelect
+              label="Unit"
+              opts={SM_UNITS}
+              value={trUnit}
+              onChange={(e) => setTrUnit(e.target.value)}
+            />
           </div>
-          <FormInput label="Transfer Date" type="date" value={trDate} onChange={e => setTrDate(e.target.value)} />
+          <FormInput
+            label="Transfer Date"
+            type="date"
+            value={trDate}
+            onChange={(e) => setTrDate(e.target.value)}
+          />
         </SMModal>
       )}
     </div>
-  )
+  );
 }
 
 // ─── Stock Adjustment ─────────────────────────────────────────────────────────
 
 function StockAdjustment() {
-  const { addNotification } = useNotifications()
-  const [adjustments, setAdjustments] = useState<Adjustment[]>(() => loadLS("sm_adjustments", []))
-  const [showModal,   setShowModal]   = useState(false)
-  const [filter,      setFilter]      = useState("All")
-  const [adjBranch,   setAdjBranch]   = useState<string>(BRANCHES[0])
-  const [adjItem,     setAdjItem]     = useState<string>(ITEMS[0])
-  const [adjQty,      setAdjQty]      = useState("")
-  const [adjUnit,     setAdjUnit]     = useState<string>(SM_UNITS[0])
-  const [adjReason,   setAdjReason]   = useState<string>(REASONS[0])
-  const [adjDate,     setAdjDate]     = useState("")
-  const [adjBy,       setAdjBy]       = useState("")
+  const { addNotification } = useNotifications();
+  const [adjustments, setAdjustments] = useState<Adjustment[]>(() =>
+    loadLS("sm_adjustments", []),
+  );
+  const [showModal, setShowModal] = useState(false);
+  const [filter, setFilter] = useState("All");
+  const [adjBranch, setAdjBranch] = useState<string>(BRANCHES[0]);
+  const [adjItem, setAdjItem] = useState<string>(ITEMS[0]);
+  const [adjQty, setAdjQty] = useState("");
+  const [adjUnit, setAdjUnit] = useState<string>(SM_UNITS[0]);
+  const [adjReason, setAdjReason] = useState<string>(REASONS[0]);
+  const [adjDate, setAdjDate] = useState("");
+  const [adjBy, setAdjBy] = useState("");
 
-  useEffect(() => { saveLS("sm_adjustments", adjustments) }, [adjustments])
+  useEffect(() => {
+    saveLS("sm_adjustments", adjustments);
+  }, [adjustments]);
 
-  function resetForm() { setAdjBranch(BRANCHES[0]); setAdjItem(ITEMS[0]); setAdjQty(""); setAdjUnit(SM_UNITS[0]); setAdjReason(REASONS[0]); setAdjDate(""); setAdjBy("") }
+  function resetForm() {
+    setAdjBranch(BRANCHES[0]);
+    setAdjItem(ITEMS[0]);
+    setAdjQty("");
+    setAdjUnit(SM_UNITS[0]);
+    setAdjReason(REASONS[0]);
+    setAdjDate("");
+    setAdjBy("");
+  }
   function submitAdj() {
     if (!adjQty || !adjDate || !adjBy) {
-      notify(addNotification, "Please fill all required fields.", "warning")
-      return
+      notify(addNotification, "Please fill all required fields.", "warning");
+      return;
     }
-    setAdjustments(p => [{ id: "ADJ-" + String(p.length + 1).padStart(3, "0"), branch: adjBranch, item: adjItem, qty: parseFloat(adjQty) * -1, unit: adjUnit, reason: adjReason, date: adjDate, by: adjBy }, ...p])
-    setShowModal(false)
-    resetForm()
-    notify(addNotification, "Stock adjustment recorded.", "success")
+    setAdjustments((p) => [
+      {
+        id: "ADJ-" + String(p.length + 1).padStart(3, "0"),
+        branch: adjBranch,
+        item: adjItem,
+        qty: parseFloat(adjQty) * -1,
+        unit: adjUnit,
+        reason: adjReason,
+        date: adjDate,
+        by: adjBy,
+      },
+      ...p,
+    ]);
+    setShowModal(false);
+    resetForm();
+    notify(addNotification, "Stock adjustment recorded.", "success");
   }
 
-  const filtered = adjustments.filter(a => filter === "All" || a.reason === filter)
+  const filtered = adjustments.filter(
+    (a) => filter === "All" || a.reason === filter,
+  );
 
   return (
     <div>
       <div className="grid grid-cols-4 gap-3 mb-5">
-        <StatCard label="Total Adjustments" value={adjustments.length}                                                                color="blue"   />
-        <StatCard label="Spoilage"           value={adjustments.filter(a => a.reason === "Spoilage").length}                          color="yellow" />
-        <StatCard label="Damaged"            value={adjustments.filter(a => a.reason === "Damaged").length}                           color="red"    />
-        <StatCard label="Other Reasons"      value={adjustments.filter(a => a.reason !== "Spoilage" && a.reason !== "Damaged").length} color="blue"   />
+        <StatCard
+          label="Total Adjustments"
+          value={adjustments.length}
+          color="blue"
+        />
+        <StatCard
+          label="Spoilage"
+          value={adjustments.filter((a) => a.reason === "Spoilage").length}
+          color="yellow"
+        />
+        <StatCard
+          label="Damaged"
+          value={adjustments.filter((a) => a.reason === "Damaged").length}
+          color="red"
+        />
+        <StatCard
+          label="Other Reasons"
+          value={
+            adjustments.filter(
+              (a) => a.reason !== "Spoilage" && a.reason !== "Damaged",
+            ).length
+          }
+          color="blue"
+        />
       </div>
 
       <SectionHeader
         title="Stock Adjustment"
         sub="Record spoilage, damage, theft, and manual corrections"
-        cta={<button className={primaryBtnClass} onClick={() => setShowModal(true)}>+ New Adjustment</button>}
+        cta={
+          <button
+            className={primaryBtnClass}
+            onClick={() => setShowModal(true)}
+          >
+            + New Adjustment
+          </button>
+        }
       />
 
       <div className="flex items-center gap-2 mb-[14px] flex-wrap">
-        {["All", ...REASONS].map(f => (
+        {["All", ...REASONS].map((f) => (
           <button
             key={f}
             onClick={() => setFilter(f)}
@@ -726,21 +1487,47 @@ function StockAdjustment() {
       </div>
 
       <DataTable
-        cols={["ADJ #", "Branch", "Item", "Adjustment", "Reason", "Date", "Recorded By"]}
+        cols={[
+          "ADJ #",
+          "Branch",
+          "Item",
+          "Adjustment",
+          "Reason",
+          "Date",
+          "Recorded By",
+        ]}
         emptyHint="No adjustments recorded yet."
-        rows={filtered.map(a => (
-          <tr key={a.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors last:border-b-0">
-            <td className="px-[14px] py-[11px] text-[12.5px] font-bold text-gray-900">{a.id}</td>
-            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">{a.branch}</td>
-            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">{a.item}</td>
-            <td className={`px-[14px] py-[11px] text-[12.5px] font-bold ${a.qty < 0 ? "text-red-600" : "text-green-700"}`}>
-              {a.qty > 0 ? "+" : ""}{a.qty} {a.unit}
+        rows={filtered.map((a) => (
+          <tr
+            key={a.id}
+            className="border-b border-gray-50 hover:bg-gray-50 transition-colors last:border-b-0"
+          >
+            <td className="px-[14px] py-[11px] text-[12.5px] font-bold text-gray-900">
+              {a.id}
+            </td>
+            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">
+              {a.branch}
+            </td>
+            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">
+              {a.item}
+            </td>
+            <td
+              className={`px-[14px] py-[11px] text-[12.5px] font-bold ${a.qty < 0 ? "text-red-600" : "text-green-700"}`}
+            >
+              {a.qty > 0 ? "+" : ""}
+              {a.qty} {a.unit}
             </td>
             <td className="px-[14px] py-[11px]">
-              <span className="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-yellow-50 text-yellow-700">{a.reason}</span>
+              <span className="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-yellow-50 text-yellow-700">
+                {a.reason}
+              </span>
             </td>
-            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">{a.date}</td>
-            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">{a.by}</td>
+            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">
+              {a.date}
+            </td>
+            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">
+              {a.by}
+            </td>
           </tr>
         ))}
       />
@@ -748,53 +1535,122 @@ function StockAdjustment() {
       {showModal && (
         <SMModal
           title="New Stock Adjustment"
-          onClose={() => { setShowModal(false); resetForm() }}
+          onClose={() => {
+            setShowModal(false);
+            resetForm();
+          }}
           footer={
             <>
-              <button className={ghostBtnClass}   onClick={() => { setShowModal(false); resetForm() }}>Discard</button>
-              <button className={primaryBtnClass} onClick={submitAdj}>Save Adjustment</button>
+              <button
+                className={ghostBtnClass}
+                onClick={() => {
+                  setShowModal(false);
+                  resetForm();
+                }}
+              >
+                Discard
+              </button>
+              <button className={primaryBtnClass} onClick={submitAdj}>
+                Save Adjustment
+              </button>
             </>
           }
         >
           <div className="grid grid-cols-2 gap-[10px]">
-            <FormSelect label="Branch" opts={BRANCHES} value={adjBranch} onChange={e => setAdjBranch(e.target.value)} />
-            <FormSelect label="Item"   opts={ITEMS}    value={adjItem}   onChange={e => setAdjItem(e.target.value)} />
+            <FormSelect
+              label="Branch"
+              opts={BRANCHES}
+              value={adjBranch}
+              onChange={(e) => setAdjBranch(e.target.value)}
+            />
+            <FormSelect
+              label="Item"
+              opts={ITEMS}
+              value={adjItem}
+              onChange={(e) => setAdjItem(e.target.value)}
+            />
           </div>
           <div className="grid grid-cols-2 gap-[10px]">
-            <FormInput  label="Qty (deducted)" type="number" placeholder="e.g. 3" value={adjQty}  onChange={e => setAdjQty(e.target.value)} />
-            <FormSelect label="Unit"           opts={SM_UNITS}                     value={adjUnit} onChange={e => setAdjUnit(e.target.value)} />
+            <FormInput
+              label="Qty (deducted)"
+              type="number"
+              placeholder="e.g. 3"
+              value={adjQty}
+              onChange={(e) => setAdjQty(e.target.value)}
+            />
+            <FormSelect
+              label="Unit"
+              opts={SM_UNITS}
+              value={adjUnit}
+              onChange={(e) => setAdjUnit(e.target.value)}
+            />
           </div>
-          <FormSelect label="Reason"      opts={REASONS} value={adjReason} onChange={e => setAdjReason(e.target.value)} />
-          <FormInput  label="Date"        type="date"    value={adjDate}   onChange={e => setAdjDate(e.target.value)} />
-          <FormInput  label="Recorded By" placeholder="Staff name" value={adjBy} onChange={e => setAdjBy(e.target.value)} />
+          <FormSelect
+            label="Reason"
+            opts={REASONS}
+            value={adjReason}
+            onChange={(e) => setAdjReason(e.target.value)}
+          />
+          <FormInput
+            label="Date"
+            type="date"
+            value={adjDate}
+            onChange={(e) => setAdjDate(e.target.value)}
+          />
+          <FormInput
+            label="Recorded By"
+            placeholder="Staff name"
+            value={adjBy}
+            onChange={(e) => setAdjBy(e.target.value)}
+          />
         </SMModal>
       )}
     </div>
-  )
+  );
 }
 
 // ─── Stock Logs ───────────────────────────────────────────────────────────────
 
 function StockLogs() {
-  const [logs]          = useState<StockLog[]>(() => loadLS("sm_logs", []))
-  const [search, setSearch] = useState("")
-  const [filter, setFilter] = useState("All")
+  const [logs] = useState<StockLog[]>(() => loadLS("sm_logs", []));
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("All");
 
-  const filtered = logs.filter(l => {
-    const s = search.toLowerCase()
-    return (l.item.toLowerCase().includes(s) || l.ref.toLowerCase().includes(s) || l.by.toLowerCase().includes(s)) && (filter === "All" || l.type === filter)
-  })
+  const filtered = logs.filter((l) => {
+    const s = search.toLowerCase();
+    return (
+      (l.item.toLowerCase().includes(s) ||
+        l.ref.toLowerCase().includes(s) ||
+        l.by.toLowerCase().includes(s)) &&
+      (filter === "All" || l.type === filter)
+    );
+  });
 
   return (
     <div>
       <div className="grid grid-cols-4 gap-3 mb-5">
-        <StatCard label="Total Entries" value={logs.length}                                          color="blue"  />
-        <StatCard label="Stock In"      value={logs.filter(l => l.type === "Stock In").length}   color="green" />
-        <StatCard label="Transfers"     value={logs.filter(l => l.type === "Transfer").length}   color="blue"  />
-        <StatCard label="Adjustments"   value={logs.filter(l => l.type === "Adjustment").length} color="red"   />
+        <StatCard label="Total Entries" value={logs.length} color="blue" />
+        <StatCard
+          label="Stock In"
+          value={logs.filter((l) => l.type === "Stock In").length}
+          color="green"
+        />
+        <StatCard
+          label="Transfers"
+          value={logs.filter((l) => l.type === "Transfer").length}
+          color="blue"
+        />
+        <StatCard
+          label="Adjustments"
+          value={logs.filter((l) => l.type === "Adjustment").length}
+          color="red"
+        />
       </div>
 
-      <SectionHeader title="Stock Logs" sub="Complete audit trail of all stock movements" />
+      <SectionHeader
+        title="Stock Logs"
+        sub="Complete audit trail of all stock movements"
+      />
 
       <div className="flex items-center gap-2 mb-[14px] flex-wrap">
         <div className="flex-1 min-w-[200px]">
@@ -802,10 +1658,10 @@ function StockLogs() {
             className="w-full px-3 py-2 border-[1.5px] border-gray-200 rounded-[9px] text-[12.5px] font-[Poppins,sans-serif] text-gray-700 outline-none bg-white transition-all focus:border-gray-400 box-border"
             placeholder="Search item, reference, staff…"
             value={search}
-            onChange={e => setSearch(e.target.value)}
+            onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        {["All", "Stock In", "Transfer", "Adjustment"].map(f => (
+        {["All", "Stock In", "Transfer", "Adjustment"].map((f) => (
           <button
             key={f}
             onClick={() => setFilter(f)}
@@ -819,37 +1675,60 @@ function StockLogs() {
       <DataTable
         cols={["Date", "Type", "Item", "Quantity", "Branch", "By", "Reference"]}
         emptyHint="No log entries yet."
-        rows={filtered.map(l => (
-          <tr key={l.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors last:border-b-0">
-            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-500">{l.date}</td>
-            <td className="px-[14px] py-[11px]"><TypeBadge type={l.type} /></td>
-            <td className="px-[14px] py-[11px] text-[12.5px] font-medium text-gray-700">{l.item}</td>
-            <td className={`px-[14px] py-[11px] text-[12.5px] font-bold ${l.qty.startsWith("+") ? "text-green-700" : "text-red-600"}`}>{l.qty}</td>
-            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">{l.branch}</td>
-            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-500">{l.by}</td>
-            <td className="px-[14px] py-[11px] text-[12.5px] font-semibold text-indigo-600">{l.ref}</td>
+        rows={filtered.map((l) => (
+          <tr
+            key={l.id}
+            className="border-b border-gray-50 hover:bg-gray-50 transition-colors last:border-b-0"
+          >
+            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-500">
+              {l.date}
+            </td>
+            <td className="px-[14px] py-[11px]">
+              <TypeBadge type={l.type} />
+            </td>
+            <td className="px-[14px] py-[11px] text-[12.5px] font-medium text-gray-700">
+              {l.item}
+            </td>
+            <td
+              className={`px-[14px] py-[11px] text-[12.5px] font-bold ${l.qty.startsWith("+") ? "text-green-700" : "text-red-600"}`}
+            >
+              {l.qty}
+            </td>
+            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-700">
+              {l.branch}
+            </td>
+            <td className="px-[14px] py-[11px] text-[12.5px] text-gray-500">
+              {l.by}
+            </td>
+            <td className="px-[14px] py-[11px] text-[12.5px] font-semibold text-indigo-600">
+              {l.ref}
+            </td>
           </tr>
         ))}
       />
     </div>
-  )
+  );
 }
 
 // ─── Stock Movement Tab ───────────────────────────────────────────────────────
 
 function StockMovementTab() {
-  const [activeSmTab, setActiveSmTab] = useState<SMTabKey>("po")
+  const [activeSmTab, setActiveSmTab] = useState<SMTabKey>("po");
 
   return (
     <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-8">
       <div className="mb-6">
-        <p className="text-xs text-gray-400 uppercase tracking-widest mb-1">Stock Movement</p>
+        <p className="text-xs text-gray-400 uppercase tracking-widest mb-1">
+          Stock Movement
+        </p>
         <h2 className="text-xl font-bold text-gray-900">Movement Records</h2>
-        <p className="text-gray-500 text-sm mt-1">Purchase orders, deliveries, transfers, adjustments, and audit logs.</p>
+        <p className="text-gray-500 text-sm mt-1">
+          Purchase orders, deliveries, transfers, adjustments, and audit logs.
+        </p>
       </div>
 
       <div className="flex border-b-[1.5px] border-gray-100 mb-[18px]">
-        {SM_TABS.map(tab => (
+        {SM_TABS.map((tab) => (
           <button
             key={tab.key}
             onClick={() => setActiveSmTab(tab.key)}
@@ -858,7 +1737,12 @@ function StockMovementTab() {
                 ? "text-gray-900 border-b-gray-700"
                 : "text-gray-400 border-b-transparent hover:text-gray-700 hover:bg-gray-50 rounded-t-md"
             }`}
-            style={{ borderBottom: activeSmTab === tab.key ? "2px solid #374151" : "2px solid transparent" }}
+            style={{
+              borderBottom:
+                activeSmTab === tab.key
+                  ? "2px solid #374151"
+                  : "2px solid transparent",
+            }}
           >
             {tab.label}
           </button>
@@ -866,231 +1750,346 @@ function StockMovementTab() {
       </div>
 
       <AnimatePresence mode="wait">
-        <motion.div key={activeSmTab} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-          {activeSmTab === "po"         && <PurchaseOrders />}
-          {activeSmTab === "stockin"    && <StockIn />}
-          {activeSmTab === "transfer"   && <StockTransfer />}
+        <motion.div
+          key={activeSmTab}
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.18 }}
+        >
+          {activeSmTab === "po" && <PurchaseOrders />}
+          {activeSmTab === "stockin" && <StockIn />}
+          {activeSmTab === "transfer" && <StockTransfer />}
           {activeSmTab === "adjustment" && <StockAdjustment />}
-          {activeSmTab === "logs"       && <StockLogs />}
+          {activeSmTab === "logs" && <StockLogs />}
         </motion.div>
       </AnimatePresence>
     </div>
-  )
+  );
 }
 
 // ─── Inventory Management Tab ─────────────────────────────────────────────────
 
 interface MgmtProduct {
-  id: number
-  name: string
-  category: string
-  price: string
-  unit: string
-  stock: number
-  description?: string
-  image?: string
+  id: number;
+  name: string;
+  category: string;
+  price: string;
+  unit: string;
+  stock: number;
+  description?: string;
+  image?: string;
 }
 
-const UNIT_OPTIONS = ["piece", "kg", "g", "liter", "ml", "bottle", "box", "bag", "pack", "dozen"] as const
+const UNIT_OPTIONS = [
+  "piece",
+  "kg",
+  "g",
+  "liter",
+  "ml",
+  "bottle",
+  "box",
+  "bag",
+  "pack",
+  "dozen",
+] as const;
 
 function InventoryManagementTab() {
-  const { addNotification } = useNotifications()
-  const [products,    setProducts]    = useState<MgmtProduct[]>([])
-  const [loading,     setLoading]     = useState(true)
-  const [saving,      setSaving]      = useState(false)
-  const [search,      setSearch]      = useState("")
-  const [showAdd,     setShowAdd]     = useState(false)
-  const [editProduct, setEditProduct] = useState<MgmtProduct | null>(null)
-  const [deleteId,    setDeleteId]    = useState<number | null>(null)
+  const { addNotification } = useNotifications();
+  const [products, setProducts] = useState<MgmtProduct[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
+  const [editProduct, setEditProduct] = useState<MgmtProduct | null>(null);
+  const [deleteId, setDeleteId] = useState<number | null>(null);
 
   // ── Add form state
-  const [fName,  setFName]  = useState("")
-  const [fCat,   setFCat]   = useState("")
-  const [fPrice, setFPrice] = useState("")
-  const [fUnit,  setFUnit]  = useState<string>(UNIT_OPTIONS[0])
-  const [fStock, setFStock] = useState("")
-  const [fDesc,  setFDesc]  = useState("")
+  const [fName, setFName] = useState("");
+  const [fCat, setFCat] = useState("");
+  const [fPrice, setFPrice] = useState("");
+  const [fUnit, setFUnit] = useState<string>(UNIT_OPTIONS[0]);
+  const [fStock, setFStock] = useState("");
+  const [fDesc, setFDesc] = useState("");
 
   // ── Edit form state
-  const [eName,  setEName]  = useState("")
-  const [eCat,   setECat]   = useState("")
-  const [ePrice, setEPrice] = useState("")
-  const [eUnit,  setEUnit]  = useState<string>(UNIT_OPTIONS[0])
-  const [eStock, setEStock] = useState("")
-  const [eDesc,  setEDesc]  = useState("")
+  const [eName, setEName] = useState("");
+  const [eCat, setECat] = useState("");
+  const [ePrice, setEPrice] = useState("");
+  const [eUnit, setEUnit] = useState<string>(UNIT_OPTIONS[0]);
+  const [eStock, setEStock] = useState("");
+  const [eDesc, setEDesc] = useState("");
 
   const loadProducts = async () => {
     try {
-      setLoading(true)
-      const data = await apiCall("/inventory", { method: "GET" }) as ApiInventoryRow[] | null
+      setLoading(true);
+      const data = (await apiCall("/inventory", { method: "GET" })) as
+        | ApiInventoryRow[]
+        | null;
       if (data && Array.isArray(data)) {
-        const rows = data.filter(item => {
-          const promo    = String(item?.promo    ?? "").toUpperCase().trim()
-          const category = String(item?.category ?? "").toLowerCase().trim()
-          return promo === "SUPPLIES" || promo === "MENU FOOD" || category.includes("suppl") || category.includes("menu food")
-        })
+        const rows = data.filter((item) => {
+          const promo = String(item?.promo ?? "")
+            .toUpperCase()
+            .trim();
+          const category = String(item?.category ?? "")
+            .toLowerCase()
+            .trim();
+          return (
+            promo === "SUPPLIES" ||
+            promo === "MENU FOOD" ||
+            category.includes("suppl") ||
+            category.includes("menu food")
+          );
+        });
 
-        const groupedByName = new Map<string, ApiInventoryRow[]>()
+        const groupedByName = new Map<string, ApiInventoryRow[]>();
         for (const item of rows) {
-          const key = String(item?.product_name ?? item?.name ?? "").trim().toLowerCase()
-          const group = groupedByName.get(key) ?? []
-          group.push(item)
-          groupedByName.set(key, group)
+          const key = String(item?.product_name ?? item?.name ?? "")
+            .trim()
+            .toLowerCase();
+          const group = groupedByName.get(key) ?? [];
+          group.push(item);
+          groupedByName.set(key, group);
         }
 
-        const normalized = Array.from(groupedByName.values()).map(group =>
+        const normalized = Array.from(groupedByName.values()).map((group) =>
           group.reduce((latest, current) => {
-            const latestId  = Number(latest?.product_id  ?? latest?.id  ?? latest?.inventory_id  ?? 0)
-            const currentId = Number(current?.product_id ?? current?.id ?? current?.inventory_id ?? 0)
-            return currentId > latestId ? current : latest
-          })
-        )
+            const latestId = Number(
+              latest?.product_id ?? latest?.id ?? latest?.inventory_id ?? 0,
+            );
+            const currentId = Number(
+              current?.product_id ?? current?.id ?? current?.inventory_id ?? 0,
+            );
+            return currentId > latestId ? current : latest;
+          }),
+        );
 
-        setProducts(normalized.map(item => ({
-          id:          Number(item.id ?? item.product_id ?? item.inventory_id ?? 0),
-          name:        item.name || item.product_name || "Unnamed Product",
-          category:    item.category || "Uncategorized",
-          price:       String(item.price ?? "0"),
-          unit:        String(item.unit  ?? "piece"),
-          stock:       Number((item as any).quantity ?? (item as any).stock ?? 0),
-          description: String((item as any).description ?? ""),
-          image:       item.image || "/img/placeholder.jpg",
-        })))
+        setProducts(
+          normalized.map((item) => ({
+            id: Number(item.id ?? item.product_id ?? item.inventory_id ?? 0),
+            name: item.name || item.product_name || "Unnamed Product",
+            category: item.category || "Uncategorized",
+            price: String(item.price ?? "0"),
+            unit: String(item.unit ?? "piece"),
+            stock: Number((item as any).quantity ?? (item as any).stock ?? 0),
+            description: String((item as any).description ?? ""),
+            image: item.image || "/img/placeholder.jpg",
+          })),
+        );
       }
     } catch (error) {
-      console.error("Failed to load products:", error)
-      notify(addNotification, "Failed to load products. Please try refreshing.", "error")
+      console.error("Failed to load products:", error);
+      notify(
+        addNotification,
+        "Failed to load products. Please try refreshing.",
+        "error",
+      );
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
+  };
+
+  useEffect(() => {
+    void loadProducts();
+  }, []);
+
+  function resetAddForm() {
+    setFName("");
+    setFCat("");
+    setFPrice("");
+    setFUnit(UNIT_OPTIONS[0]);
+    setFStock("");
+    setFDesc("");
   }
 
-  useEffect(() => { void loadProducts() }, [])
-
-  function resetAddForm() { setFName(""); setFCat(""); setFPrice(""); setFUnit(UNIT_OPTIONS[0]); setFStock(""); setFDesc("") }
-
   function openEdit(p: MgmtProduct) {
-    setEditProduct(p)
-    setEName(p.name); setECat(p.category); setEPrice(p.price)
-    setEUnit(p.unit); setEStock(String(p.stock)); setEDesc(p.description ?? "")
+    setEditProduct(p);
+    setEName(p.name);
+    setECat(p.category);
+    setEPrice(p.price);
+    setEUnit(p.unit);
+    setEStock(String(p.stock));
+    setEDesc(p.description ?? "");
   }
 
   async function handleAdd() {
     if (!fName.trim() || !fCat.trim() || !fPrice.trim()) {
-      notify(addNotification, "Please fill in Name, Category, and Price.", "warning")
-      return
+      notify(
+        addNotification,
+        "Please fill in Name, Category, and Price.",
+        "warning",
+      );
+      return;
     }
     try {
-      setSaving(true)
+      setSaving(true);
       await api.post("/products", {
-        name:        fName.trim(),
-        category:    fCat.trim(),
-        price:       parseFloat(fPrice),
-        unit:        fUnit,
-        quantity:    parseFloat(fStock) || 0,
+        name: fName.trim(),
+        category: fCat.trim(),
+        price: parseFloat(fPrice),
+        unit: fUnit,
+        quantity: parseFloat(fStock) || 0,
         description: fDesc.trim() || null,
-        image:       "/img/placeholder.jpg",
-      })
-      await loadProducts()
-      setShowAdd(false)
-      resetAddForm()
-      notify(addNotification, `"${fName.trim()}" added successfully.`, "success")
+        image: "/img/placeholder.jpg",
+      });
+      await loadProducts();
+      setShowAdd(false);
+      resetAddForm();
+      notify(
+        addNotification,
+        `"${fName.trim()}" added successfully.`,
+        "success",
+      );
     } catch (error) {
-      console.error("Failed to add product:", error)
-      notify(addNotification, `Failed to add product: ${error instanceof Error ? error.message : "Unknown error"}`, "error")
+      console.error("Failed to add product:", error);
+      notify(
+        addNotification,
+        `Failed to add product: ${error instanceof Error ? error.message : "Unknown error"}`,
+        "error",
+      );
     } finally {
-      setSaving(false)
+      setSaving(false);
     }
   }
 
   async function handleEdit() {
-    if (!editProduct) return
+    if (!editProduct) return;
     if (!eName.trim() || !eCat.trim() || !ePrice.trim()) {
-      notify(addNotification, "Please fill in Name, Category, and Price.", "warning")
-      return
+      notify(
+        addNotification,
+        "Please fill in Name, Category, and Price.",
+        "warning",
+      );
+      return;
     }
     try {
-      setSaving(true)
+      setSaving(true);
       await apiCall(`/products/${editProduct.id}`, {
         method: "PUT",
         body: JSON.stringify({
-          name:        eName.trim(),
-          category:    eCat.trim(),
-          price:       parseFloat(ePrice),
-          unit:        eUnit,
-          quantity:    parseFloat(eStock) || 0,
+          name: eName.trim(),
+          category: eCat.trim(),
+          price: parseFloat(ePrice),
+          unit: eUnit,
+          quantity: parseFloat(eStock) || 0,
           description: eDesc.trim() || null,
         }),
-      })
-      await loadProducts()
-      notify(addNotification, `"${eName.trim()}" updated successfully.`, "success")
-      setEditProduct(null)
+      });
+      await loadProducts();
+      notify(
+        addNotification,
+        `"${eName.trim()}" updated successfully.`,
+        "success",
+      );
+      setEditProduct(null);
     } catch (error) {
-      console.error("Failed to update product:", error)
-      notify(addNotification, `Failed to update: ${error instanceof Error ? error.message : "Unknown error"}`, "error")
+      console.error("Failed to update product:", error);
+      notify(
+        addNotification,
+        `Failed to update: ${error instanceof Error ? error.message : "Unknown error"}`,
+        "error",
+      );
     } finally {
-      setSaving(false)
+      setSaving(false);
     }
   }
 
   async function handleDelete(id: number) {
     try {
-      setSaving(true)
-      await apiCall(`/products/${id}`, { method: "DELETE" })
-      await loadProducts()
-      setDeleteId(null)
-      notify(addNotification, "Product deleted successfully.", "success")
+      setSaving(true);
+      await apiCall(`/products/${id}`, { method: "DELETE" });
+      await loadProducts();
+      setDeleteId(null);
+      notify(addNotification, "Product deleted successfully.", "success");
     } catch (error) {
-      console.error("Failed to delete product:", error)
-      notify(addNotification, `Failed to delete: ${error instanceof Error ? error.message : "Unknown error"}`, "error")
+      console.error("Failed to delete product:", error);
+      notify(
+        addNotification,
+        `Failed to delete: ${error instanceof Error ? error.message : "Unknown error"}`,
+        "error",
+      );
     } finally {
-      setSaving(false)
+      setSaving(false);
     }
   }
 
   async function handleStockUpdate(id: number, delta: number) {
-    const product = products.find(p => p.id === id)
-    if (!product) return
-    const newStock = Math.max(0, product.stock + delta)
+    const product = products.find((p) => p.id === id);
+    if (!product) return;
+    const newStock = Math.max(0, product.stock + delta);
     try {
       await apiCall(`/products/${id}`, {
         method: "PUT",
         body: JSON.stringify({ quantity: newStock }),
-      })
-      setProducts(prev => prev.map(p => p.id === id ? { ...p, stock: newStock } : p))
+      });
+      setProducts((prev) =>
+        prev.map((p) => (p.id === id ? { ...p, stock: newStock } : p)),
+      );
     } catch (error) {
-      console.error("Failed to update stock:", error)
-      notify(addNotification, `Failed to update stock: ${error instanceof Error ? error.message : "Unknown error"}`, "error")
+      console.error("Failed to update stock:", error);
+      notify(
+        addNotification,
+        `Failed to update stock: ${error instanceof Error ? error.message : "Unknown error"}`,
+        "error",
+      );
     }
   }
 
-  const filtered = products.filter(p => {
-    const s = search.toLowerCase()
-    return p.name.toLowerCase().includes(s) || p.category.toLowerCase().includes(s)
-  })
+  const filtered = products.filter((p) => {
+    const s = search.toLowerCase();
+    return (
+      p.name.toLowerCase().includes(s) || p.category.toLowerCase().includes(s)
+    );
+  });
 
   const totalValue = products.reduce((sum, p) => {
-    const price = parseFloat(String(p.price).replace(/[^0-9.]/g, "")) || 0
-    return sum + price * p.stock
-  }, 0)
+    const price = parseFloat(String(p.price).replace(/[^0-9.]/g, "")) || 0;
+    return sum + price * p.stock;
+  }, 0);
 
-  const lowStock = products.filter(p => p.stock > 0 && p.stock <= 10).length
-  const outOfStock = products.filter(p => p.stock === 0).length
+  const lowStock = products.filter((p) => p.stock > 0 && p.stock <= 10).length;
+  const outOfStock = products.filter((p) => p.stock === 0).length;
 
   return (
     <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-8">
       <div className="mb-6">
-        <p className="text-xs text-gray-400 uppercase tracking-widest mb-1">Management</p>
-        <h2 className="text-xl font-bold text-gray-900">Inventory Management</h2>
-        <p className="text-gray-500 text-sm mt-1">Add, edit, delete products and adjust stock levels directly.</p>
+        <p className="text-xs text-gray-400 uppercase tracking-widest mb-1">
+          Management
+        </p>
+        <h2 className="text-xl font-bold text-gray-900">
+          Inventory Management
+        </h2>
+        <p className="text-gray-500 text-sm mt-1">
+          Add, edit, delete products and adjust stock levels directly.
+        </p>
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-4 gap-3 mb-6">
-        <StatCard label="Total Products" value={products.length}                        meta="In system"   color="blue"   />
-        <StatCard label="Total Value"    value={`₱${totalValue.toLocaleString()}`}      meta="Stock value" color="green"  />
-        <StatCard label="Low Stock"      value={lowStock}                               meta="≤ 10 units"  color="yellow" />
-        <StatCard label="Out of Stock"   value={outOfStock}                             meta="Zero stock"  color="red"    />
+        <StatCard
+          label="Total Products"
+          value={products.length}
+          meta="In system"
+          color="blue"
+        />
+        <StatCard
+          label="Total Value"
+          value={`₱${totalValue.toLocaleString()}`}
+          meta="Stock value"
+          color="green"
+        />
+        <StatCard
+          label="Low Stock"
+          value={lowStock}
+          meta="≤ 10 units"
+          color="yellow"
+        />
+        <StatCard
+          label="Out of Stock"
+          value={outOfStock}
+          meta="Zero stock"
+          color="red"
+        />
       </div>
 
       <SectionHeader
@@ -1105,7 +2104,10 @@ function InventoryManagementTab() {
             >
               {loading ? "Refreshing…" : "↻ Refresh"}
             </button>
-            <button className={primaryBtnClass} onClick={() => setShowAdd(true)}>
+            <button
+              className={primaryBtnClass}
+              onClick={() => setShowAdd(true)}
+            >
               + Add Product
             </button>
           </div>
@@ -1118,7 +2120,7 @@ function InventoryManagementTab() {
           className="w-full px-3 py-2 border-[1.5px] border-gray-200 rounded-[9px] text-[12.5px] font-[Poppins,sans-serif] text-gray-700 outline-none bg-white transition-all focus:border-gray-400 box-border"
           placeholder="Search by name or category…"
           value={search}
-          onChange={e => setSearch(e.target.value)}
+          onChange={(e) => setSearch(e.target.value)}
         />
       </div>
 
@@ -1136,29 +2138,43 @@ function InventoryManagementTab() {
         <DataTable
           cols={["Product", "Category", "Price", "Unit", "Stock", "Actions"]}
           emptyHint="No products found. Try refreshing or add a new product."
-          rows={filtered.map(p => {
-            const stockColor = p.stock === 0
-              ? "text-red-600 font-bold"
-              : p.stock <= 10
-              ? "text-yellow-600 font-bold"
-              : "text-gray-900 font-semibold"
+          rows={filtered.map((p) => {
+            const stockColor =
+              p.stock === 0
+                ? "text-red-600 font-bold"
+                : p.stock <= 10
+                  ? "text-yellow-600 font-bold"
+                  : "text-gray-900 font-semibold";
 
             return (
-              <tr key={p.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors last:border-b-0">
+              <tr
+                key={p.id}
+                className="border-b border-gray-50 hover:bg-gray-50 transition-colors last:border-b-0"
+              >
                 {/* Product */}
                 <td className="px-[14px] py-[11px]">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center overflow-hidden flex-shrink-0">
                       {p.image && p.image !== "/img/placeholder.jpg" ? (
-                        <img src={p.image} alt={p.name} className="w-full h-full object-cover" />
+                        <img
+                          src={p.image}
+                          alt={p.name}
+                          className="w-full h-full object-cover"
+                        />
                       ) : (
-                        <span className="text-gray-400 text-[10px] font-bold">{p.name.charAt(0).toUpperCase()}</span>
+                        <span className="text-gray-400 text-[10px] font-bold">
+                          {p.name.charAt(0).toUpperCase()}
+                        </span>
                       )}
                     </div>
                     <div>
-                      <div className="text-[12.5px] font-semibold text-gray-900">{p.name}</div>
+                      <div className="text-[12.5px] font-semibold text-gray-900">
+                        {p.name}
+                      </div>
                       {p.description && (
-                        <div className="text-[11px] text-gray-400 max-w-[180px] truncate">{p.description}</div>
+                        <div className="text-[11px] text-gray-400 max-w-[180px] truncate">
+                          {p.description}
+                        </div>
                       )}
                     </div>
                   </div>
@@ -1173,11 +2189,16 @@ function InventoryManagementTab() {
 
                 {/* Price */}
                 <td className="px-[14px] py-[11px] text-[12.5px] font-bold text-green-700">
-                  ₱{parseFloat(String(p.price).replace(/[^0-9.]/g, "")).toLocaleString()}
+                  ₱
+                  {parseFloat(
+                    String(p.price).replace(/[^0-9.]/g, ""),
+                  ).toLocaleString()}
                 </td>
 
                 {/* Unit */}
-                <td className="px-[14px] py-[11px] text-[12.5px] text-gray-500">{p.unit}</td>
+                <td className="px-[14px] py-[11px] text-[12.5px] text-gray-500">
+                  {p.unit}
+                </td>
 
                 {/* Stock with inline ± controls */}
                 <td className="px-[14px] py-[11px]">
@@ -1185,17 +2206,29 @@ function InventoryManagementTab() {
                     <button
                       onClick={() => void handleStockUpdate(p.id, -1)}
                       className="w-6 h-6 rounded-md bg-gray-100 text-gray-500 text-[14px] font-bold flex items-center justify-center hover:bg-red-50 hover:text-red-600 transition-colors border-none cursor-pointer leading-none"
-                    >−</button>
-                    <span className={`min-w-[36px] text-center text-[12.5px] ${stockColor}`}>{p.stock}</span>
+                    >
+                      −
+                    </button>
+                    <span
+                      className={`min-w-[36px] text-center text-[12.5px] ${stockColor}`}
+                    >
+                      {p.stock}
+                    </span>
                     <button
                       onClick={() => void handleStockUpdate(p.id, 1)}
                       className="w-6 h-6 rounded-md bg-gray-100 text-gray-500 text-[14px] font-bold flex items-center justify-center hover:bg-green-50 hover:text-green-600 transition-colors border-none cursor-pointer leading-none"
-                    >+</button>
+                    >
+                      +
+                    </button>
                     {p.stock === 0 && (
-                      <span className="text-[10px] font-semibold text-red-500 bg-red-50 px-1.5 py-0.5 rounded-full">Out</span>
+                      <span className="text-[10px] font-semibold text-red-500 bg-red-50 px-1.5 py-0.5 rounded-full">
+                        Out
+                      </span>
                     )}
                     {p.stock > 0 && p.stock <= 10 && (
-                      <span className="text-[10px] font-semibold text-yellow-600 bg-yellow-50 px-1.5 py-0.5 rounded-full">Low</span>
+                      <span className="text-[10px] font-semibold text-yellow-600 bg-yellow-50 px-1.5 py-0.5 rounded-full">
+                        Low
+                      </span>
                     )}
                   </div>
                 </td>
@@ -1203,12 +2236,22 @@ function InventoryManagementTab() {
                 {/* Actions */}
                 <td className="px-[14px] py-[11px]">
                   <div className="flex gap-[5px]">
-                    <button className={ghostBtnClass}   onClick={() => openEdit(p)}>Edit</button>
-                    <button className={dangerBtnClass}  onClick={() => setDeleteId(p.id)}>Delete</button>
+                    <button
+                      className={ghostBtnClass}
+                      onClick={() => openEdit(p)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      className={dangerBtnClass}
+                      onClick={() => setDeleteId(p.id)}
+                    >
+                      Delete
+                    </button>
                   </div>
                 </td>
               </tr>
-            )
+            );
           })}
         />
       )}
@@ -1217,34 +2260,78 @@ function InventoryManagementTab() {
       {showAdd && (
         <SMModal
           title="Add New Product"
-          onClose={() => { setShowAdd(false); resetAddForm() }}
+          onClose={() => {
+            setShowAdd(false);
+            resetAddForm();
+          }}
           footer={
             <>
-              <button className={ghostBtnClass}   onClick={() => { setShowAdd(false); resetAddForm() }} disabled={saving}>Discard</button>
-              <button className={primaryBtnClass} onClick={() => void handleAdd()} disabled={saving}>
+              <button
+                className={ghostBtnClass}
+                onClick={() => {
+                  setShowAdd(false);
+                  resetAddForm();
+                }}
+                disabled={saving}
+              >
+                Discard
+              </button>
+              <button
+                className={primaryBtnClass}
+                onClick={() => void handleAdd()}
+                disabled={saving}
+              >
                 {saving ? "Saving…" : "Add Product"}
               </button>
             </>
           }
         >
-          <FormInput  label="Product Name *"  placeholder="e.g. Chicken Breast"    value={fName}  onChange={e => setFName(e.target.value)} />
-          <FormInput  label="Category *"      placeholder="e.g. Ingredients"       value={fCat}   onChange={e => setFCat(e.target.value)} />
+          <FormInput
+            label="Product Name *"
+            placeholder="e.g. Chicken Breast"
+            value={fName}
+            onChange={(e) => setFName(e.target.value)}
+          />
+          <FormInput
+            label="Category *"
+            placeholder="e.g. Ingredients"
+            value={fCat}
+            onChange={(e) => setFCat(e.target.value)}
+          />
           <div className="grid grid-cols-2 gap-[10px]">
-            <FormInput label="Price (₱) *" type="number" placeholder="0.00"        value={fPrice} onChange={e => setFPrice(e.target.value)} />
+            <FormInput
+              label="Price (₱) *"
+              type="number"
+              placeholder="0.00"
+              value={fPrice}
+              onChange={(e) => setFPrice(e.target.value)}
+            />
             <FormGroup label="Unit">
-              <select className={inputClass} value={fUnit} onChange={e => setFUnit(e.target.value)}>
-                {UNIT_OPTIONS.map(u => <option key={u}>{u}</option>)}
+              <select
+                className={inputClass}
+                value={fUnit}
+                onChange={(e) => setFUnit(e.target.value)}
+              >
+                {UNIT_OPTIONS.map((u) => (
+                  <option key={u}>{u}</option>
+                ))}
               </select>
             </FormGroup>
           </div>
-          <FormInput  label="Initial Stock"   type="number" placeholder="0"        value={fStock} onChange={e => setFStock(e.target.value)} />
+          <FormInput
+            label="Initial Stock"
+            type="number"
+            placeholder="0"
+            value={fStock}
+            onChange={(e) => setFStock(e.target.value)}
+          />
           <FormGroup label="Description (optional)">
             <textarea
               className={`${inputClass} resize-none`}
               rows={2}
               placeholder="Brief description…"
               value={fDesc}
-              onChange={e => setFDesc(e.target.value)}
+              onChange={(e) => setFDesc(e.target.value)}
             />
           </FormGroup>
         </SMModal>
@@ -1257,31 +2344,69 @@ function InventoryManagementTab() {
           onClose={() => setEditProduct(null)}
           footer={
             <>
-              <button className={ghostBtnClass}   onClick={() => setEditProduct(null)} disabled={saving}>Discard</button>
-              <button className={primaryBtnClass} onClick={() => void handleEdit()} disabled={saving}>
+              <button
+                className={ghostBtnClass}
+                onClick={() => setEditProduct(null)}
+                disabled={saving}
+              >
+                Discard
+              </button>
+              <button
+                className={primaryBtnClass}
+                onClick={() => void handleEdit()}
+                disabled={saving}
+              >
                 {saving ? "Saving…" : "Save Changes"}
               </button>
             </>
           }
         >
-          <FormInput  label="Product Name *"  placeholder="e.g. Chicken Breast"    value={eName}  onChange={e => setEName(e.target.value)} />
-          <FormInput  label="Category *"      placeholder="e.g. Ingredients"       value={eCat}   onChange={e => setECat(e.target.value)} />
+          <FormInput
+            label="Product Name *"
+            placeholder="e.g. Chicken Breast"
+            value={eName}
+            onChange={(e) => setEName(e.target.value)}
+          />
+          <FormInput
+            label="Category *"
+            placeholder="e.g. Ingredients"
+            value={eCat}
+            onChange={(e) => setECat(e.target.value)}
+          />
           <div className="grid grid-cols-2 gap-[10px]">
-            <FormInput label="Price (₱) *" type="number" placeholder="0.00"        value={ePrice} onChange={e => setEPrice(e.target.value)} />
+            <FormInput
+              label="Price (₱) *"
+              type="number"
+              placeholder="0.00"
+              value={ePrice}
+              onChange={(e) => setEPrice(e.target.value)}
+            />
             <FormGroup label="Unit">
-              <select className={inputClass} value={eUnit} onChange={e => setEUnit(e.target.value)}>
-                {UNIT_OPTIONS.map(u => <option key={u}>{u}</option>)}
+              <select
+                className={inputClass}
+                value={eUnit}
+                onChange={(e) => setEUnit(e.target.value)}
+              >
+                {UNIT_OPTIONS.map((u) => (
+                  <option key={u}>{u}</option>
+                ))}
               </select>
             </FormGroup>
           </div>
-          <FormInput  label="Stock Qty"       type="number" placeholder="0"        value={eStock} onChange={e => setEStock(e.target.value)} />
+          <FormInput
+            label="Stock Qty"
+            type="number"
+            placeholder="0"
+            value={eStock}
+            onChange={(e) => setEStock(e.target.value)}
+          />
           <FormGroup label="Description (optional)">
             <textarea
               className={`${inputClass} resize-none`}
               rows={2}
               placeholder="Brief description…"
               value={eDesc}
-              onChange={e => setEDesc(e.target.value)}
+              onChange={(e) => setEDesc(e.target.value)}
             />
           </FormGroup>
         </SMModal>
@@ -1294,8 +2419,18 @@ function InventoryManagementTab() {
           onClose={() => setDeleteId(null)}
           footer={
             <>
-              <button className={ghostBtnClass}   onClick={() => setDeleteId(null)}              disabled={saving}>Cancel</button>
-              <button className={dangerBtnClass}  onClick={() => void handleDelete(deleteId!)}   disabled={saving}>
+              <button
+                className={ghostBtnClass}
+                onClick={() => setDeleteId(null)}
+                disabled={saving}
+              >
+                Cancel
+              </button>
+              <button
+                className={dangerBtnClass}
+                onClick={() => void handleDelete(deleteId!)}
+                disabled={saving}
+              >
                 {saving ? "Deleting…" : "Yes, Delete"}
               </button>
             </>
@@ -1304,174 +2439,234 @@ function InventoryManagementTab() {
           <p className="text-[13px] text-gray-600 leading-relaxed">
             Are you sure you want to delete{" "}
             <span className="font-bold text-gray-900">
-              {products.find(p => p.id === deleteId)?.name ?? "this product"}
+              {products.find((p) => p.id === deleteId)?.name ?? "this product"}
             </span>
             ? This action cannot be undone.
           </p>
         </SMModal>
       )}
     </div>
-  )
+  );
 }
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function Inventory() {
-  const now              = useNow()
-  const { addNotification } = useNotifications()
-  const [pageTab,        setPageTab]        = useState<PageTab>("inventory")
-  const [loading,        setLoading]        = useState(true)
-  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([])
+  const now = useNow();
+  const { addNotification } = useNotifications();
+  const [pageTab, setPageTab] = useState<PageTab>("inventory");
+  const [loading, setLoading] = useState(true);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
 
   const loadInventory = async (showLoader = true) => {
     try {
-      if (showLoader) setLoading(true)
-      const data = await apiCall("/inventory", { method: "GET" }) as ApiInventoryRow[] | null
+      if (showLoader) setLoading(true);
+      const data = (await apiCall("/inventory", { method: "GET" })) as
+        | ApiInventoryRow[]
+        | null;
       if (data && Array.isArray(data)) {
         const inventoryRows = data.filter((item) => {
-          const promo    = String(item?.promo    ?? "").toUpperCase().trim()
-          const category = String(item?.category ?? "").toLowerCase().trim()
-          return promo === "SUPPLIES" || promo === "MENU FOOD" || category.includes("suppl") || category.includes("menu food")
-        })
+          const promo = String(item?.promo ?? "")
+            .toUpperCase()
+            .trim();
+          const category = String(item?.category ?? "")
+            .toLowerCase()
+            .trim();
+          return (
+            promo === "SUPPLIES" ||
+            promo === "MENU FOOD" ||
+            category.includes("suppl") ||
+            category.includes("menu food")
+          );
+        });
 
-        const groupedByName = new Map<string, ApiInventoryRow[]>()
+        const groupedByName = new Map<string, ApiInventoryRow[]>();
         for (const item of inventoryRows) {
-          const key = String(item?.product_name ?? item?.name ?? "").trim().toLowerCase()
-          const group = groupedByName.get(key) ?? []
-          group.push(item)
-          groupedByName.set(key, group)
+          const key = String(item?.product_name ?? item?.name ?? "")
+            .trim()
+            .toLowerCase();
+          const group = groupedByName.get(key) ?? [];
+          group.push(item);
+          groupedByName.set(key, group);
         }
 
         const normalizedRows = Array.from(groupedByName.values()).map((group) =>
           group.reduce((latest, current) => {
-            const latestId  = Number(latest?.product_id  ?? latest?.id  ?? latest?.inventory_id  ?? 0)
-            const currentId = Number(current?.product_id ?? current?.id ?? current?.inventory_id ?? 0)
-            return currentId > latestId ? current : latest
-          })
-        )
+            const latestId = Number(
+              latest?.product_id ?? latest?.id ?? latest?.inventory_id ?? 0,
+            );
+            const currentId = Number(
+              current?.product_id ?? current?.id ?? current?.inventory_id ?? 0,
+            );
+            return currentId > latestId ? current : latest;
+          }),
+        );
 
         setInventoryItems(
           normalizedRows.map((item) => ({
-            id:       Number(item.id ?? item.product_id ?? item.inventory_id ?? 0),
-            name:     item.name || item.product_name || "Unnamed Product",
+            id: Number(item.id ?? item.product_id ?? item.inventory_id ?? 0),
+            name: item.name || item.product_name || "Unnamed Product",
             category: item.category || "Uncategorized",
-            image:    item.image    || "/img/placeholder.jpg",
+            image: item.image || "/img/placeholder.jpg",
             incoming: 0,
-            stock:    Number((item as any).quantity ?? (item as any).stock ?? (item as any).dailyWithdrawn ?? 0),
-            price:    item.price?.toString() || "0",
-            unit:     (item.unit as UnitType) || "piece",
-            batches:  (item.batches || []).map((b: Batch) => ({
+            stock: Number(
+              (item as any).quantity ??
+                (item as any).stock ??
+                (item as any).dailyWithdrawn ??
+                0,
+            ),
+            price: item.price?.toString() || "0",
+            unit: (item.unit as UnitType) || "piece",
+            batches: (item.batches || []).map((b: Batch) => ({
               ...b,
               receivedAt: new Date(b.receivedAt),
-              expiresAt:  b.expiresAt ? new Date(b.expiresAt) : undefined,
+              expiresAt: b.expiresAt ? new Date(b.expiresAt) : undefined,
             })),
             totalUsedToday: 0,
-          }))
-        )
+          })),
+        );
       }
     } catch (error) {
-      console.error("Failed to load inventory:", error)
-      notify(addNotification, "Failed to load inventory. Please try again.", "error")
+      console.error("Failed to load inventory:", error);
+      notify(
+        addNotification,
+        "Failed to load inventory. Please try again.",
+        "error",
+      );
     } finally {
-      if (showLoader) setLoading(false)
+      if (showLoader) setLoading(false);
     }
-  }
+  };
 
-  useEffect(() => { loadInventory() }, [])
+  useEffect(() => {
+    loadInventory();
+  }, []);
 
-  const handleAddProduct = async (productData: Partial<InventoryItem> & { description?: string }) => {
+  const handleAddProduct = async (
+    productData: Partial<InventoryItem> & { description?: string },
+  ) => {
     try {
       const created = await api.post<{ id?: number }>("/products", {
-        name:        productData.name,
-        category:    productData.category,
-        price:       productData.price,
-        unit:        productData.unit,
-        quantity:    productData.stock ?? 0,
+        name: productData.name,
+        category: productData.category,
+        price: productData.price,
+        unit: productData.unit,
+        quantity: productData.stock ?? 0,
         description: productData.description ?? null,
-        image:       productData.image || "/img/placeholder.jpg",
-      })
+        image: productData.image || "/img/placeholder.jpg",
+      });
 
       const optimisticItem: InventoryItem = {
-        id:             Number(created?.id ?? Date.now()),
-        name:           String(productData.name     ?? "Unnamed Product"),
-        category:       String(productData.category ?? "Uncategorized"),
-        image:          String(productData.image    ?? "/img/placeholder.jpg"),
-        incoming:       0,
-        stock:          Number(productData.stock    ?? 0),
-        price:          String(productData.price    ?? "0"),
-        unit:           (productData.unit as UnitType) || "piece",
-        batches:        [],
+        id: Number(created?.id ?? Date.now()),
+        name: String(productData.name ?? "Unnamed Product"),
+        category: String(productData.category ?? "Uncategorized"),
+        image: String(productData.image ?? "/img/placeholder.jpg"),
+        incoming: 0,
+        stock: Number(productData.stock ?? 0),
+        price: String(productData.price ?? "0"),
+        unit: (productData.unit as UnitType) || "piece",
+        batches: [],
         totalUsedToday: 0,
-      }
-      setInventoryItems(prev => [optimisticItem, ...prev])
-      void loadInventory(false)
-      notify(addNotification, "Product added successfully!", "success")
+      };
+      setInventoryItems((prev) => [optimisticItem, ...prev]);
+      void loadInventory(false);
+      notify(addNotification, "Product added successfully!", "success");
     } catch (error) {
-      console.error("Failed to add product:", error)
-      notify(addNotification, `Failed to add product: ${error instanceof Error ? error.message : "Unknown error"}`, "error")
+      console.error("Failed to add product:", error);
+      notify(
+        addNotification,
+        `Failed to add product: ${error instanceof Error ? error.message : "Unknown error"}`,
+        "error",
+      );
     }
-  }
+  };
 
   const handleDeleteProduct = async (productId: number) => {
     try {
-      await apiCall(`/products/${productId}`, { method: "DELETE" })
-      setInventoryItems(prev => prev.filter(item => item.id !== productId))
-      notify(addNotification, "Product deleted successfully!", "success")
+      await apiCall(`/products/${productId}`, { method: "DELETE" });
+      setInventoryItems((prev) => prev.filter((item) => item.id !== productId));
+      notify(addNotification, "Product deleted successfully!", "success");
     } catch (error) {
-      console.error("Failed to delete product:", error)
-      notify(addNotification, `Failed to delete product: ${error instanceof Error ? error.message : "Unknown error"}`, "error")
+      console.error("Failed to delete product:", error);
+      notify(
+        addNotification,
+        `Failed to delete product: ${error instanceof Error ? error.message : "Unknown error"}`,
+        "error",
+      );
     }
-  }
+  };
 
-  const totalStock   = inventoryItems.reduce((sum, item) => sum + item.stock, 0)
-  const totalBatches = inventoryItems.reduce((sum, item) => sum + (item.batches?.length || 0), 0)
+  const totalStock = inventoryItems.reduce((sum, item) => sum + item.stock, 0);
+  const totalBatches = inventoryItems.reduce(
+    (sum, item) => sum + (item.batches?.length || 0),
+    0,
+  );
 
   return (
     <div className="flex min-h-screen bg-gray-50 font-[Poppins,sans-serif]">
       <Sidebar />
       <main className="flex-1 p-8 pl-24">
-
         {/* Page header + clock */}
         <motion.div
-          initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4 }}
           className="mb-2 flex items-start justify-between"
         >
           <div>
-            <p className="text-xs text-gray-400 uppercase tracking-widest mb-1">Management</p>
+            <p className="text-xs text-gray-400 uppercase tracking-widest mb-1">
+              Management
+            </p>
             <h1 className="text-3xl font-bold text-gray-900">Inventory</h1>
           </div>
           <div className="flex flex-col items-end select-none">
             <p className="text-base font-semibold text-gray-700 tabular-nums">
-              {now.toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+              {now.toLocaleTimeString("en-PH", {
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+              })}
             </p>
             <p className="text-xs text-gray-400 mt-0.5">
-              {now.toLocaleDateString("en-PH", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
+              {now.toLocaleDateString("en-PH", {
+                weekday: "long",
+                month: "long",
+                day: "numeric",
+                year: "numeric",
+              })}
             </p>
           </div>
         </motion.div>
 
         {/* Top-level tabs — 3 pills */}
         <motion.div
-          initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1, duration: 0.3 }}
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1, duration: 0.3 }}
           className="flex justify-center mb-8"
         >
           <div className="inline-flex bg-gray-100 rounded-[14px] p-1 gap-0.5">
-            {([
-              { key: "inventory"   as PageTab, label: "Inventory"           },
-              { key: "management"  as PageTab, label: "Manage Products"     },
-              { key: "movement"    as PageTab, label: "Stock Movement"      },
-            ]).map(tab => (
+            {[
+              { key: "inventory" as PageTab, label: "Inventory" },
+              { key: "management" as PageTab, label: "Manage Products" },
+              { key: "movement" as PageTab, label: "Stock Movement" },
+            ].map((tab) => (
               <button
                 key={tab.key}
                 onClick={() => setPageTab(tab.key)}
                 className={`relative px-7 py-[9px] text-[13px] font-semibold font-[Poppins,sans-serif] border-none cursor-pointer rounded-[10px] transition-colors whitespace-nowrap z-[1] ${
-                  pageTab === tab.key ? "text-gray-900" : "text-gray-400 hover:text-gray-700 bg-transparent"
+                  pageTab === tab.key
+                    ? "text-gray-900"
+                    : "text-gray-400 hover:text-gray-700 bg-transparent"
                 }`}
               >
                 {pageTab === tab.key && (
                   <motion.span
                     className="absolute inset-0 bg-white rounded-[10px] z-0"
-                    style={{ boxShadow: "0 1px 6px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.04)" }}
+                    style={{
+                      boxShadow:
+                        "0 1px 6px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.04)",
+                    }}
                     layoutId="pageTabSlider"
                     transition={{ type: "spring", stiffness: 400, damping: 34 }}
                   />
@@ -1483,28 +2678,58 @@ export default function Inventory() {
         </motion.div>
 
         <AnimatePresence mode="wait">
-
           {/* ── Inventory tab */}
           {pageTab === "inventory" && (
-            <motion.div key="inventory" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.22 }}>
-
+            <motion.div
+              key="inventory"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.22 }}
+            >
               <div className="grid grid-cols-3 gap-5 mb-8">
                 {[
-                  { label: "Total Products", value: inventoryItems.length, icon: <Package   className="w-[18px] h-[18px]" />, iconBg: "bg-blue-50",    iconColor: "text-blue-500"    },
-                  { label: "Total Stock",    value: totalStock,             icon: <Archive   className="w-[18px] h-[18px]" />, iconBg: "bg-emerald-50", iconColor: "text-emerald-500" },
-                  { label: "Active Batches", value: totalBatches,           icon: <RefreshCw className="w-[18px] h-[18px]" />, iconBg: "bg-orange-50",  iconColor: "text-orange-500"  },
+                  {
+                    label: "Total Products",
+                    value: inventoryItems.length,
+                    icon: <Package className="w-[18px] h-[18px]" />,
+                    iconBg: "bg-blue-50",
+                    iconColor: "text-blue-500",
+                  },
+                  {
+                    label: "Total Stock",
+                    value: totalStock,
+                    icon: <Archive className="w-[18px] h-[18px]" />,
+                    iconBg: "bg-emerald-50",
+                    iconColor: "text-emerald-500",
+                  },
+                  {
+                    label: "Active Batches",
+                    value: totalBatches,
+                    icon: <RefreshCw className="w-[18px] h-[18px]" />,
+                    iconBg: "bg-orange-50",
+                    iconColor: "text-orange-500",
+                  },
                 ].map((stat, i) => (
                   <motion.div
                     key={stat.label}
-                    initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.07 }}
                     className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 flex items-center gap-4"
                   >
-                    <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${stat.iconBg} ${stat.iconColor}`}>
+                    <div
+                      className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${stat.iconBg} ${stat.iconColor}`}
+                    >
                       {stat.icon}
                     </div>
                     <div>
-                      <p className="text-[26px] font-bold text-gray-900 leading-none">{stat.value}</p>
-                      <p className="text-[12px] text-gray-400 mt-1 font-medium">{stat.label}</p>
+                      <p className="text-[26px] font-bold text-gray-900 leading-none">
+                        {stat.value}
+                      </p>
+                      <p className="text-[12px] text-gray-400 mt-1 font-medium">
+                        {stat.label}
+                      </p>
                     </div>
                   </motion.div>
                 ))}
@@ -1513,50 +2738,68 @@ export default function Inventory() {
               <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-8">
                 <AnimatePresence mode="wait">
                   {loading ? (
-                    <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex flex-col items-center justify-center py-24 gap-4">
+                    <motion.div
+                      key="loading"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="flex flex-col items-center justify-center py-24 gap-4"
+                    >
                       <motion.div
                         className="w-12 h-12 rounded-full border-4 border-gray-200 border-t-blue-500"
                         animate={{ rotate: 360 }}
-                        transition={{ repeat: Infinity, duration: 0.9, ease: "linear" }}
+                        transition={{
+                          repeat: Infinity,
+                          duration: 0.9,
+                          ease: "linear",
+                        }}
                       />
-                      <p className="text-gray-400 text-sm">Loading inventory...</p>
+                      <p className="text-gray-400 text-sm">
+                        Loading inventory...
+                      </p>
                     </motion.div>
                   ) : (
-                    <motion.div key="content" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
-                      <InventoryClient items={inventoryItems} onAddProduct={handleAddProduct} onDeleteProduct={handleDeleteProduct} />
+                    <motion.div
+                      key="content"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.3 }}
+                    >
+                      <InventoryClient
+                        items={inventoryItems}
+                        onAddProduct={handleAddProduct}
+                        onDeleteProduct={handleDeleteProduct}
+                      />
                     </motion.div>
                   )}
                 </AnimatePresence>
-              </div>
-
-              <div className="grid grid-cols-3 gap-5 mt-6">
-                {[
-                  { desc: "Each batch is tracked with a timestamp. When consuming products, the oldest batch is used first (FIFO).", borderCls: "border-blue-200",    bgCls: "bg-blue-50",    textCls: "text-blue-800"    },
-                  { desc: "Click 'Add Batch' to input new product quantities. Optional expiry dates can be set for tracking.",        borderCls: "border-emerald-200", bgCls: "bg-emerald-50", textCls: "text-emerald-800" },
-                  { desc: "At end of day, return unused batches. Returned quantity is sent back to main inventory.",                   borderCls: "border-orange-200",  bgCls: "bg-orange-50",  textCls: "text-orange-800"  },
-                ].map((card, i) => (
-                  <motion.div
-                    key={i}
-                    initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 + i * 0.07 }}
-                    className={`${card.bgCls} border ${card.borderCls} rounded-2xl p-5`}
-                  >
-                    <p className={`text-sm ${card.textCls} leading-relaxed`}>{card.desc}</p>
-                  </motion.div>
-                ))}
               </div>
             </motion.div>
           )}
 
           {/* ── Inventory Management tab */}
           {pageTab === "management" && (
-            <motion.div key="management" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.22 }}>
+            <motion.div
+              key="management"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.22 }}
+            >
               <InventoryManagementTab />
             </motion.div>
           )}
 
           {/* ── Stock Movement tab */}
           {pageTab === "movement" && (
-            <motion.div key="movement" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.22 }}>
+            <motion.div
+              key="movement"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.22 }}
+            >
               <StockMovementTab />
             </motion.div>
           )}
@@ -1564,5 +2807,5 @@ export default function Inventory() {
         </AnimatePresence>
       </main>
     </div>
-  )
+  );
 }
