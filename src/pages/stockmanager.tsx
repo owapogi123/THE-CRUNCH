@@ -24,8 +24,6 @@ export interface POItem {
   unit: string;
   quantity: number;
   unitCost: number;
-  expiryDate?: string;
-  expectedExpiryDate?: string; // planning field set at PO creation
 }
 
 export interface PurchaseOrder {
@@ -113,7 +111,6 @@ interface RawMaterialForm {
   category: string;
   unit: string;
   initialStock: string;
-  expiryDate: string;
   price: string;
   description: string;
 }
@@ -182,6 +179,10 @@ const api = {
     apiFetch<{ message: string; id: number }>("/products", {
       method: "POST",
       body: JSON.stringify(body),
+    }),
+  deleteProduct: (id: number) =>
+    apiFetch<{ message: string }>(`/products/${id}`, {
+      method: "DELETE",
     }),
   getActiveBatches: () => apiFetch<Batch[]>("/batches/active"),
   getProductBatches: (product_id: number) =>
@@ -262,6 +263,10 @@ const api = {
           itemExpiryDates,
         }),
       }),
+    delete: (id: string) =>
+      apiFetch<{ success: boolean }>(`/purchase-orders/${id}`, {
+        method: "DELETE",
+      }),
   },
 };
 
@@ -297,7 +302,6 @@ const EMPTY_PO_ITEM: Omit<POItem, "id"> = {
   unit: "",
   quantity: 0,
   unitCost: 0,
-  expectedExpiryDate: "",
 };
 
 const BLANK_SUPPLIER: Omit<Supplier, "supplier_id"> = {
@@ -314,7 +318,6 @@ const BLANK_RAW_MATERIAL: RawMaterialForm = {
   category: "Sauce",
   unit: "liter",
   initialStock: "",
-  expiryDate: "",
   price: "",
   description: "",
 };
@@ -426,8 +429,13 @@ const isChoppedChicken = (p: Product) =>
 const isChicken = (p: Product) => isWholeChicken(p) || isChoppedChicken(p);
 
 const isMenuFoodProduct = (p: Pick<Product, "category" | "promo">) =>
-  String(p.promo ?? "").toUpperCase().trim() === "MENU FOOD" ||
-  String(p.category ?? "").toLowerCase().trim().includes("menu food");
+  String(p.promo ?? "")
+    .toUpperCase()
+    .trim() === "MENU FOOD" ||
+  String(p.category ?? "")
+    .toLowerCase()
+    .trim()
+    .includes("menu food");
 
 const isReconcilable = (p: Product) =>
   !/(sauce|bottle|beverage|condiment|drink)/.test(p.category.toLowerCase());
@@ -477,15 +485,6 @@ const daysUntilExpiry = (e: string | null | undefined): number | null => {
   const d = new Date(e);
   if (isNaN(d.getTime())) return null;
   return Math.floor((d.getTime() - Date.now()) / 86400000);
-};
-
-/** Aggregate the nearest expiry across all items on a PO */
-const poNearestExpiry = (order: PurchaseOrder): string | null => {
-  const dates = order.items
-    .map((i) => i.expiryDate || i.expectedExpiryDate)
-    .filter(Boolean) as string[];
-  if (dates.length === 0) return null;
-  return dates.sort()[0];
 };
 
 const getCategoryStyle = (cat: string) => {
@@ -803,11 +802,14 @@ function PODetailDrawer({
   order,
   onClose,
   onStatusChange,
+  onDelete,
 }: {
   order: PurchaseOrder;
   onClose: () => void;
   onStatusChange: (id: string, status: POStatus) => void;
+  onDelete: (id: string) => void;
 }) {
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const total = calcPOTotal(order.items);
   const tax = total * 0.12;
   const nextStatus: Partial<Record<POStatus, POStatus>> = {
@@ -815,12 +817,6 @@ function PODetailDrawer({
     Ordered: "Received",
   };
   const next = nextStatus[order.status];
-
-  // Aggregate expiry warnings for the drawer header
-  const expiryWarnings = order.items.filter((i) => {
-    const d = i.expiryDate || i.expectedExpiryDate;
-    return d && daysUntilExpiry(d) !== null && (daysUntilExpiry(d) ?? 999) <= 7;
-  });
 
   return (
     <motion.div
@@ -834,18 +830,69 @@ function PODetailDrawer({
         <div>
           <p className="text-xs text-gray-400 font-medium">{order.date}</p>
           <h2 className="text-lg font-semibold text-gray-800">{order.id}</h2>
-          {expiryWarnings.length > 0 && (
-            <p className="text-[11px] text-orange-500 font-medium mt-0.5 flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-orange-400 inline-block animate-pulse" />
-              {expiryWarnings.length} item{expiryWarnings.length > 1 ? "s" : ""} expiring soon
-            </p>
-          )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <POBadge status={order.status} />
+          {(order.status === "Draft" || order.status === "Ordered") && (
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              className="p-1.5 rounded-lg text-slate-300 hover:text-red-400 hover:bg-red-50 transition-colors"
+              title="Cancel order"
+            >
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                />
+              </svg>
+            </button>
+          )}
           <CloseBtn onClick={onClose} />
         </div>
       </div>
+
+      <AnimatePresence>
+        {showDeleteConfirm && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="border-b border-red-100 bg-red-50 px-6 py-4"
+          >
+            <p className="text-sm font-semibold text-red-700 mb-1">
+              Cancel this purchase order?
+            </p>
+            <p className="text-xs text-red-400 mb-3">
+              {order.id} · {order.supplier} · {order.items.length} item
+              {order.items.length !== 1 ? "s" : ""}
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="px-3 py-1.5 text-xs font-semibold text-slate-500 border border-slate-200 rounded-lg hover:bg-white transition-colors"
+              >
+                Keep it
+              </button>
+              <button
+                onClick={() => {
+                  onDelete(order.id);
+                  onClose();
+                }}
+                className="px-3 py-1.5 text-xs font-semibold text-white bg-red-500 rounded-lg hover:bg-red-600 transition-colors"
+              >
+                Yes, cancel order
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
         {/* Supplier info */}
@@ -863,91 +910,39 @@ function PODetailDrawer({
           </p>
         </div>
 
-        {/* Items — now includes expiry column */}
+        {/* Items */}
         <div>
           <p className="text-xs text-gray-400 font-medium uppercase tracking-wide mb-3">
             Order Items
           </p>
           <div className="space-y-2">
-            {order.items.map((item) => {
-              const displayExpiry = item.expiryDate || item.expectedExpiryDate;
-              const days = daysUntilExpiry(displayExpiry);
-              const isConfirmedExpiry = !!item.expiryDate;
-
-              return (
-                <div
-                  key={item.id}
-                  className="py-3 border-b border-gray-100 last:border-0"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-800">
-                        {item.name}
-                      </p>
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        {item.category} · {item.quantity} {item.unit}
-                      </p>
-                      {/* Expiry row */}
-                      {displayExpiry && (
-                        <div className="flex items-center gap-2 mt-1.5">
-                          <span className={`text-[10px] font-semibold uppercase tracking-wide ${isConfirmedExpiry ? "text-emerald-600" : "text-slate-400"}`}>
-                            {isConfirmedExpiry ? "Confirmed expiry" : "Expected expiry"}
-                          </span>
-                          <ExpiryChip dateStr={displayExpiry} />
-                        </div>
-                      )}
-                      {!displayExpiry && (
-                        <p className="text-[10px] text-slate-300 mt-1">No expiry date set</p>
-                      )}
-                    </div>
-                    <div className="text-right flex-shrink-0">
-                      <p className="text-sm font-semibold text-gray-800">
-                        ₱{(item.quantity * item.unitCost).toLocaleString()}
-                      </p>
-                      <p className="text-xs text-gray-400">
-                        ₱{item.unitCost}/{item.unit}
-                      </p>
-                    </div>
+            {order.items.map((item) => (
+              <div
+                key={item.id}
+                className="py-3 border-b border-gray-100 last:border-0"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-800">
+                      {item.name}
+                    </p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {item.category} · {item.quantity} {item.unit}
+                    </p>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <p className="text-sm font-semibold text-gray-800">
+                      ₱{(item.quantity * item.unitCost).toLocaleString()}
+                    </p>
+                    <p className="text-xs text-gray-400">
+                      ₱{item.unitCost}/{item.unit}
+                    </p>
                   </div>
                 </div>
-              );
-            })}
+              </div>
+            ))}
           </div>
         </div>
-
-        {/* Expiry summary banner — only if any items have expiry dates set */}
-        {order.items.some((i) => i.expiryDate || i.expectedExpiryDate) && (
-          <div className="rounded-xl border border-slate-100 overflow-hidden">
-            <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-100">
-              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Expiry Overview</p>
-            </div>
-            <div className="divide-y divide-slate-50">
-              {order.items
-                .filter((i) => i.expiryDate || i.expectedExpiryDate)
-                .sort((a, b) => {
-                  const da = a.expiryDate || a.expectedExpiryDate || "";
-                  const db = b.expiryDate || b.expectedExpiryDate || "";
-                  return da.localeCompare(db);
-                })
-                .map((item) => {
-                  const d = item.expiryDate || item.expectedExpiryDate;
-                  const days = daysUntilExpiry(d);
-                  const urgent = days !== null && days <= 7;
-                  return (
-                    <div
-                      key={item.id}
-                      className={`flex items-center justify-between px-4 py-2.5 ${urgent ? "bg-orange-50/40" : ""}`}
-                    >
-                      <p className="text-xs font-medium text-slate-700 truncate max-w-[180px]">
-                        {item.name}
-                      </p>
-                      <ExpiryChip dateStr={d} />
-                    </div>
-                  );
-                })}
-            </div>
-          </div>
-        )}
 
         {/* Totals */}
         <div className="bg-gray-50 rounded-xl p-4 space-y-2">
@@ -1022,13 +1017,7 @@ function ReceivePOModal({
   onShowToast: (message: string, type: "success" | "error") => void;
 }) {
   const [expiryDates, setExpiryDates] = useState<Record<number, string>>(() =>
-    Object.fromEntries(
-      // Pre-fill confirmed expiry first, then fall back to expected expiry as a hint
-      order.items.map((item) => [
-        item.id,
-        item.expiryDate || item.expectedExpiryDate || "",
-      ]),
-    ),
+    Object.fromEntries(order.items.map((item) => [item.id, ""])),
   );
 
   const handleConfirm = async () => {
@@ -1059,13 +1048,14 @@ function ReceivePOModal({
         transition={{ type: "spring", stiffness: 300, damping: 28 }}
         className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col"
       >
-        <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100">
+        <div className="flex items-center justify-between px-4 sm:px-6 py-5 border-b border-gray-100">
           <div>
             <h2 className="text-lg font-semibold text-gray-800">
               Receive Purchase Order
             </h2>
             <p className="text-xs text-gray-400 mt-0.5">
-              Confirm actual expiry dates. Pre-filled from your expected dates — update if the delivery differs.
+              Confirm actual expiry dates. Enter the date printed on each
+              received item.
             </p>
           </div>
           <CloseBtn onClick={onClose} />
@@ -1118,7 +1108,8 @@ function ReceivePOModal({
                 </div>
                 {warn && dayCount !== null && (
                   <p className="text-[11px] text-orange-500 font-medium mt-2">
-                    ⚠ This item will expire in {dayCount} day{dayCount !== 1 ? "s" : ""} — consider whether to accept.
+                    ⚠ This item will expire in {dayCount} day
+                    {dayCount !== 1 ? "s" : ""} — consider whether to accept.
                   </p>
                 )}
               </div>
@@ -1174,7 +1165,7 @@ function CreatePOModal({
   const [deliveryDate, setDeliveryDate] = useState("");
   const [notes, setNotes] = useState("");
   const [showQuickOrder, setShowQuickOrder] = useState(false);
-  const [showExpiry, setShowExpiry] = useState(true);
+
   const [items, setItems] = useState<Omit<POItem, "id">[]>([
     prefillProduct
       ? {
@@ -1183,7 +1174,6 @@ function CreatePOModal({
           unit: prefillProduct.unit,
           quantity: 0,
           unitCost: 0,
-          expectedExpiryDate: "",
         }
       : { ...EMPTY_PO_ITEM },
   ]);
@@ -1209,10 +1199,11 @@ function CreatePOModal({
         unit: product.unit,
         quantity: Math.max(
           1,
-          Math.ceil(toNumber(product.reorderPoint) - toNumber(product.mainStock)),
+          Math.ceil(
+            toNumber(product.reorderPoint) - toNumber(product.mainStock),
+          ),
         ),
         unitCost: 0,
-        expectedExpiryDate: "",
       },
     ]);
     setShowQuickOrder(false);
@@ -1254,7 +1245,6 @@ function CreatePOModal({
           id: idx + 1,
           quantity: toNumber(item.quantity),
           unitCost: toNumber(item.unitCost),
-          expectedExpiryDate: item.expectedExpiryDate || undefined,
         })),
       });
       onClose();
@@ -1292,11 +1282,16 @@ function CreatePOModal({
           <CloseBtn onClick={onClose} />
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
-          <div className="grid grid-cols-2 gap-3">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 sm:px-6 py-5 space-y-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {(
               [
-                ["Supplier Name", supplier, setSupplier, "e.g. Fresh Farms Co."],
+                [
+                  "Supplier Name",
+                  supplier,
+                  setSupplier,
+                  "e.g. Fresh Farms Co.",
+                ],
                 ["Contact Number", contact, setContact, "09XXXXXXXXX"],
               ] as [string, string, (v: string) => void, string][]
             ).map(([label, val, setter, ph]) => (
@@ -1327,28 +1322,28 @@ function CreatePOModal({
           </div>
 
           <div>
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-2 gap-2">
               <label className="text-xs text-gray-400 font-medium uppercase tracking-wide">
                 Items
               </label>
-              <div className="flex items-center gap-3">
-                {/* Toggle expiry column */}
-                <button
-                  onClick={() => setShowExpiry((v) => !v)}
-                  className={`text-xs font-semibold flex items-center gap-1 transition-colors ${showExpiry ? "text-emerald-600 hover:text-emerald-800" : "text-slate-400 hover:text-slate-600"}`}
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                  </svg>
-                  {showExpiry ? "Hide Expiry" : "Add Expiry Dates"}
-                </button>
+              <div className="flex items-center gap-3 flex-wrap justify-end">
                 <button
                   onClick={() => setShowQuickOrder((p) => !p)}
                   disabled={quickOrderProducts.length === 0}
                   className="text-xs font-semibold text-amber-700 hover:text-amber-800 flex items-center gap-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  <svg
+                    className="w-3.5 h-3.5"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2.5}
+                      d="M13 10V3L4 14h7v7l9-11h-7z"
+                    />
                   </svg>
                   Quick Order
                 </button>
@@ -1356,8 +1351,18 @@ function CreatePOModal({
                   onClick={() => setItems((p) => [...p, { ...EMPTY_PO_ITEM }])}
                   className="text-xs font-semibold text-gray-600 hover:text-gray-900 flex items-center gap-1 transition-colors"
                 >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+                  <svg
+                    className="w-3.5 h-3.5"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2.5}
+                      d="M12 4v16m8-8H4"
+                    />
                   </svg>
                   Add Item
                 </button>
@@ -1399,32 +1404,9 @@ function CreatePOModal({
               </div>
             )}
 
-            {/* Column headers — dynamic based on showExpiry */}
-            <div className={`grid gap-2 text-xs text-gray-400 font-medium px-1 mb-1 ${showExpiry ? "grid-cols-[4fr_1.5fr_1.5fr_2fr_2fr_auto]" : "grid-cols-12"}`}>
-              {showExpiry ? (
-                <>
-                  <span>Item</span>
-                  <span>Unit</span>
-                  <span>Qty</span>
-                  <span>Unit Cost</span>
-                  <span className="flex items-center gap-1 text-emerald-500">
-                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                    </svg>
-                    Exp. Date
-                  </span>
-                  <span />
-                </>
-              ) : (
-                <>
-                  <span className="col-span-4">Item</span>
-                  <span className="col-span-2">Unit</span>
-                  <span className="col-span-2">Qty</span>
-                  <span className="col-span-3">Unit Cost</span>
-                  <span className="col-span-1" />
-                </>
-              )}
-            </div>
+            <p className="text-[11px] text-gray-400 mb-1 px-0.5">
+              Add item details below. Layout adapts to your screen width.
+            </p>
 
             <div className="space-y-2">
               <AnimatePresence>
@@ -1434,67 +1416,85 @@ function CreatePOModal({
                     initial={{ opacity: 0, y: -6 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -6 }}
-                    className={`grid gap-2 items-center ${showExpiry ? "grid-cols-[4fr_1.5fr_1.5fr_2fr_2fr_auto]" : "grid-cols-12"}`}
+                    className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-start rounded-lg border border-slate-100 p-2 min-w-0"
                   >
-                    <input
-                      value={item.name}
-                      onChange={(e) => updateItem(idx, "name", e.target.value)}
-                      placeholder="Item name"
-                      className={`border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200 placeholder-gray-300 ${!showExpiry ? "col-span-4" : ""}`}
-                    />
-                    <input
-                      value={item.unit}
-                      onChange={(e) => updateItem(idx, "unit", e.target.value)}
-                      placeholder="kg / pcs"
-                      className={`border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200 placeholder-gray-300 ${!showExpiry ? "col-span-2" : ""}`}
-                    />
-                    <input
-                      type="number"
-                      value={item.quantity || ""}
-                      onChange={(e) => updateItem(idx, "quantity", e.target.value)}
-                      placeholder="0"
-                      className={`border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200 placeholder-gray-300 ${!showExpiry ? "col-span-2" : ""}`}
-                    />
-                    <input
-                      type="number"
-                      value={item.unitCost || ""}
-                      onChange={(e) => updateItem(idx, "unitCost", e.target.value)}
-                      placeholder="₱0"
-                      className={`border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200 placeholder-gray-300 ${!showExpiry ? "col-span-3" : ""}`}
-                    />
-                    {showExpiry && (
-                      <div className="relative">
-                        <input
-                          type="date"
-                          value={item.expectedExpiryDate || ""}
-                          onChange={(e) => updateItem(idx, "expectedExpiryDate", e.target.value)}
-                          className="w-full border border-emerald-200 bg-emerald-50/30 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-emerald-200 placeholder-gray-300"
-                        />
-                        {item.expectedExpiryDate && (
-                          <div className="absolute -bottom-5 left-0">
-                            <ExpiryChip dateStr={item.expectedExpiryDate} />
-                          </div>
-                        )}
-                      </div>
-                    )}
+                    <div className="sm:col-span-2 min-w-0">
+                      <label className="block text-[11px] text-gray-400 mb-1">
+                        Item
+                      </label>
+                      <input
+                        value={item.name}
+                        onChange={(e) =>
+                          updateItem(idx, "name", e.target.value)
+                        }
+                        placeholder="Item name"
+                        className="w-full min-w-0 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200 placeholder-gray-300"
+                      />
+                    </div>
+                    <div className="min-w-0">
+                      <label className="block text-[11px] text-gray-400 mb-1">
+                        Unit
+                      </label>
+                      <input
+                        value={item.unit}
+                        onChange={(e) =>
+                          updateItem(idx, "unit", e.target.value)
+                        }
+                        placeholder="kg / pcs"
+                        className="w-full min-w-0 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200 placeholder-gray-300"
+                      />
+                    </div>
+                    <div className="min-w-0">
+                      <label className="block text-[11px] text-gray-400 mb-1">
+                        Qty
+                      </label>
+                      <input
+                        type="number"
+                        value={item.quantity || ""}
+                        onChange={(e) =>
+                          updateItem(idx, "quantity", e.target.value)
+                        }
+                        placeholder="0"
+                        className="w-full min-w-0 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200 placeholder-gray-300"
+                      />
+                    </div>
+                    <div className="min-w-0">
+                      <label className="block text-[11px] text-gray-400 mb-1">
+                        Unit Cost
+                      </label>
+                      <input
+                        type="number"
+                        value={item.unitCost || ""}
+                        onChange={(e) =>
+                          updateItem(idx, "unitCost", e.target.value)
+                        }
+                        placeholder="₱0"
+                        className="w-full min-w-0 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200 placeholder-gray-300"
+                      />
+                    </div>
                     <button
                       onClick={() => removeItem(idx)}
                       disabled={items.length === 1}
-                      className={`flex justify-center text-gray-300 hover:text-red-400 disabled:opacity-20 transition-colors ${!showExpiry ? "col-span-1" : ""}`}
+                      className="sm:col-span-2 flex justify-end text-gray-300 hover:text-red-400 disabled:opacity-20 transition-colors"
                     >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                        />
                       </svg>
                     </button>
                   </motion.div>
                 ))}
               </AnimatePresence>
             </div>
-
-            {/* Extra bottom spacing when chips are visible */}
-            {showExpiry && items.some((i) => i.expectedExpiryDate) && (
-              <div className="h-5" />
-            )}
           </div>
 
           {subtotal > 0 && (
@@ -1520,7 +1520,7 @@ function CreatePOModal({
           </div>
         </div>
 
-        <div className="px-6 py-4 border-t border-gray-100 flex gap-3">
+        <div className="px-4 sm:px-6 py-4 border-t border-gray-100 flex gap-3">
           <button
             onClick={onClose}
             className="flex-1 py-3 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
@@ -1561,8 +1561,18 @@ function StockAlertRestockBanner({
       <div className="bg-gradient-to-r from-red-50 to-amber-50 px-5 py-3.5 flex items-center justify-between border-b border-red-100">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-xl bg-red-100 flex items-center justify-center flex-shrink-0">
-            <svg className="w-4 h-4 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            <svg
+              className="w-4 h-4 text-red-500"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+              />
             </svg>
           </div>
           <div>
@@ -1571,13 +1581,17 @@ function StockAlertRestockBanner({
             </p>
             <p className="text-xs text-slate-500 mt-0.5">
               {criticalItems.length > 0 && (
-                <span className="text-red-600 font-medium">{criticalItems.length} critical</span>
+                <span className="text-red-600 font-medium">
+                  {criticalItems.length} critical
+                </span>
               )}
               {criticalItems.length > 0 && lowItems.length > 0 && (
                 <span className="mx-1 text-slate-300">·</span>
               )}
               {lowItems.length > 0 && (
-                <span className="text-amber-600 font-medium">{lowItems.length} low stock</span>
+                <span className="text-amber-600 font-medium">
+                  {lowItems.length} low stock
+                </span>
               )}
             </p>
           </div>
@@ -1597,51 +1611,96 @@ function StockAlertRestockBanner({
             exit={{ opacity: 0, height: 0 }}
             className="bg-white"
           >
-            {([
-              { items: criticalItems, severity: "critical" as const, label: "🔴 Critical — Order Immediately" },
-              { items: lowItems, severity: "low" as const, label: "🟡 Low Stock — Reorder Soon" },
-            ]).map(({ items, severity, label }, gi) =>
+            {[
+              {
+                items: criticalItems,
+                severity: "critical" as const,
+                label: "🔴 Critical — Order Immediately",
+              },
+              {
+                items: lowItems,
+                severity: "low" as const,
+                label: "🟡 Low Stock — Reorder Soon",
+              },
+            ].map(({ items, severity, label }, gi) =>
               items.length > 0 ? (
-                <div key={severity} className={gi === 1 && criticalItems.length > 0 ? "border-t border-slate-100" : ""}>
+                <div
+                  key={severity}
+                  className={
+                    gi === 1 && criticalItems.length > 0
+                      ? "border-t border-slate-100"
+                      : ""
+                  }
+                >
                   <div className="px-5 pt-3 pb-1">
-                    <span className={`text-[10px] font-bold uppercase tracking-wider ${severity === "critical" ? "text-red-500" : "text-amber-500"}`}>
+                    <span
+                      className={`text-[10px] font-bold uppercase tracking-wider ${severity === "critical" ? "text-red-500" : "text-amber-500"}`}
+                    >
                       {label}
                     </span>
                   </div>
                   <div className="px-4 pb-3 grid grid-cols-1 gap-2">
                     {items.map((p) => {
-                      const pct = Math.min(100, (p.mainStock / Math.max(1, p.reorderPoint)) * 100);
-                      const deficit = Math.max(0, +(p.reorderPoint - p.mainStock).toFixed(2));
+                      const pct = Math.min(
+                        100,
+                        (p.mainStock / Math.max(1, p.reorderPoint)) * 100,
+                      );
+                      const deficit = Math.max(
+                        0,
+                        +(p.reorderPoint - p.mainStock).toFixed(2),
+                      );
                       return (
                         <div
                           key={p.product_id}
                           className={`flex items-center gap-4 px-4 py-3 rounded-xl border transition-colors ${severity === "critical" ? "bg-red-50/60 border-red-100 hover:bg-red-50" : "bg-amber-50/50 border-amber-100 hover:bg-amber-50"}`}
                         >
-                          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${severity === "critical" ? "bg-red-500" : "bg-amber-400"}`} />
+                          <div
+                            className={`w-2 h-2 rounded-full flex-shrink-0 ${severity === "critical" ? "bg-red-500" : "bg-amber-400"}`}
+                          />
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <p className="text-sm font-semibold text-slate-800 truncate">{p.product_name}</p>
-                              <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${getCategoryStyle(p.category)}`}>
+                              <p className="text-sm font-semibold text-slate-800 truncate">
+                                {p.product_name}
+                              </p>
+                              <span
+                                className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${getCategoryStyle(p.category)}`}
+                              >
                                 {p.category}
                               </span>
                             </div>
-                            <p className="text-xs text-slate-400 mt-0.5">{p.supplier_name}</p>
+                            <p className="text-xs text-slate-400 mt-0.5">
+                              {p.supplier_name}
+                            </p>
                           </div>
                           <div className="flex-shrink-0 text-center min-w-[80px]">
-                            <p className={`text-sm font-bold ${severity === "critical" ? "text-red-600" : "text-amber-600"}`}>
+                            <p
+                              className={`text-sm font-bold ${severity === "critical" ? "text-red-600" : "text-amber-600"}`}
+                            >
                               {p.mainStock}
-                              <span className="text-xs font-normal text-slate-400 ml-0.5">{p.unit}</span>
+                              <span className="text-xs font-normal text-slate-400 ml-0.5">
+                                {p.unit}
+                              </span>
                             </p>
                             <div className="w-full bg-slate-100 rounded-full h-1.5 mt-1 overflow-hidden">
-                              <div className={`h-full rounded-full ${severity === "critical" ? "bg-red-400" : "bg-amber-400"}`} style={{ width: `${pct}%` }} />
+                              <div
+                                className={`h-full rounded-full ${severity === "critical" ? "bg-red-400" : "bg-amber-400"}`}
+                                style={{ width: `${pct}%` }}
+                              />
                             </div>
-                            <p className="text-[10px] text-slate-400 mt-0.5">of {p.reorderPoint} {p.unit} reorder</p>
+                            <p className="text-[10px] text-slate-400 mt-0.5">
+                              of {p.reorderPoint} {p.unit} reorder
+                            </p>
                           </div>
                           {deficit > 0 && (
                             <div className="flex-shrink-0 text-center min-w-[72px]">
                               <p className="text-[10px] text-slate-400">Need</p>
-                              <p className={`text-sm font-bold ${severity === "critical" ? "text-red-600" : "text-amber-600"}`}>
-                                +{deficit} <span className="text-xs font-normal text-slate-400">{p.unit}</span>
+                              <p
+                                className={`text-sm font-bold ${severity === "critical" ? "text-red-600" : "text-amber-600"}`}
+                              >
+                                +{deficit}{" "}
+                                <span className="text-xs font-normal text-slate-400">
+                                  {p.unit}
+                                </span>
                               </p>
                             </div>
                           )}
@@ -1649,8 +1708,18 @@ function StockAlertRestockBanner({
                             onClick={() => onOrderNow(p)}
                             className={`flex-shrink-0 flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all duration-200 shadow-sm ${severity === "critical" ? "bg-red-500 text-white hover:bg-red-600 shadow-red-500/25" : "bg-amber-500 text-white hover:bg-amber-600 shadow-amber-500/25"}`}
                           >
-                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+                            <svg
+                              className="w-3.5 h-3.5"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2.5}
+                                d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"
+                              />
                             </svg>
                             Order Now
                           </button>
@@ -1708,20 +1777,35 @@ function YesterdayReturnsBanner({ batches }: { batches: Batch[] }) {
                 className={`rounded-xl p-3.5 border ${expired ? "bg-red-50 border-red-200" : expiring ? "bg-orange-50 border-orange-200" : "bg-white border-amber-100"}`}
               >
                 <div className="flex items-start justify-between mb-2">
-                  <p className="text-sm font-semibold text-slate-800">{b.product_name}</p>
-                  {expired && <span className="text-[9px] font-bold bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full ml-1 whitespace-nowrap">EXPIRED</span>}
-                  {expiring && !expired && <span className="text-[9px] font-bold bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded-full ml-1 whitespace-nowrap">EXPIRING SOON</span>}
+                  <p className="text-sm font-semibold text-slate-800">
+                    {b.product_name}
+                  </p>
+                  {expired && (
+                    <span className="text-[9px] font-bold bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full ml-1 whitespace-nowrap">
+                      EXPIRED
+                    </span>
+                  )}
+                  {expiring && !expired && (
+                    <span className="text-[9px] font-bold bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded-full ml-1 whitespace-nowrap">
+                      EXPIRING SOON
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-1.5 mb-2">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 flex-shrink-0" />
                   <p className="text-base font-bold text-emerald-700">
-                    {b.returned_qty} <span className="text-xs font-normal text-slate-400">{b.unit} returned</span>
+                    {b.returned_qty}{" "}
+                    <span className="text-xs font-normal text-slate-400">
+                      {b.unit} returned
+                    </span>
                   </p>
                 </div>
                 <div className="space-y-1 text-[11px] text-slate-400">
                   <div className="flex justify-between">
                     <span>Batch #{b.batch_id}</span>
-                    <span className="font-medium text-slate-500">{b.remaining_qty} {b.unit} available</span>
+                    <span className="font-medium text-slate-500">
+                      {b.remaining_qty} {b.unit} available
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span>Received</span>
@@ -1730,7 +1814,15 @@ function YesterdayReturnsBanner({ batches }: { batches: Batch[] }) {
                   {b.expiry_date && (
                     <div className="flex justify-between">
                       <span>Expires</span>
-                      <span className={expired ? "text-red-500 font-semibold" : expiring ? "text-orange-500 font-semibold" : ""}>
+                      <span
+                        className={
+                          expired
+                            ? "text-red-500 font-semibold"
+                            : expiring
+                              ? "text-orange-500 font-semibold"
+                              : ""
+                        }
+                      >
                         {formatExpiryDate(b.expiry_date)}
                       </span>
                     </div>
@@ -1757,8 +1849,17 @@ function FIFOBatchPreview({
   const preview = useMemo(() => {
     if (!qtyNeeded || qtyNeeded <= 0) return [];
     const sorted = [...batches]
-      .filter((b) => b.status === "active" && b.remaining_qty > 0 && !isExpired(b.expiry_date))
-      .sort((a, b) => new Date(a.received_date).getTime() - new Date(b.received_date).getTime());
+      .filter(
+        (b) =>
+          b.status === "active" &&
+          b.remaining_qty > 0 &&
+          !isExpired(b.expiry_date),
+      )
+      .sort(
+        (a, b) =>
+          new Date(a.received_date).getTime() -
+          new Date(b.received_date).getTime(),
+      );
     let remaining = qtyNeeded;
     const result: Array<{ batch: Batch; take: number }> = [];
     for (const batch of sorted) {
@@ -1771,7 +1872,12 @@ function FIFOBatchPreview({
   }, [batches, qtyNeeded]);
 
   const totalAvailable = batches
-    .filter((b) => b.status === "active" && b.remaining_qty > 0 && !isExpired(b.expiry_date))
+    .filter(
+      (b) =>
+        b.status === "active" &&
+        b.remaining_qty > 0 &&
+        !isExpired(b.expiry_date),
+    )
     .reduce((s, b) => s + b.remaining_qty, 0);
 
   const insufficient = qtyNeeded > 0 && qtyNeeded > totalAvailable;
@@ -1781,17 +1887,29 @@ function FIFOBatchPreview({
     <div className="rounded-xl border border-slate-200 overflow-hidden">
       <div className="px-3.5 py-2.5 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">FIFO Batch Queue</span>
-          <span className="text-[10px] text-slate-400">— oldest pulled first</span>
+          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+            FIFO Batch Queue
+          </span>
+          <span className="text-[10px] text-slate-400">
+            — oldest pulled first
+          </span>
         </div>
-        <span className="text-[10px] font-semibold text-slate-500">{totalAvailable} {unit} total available</span>
+        <span className="text-[10px] font-semibold text-slate-500">
+          {totalAvailable} {unit} total available
+        </span>
       </div>
       <div className="divide-y divide-slate-50">
         {batches
           .filter((b) => b.remaining_qty > 0)
-          .sort((a, b) => new Date(a.received_date).getTime() - new Date(b.received_date).getTime())
+          .sort(
+            (a, b) =>
+              new Date(a.received_date).getTime() -
+              new Date(b.received_date).getTime(),
+          )
           .map((batch, idx) => {
-            const previewRow = preview.find((p) => p.batch.batch_id === batch.batch_id);
+            const previewRow = preview.find(
+              (p) => p.batch.batch_id === batch.batch_id,
+            );
             const expiring = isExpiringSoon(batch.expiry_date);
             const expired = isExpired(batch.expiry_date);
             const isFirst = idx === 0;
@@ -1800,29 +1918,62 @@ function FIFOBatchPreview({
                 key={batch.batch_id}
                 className={`px-3.5 py-3 flex items-center gap-3 transition-colors ${previewRow ? "bg-indigo-50/60" : "bg-white"} ${expired ? "opacity-50" : ""}`}
               >
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-bold ${isFirst ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-400"}`}>
+                <div
+                  className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-bold ${isFirst ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-400"}`}
+                >
                   {idx + 1}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold text-slate-700">Batch #{batch.batch_id}</span>
-                    {isFirst && <span className="text-[9px] font-bold bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded-full">NEXT</span>}
-                    {expiring && !expired && <span className="text-[9px] font-bold bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded-full">EXPIRING</span>}
-                    {expired && <span className="text-[9px] font-bold bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full">EXPIRED</span>}
+                    <span className="text-xs font-semibold text-slate-700">
+                      Batch #{batch.batch_id}
+                    </span>
+                    {isFirst && (
+                      <span className="text-[9px] font-bold bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded-full">
+                        NEXT
+                      </span>
+                    )}
+                    {expiring && !expired && (
+                      <span className="text-[9px] font-bold bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded-full">
+                        EXPIRING
+                      </span>
+                    )}
+                    {expired && (
+                      <span className="text-[9px] font-bold bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full">
+                        EXPIRED
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-3 mt-0.5 text-[11px] text-slate-400">
-                    <span>Received {formatReceivedDate(batch.received_date)}</span>
+                    <span>
+                      Received {formatReceivedDate(batch.received_date)}
+                    </span>
                     {batch.expiry_date && (
-                      <span className={expiring && !expired ? "text-orange-500 font-medium" : expired ? "text-red-500 font-medium" : ""}>
+                      <span
+                        className={
+                          expiring && !expired
+                            ? "text-orange-500 font-medium"
+                            : expired
+                              ? "text-red-500 font-medium"
+                              : ""
+                        }
+                      >
                         Exp. {formatExpiryDate(batch.expiry_date)}
                       </span>
                     )}
                   </div>
                 </div>
                 <div className="text-right flex-shrink-0">
-                  <p className="text-sm font-bold text-slate-700">{batch.remaining_qty} <span className="text-xs font-normal text-slate-400">{unit}</span></p>
+                  <p className="text-sm font-bold text-slate-700">
+                    {batch.remaining_qty}{" "}
+                    <span className="text-xs font-normal text-slate-400">
+                      {unit}
+                    </span>
+                  </p>
                   {previewRow && (
-                    <p className="text-xs font-semibold text-indigo-600 mt-0.5">−{previewRow.take} {unit} will be pulled</p>
+                    <p className="text-xs font-semibold text-indigo-600 mt-0.5">
+                      −{previewRow.take} {unit} will be pulled
+                    </p>
                   )}
                 </div>
               </div>
@@ -1832,16 +1983,302 @@ function FIFOBatchPreview({
       {insufficient && (
         <div className="px-3.5 py-2.5 bg-red-50 border-t border-red-100">
           <p className="text-xs font-semibold text-red-600">
-            ⚠ Insufficient stock — need {qtyNeeded} {unit} but only {totalAvailable} {unit} available
+            ⚠ Insufficient stock — need {qtyNeeded} {unit} but only{" "}
+            {totalAvailable} {unit} available
           </p>
         </div>
       )}
       {preview.length > 0 && !insufficient && (
         <div className="px-3.5 py-2.5 bg-indigo-50 border-t border-indigo-100 flex justify-between items-center">
-          <span className="text-[11px] text-indigo-600 font-medium">Pulling from {preview.length} batch{preview.length > 1 ? "es" : ""}</span>
-          <span className="text-xs font-bold text-indigo-700">{qtyNeeded} {unit} total</span>
+          <span className="text-[11px] text-indigo-600 font-medium">
+            Pulling from {preview.length} batch{preview.length > 1 ? "es" : ""}
+          </span>
+          <span className="text-xs font-bold text-indigo-700">
+            {qtyNeeded} {unit} total
+          </span>
         </div>
       )}
+    </div>
+  );
+}
+
+function FIFOBatchGrouped({
+  allBatches,
+  productMap,
+}: {
+  allBatches: Batch[];
+  productMap: Map<number, { name: string; unit: string }>;
+}) {
+  const [viewMode, setViewMode] = useState<"delivery" | "expiry">("delivery");
+
+  const grouped = useMemo(() => {
+    const map = new Map<string, Batch[]>();
+    for (const b of allBatches) {
+      if (b.status !== "active" || b.remaining_qty <= 0) continue;
+      const key = b.received_date.split("T")[0];
+      map.set(key, [...(map.get(key) ?? []), b]);
+    }
+    return [...map.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, batches], idx) => ({ date, batches, idx }));
+  }, [allBatches]);
+
+  // Flat list sorted by nearest expiry — null expiry goes to bottom
+  const byExpiry = useMemo(() => {
+    return allBatches
+      .filter((b) => b.status === "active" && b.remaining_qty > 0)
+      .sort((a, b) => {
+        if (!a.expiry_date && !b.expiry_date) return 0;
+        if (!a.expiry_date) return 1;
+        if (!b.expiry_date) return -1;
+        return (
+          new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime()
+        );
+      });
+  }, [allBatches]);
+
+  const noData = grouped.length === 0;
+
+  return (
+    <div className="space-y-3">
+      {/* Toggle */}
+      <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-xl w-fit">
+        <button
+          onClick={() => setViewMode("delivery")}
+          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+            viewMode === "delivery"
+              ? "bg-white text-slate-800 shadow-sm"
+              : "text-slate-500 hover:text-slate-700"
+          }`}
+        >
+          By Delivery Date
+        </button>
+        <button
+          onClick={() => setViewMode("expiry")}
+          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+            viewMode === "expiry"
+              ? "bg-white text-slate-800 shadow-sm"
+              : "text-slate-500 hover:text-slate-700"
+          }`}
+        >
+          By Nearest Expiry
+          {byExpiry.some((b) => isExpiringSoon(b.expiry_date)) && (
+            <span className="w-1.5 h-1.5 rounded-full bg-orange-400 inline-block animate-pulse" />
+          )}
+        </button>
+      </div>
+
+      {noData && (
+        <div className="text-center py-8 text-sm text-slate-400">
+          No active batches found.
+        </div>
+      )}
+
+      {/* ── Delivery Date View ── */}
+      {viewMode === "delivery" &&
+        grouped.map(({ date, batches, idx }) => {
+          const isNext = idx === 0;
+          const hasExpiringSoon = batches.some((b) =>
+            isExpiringSoon(b.expiry_date),
+          );
+          const hasExpired = batches.some((b) => isExpired(b.expiry_date));
+
+          return (
+            <div
+              key={date}
+              className={`rounded-xl border overflow-hidden ${
+                isNext
+                  ? "border-indigo-200 shadow-sm"
+                  : hasExpired
+                    ? "border-red-200 opacity-70"
+                    : hasExpiringSoon
+                      ? "border-orange-200"
+                      : "border-slate-100"
+              }`}
+            >
+              <div
+                className={`px-4 py-2.5 flex items-center justify-between ${
+                  isNext
+                    ? "bg-indigo-50"
+                    : hasExpiringSoon
+                      ? "bg-orange-50/60"
+                      : "bg-slate-50"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  {isNext && (
+                    <span className="text-[9px] font-bold bg-indigo-600 text-white px-1.5 py-0.5 rounded-full">
+                      PULL FIRST
+                    </span>
+                  )}
+                  <span className="text-xs font-bold text-slate-600">
+                    Delivery — {formatReceivedDate(date)}
+                  </span>
+                  <span className="text-[10px] text-slate-400">
+                    ({batches.length} item type{batches.length !== 1 ? "s" : ""}
+                    )
+                  </span>
+                </div>
+                {hasExpiringSoon && !hasExpired && (
+                  <span className="text-[10px] font-bold text-orange-500 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-orange-400 inline-block animate-pulse" />
+                    Items expiring soon
+                  </span>
+                )}
+              </div>
+              <div className="divide-y divide-slate-50 bg-white">
+                {batches
+                  .sort((a, b) => {
+                    if (isExpired(a.expiry_date) && !isExpired(b.expiry_date))
+                      return 1;
+                    if (!isExpired(a.expiry_date) && isExpired(b.expiry_date))
+                      return -1;
+                    if (a.expiry_date && b.expiry_date)
+                      return (
+                        new Date(a.expiry_date).getTime() -
+                        new Date(b.expiry_date).getTime()
+                      );
+                    return 0;
+                  })
+                  .map((batch) => (
+                    <BatchRow
+                      key={batch.batch_id}
+                      batch={batch}
+                      productMap={productMap}
+                    />
+                  ))}
+              </div>
+            </div>
+          );
+        })}
+
+      {/* ── Expiry View ── */}
+      {viewMode === "expiry" && (
+        <div className="rounded-xl border border-slate-100 overflow-hidden">
+          <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+              Soonest expiry first — use these before they expire
+            </span>
+            <span className="text-[10px] text-slate-400">
+              {byExpiry.length} batches
+            </span>
+          </div>
+          <div className="divide-y divide-slate-50 bg-white">
+            {byExpiry.map((batch, idx) => {
+              const expired = isExpired(batch.expiry_date);
+              const expiring = isExpiringSoon(batch.expiry_date);
+              const productMeta = productMap.get(batch.product_id);
+              const displayName =
+                batch.product_name ||
+                productMeta?.name ||
+                `Product ${batch.product_id}`;
+              const displayUnit = batch.unit || productMeta?.unit || "unit";
+
+              return (
+                <div
+                  key={batch.batch_id}
+                  className={`flex items-center gap-3 px-4 py-3 ${
+                    expired
+                      ? "bg-red-50/40 opacity-60"
+                      : expiring
+                        ? "bg-orange-50/30"
+                        : ""
+                  }`}
+                >
+                  <div
+                    className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-bold ${
+                      idx === 0 && !expired
+                        ? "bg-orange-500 text-white"
+                        : "bg-slate-100 text-slate-400"
+                    }`}
+                  >
+                    {idx + 1}
+                  </div>
+
+                  <div
+                    className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                      expired
+                        ? "bg-red-400"
+                        : expiring
+                          ? "bg-orange-400"
+                          : "bg-emerald-400"
+                    }`}
+                  />
+
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-slate-700 truncate">
+                      {displayName}
+                    </p>
+                    <p className="text-[11px] text-slate-400">
+                      Batch #{batch.batch_id} · Received{" "}
+                      {formatReceivedDate(batch.received_date)}
+                    </p>
+                  </div>
+
+                  <div className="text-right flex-shrink-0">
+                    <p className="text-sm font-bold text-slate-700">
+                      {batch.remaining_qty}
+                      <span className="text-xs font-normal text-slate-400 ml-1">
+                        {displayUnit}
+                      </span>
+                    </p>
+                    <p className="text-[10px] text-slate-400">remaining</p>
+                  </div>
+
+                  <div className="w-28 text-right flex-shrink-0">
+                    <ExpiryChip dateStr={batch.expiry_date} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BatchRow({
+  batch,
+  productMap,
+}: {
+  batch: Batch;
+  productMap: Map<number, { name: string; unit: string }>;
+}) {
+  const expired = isExpired(batch.expiry_date);
+  const expiring = isExpiringSoon(batch.expiry_date);
+  const productMeta = productMap.get(batch.product_id);
+  const displayName =
+    batch.product_name || productMeta?.name || `Product ${batch.product_id}`;
+  const displayUnit = batch.unit || productMeta?.unit || "unit";
+
+  return (
+    <div
+      className={`flex items-center gap-3 px-4 py-3 ${expired ? "bg-red-50/40" : ""}`}
+    >
+      <div
+        className={`w-2 h-2 rounded-full flex-shrink-0 ${
+          expired ? "bg-red-400" : expiring ? "bg-orange-400" : "bg-emerald-400"
+        }`}
+      />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-slate-700 truncate">
+          {displayName}
+        </p>
+        <p className="text-[11px] text-slate-400">Batch #{batch.batch_id}</p>
+      </div>
+      <div className="text-right">
+        <p className="text-sm font-bold text-slate-700">
+          {batch.remaining_qty}
+          <span className="text-xs font-normal text-slate-400 ml-1">
+            {displayUnit}
+          </span>
+        </p>
+        <p className="text-[10px] text-slate-400">remaining</p>
+      </div>
+      <div className="w-28 text-right flex-shrink-0">
+        <ExpiryChip dateStr={batch.expiry_date} />
+      </div>
     </div>
   );
 }
@@ -1860,7 +2297,10 @@ export default function StockManager() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [toast, setToast] = useState<{
+    message: string;
+    type: "success" | "error";
+  } | null>(null);
   const [wdProductId, setWdProductId] = useState<number | null>(null);
   const [wdQty, setWdQty] = useState("");
   const [wdType, setWdType] = useState<WithdrawalType>("initial");
@@ -1869,14 +2309,20 @@ export default function StockManager() {
   const [dashboardSearch, setDashboardSearch] = useState("");
   const [supplierSearch, setSupplierSearch] = useState("");
   const [showSupplierForm, setShowSupplierForm] = useState(false);
-  const [supplierForm, setSupplierForm] = useState<Omit<Supplier, "supplier_id">>(BLANK_SUPPLIER);
+  const [supplierForm, setSupplierForm] =
+    useState<Omit<Supplier, "supplier_id">>(BLANK_SUPPLIER);
   const [showRawMaterialForm, setShowRawMaterialForm] = useState(false);
-  const [rawMaterialForm, setRawMaterialForm] = useState<RawMaterialForm>(BLANK_RAW_MATERIAL);
+  const [rawMaterialForm, setRawMaterialForm] =
+    useState<RawMaterialForm>(BLANK_RAW_MATERIAL);
   const [showReconcile, setShowReconcile] = useState(false);
   const [reconcileItems, setReconcileItems] = useState<ReconcileRow[]>([]);
   const [poOrders, setPoOrders] = useState<PurchaseOrder[]>([]);
-  const [selectedOrder, setSelectedOrder] = useState<PurchaseOrder | null>(null);
-  const [receivingOrder, setReceivingOrder] = useState<PurchaseOrder | null>(null);
+  const [selectedOrder, setSelectedOrder] = useState<PurchaseOrder | null>(
+    null,
+  );
+  const [receivingOrder, setReceivingOrder] = useState<PurchaseOrder | null>(
+    null,
+  );
   const [poFilterStatus, setPoFilterStatus] = useState<POStatus | "All">("All");
   const [poLoading, setPoLoading] = useState(false);
   const [prefillPOProduct, setPrefillPOProduct] = useState<
@@ -1902,6 +2348,29 @@ export default function StockManager() {
   const handleClosePOModal = useCallback(() => {
     setPrefillPOProduct(undefined);
   }, []);
+
+  const handleDashboardDeleteProduct = useCallback(
+    async (product: Product) => {
+      const confirmed = window.confirm(
+        `Delete ${product.product_name}? This removes it from stock records.`,
+      );
+      if (!confirmed) return;
+
+      try {
+        await api.deleteProduct(product.product_id);
+        setProducts((prev) =>
+          prev.filter((p) => p.product_id !== product.product_id),
+        );
+        showToast(`${product.product_name} deleted.`, "success");
+      } catch (err) {
+        showToast(
+          err instanceof Error ? err.message : "Failed to delete item.",
+          "error",
+        );
+      }
+    },
+    [showToast],
+  );
 
   const fetchAll = useCallback(async () => {
     setIsLoading(true);
@@ -1939,8 +2408,12 @@ export default function StockManager() {
             p.promo === "RAW_MATERIAL",
         }))
         .filter((p) => {
-          const promo = String(p.promo ?? "").toUpperCase().trim();
-          const category = String(p.category ?? "").toLowerCase().trim();
+          const promo = String(p.promo ?? "")
+            .toUpperCase()
+            .trim();
+          const category = String(p.category ?? "")
+            .toLowerCase()
+            .trim();
           return (
             promo === "SUPPLIES" ||
             promo === "MENU FOOD" ||
@@ -1956,13 +2429,19 @@ export default function StockManager() {
 
       const groupedByName = new Map<string, Product[]>();
       for (const item of candidateProducts) {
-        const key = String(item.product_name ?? "").trim().toLowerCase();
+        const key = String(item.product_name ?? "")
+          .trim()
+          .toLowerCase();
         groupedByName.set(key, [...(groupedByName.get(key) ?? []), item]);
       }
-      const normalizedProducts: Product[] = Array.from(groupedByName.values()).map((group) => {
+      const normalizedProducts: Product[] = Array.from(
+        groupedByName.values(),
+      ).map((group) => {
         const pool = group.filter((i) => !i.isRawMaterial);
         return (pool.length > 0 ? pool : group).reduce((latest, current) =>
-          toNumber(current.product_id) > toNumber(latest.product_id) ? current : latest,
+          toNumber(current.product_id) > toNumber(latest.product_id)
+            ? current
+            : latest,
         );
       });
 
@@ -1976,9 +2455,19 @@ export default function StockManager() {
         })),
       );
       setSuppliers(sup);
-      setActiveBatches(activeBatchesResult.status === "fulfilled" ? activeBatchesResult.value : []);
-      setYesterdayReturns(yesterdayReturnsResult.status === "fulfilled" ? yesterdayReturnsResult.value : []);
-      setPoOrders(poOrdersResult.status === "fulfilled" ? poOrdersResult.value : []);
+      setActiveBatches(
+        activeBatchesResult.status === "fulfilled"
+          ? activeBatchesResult.value
+          : [],
+      );
+      setYesterdayReturns(
+        yesterdayReturnsResult.status === "fulfilled"
+          ? yesterdayReturnsResult.value
+          : [],
+      );
+      setPoOrders(
+        poOrdersResult.status === "fulfilled" ? poOrdersResult.value : [],
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load data.");
     } finally {
@@ -1986,7 +2475,9 @@ export default function StockManager() {
     }
   }, []);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => {
+    fetchAll();
+  }, [fetchAll]);
 
   useEffect(() => {
     if (products.length > 0) {
@@ -1995,12 +2486,17 @@ export default function StockManager() {
     }
   }, [products, wdProductId, adjProductId]);
 
-  // ── Derived state ──────────────────────────────────────────────────────────
-
-  const lowStock = products.filter((p) => !isMenuFoodProduct(p) && getStockStatus(p) === "low");
-  const criticalStock = products.filter((p) => !isMenuFoodProduct(p) && getStockStatus(p) === "critical");
+  const lowStock = products.filter(
+    (p) => !isMenuFoodProduct(p) && getStockStatus(p) === "low",
+  );
+  const criticalStock = products.filter(
+    (p) => !isMenuFoodProduct(p) && getStockStatus(p) === "critical",
+  );
   const attentionItems = useMemo(
-    () => products.filter((p) => !isMenuFoodProduct(p) && getStockStatus(p) !== "normal"),
+    () =>
+      products.filter(
+        (p) => !isMenuFoodProduct(p) && getStockStatus(p) !== "normal",
+      ),
     [products],
   );
   const poQuickOrderProducts = useMemo(() => {
@@ -2016,49 +2512,73 @@ export default function StockManager() {
         ? []
         : activeBatches
             .filter((b) => b.product_id === wdProductId)
-            .sort((a, b) => new Date(a.received_date).getTime() - new Date(b.received_date).getTime()),
+            .sort(
+              (a, b) =>
+                new Date(a.received_date).getTime() -
+                new Date(b.received_date).getTime(),
+            ),
     [activeBatches, wdProductId],
   );
   const dashboardFilteredProducts = useMemo(() => {
     const q = dashboardSearch.trim().toLowerCase();
     const base = products.filter((p) => !isMenuFoodProduct(p));
-    const filtered = !q ? base : base.filter((p) => p.product_name.toLowerCase().includes(q) || p.category.toLowerCase().includes(q));
+    const filtered = !q
+      ? base
+      : base.filter(
+          (p) =>
+            p.product_name.toLowerCase().includes(q) ||
+            p.category.toLowerCase().includes(q),
+        );
     return [...filtered].sort((a, b) => {
       const diff = toNumber(b.dailyWithdrawn) - toNumber(a.dailyWithdrawn);
-      return diff !== 0 ? diff : a.mainStock / Math.max(1, a.reorderPoint * 2) - b.mainStock / Math.max(1, b.reorderPoint * 2);
+      return diff !== 0
+        ? diff
+        : a.mainStock / Math.max(1, a.reorderPoint * 2) -
+            b.mainStock / Math.max(1, b.reorderPoint * 2);
     });
   }, [products, dashboardSearch]);
   const filteredSuppliers = useMemo(() => {
     const q = supplierSearch.trim().toLowerCase();
-    return !q ? suppliers : suppliers.filter((s) => s.supplier_name.toLowerCase().includes(q) || (s.products_supplied ?? "").toLowerCase().includes(q));
+    return !q
+      ? suppliers
+      : suppliers.filter(
+          (s) =>
+            s.supplier_name.toLowerCase().includes(q) ||
+            (s.products_supplied ?? "").toLowerCase().includes(q),
+        );
   }, [suppliers, supplierSearch]);
   const selectedWithdrawalProduct = useMemo(
     () => products.find((p) => p.product_id === wdProductId) ?? null,
     [products, wdProductId],
   );
-  const selectedWithdrawalStatus = selectedWithdrawalProduct ? getStockStatus(selectedWithdrawalProduct) : "normal";
+  const selectedWithdrawalStatus = selectedWithdrawalProduct
+    ? getStockStatus(selectedWithdrawalProduct)
+    : "normal";
   const selectedWithdrawalPct = selectedWithdrawalProduct
-    ? Math.min(100, Math.round((selectedWithdrawalProduct.mainStock / Math.max(1, selectedWithdrawalProduct.reorderPoint)) * 100))
+    ? Math.min(
+        100,
+        Math.round(
+          (selectedWithdrawalProduct.mainStock /
+            Math.max(1, selectedWithdrawalProduct.reorderPoint)) *
+            100,
+        ),
+      )
     : 0;
-  const totalWithdrawn = products.reduce((s, p) => s + toNumber(p.dailyWithdrawn), 0);
+  const totalWithdrawn = products.reduce(
+    (s, p) => s + toNumber(p.dailyWithdrawn),
+    0,
+  );
   const totalWasted = products.reduce((s, p) => s + toNumber(p.wasted), 0);
   const totalReturned = products.reduce((s, p) => s + toNumber(p.returned), 0);
   const wholeChickenProducts = products.filter(isWholeChicken);
   const choppedChickenProducts = products.filter(isChoppedChicken);
   const filteredPOs = useMemo(
-    () => (poFilterStatus === "All" ? poOrders : poOrders.filter((o) => o.status === poFilterStatus)),
+    () =>
+      poFilterStatus === "All"
+        ? poOrders
+        : poOrders.filter((o) => o.status === poFilterStatus),
     [poOrders, poFilterStatus],
   );
-
-  // Compute expiry alerts for the PO tab badge
-  const poExpiryAlerts = useMemo(() => {
-    return poOrders.filter((o) => {
-      const nearest = poNearestExpiry(o);
-      if (!nearest) return false;
-      const days = daysUntilExpiry(nearest);
-      return days !== null && days <= 7;
-    }).length;
-  }, [poOrders]);
 
   // ── PO actions ─────────────────────────────────────────────────────────────
 
@@ -2066,7 +2586,10 @@ export default function StockManager() {
     async (id: string, status: POStatus) => {
       if (status === "Received") {
         const orderToReceive = poOrders.find((order) => order.id === id);
-        if (!orderToReceive) { showToast("Purchase order not found.", "error"); return; }
+        if (!orderToReceive) {
+          showToast("Purchase order not found.", "error");
+          return;
+        }
         setReceivingOrder(orderToReceive);
         setSelectedOrder(null);
         return;
@@ -2078,7 +2601,12 @@ export default function StockManager() {
         setSelectedOrder((prev) => (prev?.id === id ? updated : prev));
         showToast(`Purchase order moved to ${status}.`, "success");
       } catch (err) {
-        showToast(err instanceof Error ? err.message : "Failed to update purchase order status.", "error");
+        showToast(
+          err instanceof Error
+            ? err.message
+            : "Failed to update purchase order status.",
+          "error",
+        );
       } finally {
         setPoLoading(false);
       }
@@ -2086,21 +2614,69 @@ export default function StockManager() {
     [poOrders, showToast],
   );
 
-  const handleCloseReceivePO = useCallback(() => { setReceivingOrder(null); }, []);
+  const handlePODelete = useCallback(
+    async (id: string) => {
+      setPoLoading(true);
+      try {
+        await api.po.delete(id);
+        setPoOrders((prev) =>
+          prev.map((order) =>
+            order.id === id
+              ? { ...order, status: "Cancelled" as POStatus }
+              : order,
+          ),
+        );
+        setSelectedOrder((prev) =>
+          prev?.id === id ? { ...prev, status: "Cancelled" as POStatus } : prev,
+        );
+        showToast("Purchase order cancelled.", "success");
+      } catch (err) {
+        showToast(
+          err instanceof Error ? err.message : "Failed to cancel order.",
+          "error",
+        );
+      } finally {
+        setPoLoading(false);
+      }
+    },
+    [showToast],
+  );
+
+  const handleCloseReceivePO = useCallback(() => {
+    setReceivingOrder(null);
+  }, []);
 
   const handleConfirmReceivePO = useCallback(
     async (expiryDates: Record<number, string>) => {
       if (!receivingOrder) return;
       setPoLoading(true);
       try {
-        const updated = await api.po.markReceived(receivingOrder.id, "Staff on Duty", expiryDates);
-        setPoOrders((prev) => prev.map((order) => (order.id === receivingOrder.id ? updated : order)));
-        setSelectedOrder((prev) => (prev?.id === receivingOrder.id ? updated : prev));
+        const updated = await api.po.markReceived(
+          receivingOrder.id,
+          "Staff on Duty",
+          expiryDates,
+        );
+        setPoOrders((prev) =>
+          prev.map((order) =>
+            order.id === receivingOrder.id ? updated : order,
+          ),
+        );
+        setSelectedOrder((prev) =>
+          prev?.id === receivingOrder.id ? updated : prev,
+        );
         setReceivingOrder(null);
         await fetchAll();
-        showToast("Purchase order received and stock batches added.", "success");
+        showToast(
+          "Purchase order received and stock batches added.",
+          "success",
+        );
       } catch (err) {
-        showToast(err instanceof Error ? err.message : "Failed to receive purchase order.", "error");
+        showToast(
+          err instanceof Error
+            ? err.message
+            : "Failed to receive purchase order.",
+          "error",
+        );
       } finally {
         setPoLoading(false);
       }
@@ -2115,7 +2691,12 @@ export default function StockManager() {
         const created = await api.po.create(po);
         setPoOrders((prev) => [created, ...prev]);
       } catch (err) {
-        showToast(err instanceof Error ? err.message : "Failed to create purchase order.", "error");
+        showToast(
+          err instanceof Error
+            ? err.message
+            : "Failed to create purchase order.",
+          "error",
+        );
         throw err;
       } finally {
         setPoLoading(false);
@@ -2126,18 +2707,35 @@ export default function StockManager() {
 
   // ── Stock actions ──────────────────────────────────────────────────────────
 
-  async function doWithdraw(product_id: number, qty: number, type: WithdrawalType) {
+  async function doWithdraw(
+    product_id: number,
+    qty: number,
+    type: WithdrawalType,
+  ) {
     const product = products.find((p) => p.product_id === product_id);
     if (!product) throw new Error("Product not found");
     if (type === "return") {
       const batches = await api.getProductBatches(product_id);
       const validBatch = batches
         .filter((b) => ["active", "withdrawn", "returned"].includes(b.status))
-        .sort((a, b) => new Date(b.received_date).getTime() - new Date(a.received_date).getTime())[0];
+        .sort(
+          (a, b) =>
+            new Date(b.received_date).getTime() -
+            new Date(a.received_date).getTime(),
+        )[0];
       if (!validBatch) throw new Error("No batch found to return to.");
-      await api.returnToBatch({ batch_id: validBatch.batch_id, return_qty: qty, recorded_by: null });
+      await api.returnToBatch({
+        batch_id: validBatch.batch_id,
+        return_qty: qty,
+        recorded_by: null,
+      });
     } else {
-      await api.withdrawFromBatches({ product_id, qty_needed: qty, type, recorded_by: null });
+      await api.withdrawFromBatches({
+        product_id,
+        qty_needed: qty,
+        type,
+        recorded_by: null,
+      });
     }
   }
 
@@ -2147,17 +2745,26 @@ export default function StockManager() {
     const product = products.find((p) => p.product_id === wdProductId);
     if (!product) return;
     if (wdType !== "return" && qty > product.mainStock) {
-      showToast(`Insufficient stock. Available: ${product.mainStock} ${product.unit}`, "error");
+      showToast(
+        `Insufficient stock. Available: ${product.mainStock} ${product.unit}`,
+        "error",
+      );
       return;
     }
     setSubmitting(true);
     try {
       await doWithdraw(wdProductId, qty, wdType);
       setWdQty("");
-      showToast(wdType === "return" ? "Return recorded!" : "Withdrawal recorded!", "success");
+      showToast(
+        wdType === "return" ? "Return recorded!" : "Withdrawal recorded!",
+        "success",
+      );
       await fetchAll();
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Failed to submit.", "error");
+      showToast(
+        err instanceof Error ? err.message : "Failed to submit.",
+        "error",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -2170,18 +2777,34 @@ export default function StockManager() {
     if (!product) return;
     setSubmitting(true);
     try {
-      await api.postSpoilage({ product_id: adjProductId, quantity: qty, recorded_by: null });
+      await api.postSpoilage({
+        product_id: adjProductId,
+        quantity: qty,
+        recorded_by: null,
+      });
       const updatedStock = Math.max(0, +(product.mainStock - qty).toFixed(2));
-      await api.updateStock(product.inventory_id, { stock: updatedStock, wasted: +(product.wasted + qty).toFixed(2) });
+      await api.updateStock(product.inventory_id, {
+        stock: updatedStock,
+        wasted: +(product.wasted + qty).toFixed(2),
+      });
       setProducts((prev) =>
         prev.map((p) =>
-          p.product_id === adjProductId ? { ...p, mainStock: updatedStock, wasted: +(p.wasted + qty).toFixed(2) } : p,
+          p.product_id === adjProductId
+            ? {
+                ...p,
+                mainStock: updatedStock,
+                wasted: +(p.wasted + qty).toFixed(2),
+              }
+            : p,
         ),
       );
       setAdjQty("");
       showToast("Spoilage recorded.", "success");
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Failed to record spoilage.", "error");
+      showToast(
+        err instanceof Error ? err.message : "Failed to record spoilage.",
+        "error",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -2206,30 +2829,55 @@ export default function StockManager() {
   }
 
   async function submitReconciliation() {
-    const validItems = reconcileItems.filter((i) => parseFloat(i.returnQty) > 0);
+    const validItems = reconcileItems.filter(
+      (i) => parseFloat(i.returnQty) > 0,
+    );
     if (validItems.length === 0) return;
     setSubmitting(true);
     try {
       for (const item of validItems) {
         const qty = parseFloat(item.returnQty);
-        const sourceProduct = products.find((p) => p.product_id === item.product_id);
+        const sourceProduct = products.find(
+          (p) => p.product_id === item.product_id,
+        );
         if (!sourceProduct) continue;
-        const returnAsWhole = isChoppedChicken(sourceProduct) && item.returnDestination === "whole";
+        const returnAsWhole =
+          isChoppedChicken(sourceProduct) && item.returnDestination === "whole";
         const targetProductId = returnAsWhole
-          ? ((products.find((p) => isWholeChicken(p) && p.supplier_name === sourceProduct.supplier_name) ?? products.find((p) => isWholeChicken(p)))?.product_id ?? item.product_id)
+          ? ((
+              products.find(
+                (p) =>
+                  isWholeChicken(p) &&
+                  p.supplier_name === sourceProduct.supplier_name,
+              ) ?? products.find((p) => isWholeChicken(p))
+            )?.product_id ?? item.product_id)
           : item.product_id;
         const batchList = await api.getProductBatches(targetProductId);
         const targetBatch = batchList
           .filter((b) => ["active", "withdrawn", "returned"].includes(b.status))
-          .sort((a, b) => new Date(b.received_date).getTime() - new Date(a.received_date).getTime())[0];
-        if (!targetBatch) { showToast(`No batch found for ${item.product_name}`, "error"); continue; }
-        await api.returnToBatch({ batch_id: targetBatch.batch_id, return_qty: qty, recorded_by: null });
+          .sort(
+            (a, b) =>
+              new Date(b.received_date).getTime() -
+              new Date(a.received_date).getTime(),
+          )[0];
+        if (!targetBatch) {
+          showToast(`No batch found for ${item.product_name}`, "error");
+          continue;
+        }
+        await api.returnToBatch({
+          batch_id: targetBatch.batch_id,
+          return_qty: qty,
+          recorded_by: null,
+        });
       }
       setShowReconcile(false);
       showToast(`${validItems.length} item(s) reconciled.`, "success");
       await fetchAll();
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Reconciliation failed.", "error");
+      showToast(
+        err instanceof Error ? err.message : "Reconciliation failed.",
+        "error",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -2245,7 +2893,10 @@ export default function StockManager() {
       setShowSupplierForm(false);
       showToast("Supplier added successfully!", "success");
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Failed to add supplier.", "error");
+      showToast(
+        err instanceof Error ? err.message : "Failed to add supplier.",
+        "error",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -2257,7 +2908,10 @@ export default function StockManager() {
       setSuppliers((prev) => prev.filter((s) => s.supplier_id !== id));
       showToast("Supplier removed.", "success");
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Failed to remove supplier.", "error");
+      showToast(
+        err instanceof Error ? err.message : "Failed to remove supplier.",
+        "error",
+      );
     }
   }
 
@@ -2265,33 +2919,73 @@ export default function StockManager() {
     const name = rawMaterialForm.name.trim();
     const qty = Number(rawMaterialForm.initialStock);
     const price = Number(rawMaterialForm.price || 0);
-    if (!name) { showToast("Please enter a raw material name.", "error"); return; }
-    if (!Number.isFinite(qty) || qty <= 0) { showToast("Initial stock must be greater than 0.", "error"); return; }
-    if (!rawMaterialForm.expiryDate) { showToast("Please select an expiry date.", "error"); return; }
+    if (!name) {
+      showToast("Please enter a raw material name.", "error");
+      return;
+    }
+    if (!Number.isFinite(qty) || qty <= 0) {
+      showToast("Initial stock must be greater than 0.", "error");
+      return;
+    }
     setSubmitting(true);
     try {
       const normalizedName = name.toLowerCase();
-      const existing = products.find((p) => p.product_name.trim().toLowerCase() === normalizedName);
+      const existing = products.find(
+        (p) => p.product_name.trim().toLowerCase() === normalizedName,
+      );
       if (existing) {
-        await api.postBatch({ productId: existing.product_id, productName: existing.product_name, quantity: qty, unit: rawMaterialForm.unit, expiresAt: rawMaterialForm.expiryDate });
+        await api.postBatch({
+          productId: existing.product_id,
+          productName: existing.product_name,
+          quantity: qty,
+          unit: rawMaterialForm.unit,
+        });
       } else {
-        const created = await api.createProduct({ name, price: Number.isFinite(price) ? price : 0, quantity: 0, category: rawMaterialForm.category.trim(), description: rawMaterialForm.description.trim() || undefined, raw_material: true });
-        await api.postBatch({ productId: created.id, productName: name, quantity: qty, unit: rawMaterialForm.unit, expiresAt: rawMaterialForm.expiryDate });
+        const created = await api.createProduct({
+          name,
+          price: Number.isFinite(price) ? price : 0,
+          quantity: 0,
+          category: rawMaterialForm.category.trim(),
+          description: rawMaterialForm.description.trim() || undefined,
+          raw_material: true,
+        });
+        await api.postBatch({
+          productId: created.id,
+          productName: name,
+          quantity: qty,
+          unit: rawMaterialForm.unit,
+        });
       }
       await fetchAll();
       setRawMaterialForm(BLANK_RAW_MATERIAL);
       setShowRawMaterialForm(false);
-      showToast(existing ? "Stock added to existing item." : "Raw material added.", "success");
+      showToast(
+        existing ? "Stock added to existing item." : "Raw material added.",
+        "success",
+      );
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Failed to add raw material.", "error");
+      showToast(
+        err instanceof Error ? err.message : "Failed to add raw material.",
+        "error",
+      );
     } finally {
       setSubmitting(false);
     }
   }
 
   const cartIcon = (
-    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+    <svg
+      className="w-3.5 h-3.5"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2.5}
+        d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"
+      />
     </svg>
   );
 
@@ -2300,44 +2994,72 @@ export default function StockManager() {
   return (
     <>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap'); @keyframes fadeInRow { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }`}</style>
-      <div style={{ fontFamily: "'Poppins', sans-serif" }} className="min-h-screen bg-[#f5f6fa]">
+      <div
+        style={{ fontFamily: "'Poppins', sans-serif" }}
+        className="min-h-screen bg-[#f5f6fa]"
+      >
         <Sidebar />
 
         <header className="bg-white border-b border-slate-100 sticky top-0 z-30 shadow-sm">
           <div className="pl-25 pr-8 py-4 flex items-center justify-between">
             <div>
-              <h2 className="text-base font-semibold text-slate-800">Stock Manager</h2>
+              <h2 className="text-base font-semibold text-slate-800">
+                Stock Manager
+              </h2>
               <p className="text-xs text-slate-400 font-light mt-0.5">
-                {new Date().toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
+                {new Date().toLocaleDateString(undefined, {
+                  weekday: "long",
+                  year: "numeric",
+                  month: "long",
+                  day: "numeric",
+                })}
               </p>
             </div>
             <div className="flex items-center gap-3">
               {yesterdayReturns.length > 0 && (
-                <button onClick={() => setTab("withdrawal")} className="px-3.5 py-1.5 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold border border-amber-200 flex items-center gap-1.5">
-                  ↩ {yesterdayReturns.length} return{yesterdayReturns.length > 1 ? "s" : ""} from yesterday
+                <button
+                  onClick={() => setTab("withdrawal")}
+                  className="px-3.5 py-1.5 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold border border-amber-200 flex items-center gap-1.5"
+                >
+                  ↩ {yesterdayReturns.length} return
+                  {yesterdayReturns.length > 1 ? "s" : ""} from yesterday
                 </button>
               )}
-              <button onClick={openReconcile} className="px-4 py-2 text-xs font-semibold bg-indigo-50 text-indigo-600 rounded-xl border border-indigo-100 hover:bg-indigo-100 transition-colors">
+              <button
+                onClick={openReconcile}
+                className="px-4 py-2 text-xs font-semibold bg-indigo-50 text-indigo-600 rounded-xl border border-indigo-100 hover:bg-indigo-100 transition-colors"
+              >
                 End-of-Day Reconciliation
               </button>
               {attentionItems.length > 0 && (
-                <button onClick={() => setTab("alerts")} className="px-3.5 py-1.5 rounded-full bg-red-100 text-red-600 text-xs font-semibold border border-red-200 animate-pulse">
-                  {attentionItems.length} item{attentionItems.length > 1 ? "s" : ""} need attention
+                <button
+                  onClick={() => setTab("alerts")}
+                  className="px-3.5 py-1.5 rounded-full bg-red-100 text-red-600 text-xs font-semibold border border-red-200 animate-pulse"
+                >
+                  {attentionItems.length} item
+                  {attentionItems.length > 1 ? "s" : ""} need attention
                 </button>
               )}
               <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg">
-                <span className={`w-2 h-2 rounded-full ${isLoading ? "bg-amber-400" : "bg-emerald-400"}`} />
-                <span className="text-xs font-medium text-slate-600">{isLoading ? "Syncing" : "Up to date"}</span>
+                <span
+                  className={`w-2 h-2 rounded-full ${isLoading ? "bg-amber-400" : "bg-emerald-400"}`}
+                />
+                <span className="text-xs font-medium text-slate-600">
+                  {isLoading ? "Syncing" : "Up to date"}
+                </span>
               </div>
             </div>
           </div>
           <div className="pb-3 flex items-center justify-center gap-2">
             {TABS.map((t) => {
               const badge =
-                t.id === "alerts" ? attentionItems.length
-                : t.id === "withdrawal" ? yesterdayReturns.length
-                : t.id === "purchases" ? (poOrders.filter((o) => o.status === "Draft").length + poExpiryAlerts)
-                : 0;
+                t.id === "alerts"
+                  ? attentionItems.length
+                  : t.id === "withdrawal"
+                    ? yesterdayReturns.length
+                    : t.id === "purchases"
+                      ? poOrders.filter((o) => o.status === "Draft").length
+                      : 0;
               const active = tab === t.id;
               return (
                 <button
@@ -2348,7 +3070,9 @@ export default function StockManager() {
                 >
                   {t.label}
                   {badge > 0 && (
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none ${active ? "bg-white/20 text-white" : t.id === "withdrawal" ? "bg-amber-100 text-amber-700" : t.id === "purchases" ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-600"}`}>
+                    <span
+                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none ${active ? "bg-white/20 text-white" : t.id === "withdrawal" ? "bg-amber-100 text-amber-700" : t.id === "purchases" ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-600"}`}
+                    >
                       {badge}
                     </span>
                   )}
@@ -2368,61 +3092,145 @@ export default function StockManager() {
             <LoadingSkeleton />
           ) : (
             <AnimatePresence mode="wait">
-
               {/* ── Dashboard ─────────────────────────────────────────────── */}
               {tab === "dashboard" && (
-                <motion.div key="dashboard" variants={pageVariants} initial="hidden" animate="show" exit="exit">
-                  <motion.div variants={staggerVariants} initial="hidden" animate="show" className="space-y-6">
-                    <motion.div variants={staggerVariants} className="grid grid-cols-4 gap-4">
-                      {([
-                        { label: "Total Products", value: products.length.toString(), sub: "in inventory", accent: "slate" },
-                        { label: "Withdrawn Today", value: totalWithdrawn.toFixed(1), sub: "units pulled", accent: "indigo" },
-                        { label: "Wasted Today", value: totalWasted.toFixed(2), sub: "units spoiled", accent: "rose" },
-                        { label: "Returned Today", value: totalReturned.toFixed(2), sub: "units returned", accent: "emerald" },
-                      ] as { label: string; value: string; sub: string; accent: string }[]).map((k) => (
-                        <motion.div key={k.label} variants={itemVariants} className={`bg-white rounded-2xl p-5 shadow-sm border border-slate-100 border-t-4 ${KPI_ACCENT[k.accent].border}`}>
-                          <p className="text-xs text-slate-400 font-medium">{k.label}</p>
-                          <p className={`text-3xl font-bold mt-1 leading-none ${KPI_ACCENT[k.accent].value}`}>{k.value}</p>
+                <motion.div
+                  key="dashboard"
+                  variants={pageVariants}
+                  initial="hidden"
+                  animate="show"
+                  exit="exit"
+                >
+                  <motion.div
+                    variants={staggerVariants}
+                    initial="hidden"
+                    animate="show"
+                    className="space-y-6"
+                  >
+                    <motion.div
+                      variants={staggerVariants}
+                      className="grid grid-cols-4 gap-4"
+                    >
+                      {(
+                        [
+                          {
+                            label: "Total Products",
+                            value: products.length.toString(),
+                            sub: "in inventory",
+                            accent: "slate",
+                          },
+                          {
+                            label: "Withdrawn Today",
+                            value: totalWithdrawn.toFixed(1),
+                            sub: "units pulled",
+                            accent: "indigo",
+                          },
+                          {
+                            label: "Wasted Today",
+                            value: totalWasted.toFixed(2),
+                            sub: "units spoiled",
+                            accent: "rose",
+                          },
+                          {
+                            label: "Returned Today",
+                            value: totalReturned.toFixed(2),
+                            sub: "units returned",
+                            accent: "emerald",
+                          },
+                        ] as {
+                          label: string;
+                          value: string;
+                          sub: string;
+                          accent: string;
+                        }[]
+                      ).map((k) => (
+                        <motion.div
+                          key={k.label}
+                          variants={itemVariants}
+                          className={`bg-white rounded-2xl p-5 shadow-sm border border-slate-100 border-t-4 ${KPI_ACCENT[k.accent].border}`}
+                        >
+                          <p className="text-xs text-slate-400 font-medium">
+                            {k.label}
+                          </p>
+                          <p
+                            className={`text-3xl font-bold mt-1 leading-none ${KPI_ACCENT[k.accent].value}`}
+                          >
+                            {k.value}
+                          </p>
                           <p className="text-xs text-slate-400 mt-1">{k.sub}</p>
                         </motion.div>
                       ))}
                     </motion.div>
 
-                    {(wholeChickenProducts.length > 0 || choppedChickenProducts.length > 0) && (
-                      <motion.div variants={itemVariants} className="bg-gradient-to-r from-orange-50 to-amber-50 border border-orange-100 rounded-2xl p-4 flex items-center gap-6">
+                    {(wholeChickenProducts.length > 0 ||
+                      choppedChickenProducts.length > 0) && (
+                      <motion.div
+                        variants={itemVariants}
+                        className="bg-gradient-to-r from-orange-50 to-amber-50 border border-orange-100 rounded-2xl p-4 flex items-center gap-6"
+                      >
                         <div className="flex items-center gap-2">
                           <span className="text-lg">🐔</span>
-                          <span className="text-xs font-bold text-orange-700 uppercase tracking-wider">Chicken Inventory</span>
+                          <span className="text-xs font-bold text-orange-700 uppercase tracking-wider">
+                            Chicken Inventory
+                          </span>
                         </div>
                         <div className="flex gap-6 flex-1">
                           {wholeChickenProducts.map((p) => (
-                            <div key={p.product_id} className="flex items-center gap-3">
+                            <div
+                              key={p.product_id}
+                              className="flex items-center gap-3"
+                            >
                               <div className="w-2 h-2 rounded-full bg-orange-400" />
                               <div>
-                                <p className="text-xs text-orange-600 font-medium">Whole Chicken</p>
-                                <p className="text-sm font-bold text-orange-800">{p.mainStock} <span className="text-xs font-normal text-orange-500">{p.unit}</span></p>
+                                <p className="text-xs text-orange-600 font-medium">
+                                  Whole Chicken
+                                </p>
+                                <p className="text-sm font-bold text-orange-800">
+                                  {p.mainStock}{" "}
+                                  <span className="text-xs font-normal text-orange-500">
+                                    {p.unit}
+                                  </span>
+                                </p>
                               </div>
                             </div>
                           ))}
-                          {wholeChickenProducts.length > 0 && choppedChickenProducts.length > 0 && (
-                            <div className="flex items-center text-orange-200 text-lg font-light">→</div>
-                          )}
+                          {wholeChickenProducts.length > 0 &&
+                            choppedChickenProducts.length > 0 && (
+                              <div className="flex items-center text-orange-200 text-lg font-light">
+                                →
+                              </div>
+                            )}
                           {choppedChickenProducts.map((p) => (
-                            <div key={p.product_id} className="flex items-center gap-3">
+                            <div
+                              key={p.product_id}
+                              className="flex items-center gap-3"
+                            >
                               <div className="w-2 h-2 rounded-full bg-amber-500" />
                               <div>
-                                <p className="text-xs text-amber-600 font-medium">Chopped Chicken</p>
-                                <p className="text-sm font-bold text-amber-800">{p.mainStock} <span className="text-xs font-normal text-amber-500">{p.unit}</span></p>
+                                <p className="text-xs text-amber-600 font-medium">
+                                  Chopped Chicken
+                                </p>
+                                <p className="text-sm font-bold text-amber-800">
+                                  {p.mainStock}{" "}
+                                  <span className="text-xs font-normal text-amber-500">
+                                    {p.unit}
+                                  </span>
+                                </p>
                               </div>
                             </div>
                           ))}
                         </div>
-                        <p className="text-xs text-orange-400 italic">Delivered whole → chopped separately in inventory</p>
+                        <p className="text-xs text-orange-400 italic">
+                          Delivered whole → chopped separately in inventory
+                        </p>
                       </motion.div>
                     )}
 
                     <motion.div variants={itemVariants}>
-                      <SectionCard title="Main Stock Levels" subtitle="Raw materials added from Stock Manager">
+                      <SectionCard
+                        title="Main Stock Levels"
+                        subtitle="Raw materials added from Stock Manager"
+                      >
                         <div className="px-4 pt-4 flex flex-col md:flex-row md:items-center gap-3 md:justify-between">
                           <input
                             type="text"
@@ -2431,15 +3239,32 @@ export default function StockManager() {
                             placeholder="Search by item name or category..."
                             className="w-full md:w-96 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
                           />
-                          <button onClick={() => setShowRawMaterialForm(true)} className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 transition-colors">
-                            Add Raw Material
+                          <button
+                            onClick={() => setShowRawMaterialForm(true)}
+                            className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 transition-colors"
+                          >
+                            Add Material
                           </button>
                         </div>
                         <table className="w-full text-sm">
                           <thead>
                             <tr className="border-b border-slate-100">
-                              {["Item", "Category", "Main Stock", "Qty Purchased", "Withdrawn", "Expiry Date", "Returned", "Level", "Status"].map((h) => (
-                                <th key={h} className={`py-3 px-4 text-[11px] font-semibold text-slate-400 uppercase tracking-wider ${["Item", "Category"].includes(h) ? "text-left" : h === "Status" ? "text-center" : "text-right"}`}>
+                              {[
+                                "Item",
+                                "Category",
+                                "Main Stock",
+                                "Qty Purchased",
+                                "Withdrawn",
+                                "Expiry Date",
+                                "Returned",
+                                "Level",
+                                "Status",
+                                "Action",
+                              ].map((h) => (
+                                <th
+                                  key={h}
+                                  className={`py-3 px-4 text-[11px] font-semibold text-slate-400 uppercase tracking-wider ${["Item", "Category"].includes(h) ? "text-left" : ["Status", "Action"].includes(h) ? "text-center" : "text-right"}`}
+                                >
                                   {h}
                                 </th>
                               ))}
@@ -2448,85 +3273,191 @@ export default function StockManager() {
                           <tbody>
                             {dashboardFilteredProducts.map((p, i) => {
                               const status = getStockStatus(p);
-                              const pct = Math.min(100, (p.mainStock / Math.max(1, p.reorderPoint * 2)) * 100);
+                              const pct = Math.min(
+                                100,
+                                (p.mainStock /
+                                  Math.max(1, p.reorderPoint * 2)) *
+                                  100,
+                              );
                               return (
                                 <tr
                                   key={p.inventory_id}
-                                  style={{ opacity: 0, animation: `fadeInRow 0.28s ease forwards`, animationDelay: `${i * 0.04}s` }}
+                                  style={{
+                                    opacity: 0,
+                                    animation: `fadeInRow 0.28s ease forwards`,
+                                    animationDelay: `${i * 0.04}s`,
+                                  }}
                                   className="border-b border-slate-50 hover:bg-slate-50/70 transition-colors"
                                 >
                                   <td className="py-3.5 px-4">
                                     <div className="flex items-center gap-2">
-                                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${STATUS_DOT[status]}`} />
-                                      <span className="font-medium text-slate-800">{p.product_name}</span>
+                                      <span
+                                        className={`w-2 h-2 rounded-full flex-shrink-0 ${STATUS_DOT[status]}`}
+                                      />
+                                      <span className="font-medium text-slate-800">
+                                        {p.product_name}
+                                      </span>
                                     </div>
                                   </td>
                                   <td className="py-3.5 px-4">
-                                    <span className={`text-[11px] font-medium px-2 py-0.5 rounded-md border ${getCategoryStyle(p.category)}`}>{p.category}</span>
+                                    <span
+                                      className={`text-[11px] font-medium px-2 py-0.5 rounded-md border ${getCategoryStyle(p.category)}`}
+                                    >
+                                      {p.category}
+                                    </span>
                                   </td>
-                                  <td className="py-3.5 px-4 text-right font-semibold text-slate-700">{p.mainStock} <span className="text-slate-400 font-normal text-xs">{p.unit}</span></td>
-                                  <td className="py-3.5 px-4 text-right text-slate-500">{p.item_purchased}</td>
-                                  <td className="py-3.5 px-4 text-right text-indigo-500 font-medium">{p.dailyWithdrawn}</td>
+                                  <td className="py-3.5 px-4 text-right font-semibold text-slate-700">
+                                    {p.mainStock}{" "}
+                                    <span className="text-slate-400 font-normal text-xs">
+                                      {p.unit}
+                                    </span>
+                                  </td>
+                                  <td className="py-3.5 px-4 text-right text-slate-500">
+                                    {p.item_purchased}
+                                  </td>
+                                  <td className="py-3.5 px-4 text-right text-indigo-500 font-medium">
+                                    {p.dailyWithdrawn}
+                                  </td>
                                   <td className="py-3.5 px-4 text-right">
                                     <ExpiryChip dateStr={p.expiryDate} />
                                   </td>
-                                  <td className="py-3.5 px-4 text-right text-emerald-500 font-medium">{p.returned}</td>
+                                  <td className="py-3.5 px-4 text-right text-emerald-500 font-medium">
+                                    {p.returned}
+                                  </td>
                                   <td className="py-3.5 px-4 w-32">
                                     <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
                                       <motion.div
                                         className={`h-full rounded-full ${STATUS_BAR[status]}`}
                                         initial={{ width: 0 }}
                                         animate={{ width: `${pct}%` }}
-                                        transition={{ duration: 0.7, delay: i * 0.05, ease: "easeOut" }}
+                                        transition={{
+                                          duration: 0.7,
+                                          delay: i * 0.05,
+                                          ease: "easeOut",
+                                        }}
                                       />
                                     </div>
                                   </td>
                                   <td className="py-3.5 px-4 text-center">
-                                    <span className={`px-2.5 py-1 rounded-full text-[11px] font-medium capitalize ${STATUS_BADGE[status]}`}>{status}</span>
+                                    <span
+                                      className={`px-2.5 py-1 rounded-full text-[11px] font-medium capitalize ${STATUS_BADGE[status]}`}
+                                    >
+                                      {status}
+                                    </span>
+                                  </td>
+                                  <td className="py-3.5 px-4 text-center">
+                                    <button
+                                      onClick={() =>
+                                        handleDashboardDeleteProduct(p)
+                                      }
+                                      className="inline-flex items-center justify-center p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                                      title={`Delete ${p.product_name}`}
+                                    >
+                                      <svg
+                                        className="w-4 h-4"
+                                        fill="none"
+                                        viewBox="0 0 24 24"
+                                        stroke="currentColor"
+                                      >
+                                        <path
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          strokeWidth={2}
+                                          d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                                        />
+                                      </svg>
+                                    </button>
                                   </td>
                                 </tr>
                               );
                             })}
                             {dashboardFilteredProducts.length === 0 && (
-                              <tr><td colSpan={9} className="py-8 text-center text-slate-400 text-sm">No items match your search.</td></tr>
+                              <tr>
+                                <td
+                                  colSpan={10}
+                                  className="py-8 text-center text-slate-400 text-sm"
+                                >
+                                  No items match your search.
+                                </td>
+                              </tr>
                             )}
                           </tbody>
                         </table>
                       </SectionCard>
                     </motion.div>
 
-                    <motion.div variants={itemVariants} className="grid grid-cols-2 gap-4">
-                      <SectionCard title="Last Inventory Updates" subtitle="Most recently updated items">
+                    <motion.div
+                      variants={itemVariants}
+                      className="grid grid-cols-2 gap-4"
+                    >
+                      <SectionCard
+                        title="Last Inventory Updates"
+                        subtitle="Most recently updated items"
+                      >
                         <div className="divide-y divide-slate-50">
                           {[...products]
-                            .sort((a, b) => new Date(b.last_update).getTime() - new Date(a.last_update).getTime())
+                            .sort(
+                              (a, b) =>
+                                new Date(b.last_update).getTime() -
+                                new Date(a.last_update).getTime(),
+                            )
                             .slice(0, 6)
                             .map((p, i) => (
-                              <motion.div key={p.inventory_id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.07 }} className="flex items-center justify-between px-5 py-3.5 hover:bg-slate-50/70 transition-colors">
+                              <motion.div
+                                key={p.inventory_id}
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                transition={{ delay: i * 0.07 }}
+                                className="flex items-center justify-between px-5 py-3.5 hover:bg-slate-50/70 transition-colors"
+                              >
                                 <div>
-                                  <p className="text-sm font-medium text-slate-700">{p.product_name}</p>
-                                  <p className="text-xs text-slate-400 mt-0.5">{p.supplier_name}</p>
+                                  <p className="text-sm font-medium text-slate-700">
+                                    {p.product_name}
+                                  </p>
+                                  <p className="text-xs text-slate-400 mt-0.5">
+                                    {p.supplier_name}
+                                  </p>
                                 </div>
                                 <span className="text-xs text-slate-500 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-lg">
-                                  {new Date(p.last_update).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                                  {new Date(p.last_update).toLocaleDateString(
+                                    undefined,
+                                    { month: "short", day: "numeric" },
+                                  )}
                                 </span>
                               </motion.div>
                             ))}
                         </div>
                       </SectionCard>
-                      <SectionCard title="Record Spoilage" subtitle="Log wasted items — updates Inventory.Stock">
+                      <SectionCard
+                        title="Record Spoilage"
+                        subtitle="Log wasted items — updates Inventory.Stock"
+                      >
                         <div className="p-5 space-y-4">
                           <FormField label="Select Item">
-                            <StyledSelect value={adjProductId ?? ""} onChange={(v) => setAdjProductId(Number(v))}>
+                            <StyledSelect
+                              value={adjProductId ?? ""}
+                              onChange={(v) => setAdjProductId(Number(v))}
+                            >
                               {products.map((p) => (
-                                <option key={p.product_id} value={p.product_id}>{p.product_name}</option>
+                                <option key={p.product_id} value={p.product_id}>
+                                  {p.product_name}
+                                </option>
                               ))}
                             </StyledSelect>
                           </FormField>
                           <FormField label="Quantity Wasted">
-                            <StyledInput type="number" value={adjQty} onChange={setAdjQty} placeholder="Enter amount" />
+                            <StyledInput
+                              type="number"
+                              value={adjQty}
+                              onChange={setAdjQty}
+                              placeholder="Enter amount"
+                            />
                           </FormField>
-                          <Btn onClick={submitSpoilage} variant="danger" loading={submitting}>
+                          <Btn
+                            onClick={submitSpoilage}
+                            variant="danger"
+                            loading={submitting}
+                          >
                             {submitting ? "Saving..." : "Record Spoilage"}
                           </Btn>
                         </div>
@@ -2538,13 +3469,36 @@ export default function StockManager() {
 
               {/* ── Withdrawal ────────────────────────────────────────────── */}
               {tab === "withdrawal" && (
-                <motion.div key="withdrawal" variants={pageVariants} initial="hidden" animate="show" exit="exit">
-                  <motion.div variants={staggerVariants} initial="hidden" animate="show" className="space-y-6">
+                <motion.div
+                  key="withdrawal"
+                  variants={pageVariants}
+                  initial="hidden"
+                  animate="show"
+                  exit="exit"
+                >
+                  <motion.div
+                    variants={staggerVariants}
+                    initial="hidden"
+                    animate="show"
+                    className="space-y-6"
+                  >
                     {yesterdayReturns.length > 0 && (
-                      <motion.div variants={itemVariants}><YesterdayReturnsBanner batches={yesterdayReturns} /></motion.div>
+                      <motion.div variants={itemVariants}>
+                        <YesterdayReturnsBanner batches={yesterdayReturns} />
+                      </motion.div>
                     )}
-                    <motion.div variants={itemVariants} className="grid grid-cols-2 gap-6">
-                      <SectionCard title="New Withdrawal Record" subtitle={wdType === "initial" ? "Opening withdrawal — sets the day's reference" : "FIFO — oldest batch pulled first"}>
+                    <motion.div
+                      variants={itemVariants}
+                      className="grid grid-cols-2 gap-6"
+                    >
+                      <SectionCard
+                        title="New Withdrawal Record"
+                        subtitle={
+                          wdType === "initial"
+                            ? "Opening withdrawal — sets the day's reference"
+                            : "FIFO — oldest batch pulled first"
+                        }
+                      >
                         <div className="p-5 space-y-4">
                           <FormField label="Record Type">
                             <div className="grid grid-cols-3 gap-2">
@@ -2559,72 +3513,158 @@ export default function StockManager() {
                               ))}
                             </div>
                           </FormField>
-                          <div className={`text-xs px-3 py-2 rounded-xl border ${wdType === "initial" ? "bg-indigo-50 text-indigo-600 border-indigo-100" : wdType === "supplementary" ? "bg-sky-50 text-sky-600 border-sky-100" : "bg-emerald-50 text-emerald-600 border-emerald-100"}`}>
-                            {wdType === "initial" && "Opening withdrawal for today — recorded as the initial pull."}
-                            {wdType === "supplementary" && "Additional pull on top of the opening withdrawal."}
-                            {wdType === "return" && "Returning unused/leftover stock back to main storage."}
+                          <div
+                            className={`text-xs px-3 py-2 rounded-xl border ${wdType === "initial" ? "bg-indigo-50 text-indigo-600 border-indigo-100" : wdType === "supplementary" ? "bg-sky-50 text-sky-600 border-sky-100" : "bg-emerald-50 text-emerald-600 border-emerald-100"}`}
+                          >
+                            {wdType === "initial" &&
+                              "Opening withdrawal for today — recorded as the initial pull."}
+                            {wdType === "supplementary" &&
+                              "Additional pull on top of the opening withdrawal."}
+                            {wdType === "return" &&
+                              "Returning unused/leftover stock back to main storage."}
                           </div>
                           <FormField label="Select Item">
-                            <StyledSelect value={wdProductId ?? ""} onChange={(v) => setWdProductId(Number(v))}>
+                            <StyledSelect
+                              value={wdProductId ?? ""}
+                              onChange={(v) => setWdProductId(Number(v))}
+                            >
                               {wholeChickenProducts.length > 0 && (
                                 <optgroup label="── Whole Chicken ──">
                                   {wholeChickenProducts.map((p) => (
-                                    <option key={p.product_id} value={p.product_id}>{p.product_name} ({p.mainStock} {p.unit})</option>
+                                    <option
+                                      key={p.product_id}
+                                      value={p.product_id}
+                                    >
+                                      {p.product_name} ({p.mainStock} {p.unit})
+                                    </option>
                                   ))}
                                 </optgroup>
                               )}
                               {choppedChickenProducts.length > 0 && (
                                 <optgroup label="── Chopped Chicken ──">
                                   {choppedChickenProducts.map((p) => (
-                                    <option key={p.product_id} value={p.product_id}>{p.product_name} ({p.mainStock} {p.unit})</option>
+                                    <option
+                                      key={p.product_id}
+                                      value={p.product_id}
+                                    >
+                                      {p.product_name} ({p.mainStock} {p.unit})
+                                    </option>
                                   ))}
                                 </optgroup>
                               )}
-                              {products.filter((p) => !isChicken(p)).length > 0 && (
+                              {products.filter((p) => !isChicken(p)).length >
+                                0 && (
                                 <optgroup label="── Other Items ──">
-                                  {products.filter((p) => !isChicken(p)).map((p) => (
-                                    <option key={p.product_id} value={p.product_id}>{p.product_name} ({p.mainStock} {p.unit})</option>
-                                  ))}
+                                  {products
+                                    .filter((p) => !isChicken(p))
+                                    .map((p) => (
+                                      <option
+                                        key={p.product_id}
+                                        value={p.product_id}
+                                      >
+                                        {p.product_name} ({p.mainStock} {p.unit}
+                                        )
+                                      </option>
+                                    ))}
                                 </optgroup>
                               )}
                             </StyledSelect>
                           </FormField>
-                          {selectedWithdrawalProduct && selectedWithdrawalStatus !== "normal" && (
-                            <div className={`text-xs px-3 py-2 rounded-xl border ${selectedWithdrawalStatus === "critical" ? "bg-red-50 text-red-600 border-red-200" : "bg-amber-50 text-amber-600 border-amber-200"}`}>
-                              {selectedWithdrawalStatus === "critical" ? "Critical stock warning" : "Low stock warning"}: {selectedWithdrawalProduct.product_name} is at {selectedWithdrawalPct}% of reorder level ({selectedWithdrawalProduct.mainStock} {selectedWithdrawalProduct.unit} left).
-                            </div>
-                          )}
-                          {selectedWithdrawalProduct?.category.toLowerCase().includes("sauce") && (
+                          {selectedWithdrawalProduct &&
+                            selectedWithdrawalStatus !== "normal" && (
+                              <div
+                                className={`text-xs px-3 py-2 rounded-xl border ${selectedWithdrawalStatus === "critical" ? "bg-red-50 text-red-600 border-red-200" : "bg-amber-50 text-amber-600 border-amber-200"}`}
+                              >
+                                {selectedWithdrawalStatus === "critical"
+                                  ? "Critical stock warning"
+                                  : "Low stock warning"}
+                                : {selectedWithdrawalProduct.product_name} is at{" "}
+                                {selectedWithdrawalPct}% of reorder level (
+                                {selectedWithdrawalProduct.mainStock}{" "}
+                                {selectedWithdrawalProduct.unit} left).
+                              </div>
+                            )}
+                          {selectedWithdrawalProduct?.category
+                            .toLowerCase()
+                            .includes("sauce") && (
                             <div className="text-xs px-3 py-2 rounded-xl border bg-rose-50 text-rose-500 border-rose-100">
-                              ⚠️ Sauce items are not reconciled at end-of-day. Once withdrawn, they are considered consumed.
+                              ⚠️ Sauce items are not reconciled at end-of-day.
+                              Once withdrawn, they are considered consumed.
                             </div>
                           )}
                           <FormField label="Quantity">
-                            <StyledInput type="number" value={wdQty} onChange={setWdQty} placeholder="Enter amount" />
+                            <StyledInput
+                              type="number"
+                              value={wdQty}
+                              onChange={setWdQty}
+                              placeholder="Enter amount"
+                            />
                           </FormField>
-                          <Btn onClick={submitWithdrawal} variant="primary" loading={submitting}>
-                            {submitting ? "Saving..." : wdType === "return" ? "Record Return" : wdType === "initial" ? "Submit Opening Withdrawal" : "Submit Withdrawal"}
+                          <Btn
+                            onClick={submitWithdrawal}
+                            variant="primary"
+                            loading={submitting}
+                          >
+                            {submitting
+                              ? "Saving..."
+                              : wdType === "return"
+                                ? "Record Return"
+                                : wdType === "initial"
+                                  ? "Submit Opening Withdrawal"
+                                  : "Submit Withdrawal"}
                           </Btn>
                         </div>
                       </SectionCard>
-                      <SectionCard title="Today's Withdrawal Log" subtitle={`${withdrawals.length} entries`}>
+                      <SectionCard
+                        title="Today's Withdrawal Log"
+                        subtitle={`${withdrawals.length} entries`}
+                      >
                         {withdrawals.length === 0 ? (
                           <EmptyState message="No withdrawals recorded today." />
                         ) : (
                           <div className="divide-y divide-slate-50 max-h-96 overflow-y-auto">
                             <AnimatePresence>
                               {withdrawals.map((w) => (
-                                <motion.div key={w.status_id} initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} transition={{ duration: 0.28 }} className="flex items-center justify-between px-5 py-3.5 hover:bg-slate-50/70 transition-colors">
+                                <motion.div
+                                  key={w.status_id}
+                                  initial={{ opacity: 0, height: 0 }}
+                                  animate={{ opacity: 1, height: "auto" }}
+                                  transition={{ duration: 0.28 }}
+                                  className="flex items-center justify-between px-5 py-3.5 hover:bg-slate-50/70 transition-colors"
+                                >
                                   <div>
-                                    <p className="text-sm font-medium text-slate-700">{w.product_name}</p>
+                                    <p className="text-sm font-medium text-slate-700">
+                                      {w.product_name}
+                                    </p>
                                     <p className="text-xs text-slate-400 mt-0.5">
-                                      {new Date(w.status_date).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
-                                      {w.recorded_by && <> · <span className="text-slate-500">{w.recorded_by}</span></>}
+                                      {new Date(
+                                        w.status_date,
+                                      ).toLocaleTimeString(undefined, {
+                                        hour: "2-digit",
+                                        minute: "2-digit",
+                                      })}
+                                      {w.recorded_by && (
+                                        <>
+                                          {" "}
+                                          ·{" "}
+                                          <span className="text-slate-500">
+                                            {w.recorded_by}
+                                          </span>
+                                        </>
+                                      )}
                                     </p>
                                   </div>
                                   <div className="flex items-center gap-2.5">
-                                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full capitalize ${TYPE_BADGE[w.type]}`}>{w.type}</span>
-                                    <span className={`text-sm font-semibold ${w.type === "return" ? "text-amber-600" : "text-slate-700"}`}>−{w.quantity}</span>
+                                    <span
+                                      className={`text-xs font-medium px-2 py-0.5 rounded-full capitalize ${TYPE_BADGE[w.type]}`}
+                                    >
+                                      {w.type}
+                                    </span>
+                                    <span
+                                      className={`text-sm font-semibold ${w.type === "return" ? "text-amber-600" : "text-slate-700"}`}
+                                    >
+                                      −{w.quantity}
+                                    </span>
                                   </div>
                                 </motion.div>
                               ))}
@@ -2633,35 +3673,92 @@ export default function StockManager() {
                         )}
                       </SectionCard>
                     </motion.div>
-                    {wdType !== "return" && selectedProductBatches.length > 0 && (
+                    {selectedProductBatches.length > 0 && (
                       <motion.div variants={itemVariants}>
-                        <SectionCard title={`Batch Queue — ${selectedWithdrawalProduct?.product_name ?? ""}`} subtitle="FIFO order: batch with the oldest received date is pulled first">
+                        <SectionCard
+                          title={`Batch Queue - ${selectedWithdrawalProduct?.product_name ?? ""}`}
+                          subtitle="FIFO: oldest delivery pulled first. Each row = one batch with its own expiry."
+                        >
                           <div className="p-4">
-                            <FIFOBatchPreview batches={selectedProductBatches} qtyNeeded={parseFloat(wdQty) || 0} unit={selectedWithdrawalProduct?.unit ?? ""} />
+                            <FIFOBatchPreview
+                              batches={selectedProductBatches}
+                              qtyNeeded={parseFloat(wdQty) || 0}
+                              unit={selectedWithdrawalProduct?.unit ?? ""}
+                            />
                           </div>
                         </SectionCard>
                       </motion.div>
                     )}
+
                     <motion.div variants={itemVariants}>
-                      <SectionCard title="Currently Withdrawn" subtitle="Stock pulled for today's preparation — net of returns">
-                        {products.filter((p) => p.dailyWithdrawn > 0).length === 0 ? (
+                      <SectionCard
+                        title="All Active Batches by Delivery"
+                        subtitle="Grouped by received date - same delivery groups products together"
+                      >
+                        <div className="p-4">
+                          <FIFOBatchGrouped
+                            allBatches={activeBatches}
+                            productMap={
+                              new Map(
+                                products.map((p) => [
+                                  p.product_id,
+                                  { name: p.product_name, unit: p.unit },
+                                ]),
+                              )
+                            }
+                          />
+                        </div>
+                      </SectionCard>
+                    </motion.div>
+
+                    <motion.div variants={itemVariants}>
+                      <SectionCard
+                        title="Currently Withdrawn"
+                        subtitle="Stock pulled for today's preparation — net of returns"
+                      >
+                        {products.filter((p) => p.dailyWithdrawn > 0).length ===
+                        0 ? (
                           <EmptyState message="No stock withdrawn today." />
                         ) : (
                           <div className="grid grid-cols-4 divide-x divide-slate-100">
-                            {products.filter((p) => p.dailyWithdrawn > 0).map((p, i) => (
-                              <motion.div key={p.inventory_id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }} className="p-5 hover:bg-slate-50/50 transition-colors">
-                                <div className="flex items-center gap-1.5 mb-1">
-                                  <p className="text-xs text-slate-400 truncate font-medium">{p.product_name}</p>
-                                  {isReconcilable(p) ? (
-                                    <span className="text-[9px] font-bold text-emerald-500 bg-emerald-50 px-1.5 py-0.5 rounded-full border border-emerald-100 whitespace-nowrap">reconcilable</span>
-                                  ) : (
-                                    <span className="text-[9px] font-bold text-rose-400 bg-rose-50 px-1.5 py-0.5 rounded-full border border-rose-100 whitespace-nowrap">no return</span>
-                                  )}
-                                </div>
-                                <p className="text-2xl font-bold text-slate-800 mt-1.5 leading-none">{p.dailyWithdrawn}<span className="text-sm text-slate-400 font-normal ml-1">{p.unit}</span></p>
-                                <p className="text-xs text-slate-400 mt-1.5">Returned: <span className="text-emerald-500 font-medium">{p.returned} {p.unit}</span></p>
-                              </motion.div>
-                            ))}
+                            {products
+                              .filter((p) => p.dailyWithdrawn > 0)
+                              .map((p, i) => (
+                                <motion.div
+                                  key={p.inventory_id}
+                                  initial={{ opacity: 0, y: 8 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  transition={{ delay: i * 0.07 }}
+                                  className="p-5 hover:bg-slate-50/50 transition-colors"
+                                >
+                                  <div className="flex items-center gap-1.5 mb-1">
+                                    <p className="text-xs text-slate-400 truncate font-medium">
+                                      {p.product_name}
+                                    </p>
+                                    {isReconcilable(p) ? (
+                                      <span className="text-[9px] font-bold text-emerald-500 bg-emerald-50 px-1.5 py-0.5 rounded-full border border-emerald-100 whitespace-nowrap">
+                                        reconcilable
+                                      </span>
+                                    ) : (
+                                      <span className="text-[9px] font-bold text-rose-400 bg-rose-50 px-1.5 py-0.5 rounded-full border border-rose-100 whitespace-nowrap">
+                                        no return
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-2xl font-bold text-slate-800 mt-1.5 leading-none">
+                                    {p.dailyWithdrawn}
+                                    <span className="text-sm text-slate-400 font-normal ml-1">
+                                      {p.unit}
+                                    </span>
+                                  </p>
+                                  <p className="text-xs text-slate-400 mt-1.5">
+                                    Returned:{" "}
+                                    <span className="text-emerald-500 font-medium">
+                                      {p.returned} {p.unit}
+                                    </span>
+                                  </p>
+                                </motion.div>
+                              ))}
                           </div>
                         )}
                       </SectionCard>
@@ -2672,63 +3769,148 @@ export default function StockManager() {
 
               {/* ── Alerts ────────────────────────────────────────────────── */}
               {tab === "alerts" && (
-                <motion.div key="alerts" variants={pageVariants} initial="hidden" animate="show" exit="exit">
-                  <motion.div variants={staggerVariants} initial="hidden" animate="show" className="space-y-4">
-                    <motion.div variants={itemVariants} className="grid grid-cols-2 gap-4">
+                <motion.div
+                  key="alerts"
+                  variants={pageVariants}
+                  initial="hidden"
+                  animate="show"
+                  exit="exit"
+                >
+                  <motion.div
+                    variants={staggerVariants}
+                    initial="hidden"
+                    animate="show"
+                    className="space-y-4"
+                  >
+                    <motion.div
+                      variants={itemVariants}
+                      className="grid grid-cols-2 gap-4"
+                    >
                       <div className="bg-white rounded-2xl p-5 border border-t-4 border-red-300 shadow-sm">
-                        <p className="text-xs text-slate-400 font-medium">Critical Items</p>
-                        <p className="text-3xl font-bold text-red-500 mt-1">{criticalStock.length}</p>
+                        <p className="text-xs text-slate-400 font-medium">
+                          Critical Items
+                        </p>
+                        <p className="text-3xl font-bold text-red-500 mt-1">
+                          {criticalStock.length}
+                        </p>
                       </div>
                       <div className="bg-white rounded-2xl p-5 border border-t-4 border-amber-300 shadow-sm">
-                        <p className="text-xs text-slate-400 font-medium">Warning Items</p>
-                        <p className="text-3xl font-bold text-amber-500 mt-1">{lowStock.length}</p>
+                        <p className="text-xs text-slate-400 font-medium">
+                          Warning Items
+                        </p>
+                        <p className="text-3xl font-bold text-amber-500 mt-1">
+                          {lowStock.length}
+                        </p>
                       </div>
                     </motion.div>
                     {lowStock.length === 0 && criticalStock.length === 0 ? (
-                      <motion.div variants={itemVariants}><EmptyState message="All stock levels are within safe range." /></motion.div>
+                      <motion.div variants={itemVariants}>
+                        <EmptyState message="All stock levels are within safe range." />
+                      </motion.div>
                     ) : (
                       <>
-                        {([
-                          { items: criticalStock, label: "Critical", color: "red" },
-                          { items: lowStock, label: "Warning", color: "amber" },
-                        ] as { items: Product[]; label: string; color: string }[]).map(({ items, label, color }) =>
+                        {(
+                          [
+                            {
+                              items: criticalStock,
+                              label: "Critical",
+                              color: "red",
+                            },
+                            {
+                              items: lowStock,
+                              label: "Warning",
+                              color: "amber",
+                            },
+                          ] as {
+                            items: Product[];
+                            label: string;
+                            color: string;
+                          }[]
+                        ).map(({ items, label, color }) =>
                           items.length > 0 ? (
                             <div key={label}>
-                              <motion.div variants={itemVariants} className="pt-1">
-                                <p className={`text-xs font-semibold text-${color}-500 uppercase tracking-wider mb-2`}>{label}</p>
+                              <motion.div
+                                variants={itemVariants}
+                                className="pt-1"
+                              >
+                                <p
+                                  className={`text-xs font-semibold text-${color}-500 uppercase tracking-wider mb-2`}
+                                >
+                                  {label}
+                                </p>
                               </motion.div>
                               {items.map((p, i) => {
                                 const status = getStockStatus(p);
-                                const deficit = +(p.reorderPoint - p.mainStock).toFixed(2);
+                                const deficit = +(
+                                  p.reorderPoint - p.mainStock
+                                ).toFixed(2);
                                 return (
-                                  <motion.div key={p.inventory_id} variants={itemVariants} transition={{ delay: i * 0.06 }} className={`bg-white rounded-2xl border border-t-4 p-5 flex items-center justify-between shadow-sm mb-3 ${status === "critical" ? "border-red-200 border-t-red-400" : "border-amber-200 border-t-amber-400"}`}>
+                                  <motion.div
+                                    key={p.inventory_id}
+                                    variants={itemVariants}
+                                    transition={{ delay: i * 0.06 }}
+                                    className={`bg-white rounded-2xl border border-t-4 p-5 flex items-center justify-between shadow-sm mb-3 ${status === "critical" ? "border-red-200 border-t-red-400" : "border-amber-200 border-t-amber-400"}`}
+                                  >
                                     <div className="flex items-center gap-4">
-                                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${status === "critical" ? "bg-red-50" : "bg-amber-50"}`}>
-                                        <span className={`text-sm font-bold ${status === "critical" ? "text-red-500" : "text-amber-500"}`}>!</span>
+                                      <div
+                                        className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${status === "critical" ? "bg-red-50" : "bg-amber-50"}`}
+                                      >
+                                        <span
+                                          className={`text-sm font-bold ${status === "critical" ? "text-red-500" : "text-amber-500"}`}
+                                        >
+                                          !
+                                        </span>
                                       </div>
                                       <div>
                                         <div className="flex items-center gap-2">
-                                          <p className="font-semibold text-slate-800">{p.product_name}</p>
-                                          <span className={`text-[10px] font-medium px-2 py-0.5 rounded-md border ${getCategoryStyle(p.category)}`}>{p.category}</span>
+                                          <p className="font-semibold text-slate-800">
+                                            {p.product_name}
+                                          </p>
+                                          <span
+                                            className={`text-[10px] font-medium px-2 py-0.5 rounded-md border ${getCategoryStyle(p.category)}`}
+                                          >
+                                            {p.category}
+                                          </span>
                                         </div>
-                                        <p className="text-xs text-slate-400 mt-0.5">{p.supplier_name}</p>
-                                        <p className={`text-xs font-medium mt-1 ${status === "critical" ? "text-red-500" : "text-amber-500"}`}>
-                                          {deficit > 0 ? `Need ${deficit} ${p.unit} to reach reorder point` : "Below critical threshold"}
+                                        <p className="text-xs text-slate-400 mt-0.5">
+                                          {p.supplier_name}
+                                        </p>
+                                        <p
+                                          className={`text-xs font-medium mt-1 ${status === "critical" ? "text-red-500" : "text-amber-500"}`}
+                                        >
+                                          {deficit > 0
+                                            ? `Need ${deficit} ${p.unit} to reach reorder point`
+                                            : "Below critical threshold"}
                                         </p>
                                       </div>
                                     </div>
                                     <div className="flex items-center gap-4">
                                       <div className="text-right">
-                                        <p className={`text-2xl font-bold ${status === "critical" ? "text-red-500" : "text-amber-500"}`}>
-                                          {p.mainStock} <span className="text-sm font-normal text-slate-400">{p.unit}</span>
+                                        <p
+                                          className={`text-2xl font-bold ${status === "critical" ? "text-red-500" : "text-amber-500"}`}
+                                        >
+                                          {p.mainStock}{" "}
+                                          <span className="text-sm font-normal text-slate-400">
+                                            {p.unit}
+                                          </span>
                                         </p>
-                                        <p className="text-xs text-slate-400 mt-1">Reorder at {p.reorderPoint} · Critical at {p.criticalPoint}</p>
-                                        <span className={`inline-block mt-2 text-xs font-semibold px-3 py-1 rounded-full ${STATUS_BADGE[status]}`}>
-                                          {status === "critical" ? "Restock Now" : "Reorder Soon"}
+                                        <p className="text-xs text-slate-400 mt-1">
+                                          Reorder at {p.reorderPoint} · Critical
+                                          at {p.criticalPoint}
+                                        </p>
+                                        <span
+                                          className={`inline-block mt-2 text-xs font-semibold px-3 py-1 rounded-full ${STATUS_BADGE[status]}`}
+                                        >
+                                          {status === "critical"
+                                            ? "Restock Now"
+                                            : "Reorder Soon"}
                                         </span>
                                       </div>
                                       <button
-                                        onClick={() => { setTab("purchases"); handleOrderNow(p); }}
+                                        onClick={() => {
+                                          setTab("purchases");
+                                          handleOrderNow(p);
+                                        }}
                                         className={`flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-white text-xs font-bold transition-all shadow-sm ${status === "critical" ? "bg-red-500 hover:bg-red-600 shadow-red-500/25" : "bg-amber-500 hover:bg-amber-600 shadow-amber-500/25"}`}
                                       >
                                         {cartIcon}Order Now
@@ -2748,25 +3930,69 @@ export default function StockManager() {
 
               {/* ── Suppliers ─────────────────────────────────────────────── */}
               {tab === "suppliers" && (
-                <motion.div key="suppliers" variants={pageVariants} initial="hidden" animate="show" exit="exit">
-                  <motion.div variants={staggerVariants} initial="hidden" animate="show" className="space-y-5">
-                    <motion.div variants={itemVariants} className="flex justify-end">
-                      <button onClick={() => setShowSupplierForm((f) => !f)} className="px-5 py-2.5 bg-slate-900 text-white text-sm font-medium rounded-xl hover:bg-slate-700 transition-all duration-200 shadow-md shadow-slate-900/20">
+                <motion.div
+                  key="suppliers"
+                  variants={pageVariants}
+                  initial="hidden"
+                  animate="show"
+                  exit="exit"
+                >
+                  <motion.div
+                    variants={staggerVariants}
+                    initial="hidden"
+                    animate="show"
+                    className="space-y-5"
+                  >
+                    <motion.div
+                      variants={itemVariants}
+                      className="flex justify-end"
+                    >
+                      <button
+                        onClick={() => setShowSupplierForm((f) => !f)}
+                        className="px-5 py-2.5 bg-slate-900 text-white text-sm font-medium rounded-xl hover:bg-slate-700 transition-all duration-200 shadow-md shadow-slate-900/20"
+                      >
                         {showSupplierForm ? "Cancel" : "Add Supplier"}
                       </button>
                     </motion.div>
                     <AnimatePresence>
                       {showSupplierForm && (
-                        <motion.div key="sup-form" initial={{ opacity: 0, y: -10, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -10, scale: 0.98 }} transition={{ duration: 0.22 }}>
-                          <SectionCard title="New Supplier" subtitle="Posts to Suppliers table">
+                        <motion.div
+                          key="sup-form"
+                          initial={{ opacity: 0, y: -10, scale: 0.98 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: -10, scale: 0.98 }}
+                          transition={{ duration: 0.22 }}
+                        >
+                          <SectionCard
+                            title="New Supplier"
+                            subtitle="Posts to Suppliers table"
+                          >
                             <div className="p-5 grid grid-cols-3 gap-4">
-                              {SUPPLIER_FIELDS.map(({ key, label, placeholder }) => (
-                                <FormField key={key} label={label}>
-                                  <StyledInput type="text" value={(supplierForm[key] as string) ?? ""} onChange={(v) => setSupplierForm((p) => ({ ...p, [key]: v }))} placeholder={placeholder} />
-                                </FormField>
-                              ))}
+                              {SUPPLIER_FIELDS.map(
+                                ({ key, label, placeholder }) => (
+                                  <FormField key={key} label={label}>
+                                    <StyledInput
+                                      type="text"
+                                      value={
+                                        (supplierForm[key] as string) ?? ""
+                                      }
+                                      onChange={(v) =>
+                                        setSupplierForm((p) => ({
+                                          ...p,
+                                          [key]: v,
+                                        }))
+                                      }
+                                      placeholder={placeholder}
+                                    />
+                                  </FormField>
+                                ),
+                              )}
                               <div className="col-span-3 pt-1">
-                                <Btn onClick={addSupplier} variant="primary" loading={submitting}>
+                                <Btn
+                                  onClick={addSupplier}
+                                  variant="primary"
+                                  loading={submitting}
+                                >
                                   {submitting ? "Saving..." : "Save Supplier"}
                                 </Btn>
                               </div>
@@ -2776,39 +4002,91 @@ export default function StockManager() {
                       )}
                     </AnimatePresence>
                     <motion.div variants={itemVariants}>
-                      <SectionCard title="Supplier Directory" subtitle={`${filteredSuppliers.length} supplier${filteredSuppliers.length === 1 ? "" : "s"} shown`}>
+                      <SectionCard
+                        title="Supplier Directory"
+                        subtitle={`${filteredSuppliers.length} supplier${filteredSuppliers.length === 1 ? "" : "s"} shown`}
+                      >
                         <div className="px-4 pt-4">
-                          <input type="text" value={supplierSearch} onChange={(e) => setSupplierSearch(e.target.value)} placeholder="Search by company or supplied products..." className="w-full md:w-96 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300" />
+                          <input
+                            type="text"
+                            value={supplierSearch}
+                            onChange={(e) => setSupplierSearch(e.target.value)}
+                            placeholder="Search by company or supplied products..."
+                            className="w-full md:w-96 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
+                          />
                         </div>
                         <table className="w-full text-sm">
                           <thead>
                             <tr className="border-b border-slate-100">
-                              {["Supplier ID", "Company", "Contact Number", "Products Supplied", "Delivery Schedule", ""].map((h) => (
-                                <th key={h} className="py-3 px-4 text-[11px] font-semibold text-slate-400 uppercase tracking-wider text-left">{h}</th>
+                              {[
+                                "Supplier ID",
+                                "Company",
+                                "Contact Number",
+                                "Products Supplied",
+                                "Delivery Schedule",
+                                "",
+                              ].map((h) => (
+                                <th
+                                  key={h}
+                                  className="py-3 px-4 text-[11px] font-semibold text-slate-400 uppercase tracking-wider text-left"
+                                >
+                                  {h}
+                                </th>
                               ))}
                             </tr>
                           </thead>
                           <tbody>
                             {filteredSuppliers.map((s, i) => (
-                              <tr key={s.supplier_id} style={{ opacity: 0, animation: `fadeInRow 0.28s ease forwards`, animationDelay: `${i * 0.04}s` }} className="border-b border-slate-50 hover:bg-slate-50/70 transition-colors">
-                                <td className="py-3.5 px-4 text-xs text-slate-400 font-mono">#{s.supplier_id}</td>
-                                <td className="py-3.5 px-4">
-                                  <p className="font-semibold text-slate-800">{s.supplier_name}</p>
-                                  {s.email && <p className="text-xs text-slate-400">{s.email}</p>}
+                              <tr
+                                key={s.supplier_id}
+                                style={{
+                                  opacity: 0,
+                                  animation: `fadeInRow 0.28s ease forwards`,
+                                  animationDelay: `${i * 0.04}s`,
+                                }}
+                                className="border-b border-slate-50 hover:bg-slate-50/70 transition-colors"
+                              >
+                                <td className="py-3.5 px-4 text-xs text-slate-400 font-mono">
+                                  #{s.supplier_id}
                                 </td>
-                                <td className="py-3.5 px-4 text-slate-600 text-xs">{s.contact_number}</td>
-                                <td className="py-3.5 px-4 text-slate-600 text-xs">{s.products_supplied ?? "—"}</td>
                                 <td className="py-3.5 px-4">
-                                  <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg">{s.delivery_schedule}</span>
+                                  <p className="font-semibold text-slate-800">
+                                    {s.supplier_name}
+                                  </p>
+                                  {s.email && (
+                                    <p className="text-xs text-slate-400">
+                                      {s.email}
+                                    </p>
+                                  )}
+                                </td>
+                                <td className="py-3.5 px-4 text-slate-600 text-xs">
+                                  {s.contact_number}
+                                </td>
+                                <td className="py-3.5 px-4 text-slate-600 text-xs">
+                                  {s.products_supplied ?? "—"}
+                                </td>
+                                <td className="py-3.5 px-4">
+                                  <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg">
+                                    {s.delivery_schedule}
+                                  </span>
                                 </td>
                                 <td className="py-3.5 px-4 text-right">
-                                  <button onClick={() => removeSupplier(s.supplier_id)} className="text-xs text-slate-300 hover:text-red-400 transition-colors font-medium">Remove</button>
+                                  <button
+                                    onClick={() =>
+                                      removeSupplier(s.supplier_id)
+                                    }
+                                    className="text-xs text-slate-300 hover:text-red-400 transition-colors font-medium"
+                                  >
+                                    Remove
+                                  </button>
                                 </td>
                               </tr>
                             ))}
                           </tbody>
                         </table>
-                        {filteredSuppliers.length === 0 && <EmptyState message="No suppliers found for this search." />}
+                        {filteredSuppliers.length === 0 && (
+                          <EmptyState message="No suppliers found for this search." />
+                        )}
                       </SectionCard>
                     </motion.div>
                   </motion.div>
@@ -2817,52 +4095,101 @@ export default function StockManager() {
 
               {/* ── Purchase Orders ───────────────────────────────────────── */}
               {tab === "purchases" && (
-                <motion.div key="purchases" variants={pageVariants} initial="hidden" animate="show" exit="exit">
-                  <motion.div variants={staggerVariants} initial="hidden" animate="show" className="space-y-5">
-                    <motion.div variants={itemVariants} className="grid grid-cols-4 gap-4">
-                      {([
-                        { label: "Total Orders", value: poOrders.length, accent: "border-t-slate-800", text: "text-slate-700" },
-                        { label: "Draft", value: poOrders.filter((o) => o.status === "Draft").length, accent: "border-t-yellow-400", text: "text-yellow-600" },
-                        { label: "Ordered", value: poOrders.filter((o) => o.status === "Ordered").length, accent: "border-t-blue-400", text: "text-blue-600" },
-                        { label: "Received", value: poOrders.filter((o) => o.status === "Received").length, accent: "border-t-emerald-400", text: "text-emerald-600" },
-                      ] as { label: string; value: number; accent: string; text: string }[]).map((k) => (
-                        <div key={k.label} className={`bg-white rounded-2xl p-5 shadow-sm border border-slate-100 border-t-4 ${k.accent}`}>
-                          <p className="text-xs text-slate-400 font-medium">{k.label}</p>
-                          <p className={`text-3xl font-bold mt-1 leading-none ${k.text}`}>{k.value}</p>
+                <motion.div
+                  key="purchases"
+                  variants={pageVariants}
+                  initial="hidden"
+                  animate="show"
+                  exit="exit"
+                >
+                  <motion.div
+                    variants={staggerVariants}
+                    initial="hidden"
+                    animate="show"
+                    className="space-y-5"
+                  >
+                    <motion.div
+                      variants={itemVariants}
+                      className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4"
+                    >
+                      {(
+                        [
+                          {
+                            label: "Total Orders",
+                            value: poOrders.length,
+                            accent: "border-t-slate-800",
+                            text: "text-slate-700",
+                          },
+                          {
+                            label: "Draft",
+                            value: poOrders.filter((o) => o.status === "Draft")
+                              .length,
+                            accent: "border-t-yellow-400",
+                            text: "text-yellow-600",
+                          },
+                          {
+                            label: "Ordered",
+                            value: poOrders.filter(
+                              (o) => o.status === "Ordered",
+                            ).length,
+                            accent: "border-t-blue-400",
+                            text: "text-blue-600",
+                          },
+                          {
+                            label: "Received",
+                            value: poOrders.filter(
+                              (o) => o.status === "Received",
+                            ).length,
+                            accent: "border-t-emerald-400",
+                            text: "text-emerald-600",
+                          },
+                        ] as {
+                          label: string;
+                          value: number;
+                          accent: string;
+                          text: string;
+                        }[]
+                      ).map((k) => (
+                        <div
+                          key={k.label}
+                          className={`bg-white rounded-2xl p-5 shadow-sm border border-slate-100 border-t-4 ${k.accent}`}
+                        >
+                          <p className="text-xs text-slate-400 font-medium">
+                            {k.label}
+                          </p>
+                          <p
+                            className={`text-3xl font-bold mt-1 leading-none ${k.text}`}
+                          >
+                            {k.value}
+                          </p>
                         </div>
                       ))}
                     </motion.div>
 
-                    {/* Expiry alert banner for PO tab */}
-                    {poExpiryAlerts > 0 && (
-                      <motion.div variants={itemVariants}>
-                        <div className="bg-orange-50 border border-orange-200 rounded-2xl px-5 py-3.5 flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-xl bg-orange-100 flex items-center justify-center flex-shrink-0">
-                            <svg className="w-4 h-4 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                            </svg>
-                          </div>
-                          <div>
-                            <p className="text-sm font-semibold text-orange-800">
-                              {poExpiryAlerts} order{poExpiryAlerts > 1 ? "s" : ""} contain items expiring within 7 days
-                            </p>
-                            <p className="text-xs text-orange-500 mt-0.5">
-                              Click on a PO to see the expiry breakdown per item.
-                            </p>
-                          </div>
-                        </div>
-                      </motion.div>
-                    )}
-
                     {(criticalStock.length > 0 || lowStock.length > 0) && (
                       <motion.div variants={itemVariants}>
-                        <StockAlertRestockBanner criticalItems={criticalStock} lowItems={lowStock} onOrderNow={handleOrderNow} />
+                        <StockAlertRestockBanner
+                          criticalItems={criticalStock}
+                          lowItems={lowStock}
+                          onOrderNow={handleOrderNow}
+                        />
                       </motion.div>
                     )}
 
-                    <motion.div variants={itemVariants} className="flex items-center justify-between">
+                    <motion.div
+                      variants={itemVariants}
+                      className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
+                    >
                       <div className="flex gap-2 flex-wrap">
-                        {(["All", "Draft", "Ordered", "Received", "Cancelled"] as (POStatus | "All")[]).map((s) => (
+                        {(
+                          [
+                            "All",
+                            "Draft",
+                            "Ordered",
+                            "Received",
+                            "Cancelled",
+                          ] as (POStatus | "All")[]
+                        ).map((s) => (
                           <button
                             key={s}
                             onClick={() => setPoFilterStatus(s)}
@@ -2876,8 +4203,18 @@ export default function StockManager() {
                         onClick={() => setPrefillPOProduct(null)}
                         className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white text-sm font-medium rounded-xl hover:bg-slate-700 transition-colors"
                       >
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+                        <svg
+                          className="w-4 h-4"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2.5}
+                            d="M12 4v16m8-8H4"
+                          />
                         </svg>
                         New PO
                       </button>
@@ -2887,107 +4224,247 @@ export default function StockManager() {
                       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
                         <div className="px-5 py-4 border-b border-slate-50 flex items-center justify-between">
                           <div>
-                            <p className="font-semibold text-slate-800 text-sm">Quick Order — All Products</p>
-                            <p className="text-xs text-slate-400 mt-0.5">Place a PO for any product, regardless of stock level</p>
+                            <p className="font-semibold text-slate-800 text-sm">
+                              Quick Order — All Products
+                            </p>
+                            <p className="text-xs text-slate-400 mt-0.5">
+                              Place a PO for any product, regardless of stock
+                              level
+                            </p>
                           </div>
                         </div>
                         <div className="divide-y divide-slate-50">
-                          {products.filter((p) => !isMenuFoodProduct(p)).map((p, i) => {
-                            const status = getStockStatus(p);
-                            const pct = Math.min(100, (p.mainStock / Math.max(1, p.reorderPoint)) * 100);
-                            return (
-                              <motion.div key={p.product_id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.03 }} className="flex items-center gap-4 px-5 py-3 hover:bg-slate-50/60 transition-colors">
-                                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${STATUS_DOT[status]}`} />
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2">
-                                    <p className="text-sm font-semibold text-slate-800 truncate">{p.product_name}</p>
-                                    {status !== "normal" && (
-                                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${status === "critical" ? "bg-red-100 text-red-600" : "bg-amber-100 text-amber-600"}`}>
-                                        {status === "critical" ? "Critical" : "Low"}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <p className="text-xs text-slate-400">{p.supplier_name}</p>
-                                </div>
-                                <div className="flex-shrink-0 w-28 text-right">
-                                  <p className="text-xs font-semibold text-slate-600 mb-1">{p.mainStock}<span className="text-slate-400 font-normal ml-0.5">{p.unit}</span></p>
-                                  <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
-                                    <div className={`h-full rounded-full ${STATUS_BAR[status]}`} style={{ width: `${pct}%` }} />
-                                  </div>
-                                </div>
-                                <button
-                                  onClick={() => handleOrderNow(p)}
-                                  className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-900 hover:text-white hover:border-slate-900 transition-all duration-150"
+                          {products
+                            .filter((p) => !isMenuFoodProduct(p))
+                            .map((p, i) => {
+                              const status = getStockStatus(p);
+                              const pct = Math.min(
+                                100,
+                                (p.mainStock / Math.max(1, p.reorderPoint)) *
+                                  100,
+                              );
+                              return (
+                                <motion.div
+                                  key={p.product_id}
+                                  initial={{ opacity: 0 }}
+                                  animate={{ opacity: 1 }}
+                                  transition={{ delay: i * 0.03 }}
+                                  className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 px-5 py-3 hover:bg-slate-50/60 transition-colors"
                                 >
-                                  {cartIcon}Order
-                                </button>
-                              </motion.div>
-                            );
-                          })}
-                          {products.filter((p) => !isMenuFoodProduct(p)).length === 0 && (
+                                  <span
+                                    className={`w-2 h-2 rounded-full flex-shrink-0 ${STATUS_DOT[status]}`}
+                                  />
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      <p className="text-sm font-semibold text-slate-800 truncate">
+                                        {p.product_name}
+                                      </p>
+                                      {status !== "normal" && (
+                                        <span
+                                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${status === "critical" ? "bg-red-100 text-red-600" : "bg-amber-100 text-amber-600"}`}
+                                        >
+                                          {status === "critical"
+                                            ? "Critical"
+                                            : "Low"}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p className="text-xs text-slate-400">
+                                      {p.supplier_name}
+                                    </p>
+                                  </div>
+                                  <div className="w-full sm:w-28 sm:text-right">
+                                    <p className="text-xs font-semibold text-slate-600 mb-1">
+                                      {p.mainStock}
+                                      <span className="text-slate-400 font-normal ml-0.5">
+                                        {p.unit}
+                                      </span>
+                                    </p>
+                                    <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                                      <div
+                                        className={`h-full rounded-full ${STATUS_BAR[status]}`}
+                                        style={{ width: `${pct}%` }}
+                                      />
+                                    </div>
+                                  </div>
+                                  <button
+                                    onClick={() => handleOrderNow(p)}
+                                    className="w-full sm:w-auto sm:flex-shrink-0 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-900 hover:text-white hover:border-slate-900 transition-all duration-150"
+                                  >
+                                    {cartIcon}Order
+                                  </button>
+                                </motion.div>
+                              );
+                            })}
+                          {products.filter((p) => !isMenuFoodProduct(p))
+                            .length === 0 && (
                             <EmptyState message="No products found in inventory." />
                           )}
                         </div>
                       </div>
                     </motion.div>
 
-                    {/* PO list table — now with expiry column */}
+                    {/* PO list table */}
                     <motion.div variants={itemVariants}>
                       <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
                         <div className="px-5 py-4 border-b border-slate-50">
-                          <p className="font-semibold text-slate-800 text-sm">Purchase Orders</p>
-                          <p className="text-xs text-slate-400 mt-0.5">{filteredPOs.length} order{filteredPOs.length !== 1 ? "s" : ""} shown</p>
+                          <p className="font-semibold text-slate-800 text-sm">
+                            Purchase Orders
+                          </p>
+                          <p className="text-xs text-slate-400 mt-0.5">
+                            {filteredPOs.length} order
+                            {filteredPOs.length !== 1 ? "s" : ""} shown
+                          </p>
                         </div>
-                        <div className="grid grid-cols-[2fr_3fr_2fr_2fr_2fr_2fr_1.5fr] px-5 py-3 border-b border-slate-100 text-xs font-semibold text-slate-400 uppercase tracking-wide">
+                        <div className="hidden lg:grid grid-cols-[2fr_3fr_2fr_2fr_2fr_1.5fr_auto] px-5 py-3 border-b border-slate-100 text-xs font-semibold text-slate-400 uppercase tracking-wide">
                           <span>PO No.</span>
                           <span>Supplier</span>
                           <span>Order Date</span>
                           <span>Delivery</span>
-                          <span>Nearest Expiry</span>
                           <span>Total</span>
                           <span>Status</span>
+                          <span className="text-right">Action</span>
                         </div>
                         <div className="divide-y divide-slate-50">
                           {poLoading ? (
-                            <div className="py-12 text-center text-sm text-slate-400 animate-pulse">Loading purchase orders…</div>
+                            <div className="py-12 text-center text-sm text-slate-400 animate-pulse">
+                              Loading purchase orders…
+                            </div>
                           ) : filteredPOs.length === 0 ? (
                             <EmptyState message="No purchase orders found." />
                           ) : (
                             filteredPOs.map((order, i) => {
-                              const nearestExpiry = poNearestExpiry(order);
-                              const expiryDays = daysUntilExpiry(nearestExpiry);
-                              const hasExpiryWarning = expiryDays !== null && expiryDays <= 7;
-
                               return (
-                                <motion.button
-                                  key={order.id}
-                                  layout
-                                  initial={{ opacity: 0 }}
-                                  animate={{ opacity: 1 }}
-                                  transition={{ delay: i * 0.04 }}
-                                  onClick={() => setSelectedOrder(order)}
-                                  className={`grid grid-cols-[2fr_3fr_2fr_2fr_2fr_2fr_1.5fr] px-5 py-4 w-full text-left transition-colors items-center ${hasExpiryWarning ? "hover:bg-orange-50/40 bg-orange-50/20" : "hover:bg-slate-50/70"}`}
-                                >
-                                  <span className="text-sm font-semibold text-slate-800">{order.id}</span>
-                                  <div>
-                                    <p className="text-sm font-medium text-slate-800">{order.supplier}</p>
-                                    <p className="text-xs text-slate-400">{order.items.length} item{order.items.length !== 1 ? "s" : ""}</p>
+                                <div key={order.id}>
+                                  <div className="hidden lg:grid grid-cols-[2fr_3fr_2fr_2fr_2fr_1.5fr_auto] px-5 py-4 transition-colors items-center hover:bg-slate-50/70">
+                                    <button
+                                      onClick={() => setSelectedOrder(order)}
+                                      className="contents text-left"
+                                    >
+                                      <span className="text-sm font-semibold text-slate-800">
+                                        {order.id}
+                                      </span>
+                                      <div>
+                                        <p className="text-sm font-medium text-slate-800">
+                                          {order.supplier}
+                                        </p>
+                                        <p className="text-xs text-slate-400">
+                                          {order.items.length} item
+                                          {order.items.length !== 1 ? "s" : ""}
+                                        </p>
+                                      </div>
+                                      <span className="text-sm text-slate-500">
+                                        {order.date}
+                                      </span>
+                                      <span className="text-sm text-slate-500">
+                                        {order.deliveryDate}
+                                      </span>
+                                      <span className="text-sm font-semibold text-slate-800">
+                                        ₱
+                                        {(
+                                          calcPOTotal(order.items) * 1.12
+                                        ).toLocaleString(undefined, {
+                                          maximumFractionDigits: 0,
+                                        })}
+                                      </span>
+                                      <span>
+                                        <POBadge status={order.status} />
+                                      </span>
+                                    </button>
+                                    <div className="flex justify-end">
+                                      {order.status === "Draft" ||
+                                      order.status === "Ordered" ? (
+                                        <button
+                                          onClick={() =>
+                                            handlePODelete(order.id)
+                                          }
+                                          className="p-1.5 rounded-lg text-slate-300 hover:text-red-400 hover:bg-red-50 transition-colors"
+                                          title="Cancel order"
+                                        >
+                                          <svg
+                                            className="w-4 h-4"
+                                            fill="none"
+                                            viewBox="0 0 24 24"
+                                            stroke="currentColor"
+                                          >
+                                            <path
+                                              strokeLinecap="round"
+                                              strokeLinejoin="round"
+                                              strokeWidth={2}
+                                              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                                            />
+                                          </svg>
+                                        </button>
+                                      ) : (
+                                        <span className="text-xs text-slate-300">
+                                          -
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
-                                  <span className="text-sm text-slate-500">{order.date}</span>
-                                  <span className="text-sm text-slate-500">{order.deliveryDate}</span>
-                                  {/* Nearest expiry column */}
-                                  <span>
-                                    {nearestExpiry ? (
-                                      <ExpiryChip dateStr={nearestExpiry} />
-                                    ) : (
-                                      <span className="text-xs text-slate-300">—</span>
-                                    )}
-                                  </span>
-                                  <span className="text-sm font-semibold text-slate-800">
-                                    ₱{(calcPOTotal(order.items) * 1.12).toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                                  </span>
-                                  <span><POBadge status={order.status} /></span>
-                                </motion.button>
+
+                                  <motion.button
+                                    layout
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    transition={{ delay: i * 0.04 }}
+                                    onClick={() => setSelectedOrder(order)}
+                                    className="lg:hidden w-full text-left px-4 py-3 transition-colors hover:bg-slate-50/70"
+                                  >
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div className="min-w-0">
+                                        <p className="text-sm font-semibold text-slate-800 truncate">
+                                          {order.id}
+                                        </p>
+                                        <p className="text-xs text-slate-500 truncate">
+                                          {order.supplier}
+                                        </p>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        {(order.status === "Draft" ||
+                                          order.status === "Ordered") && (
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handlePODelete(order.id);
+                                            }}
+                                            className="p-1.5 rounded-lg text-slate-300 hover:text-red-400 hover:bg-red-50 transition-colors"
+                                            title="Cancel order"
+                                          >
+                                            <svg
+                                              className="w-4 h-4"
+                                              fill="none"
+                                              viewBox="0 0 24 24"
+                                              stroke="currentColor"
+                                            >
+                                              <path
+                                                strokeLinecap="round"
+                                                strokeLinejoin="round"
+                                                strokeWidth={2}
+                                                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                                              />
+                                            </svg>
+                                          </button>
+                                        )}
+                                        <POBadge status={order.status} />
+                                      </div>
+                                    </div>
+                                    <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-slate-500">
+                                      <span>Order: {order.date}</span>
+                                      <span>
+                                        Delivery: {order.deliveryDate}
+                                      </span>
+                                      <span className="font-semibold text-slate-700">
+                                        ₱
+                                        {(
+                                          calcPOTotal(order.items) * 1.12
+                                        ).toLocaleString(undefined, {
+                                          maximumFractionDigits: 0,
+                                        })}
+                                      </span>
+                                    </div>
+                                  </motion.button>
+                                </div>
                               );
                             })
                           )}
@@ -3005,8 +4482,19 @@ export default function StockManager() {
         <AnimatePresence>
           {selectedOrder && (
             <>
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setSelectedOrder(null)} className="fixed inset-0 bg-black/10 z-40" />
-              <PODetailDrawer order={selectedOrder} onClose={() => setSelectedOrder(null)} onStatusChange={handlePOStatusChange} />
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setSelectedOrder(null)}
+                className="fixed inset-0 bg-black/10 z-40"
+              />
+              <PODetailDrawer
+                order={selectedOrder}
+                onClose={() => setSelectedOrder(null)}
+                onStatusChange={handlePOStatusChange}
+                onDelete={handlePODelete}
+              />
             </>
           )}
         </AnimatePresence>
@@ -3014,62 +4502,142 @@ export default function StockManager() {
         {/* Receive PO Modal */}
         <AnimatePresence>
           {receivingOrder && (
-            <ReceivePOModal order={receivingOrder} loading={poLoading} onClose={handleCloseReceivePO} onConfirm={handleConfirmReceivePO} onShowToast={showToast} />
+            <ReceivePOModal
+              order={receivingOrder}
+              loading={poLoading}
+              onClose={handleCloseReceivePO}
+              onConfirm={handleConfirmReceivePO}
+              onShowToast={showToast}
+            />
           )}
         </AnimatePresence>
 
         {/* Create PO Modal */}
         <AnimatePresence>
           {prefillPOProduct !== undefined && (
-            <CreatePOModal onClose={handleClosePOModal} onCreate={handlePOCreate} quickOrderProducts={poQuickOrderProducts} allProducts={products} prefillProduct={prefillPOProduct} onShowToast={showToast} />
+            <CreatePOModal
+              onClose={handleClosePOModal}
+              onCreate={handlePOCreate}
+              quickOrderProducts={poQuickOrderProducts}
+              allProducts={products}
+              prefillProduct={prefillPOProduct}
+              onShowToast={showToast}
+            />
           )}
         </AnimatePresence>
 
-        {/* Add Raw Material Modal */}
+        {/* Add Material Modal */}
         <AnimatePresence>
           {showRawMaterialForm && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-              <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} className="bg-white rounded-3xl shadow-2xl w-full max-w-xl overflow-hidden">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            >
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                className="bg-white rounded-3xl shadow-2xl w-full max-w-xl overflow-hidden"
+              >
                 <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
                   <div>
-                    <p className="font-semibold text-slate-800">Add Raw Material</p>
-                    <p className="text-xs text-slate-400 mt-0.5">Add items like chicken, sauces, and other ingredients.</p>
+                    <p className="font-semibold text-slate-800">Add Material</p>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Add items like chicken, sauces, and other ingredients.
+                    </p>
                   </div>
-                  <button onClick={() => setShowRawMaterialForm(false)} className="text-slate-400 hover:text-slate-600 transition-colors text-lg">✕</button>
+                  <button
+                    onClick={() => setShowRawMaterialForm(false)}
+                    className="text-slate-400 hover:text-slate-600 transition-colors text-lg"
+                  >
+                    ✕
+                  </button>
                 </div>
                 <div className="p-6 grid grid-cols-2 gap-4">
                   <div className="col-span-2">
                     <FormField label="Material Name">
-                      <StyledInput type="text" value={rawMaterialForm.name} onChange={(v) => setRawMaterialForm((p) => ({ ...p, name: v }))} placeholder="e.g. Whole Chicken" />
+                      <StyledInput
+                        type="text"
+                        value={rawMaterialForm.name}
+                        onChange={(v) =>
+                          setRawMaterialForm((p) => ({ ...p, name: v }))
+                        }
+                        placeholder="e.g. Whole Chicken"
+                      />
                     </FormField>
                   </div>
                   <FormField label="Category">
-                    <StyledInput type="text" value={rawMaterialForm.category} onChange={(v) => setRawMaterialForm((p) => ({ ...p, category: v }))} placeholder="e.g. Sauce, Chopped Chicken" />
+                    <StyledInput
+                      type="text"
+                      value={rawMaterialForm.category}
+                      onChange={(v) =>
+                        setRawMaterialForm((p) => ({ ...p, category: v }))
+                      }
+                      placeholder="e.g. Sauce, Chopped Chicken"
+                    />
                   </FormField>
                   <FormField label="Unit">
-                    <StyledSelect value={rawMaterialForm.unit} onChange={(v) => setRawMaterialForm((p) => ({ ...p, unit: v }))}>
-                      {RAW_MATERIAL_UNITS.map((u) => (<option key={u} value={u}>{u}</option>))}
+                    <StyledSelect
+                      value={rawMaterialForm.unit}
+                      onChange={(v) =>
+                        setRawMaterialForm((p) => ({ ...p, unit: v }))
+                      }
+                    >
+                      {RAW_MATERIAL_UNITS.map((u) => (
+                        <option key={u} value={u}>
+                          {u}
+                        </option>
+                      ))}
                     </StyledSelect>
                   </FormField>
                   <FormField label="Initial Stock">
-                    <StyledInput type="number" value={rawMaterialForm.initialStock} onChange={(v) => setRawMaterialForm((p) => ({ ...p, initialStock: v }))} placeholder="e.g. 20" />
-                  </FormField>
-                  <FormField label="Expiry Date">
-                    <StyledInput type="date" value={rawMaterialForm.expiryDate} onChange={(v) => setRawMaterialForm((p) => ({ ...p, expiryDate: v }))} placeholder="" />
+                    <StyledInput
+                      type="number"
+                      value={rawMaterialForm.initialStock}
+                      onChange={(v) =>
+                        setRawMaterialForm((p) => ({ ...p, initialStock: v }))
+                      }
+                      placeholder="e.g. 20"
+                    />
                   </FormField>
                   <FormField label="Price (optional)">
-                    <StyledInput type="number" value={rawMaterialForm.price} onChange={(v) => setRawMaterialForm((p) => ({ ...p, price: v }))} placeholder="e.g. 180" />
+                    <StyledInput
+                      type="number"
+                      value={rawMaterialForm.price}
+                      onChange={(v) =>
+                        setRawMaterialForm((p) => ({ ...p, price: v }))
+                      }
+                      placeholder="e.g. 180"
+                    />
                   </FormField>
                   <div className="col-span-2">
                     <FormField label="Description (optional)">
-                      <StyledInput type="text" value={rawMaterialForm.description} onChange={(v) => setRawMaterialForm((p) => ({ ...p, description: v }))} placeholder="Optional notes" />
+                      <StyledInput
+                        type="text"
+                        value={rawMaterialForm.description}
+                        onChange={(v) =>
+                          setRawMaterialForm((p) => ({ ...p, description: v }))
+                        }
+                        placeholder="Optional notes"
+                      />
                     </FormField>
                   </div>
                 </div>
                 <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-end gap-3">
-                  <button onClick={() => setShowRawMaterialForm(false)} className="px-4 py-2 text-sm font-medium text-slate-500 hover:text-slate-700 transition-colors">Cancel</button>
-                  <button onClick={addRawMaterial} disabled={submitting} className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition-colors disabled:opacity-60">
-                    {submitting ? "Saving..." : "Save Raw Material"}
+                  <button
+                    onClick={() => setShowRawMaterialForm(false)}
+                    className="px-4 py-2 text-sm font-medium text-slate-500 hover:text-slate-700 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={addRawMaterial}
+                    disabled={submitting}
+                    className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition-colors disabled:opacity-60"
+                  >
+                    {submitting ? "Saving..." : "Save Material"}
                   </button>
                 </div>
               </motion.div>
@@ -3080,63 +4648,141 @@ export default function StockManager() {
         {/* End-of-Day Reconciliation Modal */}
         <AnimatePresence>
           {showReconcile && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-              <motion.div initial={{ scale: 0.94, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.94, opacity: 0 }} className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            >
+              <motion.div
+                initial={{ scale: 0.94, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.94, opacity: 0 }}
+                className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden"
+              >
                 <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
                   <div>
-                    <p className="font-semibold text-slate-800">End-of-Day Reconciliation</p>
-                    <p className="text-xs text-slate-400 mt-0.5">Returns are saved on the batch — staff will see them tomorrow morning.</p>
+                    <p className="font-semibold text-slate-800">
+                      End-of-Day Reconciliation
+                    </p>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Returns are saved on the batch — staff will see them
+                      tomorrow morning.
+                    </p>
                   </div>
-                  <button onClick={() => setShowReconcile(false)} className="text-slate-400 hover:text-slate-600 transition-colors text-lg">✕</button>
+                  <button
+                    onClick={() => setShowReconcile(false)}
+                    className="text-slate-400 hover:text-slate-600 transition-colors text-lg"
+                  >
+                    ✕
+                  </button>
                 </div>
                 <div className="px-6 pt-4 flex items-center gap-4 text-xs text-slate-400">
-                  {[["bg-orange-400", "Whole Chicken", ""], ["bg-amber-500", "Chopped Chicken", "(can return as whole)"], ["bg-slate-400", "Other Meat/Protein", ""]].map(([dot, label, sub]) => (
+                  {[
+                    ["bg-orange-400", "Whole Chicken", ""],
+                    [
+                      "bg-amber-500",
+                      "Chopped Chicken",
+                      "(can return as whole)",
+                    ],
+                    ["bg-slate-400", "Other Meat/Protein", ""],
+                  ].map(([dot, label, sub]) => (
                     <span key={label} className="flex items-center gap-1.5">
-                      <span className={`w-2.5 h-2.5 rounded-full ${dot} inline-block`} />
+                      <span
+                        className={`w-2.5 h-2.5 rounded-full ${dot} inline-block`}
+                      />
                       {label}
-                      {sub && <span className="ml-1 text-amber-500 font-medium">{sub}</span>}
+                      {sub && (
+                        <span className="ml-1 text-amber-500 font-medium">
+                          {sub}
+                        </span>
+                      )}
                     </span>
                   ))}
                 </div>
                 <div className="p-6 space-y-3 max-h-[26rem] overflow-y-auto">
                   {reconcileItems.length === 0 ? (
-                    <p className="text-sm text-slate-400 text-center py-8">No reconcilable items currently withdrawn.</p>
+                    <p className="text-sm text-slate-400 text-center py-8">
+                      No reconcilable items currently withdrawn.
+                    </p>
                   ) : (
                     reconcileItems.map((item, i) => {
-                      const isChopped = item.category.toLowerCase().includes("chopped chicken");
-                      const isWhole = item.category.toLowerCase().includes("whole chicken");
+                      const isChopped = item.category
+                        .toLowerCase()
+                        .includes("chopped chicken");
+                      const isWhole = item.category
+                        .toLowerCase()
+                        .includes("whole chicken");
                       return (
-                        <div key={item.product_id} className={`p-4 rounded-2xl border transition-colors ${isChopped ? "bg-amber-50/60 border-amber-100" : isWhole ? "bg-orange-50/60 border-orange-100" : "bg-slate-50 border-slate-100"}`}>
+                        <div
+                          key={item.product_id}
+                          className={`p-4 rounded-2xl border transition-colors ${isChopped ? "bg-amber-50/60 border-amber-100" : isWhole ? "bg-orange-50/60 border-orange-100" : "bg-slate-50 border-slate-100"}`}
+                        >
                           <div className="flex items-start justify-between mb-3">
                             <div className="flex items-center gap-2">
-                              <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 mt-0.5 ${isWhole ? "bg-orange-400" : isChopped ? "bg-amber-500" : "bg-slate-400"}`} />
+                              <span
+                                className={`w-2.5 h-2.5 rounded-full flex-shrink-0 mt-0.5 ${isWhole ? "bg-orange-400" : isChopped ? "bg-amber-500" : "bg-slate-400"}`}
+                              />
                               <div>
-                                <p className="text-sm font-semibold text-slate-800">{item.product_name}</p>
-                                <p className="text-xs text-slate-400 mt-0.5">Withdrawn today: <span className="font-medium text-slate-600">{item.withdrawn} {item.unit}</span></p>
+                                <p className="text-sm font-semibold text-slate-800">
+                                  {item.product_name}
+                                </p>
+                                <p className="text-xs text-slate-400 mt-0.5">
+                                  Withdrawn today:{" "}
+                                  <span className="font-medium text-slate-600">
+                                    {item.withdrawn} {item.unit}
+                                  </span>
+                                </p>
                               </div>
                             </div>
-                            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${getCategoryStyle(item.category)}`}>{item.category}</span>
+                            <span
+                              className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${getCategoryStyle(item.category)}`}
+                            >
+                              {item.category}
+                            </span>
                           </div>
                           <div className="flex items-center gap-3">
-                            <label className="text-xs text-slate-500 whitespace-nowrap w-20 flex-shrink-0">Return qty:</label>
+                            <label className="text-xs text-slate-500 whitespace-nowrap w-20 flex-shrink-0">
+                              Return qty:
+                            </label>
                             <input
                               type="number"
                               value={item.returnQty}
                               placeholder="0"
                               min={0}
                               max={item.withdrawn}
-                              onChange={(e) => setReconcileItems((prev) => prev.map((r, j) => j === i ? { ...r, returnQty: e.target.value } : r))}
+                              onChange={(e) =>
+                                setReconcileItems((prev) =>
+                                  prev.map((r, j) =>
+                                    j === i
+                                      ? { ...r, returnQty: e.target.value }
+                                      : r,
+                                  ),
+                                )
+                              }
                               className="w-28 border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-slate-300"
                             />
-                            <span className="text-xs text-slate-400">{item.unit}</span>
+                            <span className="text-xs text-slate-400">
+                              {item.unit}
+                            </span>
                             {isChopped && parseFloat(item.returnQty) > 0 && (
                               <div className="ml-auto flex items-center gap-2 bg-white border border-amber-200 rounded-xl p-1">
-                                <span className="text-[10px] text-amber-600 font-semibold ml-1">Return as:</span>
+                                <span className="text-[10px] text-amber-600 font-semibold ml-1">
+                                  Return as:
+                                </span>
                                 {(["chopped", "whole"] as const).map((dest) => (
                                   <button
                                     key={dest}
-                                    onClick={() => setReconcileItems((prev) => prev.map((r, j) => j === i ? { ...r, returnDestination: dest } : r))}
-                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all capitalize ${item.returnDestination === dest ? dest === "chopped" ? "bg-amber-500 text-white shadow-sm" : "bg-orange-500 text-white shadow-sm" : "text-slate-400 hover:text-amber-500"}`}
+                                    onClick={() =>
+                                      setReconcileItems((prev) =>
+                                        prev.map((r, j) =>
+                                          j === i
+                                            ? { ...r, returnDestination: dest }
+                                            : r,
+                                        ),
+                                      )
+                                    }
+                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all capitalize ${item.returnDestination === dest ? (dest === "chopped" ? "bg-amber-500 text-white shadow-sm" : "bg-orange-500 text-white shadow-sm") : "text-slate-400 hover:text-amber-500"}`}
                                   >
                                     {dest}
                                   </button>
@@ -3146,7 +4792,9 @@ export default function StockManager() {
                           </div>
                           {isChopped && parseFloat(item.returnQty) > 0 && (
                             <p className="text-[10px] text-slate-400 mt-2 pl-px">
-                              {item.returnDestination === "whole" ? "↩ Excess will be returned to Whole Chicken stock" : "↩ Excess will stay as Chopped Chicken stock"}
+                              {item.returnDestination === "whole"
+                                ? "↩ Excess will be returned to Whole Chicken stock"
+                                : "↩ Excess will stay as Chopped Chicken stock"}
                             </p>
                           )}
                         </div>
@@ -3156,16 +4804,33 @@ export default function StockManager() {
                 </div>
                 <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-between">
                   <p className="text-xs text-slate-400">
-                    {reconcileItems.filter((i) => parseFloat(i.returnQty) > 0).length} item(s) to reconcile
-                    {reconcileItems.filter((i) => parseFloat(i.returnQty) > 0).length > 0 && (
-                      <span className="ml-1 text-amber-600 font-medium">— will show in tomorrow's banner</span>
+                    {
+                      reconcileItems.filter((i) => parseFloat(i.returnQty) > 0)
+                        .length
+                    }{" "}
+                    item(s) to reconcile
+                    {reconcileItems.filter((i) => parseFloat(i.returnQty) > 0)
+                      .length > 0 && (
+                      <span className="ml-1 text-amber-600 font-medium">
+                        — will show in tomorrow's banner
+                      </span>
                     )}
                   </p>
                   <div className="flex items-center gap-3">
-                    <button onClick={() => setShowReconcile(false)} className="px-5 py-2.5 text-sm font-medium text-slate-500 hover:text-slate-700 transition-colors">Cancel</button>
+                    <button
+                      onClick={() => setShowReconcile(false)}
+                      className="px-5 py-2.5 text-sm font-medium text-slate-500 hover:text-slate-700 transition-colors"
+                    >
+                      Cancel
+                    </button>
                     <button
                       onClick={submitReconciliation}
-                      disabled={submitting || reconcileItems.filter((i) => parseFloat(i.returnQty) > 0).length === 0}
+                      disabled={
+                        submitting ||
+                        reconcileItems.filter(
+                          (i) => parseFloat(i.returnQty) > 0,
+                        ).length === 0
+                      }
                       className="px-5 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-xl hover:bg-slate-700 transition-colors disabled:opacity-60"
                     >
                       {submitting ? "Saving..." : "Confirm Returns"}
@@ -3179,7 +4844,13 @@ export default function StockManager() {
 
         {/* Toast */}
         <AnimatePresence>
-          {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+          {toast && (
+            <Toast
+              message={toast.message}
+              type={toast.type}
+              onClose={() => setToast(null)}
+            />
+          )}
         </AnimatePresence>
       </div>
     </>
