@@ -42,6 +42,8 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
     roles: ["administrator", "inventory_manager"],
   },
   { label: "User Accounts", path: "/users", roles: ["administrator"] },
+
+  {label: "Sales & Reports", path: "/sales-reports", roles: ["administrator", "cashier"]},
 ];
 
 export function Sidebar() {

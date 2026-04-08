@@ -10,14 +10,8 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { ChevronLeft, ChevronRight, CalendarDays, X } from "lucide-react";
 
 interface Order {
   id: number;
@@ -36,61 +30,109 @@ interface OrdersTableProps {
   orders?: Order[];
 }
 
-type Period = "all" | "daily" | "weekly" | "monthly" | "yearly";
-
 const PAGE_SIZE = 10;
 
-const PERIOD_OPTIONS: { value: Period; label: string }[] = [
-  { value: "all",     label: "All Time"  },
-  { value: "daily",   label: "Today"     },
-  { value: "weekly",  label: "This Week" },
-  { value: "monthly", label: "This Month"},
-  { value: "yearly",  label: "This Year" },
-];
+const QUICK_RANGES = [
+  { label: "Today",      key: "today"     },
+  { label: "Yesterday",  key: "yesterday" },
+  { label: "This week",  key: "week"      },
+  { label: "This month", key: "month"     },
+  { label: "Last 7 days",key: "last7"     },
+  { label: "Last 30 days",key:"last30"    },
+  { label: "All time",   key: "all"       },
+] as const;
 
-function filterByPeriod(orders: Order[], period: Period): Order[] {
-  if (period === "all") return orders;
+type QuickKey = typeof QUICK_RANGES[number]["key"];
 
+function toDateInputValue(d: Date) {
+  return d.toISOString().slice(0, 10);
+}
+
+function filterByRange(orders: Order[], from: Date | null, to: Date | null): Order[] {
+  if (!from && !to) return orders;
+  return orders.filter((o) => {
+    const d = new Date(o.date);
+    d.setHours(0, 0, 0, 0);
+    if (from && d < from) return false;
+    if (to   && d > to  ) return false;
+    return true;
+  });
+}
+
+function getQuickRange(key: QuickKey): { from: Date; to: Date } | null {
+  if (key === "all") return null;
   const now = new Date();
-  const startOf = (unit: "day" | "week" | "month" | "year"): Date => {
-    const d = new Date(now);
-    if (unit === "day") {
-      d.setHours(0, 0, 0, 0);
-    } else if (unit === "week") {
-      const day = d.getDay(); // 0 = Sunday
-      d.setDate(d.getDate() - day);
-      d.setHours(0, 0, 0, 0);
-    } else if (unit === "month") {
-      d.setDate(1);
-      d.setHours(0, 0, 0, 0);
-    } else {
-      d.setMonth(0, 1);
-      d.setHours(0, 0, 0, 0);
-    }
-    return d;
-  };
+  const f   = new Date(now);
+  const t   = new Date(now);
 
-  const from =
-    period === "daily"   ? startOf("day")   :
-    period === "weekly"  ? startOf("week")  :
-    period === "monthly" ? startOf("month") :
-                           startOf("year");
+  if (key === "today") {
+    f.setHours(0, 0, 0, 0);
+    t.setHours(23, 59, 59, 999);
+  } else if (key === "yesterday") {
+    f.setDate(now.getDate() - 1); f.setHours(0, 0, 0, 0);
+    t.setDate(now.getDate() - 1); t.setHours(23, 59, 59, 999);
+  } else if (key === "week") {
+    f.setDate(now.getDate() - now.getDay()); f.setHours(0, 0, 0, 0);
+    t.setHours(23, 59, 59, 999);
+  } else if (key === "month") {
+    f.setDate(1); f.setHours(0, 0, 0, 0);
+    t.setHours(23, 59, 59, 999);
+  } else if (key === "last7") {
+    f.setDate(now.getDate() - 6); f.setHours(0, 0, 0, 0);
+    t.setHours(23, 59, 59, 999);
+  } else if (key === "last30") {
+    f.setDate(now.getDate() - 29); f.setHours(0, 0, 0, 0);
+    t.setHours(23, 59, 59, 999);
+  }
 
-  return orders.filter((o) => new Date(o.date) >= from);
+  return { from: f, to: t };
 }
 
 export function OrdersTable({ orders = [] }: OrdersTableProps) {
   const [currentPage, setCurrentPage] = useState(1);
-  const [period, setPeriod] = useState<Period>("all");
+  const [fromInput,   setFromInput  ] = useState("");
+  const [toInput,     setToInput    ] = useState("");
+  const [fromDate,    setFromDate   ] = useState<Date | null>(null);
+  const [toDate,      setToDate     ] = useState<Date | null>(null);
+  const [activeQuick, setActiveQuick] = useState<QuickKey | null>("all");
 
-  const filtered = filterByPeriod(orders, period);
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-
-  // Reset to page 1 whenever period changes
-  const handlePeriodChange = (value: string) => {
-    setPeriod(value as Period);
+  const applyInputRange = (from: string, to: string) => {
+    const f = from ? (() => { const d = new Date(from); d.setHours(0,  0,  0,   0); return d; })() : null;
+    const t = to   ? (() => { const d = new Date(to);   d.setHours(23, 59, 59, 999); return d; })() : null;
+    setFromDate(f);
+    setToDate(t);
+    setActiveQuick(null);
     setCurrentPage(1);
   };
+
+  const applyQuick = (key: QuickKey) => {
+    setActiveQuick(key);
+    if (key === "all") {
+      setFromDate(null);
+      setToDate(null);
+      setFromInput("");
+      setToInput("");
+    } else {
+      const range = getQuickRange(key)!;
+      setFromDate(range.from);
+      setToDate(range.to);
+      setFromInput(toDateInputValue(range.from));
+      setToInput(toDateInputValue(range.to));
+    }
+    setCurrentPage(1);
+  };
+
+  const clearRange = () => {
+    setFromDate(null);
+    setToDate(null);
+    setFromInput("");
+    setToInput("");
+    setActiveQuick("all");
+    setCurrentPage(1);
+  };
+
+  const filtered = filterByRange(orders, fromDate, toDate);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
 
   const sorted = [...filtered].sort(
     (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
@@ -100,9 +142,10 @@ export function OrdersTable({ orders = [] }: OrdersTableProps) {
     currentPage * PAGE_SIZE,
   );
 
-  // Summary stats for the selected period
-  const totalRevenue = filtered.reduce((sum, o) => sum + o.total, 0);
+  const totalRevenue  = filtered.reduce((sum, o) => sum + o.total, 0);
   const completedCount = filtered.filter((o) => o.status === "Completed").length;
+
+  const hasRange = fromDate || toDate;
 
   const statusBadgeClass = (status: string) =>
     status === "Completed"
@@ -119,7 +162,9 @@ export function OrdersTable({ orders = [] }: OrdersTableProps) {
   const formatDate = (value: string) => {
     if (!value) return "-";
     const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString("en-US");
+    return Number.isNaN(d.getTime())
+      ? value
+      : d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   };
 
   const formatTime = (value: string) => {
@@ -127,23 +172,16 @@ export function OrdersTable({ orders = [] }: OrdersTableProps) {
     const d = new Date(value);
     return Number.isNaN(d.getTime())
       ? value
-      : d.toLocaleTimeString("en-US", {
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: true,
-        });
+      : d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
   };
-
-  const selectedLabel = PERIOD_OPTIONS.find((p) => p.value === period)?.label ?? "All Time";
 
   return (
     <Card className="bg-white rounded-2xl p-6 shadow-md border-0">
-      {/* Header row: title + dropdown */}
-      <div className="flex items-center justify-between mb-5">
+      {/* Header */}
+      <div className="flex items-start justify-between mb-4 flex-wrap gap-4">
         <div>
           <h3 className="text-base font-semibold text-gray-800">Orders</h3>
-          {/* Quick summary pill */}
-          {period !== "all" && (
+          {hasRange && (
             <p className="text-xs text-gray-400 mt-0.5">
               {filtered.length} order{filtered.length !== 1 ? "s" : ""} ·{" "}
               <span className="text-green-600 font-medium">{completedCount} completed</span>{" "}
@@ -155,27 +193,59 @@ export function OrdersTable({ orders = [] }: OrdersTableProps) {
           )}
         </div>
 
-        <div className="flex items-center gap-2">
-          <CalendarDays className="w-4 h-4 text-gray-400" />
-          <Select value={period} onValueChange={handlePeriodChange}>
-            <SelectTrigger className="w-36 h-9 rounded-xl border-gray-200 text-sm font-medium text-gray-700 focus:ring-1 focus:ring-[#4A1C1C]">
-              <SelectValue placeholder="Filter period" />
-            </SelectTrigger>
-            <SelectContent className="rounded-xl border-gray-200 shadow-lg">
-              {PERIOD_OPTIONS.map((opt) => (
-                <SelectItem
-                  key={opt.value}
-                  value={opt.value}
-                  className="text-sm rounded-lg focus:bg-gray-50"
-                >
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        {/* Date range inputs */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <CalendarDays className="w-4 h-4 text-gray-400 flex-shrink-0" />
+          <Input
+            type="date"
+            value={fromInput}
+            onChange={(e) => {
+              setFromInput(e.target.value);
+              applyInputRange(e.target.value, toInput);
+            }}
+            className="w-36 h-9 rounded-xl border-gray-200 text-sm text-gray-700 focus:ring-1 focus:ring-[#4A1C1C]"
+          />
+          <span className="text-xs text-gray-400">to</span>
+          <Input
+            type="date"
+            value={toInput}
+            onChange={(e) => {
+              setToInput(e.target.value);
+              applyInputRange(fromInput, e.target.value);
+            }}
+            className="w-36 h-9 rounded-xl border-gray-200 text-sm text-gray-700 focus:ring-1 focus:ring-[#4A1C1C]"
+          />
+          {hasRange && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 rounded-lg text-gray-400 hover:text-gray-600"
+              onClick={clearRange}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          )}
         </div>
       </div>
 
+      {/* Quick range pills */}
+      <div className="flex gap-2 flex-wrap mb-5">
+        {QUICK_RANGES.map((r) => (
+          <button
+            key={r.key}
+            onClick={() => applyQuick(r.key)}
+            className={`text-xs font-semibold px-3 py-1 rounded-full border transition-colors ${
+              activeQuick === r.key
+                ? "bg-[#4A1C1C] text-white border-[#4A1C1C]"
+                : "bg-gray-50 text-gray-500 border-gray-200 hover:border-gray-300 hover:text-gray-700"
+            }`}
+          >
+            {r.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Table */}
       <Table>
         <TableHeader>
           <TableRow className="border-gray-200 hover:bg-transparent">
@@ -194,7 +264,7 @@ export function OrdersTable({ orders = [] }: OrdersTableProps) {
               <TableCell colSpan={7} className="text-center text-gray-400 py-10">
                 {orders.length === 0
                   ? "No orders yet. Orders will appear here once the cashier processes them."
-                  : `No orders found for ${selectedLabel.toLowerCase()}.`}
+                  : "No orders found for the selected date range."}
               </TableCell>
             </TableRow>
           ) : (
@@ -226,7 +296,7 @@ export function OrdersTable({ orders = [] }: OrdersTableProps) {
                   {order.paymentCategory}
                 </TableCell>
                 <TableCell className="font-semibold text-gray-900 text-right">
-                  ₱{order.total}
+                  ₱{order.total.toLocaleString()}
                 </TableCell>
               </TableRow>
             ))

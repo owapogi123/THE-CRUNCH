@@ -5,7 +5,6 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Sidebar } from "@/components/Sidebar";
 import { useNotifications } from "@/lib/NotificationContext";
-import { OrdersTable } from "@/components/orders-table";
 import {
   LineChart,
   Line,
@@ -669,11 +668,6 @@ export default function AdminDashboard() {
           {/* Header */}
           <div className="flex items-center justify-between mb-8">
             <div className="flex items-center gap-3">
-              <img
-                src="src/assets/img/logo.jpg"
-                alt="The Crunch Logo"
-                className="w-12 h-12 rounded-full"
-              />
               <span className="text-2xl font-semibold text-[#4A1C1C]">
                 The Crunch
               </span>
@@ -1034,8 +1028,6 @@ export default function AdminDashboard() {
               )}
             </Card>
           </div>
-
-          <OrdersTable orders={filteredOrders} />
         </div>
       </main>
     </div>
