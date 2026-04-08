@@ -12,7 +12,6 @@ import {
 } from "lucide-react";
 import { api } from "../lib/api";
 import { Sidebar } from "@/components/Sidebar";
-import { useNotifications } from "@/lib/NotificationContext";
 
 // ─── TYPES ────────────────────────────────────────────────────────────────────
 
@@ -418,8 +417,6 @@ export default function CashierView() {
   const [paidAmount, setPaidAmount] = useState<number>(0);
   const [orderNumber, setOrderNumber] = useState<string>("");
   const [isPlacingOrder, setIsPlacingOrder] = useState<boolean>(false);
-  const [riderPickupTime, setRiderPickupTime] = useState<string>("");
-
   useEffect(() => {
     setIsLoading(true);
     api

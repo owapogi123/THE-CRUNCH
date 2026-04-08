@@ -651,38 +651,6 @@ function ErrorBanner({
   );
 }
 
-function Toast({
-  message,
-  type,
-  onClose,
-}: {
-  message: string;
-  type: "success" | "error";
-  onClose: () => void;
-}) {
-  useEffect(() => {
-    const t = setTimeout(onClose, 3000);
-    return () => clearTimeout(t);
-  }, [onClose]);
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 40 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 40 }}
-      className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-2xl shadow-xl text-sm font-medium ${type === "success" ? "bg-emerald-600" : "bg-red-500"} text-white`}
-    >
-      <span>{type === "success" ? "✓" : "✕"}</span>
-      <span>{message}</span>
-      <button
-        onClick={onClose}
-        className="ml-2 opacity-70 hover:opacity-100 text-xs"
-      >
-        ✕
-      </button>
-    </motion.div>
-  );
-}
-
 function SectionCard({
   title,
   subtitle,
@@ -2402,17 +2370,17 @@ export default function StockManager() {
     new Date().getFullYear(),
   );
 
- const { addNotification } = useNotifications();
-const showToast = useCallback(
-  (message: string, type: "success" | "error") => {
-    addNotification({
-      id: crypto.randomUUID(),
-      label: message,
-      type,
-    });
-  },
-  [addNotification],
-);
+  const { addNotification } = useNotifications();
+  const showToast = useCallback(
+    (message: string, type: "success" | "error") => {
+      addNotification({
+        id: crypto.randomUUID(),
+        label: message,
+        type,
+      });
+    },
+    [addNotification],
+  );
 
   const handleOrderNow = useCallback((product: Product) => {
     setPrefillPOProduct({
