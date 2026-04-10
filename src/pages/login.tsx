@@ -1,41 +1,87 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Eye, EyeOff } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { authApi } from "../lib/api";
 
+// ── Inject fonts ──────────────────────────────────────────────────────────────
+if (typeof document !== "undefined" && !document.getElementById("login-fonts")) {
+  const link = document.createElement("link");
+  link.id = "login-fonts";
+  link.rel = "stylesheet";
+  link.href =
+    "https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,300;0,400;0,500;0,600;0,700;1,700&display=swap";
+  document.head.appendChild(link);
+}
+
+
+// ── Field component ───────────────────────────────────────────────────────────
+interface FieldProps {
+  label: string;
+  children: React.ReactNode;
+  delay?: number;
+  extra?: React.ReactNode;
+}
+function Field({ label, children, delay = 0, extra }: FieldProps) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 14 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, delay, ease: [0.23, 1, 0.32, 1] }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <label style={{
+          fontFamily: "'Poppins', sans-serif",
+          fontSize: 11, fontWeight: 500,
+          color: "rgba(255,255,255,0.4)",
+          letterSpacing: "0.7px",
+          textTransform: "uppercase",
+        }}>
+          {label}
+        </label>
+        {extra}
+      </div>
+      {children}
+    </motion.div>
+  );
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
 export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
 
   const [isLogin, setIsLogin] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [formData, setFormData] = useState({
-    email: "",
-    password: "",
-    confirmPassword: "",
-    name: "",
-  });
+  const [formData, setFormData] = useState({ email: "", password: "", confirmPassword: "", name: "" });
 
-  // Auto-select Sign Up tab if ?tab=signup is in the URL
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [tilt, setTilt] = useState({ x: 0, y: 0 });
+
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    if (params.get("tab") === "signup") {
-      setIsLogin(false);
-    }
+    if (params.get("tab") === "signup") setIsLogin(false);
   }, [location.search]);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const card = cardRef.current;
+    if (!card) return;
+    const rect = card.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const dx = (e.clientX - cx) / (rect.width / 2);
+    const dy = (e.clientY - cy) / (rect.height / 2);
+    setTilt({ x: dy * -5, y: dx * 5 });
   };
+  const handleMouseLeave = () => setTilt({ x: 0, y: 0 });
 
-  const persistAuth = (data: {
-    token: string;
-    username: string;
-    role: string;
-    userId: number | string;
-  }) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) =>
+    setFormData({ ...formData, [e.target.name]: e.target.value });
+
+  const persistAuth = (data: { token: string; username: string; role: string; userId: number | string }) => {
     localStorage.setItem("authToken", data.token);
     localStorage.setItem("isAuthenticated", "true");
     localStorage.setItem("userName", data.username);
@@ -53,7 +99,6 @@ export default function Login() {
       try {
         const data = await authApi.login(formData.email, formData.password);
         persistAuth(data);
-
         const roleHomeMap: Record<string, string> = {
           administrator: "/dashboard",
           cashier: "/orders",
@@ -68,34 +113,27 @@ export default function Login() {
         setIsLoading(false);
       }
     } else {
+      const passwordRegex = /^(?=.*[a-zA-Z])(?=.*\d).{8,}$/;
+      if (!passwordRegex.test(formData.password)) {
+        setError("Password must be at least 8 characters with letters and numbers.");
+        setIsLoading(false);
+        return;
+      }
       if (formData.password !== formData.confirmPassword) {
         setError("Passwords don't match!");
         setIsLoading(false);
         return;
       }
-
       try {
-        await authApi.register(
-          formData.name,
-          formData.email,
-          formData.password,
-        );
+        await authApi.register(formData.name, formData.email, formData.password);
         const data = await authApi.login(formData.email, formData.password);
         persistAuth(data);
         navigate("/products");
       } catch (err: any) {
-        if (
-          err.message?.toLowerCase().includes("login") ||
-          err.message?.toLowerCase().includes("credential")
-        ) {
+        if (err.message?.toLowerCase().includes("login") || err.message?.toLowerCase().includes("credential")) {
           setError("");
           setIsLogin(true);
-          setFormData({
-            email: formData.email,
-            password: "",
-            confirmPassword: "",
-            name: "",
-          });
+          setFormData({ email: formData.email, password: "", confirmPassword: "", name: "" });
         } else {
           setError(err.message || "Failed to register.");
         }
@@ -105,248 +143,418 @@ export default function Login() {
     }
   };
 
+  const switchTab = (login: boolean) => {
+    setIsLogin(login);
+    setError("");
+    setFormData({ email: "", password: "", confirmPassword: "", name: "" });
+    setShowPassword(false);
+    setShowConfirm(false);
+  };
+
+  const inputStyle: React.CSSProperties = {
+    width: "100%",
+    background: "rgba(255,255,255,0.12)",
+    border: "1px solid rgba(255,255,255,0.22)",
+    borderRadius: 14,
+    backdropFilter: "blur(12px)",
+    WebkitBackdropFilter: "blur(12px)",
+    boxShadow: "0 2px 12px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.12)",
+    padding: "13px 16px",
+    color: "#fff",
+    fontSize: 14,
+    fontFamily: "'Poppins', sans-serif",
+    outline: "none",
+    boxSizing: "border-box",
+    transition: "border-color 0.3s ease, background 0.3s ease, box-shadow 0.35s ease",
+  };
+
+  // Brand yellow
+  const YELLOW = "#F5C518";
+  const YELLOW_DARK = "#D4A800";
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200 p-4 font-['Poppins',sans-serif]">
-      <div className="w-full max-w-md bg-white rounded-3xl shadow-xl p-8">
-        {/* ── Tabs ── */}
-        <div className="flex items-center justify-center gap-6 mb-8">
-          <button
-            onClick={() => {
-              setIsLogin(true);
-              setError("");
-            }}
-            className={`flex items-center gap-2 text-base font-medium transition-colors pb-1 ${
-              isLogin
-                ? "text-gray-900 border-b-2 border-gray-900"
-                : "text-gray-400"
-            }`}
-          >
-            <svg
-              className="w-5 h-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"
-              />
+    <>
+      <style>{`
+        @keyframes gradientShift {
+          0%   { background-position: 0% 50%; }
+          50%  { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
+        }
+        @keyframes orbFloat1 {
+          0%,100% { transform: translate(0,0) scale(1); }
+          50%      { transform: translate(20px,-25px) scale(1.06); }
+        }
+        @keyframes orbFloat2 {
+          0%,100% { transform: translate(0,0) scale(1); }
+          50%      { transform: translate(-18px,20px) scale(1.04); }
+        }
+        @keyframes shimmer {
+          0%   { background-position: -300px 0; }
+          100% { background-position: 300px 0; }
+        }
+        .login-input:focus {
+          border-color: rgba(245,197,24,0.6) !important;
+          background: rgba(255,255,255,0.16) !important;
+          box-shadow: 0 0 0 3px rgba(245,197,24,0.12), inset 0 1px 0 rgba(255,255,255,0.18) !important;
+        }
+        .login-input::placeholder { color: rgba(255,255,255,0.2); }
+        .tab-pill {
+          background: none; border: none; cursor: pointer;
+          font-family: 'Poppins', sans-serif;
+          font-size: 13px; font-weight: 500;
+          padding: 10px 24px; border-radius: 0;
+          position: relative;
+          transition: color 0.3s ease;
+        }
+        .tab-pill::after {
+          content: '';
+          position: absolute; bottom: -1px; left: 0; right: 0; height: 2px;
+          background: #F5C518;
+          border-radius: 2px 2px 0 0;
+          transform: scaleX(0);
+          transition: transform 0.3s cubic-bezier(0.23, 1, 0.32, 1);
+        }
+        .tab-pill.active  { color: #F5C518; font-weight: 600; }
+        .tab-pill.active::after { transform: scaleX(1); }
+        .tab-pill.inactive { color: rgba(255,255,255,0.35); }
+        .tab-pill.inactive:hover { color: rgba(255,255,255,0.6); }
+        .submit-btn {
+          width: 100%; padding: 14px;
+          border-radius: 12px; border: none;
+          font-family: 'Poppins', sans-serif;
+          font-weight: 700; font-size: 14px;
+          cursor: pointer; position: relative; overflow: hidden;
+          background: #F5C518; color: #0a0a0a;
+          transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.23,1,0.32,1), background 0.3s ease;
+          letter-spacing: 0.2px;
+        }
+        .submit-btn:hover:not(:disabled) { background: #D4A800; transform: translateY(-1px); }
+        .submit-btn:active:not(:disabled) { transform: scale(0.985); }
+        .submit-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+        .submit-btn::after {
+          content: '';
+          position: absolute; inset: 0;
+          background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+          background-size: 300px 100%;
+          animation: shimmer 2.6s infinite;
+        }
+        .eye-btn {
+          position: absolute; right: 14px; top: 50%;
+          transform: translateY(-50%);
+          background: none; border: none; cursor: pointer;
+          color: rgba(255,255,255,0.28); display: flex;
+          align-items: center; padding: 0;
+          transition: color 0.2s;
+        }
+        .eye-btn:hover { color: #F5C518; }
+        @media (max-width: 480px) {
+          .login-card { padding: 28px 20px 24px !important; }
+        }
+      `}</style>
+
+      <div style={{ minHeight: "100vh", position: "relative", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Poppins', sans-serif", overflow: "hidden" }}>
+
+        {/* ── FULL SCREEN BACKGROUND IMAGE ── */}
+        <div style={{
+          position: "absolute", inset: 0,
+          backgroundImage: "url('https://shorturl.at/IyJkH')",
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          backgroundRepeat: "no-repeat",
+        }} />
+        {/* Dark overlay */}
+        <div style={{
+          position: "absolute", inset: 0,
+          background: "linear-gradient(135deg, rgba(5,3,1,0.82) 0%, rgba(10,7,2,0.70) 50%, rgba(14,9,0,0.80) 100%)",
+        }} />
+        {/* Warm bottom vignette */}
+        <div style={{
+          position: "absolute", inset: 0,
+          background: "radial-gradient(ellipse at 50% 110%, rgba(212,134,10,0.22) 0%, transparent 55%)",
+          pointerEvents: "none",
+        }} />
+
+        {/* ── LOGO TOP LEFT ── */}
+        <motion.div
+          initial={{ opacity: 0, y: -12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, ease: [0.23, 1, 0.32, 1] }}
+          style={{ position: "absolute", top: 32, left: 36, zIndex: 10, display: "inline-flex", alignItems: "center", gap: 10 }}
+        >
+          <div style={{
+            width: 30, height: 30, borderRadius: 8,
+            background: "#F5C518",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            boxShadow: "0 4px 12px rgba(245,197,24,0.4)",
+          }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0a0a0a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 11l19-9-9 19-2-8-8-2z" />
             </svg>
-            Login
-          </button>
-          <button
-            onClick={() => {
-              setIsLogin(false);
-              setError("");
-            }}
-            className={`flex items-center gap-2 text-base font-medium transition-colors pb-1 ${
-              !isLogin
-                ? "text-gray-900 border-b-2 border-gray-900"
-                : "text-gray-400"
-            }`}
-          >
-            <svg
-              className="w-5 h-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"
-              />
-            </svg>
-            Sign Up
-          </button>
-        </div>
-
-        {/* ── Form ── */}
-        <form onSubmit={handleSubmit} className="space-y-5">
-          {error && (
-            <div className="p-3 bg-red-100 border border-red-400 rounded-lg text-red-600 text-sm">
-              {error}
-            </div>
-          )}
-
-          {!isLogin && (
-            <div>
-              <label
-                htmlFor="name"
-                className="block text-sm font-medium text-gray-700 mb-2"
-              >
-                Full Name
-              </label>
-              <input
-                id="name"
-                name="name"
-                type="text"
-                required={!isLogin}
-                autoComplete="name"
-                value={formData.name}
-                onChange={handleChange}
-                placeholder="Enter your full name"
-                className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent transition-all text-sm"
-              />
-            </div>
-          )}
-
-          <div>
-            <label
-              htmlFor="email"
-              className="block text-sm font-medium text-gray-700 mb-2"
-            >
-              Email address
-            </label>
-            <input
-              id="email"
-              name="email"
-              type="email"
-              required
-              autoComplete="email"
-              value={formData.email}
-              onChange={handleChange}
-              placeholder="Enter your email address"
-              className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent transition-all text-sm"
-            />
           </div>
+          <span style={{ color: "#fff", fontFamily: "'Poppins', sans-serif", fontWeight: 600, fontSize: 14, textShadow: "0 1px 8px rgba(0,0,0,0.6)" }}>
+            The Crunch Dahlia Fairview
+          </span>
+        </motion.div>
 
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label
-                htmlFor="password"
-                className="block text-sm font-medium text-gray-700"
+        {/* ── CARD WRAPPER ── */}
+        <div
+          style={{
+            position: "relative", zIndex: 5,
+            width: "100%", display: "flex",
+            alignItems: "center", justifyContent: "center",
+            padding: "100px 24px 40px",
+          }}
+        >
+
+          {/* ── CARD ── */}
+          <motion.div
+            ref={cardRef}
+            className="login-card"
+            onMouseMove={handleMouseMove}
+            onMouseLeave={handleMouseLeave}
+            initial={{ opacity: 0, y: 40, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ duration: 0.8, ease: [0.23, 1, 0.32, 1] }}
+            style={{
+              width: "100%",
+              maxWidth: 420,
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(255,255,255,0.22)",
+              borderRadius: 24,
+              padding: "36px 36px 32px",
+              backdropFilter: "blur(24px)",
+              WebkitBackdropFilter: "blur(24px)",
+              boxShadow: "0 24px 80px rgba(0,0,0,0.6), 0 0 0 0.5px rgba(255,255,255,0.05) inset",
+              transform: `perspective(900px) rotateX(${tilt.x}deg) rotateY(${tilt.y}deg)`,
+              transition: "transform 0.6s cubic-bezier(0.23, 1, 0.32, 1)",
+              position: "relative",
+              overflow: "hidden",
+            }}
+          >
+            {/* Card inner glow — yellow tint on top edge */}
+            <div style={{
+              position: "absolute", top: 0, left: "20%", right: "20%", height: 1,
+              background: "linear-gradient(90deg, transparent, rgba(245,197,24,0.35), transparent)",
+              pointerEvents: "none",
+            }} />
+
+            {/* Heading */}
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, delay: 0.2 }}
+              style={{ marginBottom: 28 }}
+            >
+              <h1 style={{
+                fontFamily: "'Poppins', sans-serif",
+                fontSize: 22, fontWeight: 700,
+                color: "#fff", margin: "0 0 6px",
+                letterSpacing: "-0.3px",
+              }}>
+                {isLogin ? "Welcome back" : "Create account"}
+              </h1>
+              <p style={{ color: "rgba(255,255,255,0.3)", fontSize: 13, fontWeight: 300, margin: 0 }}>
+                {isLogin ? "Sign in to your workspace" : "Get started with your team"}
+              </p>
+            </motion.div>
+
+            {/* Tab switcher */}
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, delay: 0.25 }}
+              style={{
+                display: "inline-flex", gap: 0,
+                marginBottom: 28,
+                borderBottom: "1px solid rgba(255,255,255,0.1)",
+              }}
+            >
+              <button className={`tab-pill ${isLogin ? "active" : "inactive"}`} onClick={() => switchTab(true)}>
+                Sign In
+              </button>
+              <button className={`tab-pill ${!isLogin ? "active" : "inactive"}`} onClick={() => switchTab(false)}>
+                Sign Up
+              </button>
+            </motion.div>
+
+            {/* Form */}
+            <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+
+              {/* Error */}
+              <AnimatePresence>
+                {error && (
+                  <motion.div
+                    key="error"
+                    initial={{ opacity: 0, y: -8, height: 0 }}
+                    animate={{ opacity: 1, y: 0, height: "auto" }}
+                    exit={{ opacity: 0, y: -8, height: 0 }}
+                    transition={{ duration: 0.25 }}
+                    style={{
+                      background: "rgba(239,68,68,0.1)",
+                      border: "1px solid rgba(239,68,68,0.28)",
+                      color: "#fca5a5", fontSize: 13,
+                      fontFamily: "'Poppins', sans-serif",
+                    }}
+                  >
+                    {error}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Full name — sign up only */}
+              <AnimatePresence>
+                {!isLogin && (
+                  <motion.div
+                    key="name-field"
+                    initial={{ opacity: 0, height: 0, y: -8 }}
+                    animate={{ opacity: 1, height: "auto", y: 0 }}
+                    exit={{ opacity: 0, height: 0, y: -8 }}
+                    transition={{ duration: 0.3, ease: [0.23, 1, 0.32, 1] }}
+                    style={{ overflow: "hidden" }}
+                  >
+                    <Field label="Full Name" delay={0.28}>
+                      <input
+                        className="login-input"
+                        style={inputStyle}
+                        id="name" name="name" type="text"
+                        required={!isLogin} autoComplete="name"
+                        value={formData.name} onChange={handleChange}
+                        placeholder="Your full name"
+                      />
+                    </Field>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Email */}
+              <Field label="Email Address" delay={0.3}>
+                <input
+                  className="login-input"
+                  style={inputStyle}
+                  id="email" name="email" type="email"
+                  required autoComplete="email"
+                  value={formData.email} onChange={handleChange}
+                  placeholder="you@example.com"
+                />
+              </Field>
+
+              {/* Password */}
+              <Field
+                label="Password"
+                delay={0.36}
+                extra={
+                  isLogin ? (
+                    <a href="#" style={{
+                      fontSize: 11, color: "rgba(255,255,255,0.3)",
+                      textDecoration: "none", fontFamily: "'Poppins', sans-serif",
+                      letterSpacing: "0.3px", transition: "color 0.2s",
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.color = YELLOW)}
+                    onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.3)")}
+                    >
+                      Forgot password?
+                    </a>
+                  ) : undefined
+                }
               >
-                Password
-              </label>
-              {isLogin && (
-                <a
-                  href="#"
-                  className="text-sm text-gray-900 font-medium hover:underline"
-                >
-                  Forgot password?
-                </a>
-              )}
-            </div>
-            <div className="relative">
-              <input
-                id="password"
-                name="password"
-                type={showPassword ? "text" : "password"}
-                autoComplete={isLogin ? "current-password" : "new-password"}
-                required
-                value={formData.password}
-                onChange={handleChange}
-                placeholder="Enter your password"
-                className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent transition-all text-sm"
-              />
+                <div style={{ position: "relative" }}>
+                  <input
+                    className="login-input"
+                    style={{ ...inputStyle, paddingRight: 44 }}
+                    id="password" name="password"
+                    type={showPassword ? "text" : "password"}
+                    autoComplete={isLogin ? "current-password" : "new-password"}
+                    required value={formData.password} onChange={handleChange}
+                    placeholder="••••••••"
+                  />
+                  <button type="button" className="eye-btn" onClick={() => setShowPassword(!showPassword)}>
+                    {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </button>
+                </div>
+                {!isLogin && (
+                  <p style={{ marginTop: 6, fontSize: 11, color: "rgba(255,255,255,0.2)", fontFamily: "'Poppins', sans-serif" }}>
+                    Min. 8 characters with letters and numbers.
+                  </p>
+                )}
+              </Field>
+
+              {/* Confirm password — sign up only */}
+              <AnimatePresence>
+                {!isLogin && (
+                  <motion.div
+                    key="confirm-field"
+                    initial={{ opacity: 0, height: 0, y: -8 }}
+                    animate={{ opacity: 1, height: "auto", y: 0 }}
+                    exit={{ opacity: 0, height: 0, y: -8 }}
+                    transition={{ duration: 0.3, delay: 0.05, ease: [0.23, 1, 0.32, 1] }}
+                    style={{ overflow: "hidden" }}
+                  >
+                    <Field label="Confirm Password" delay={0}>
+                      <div style={{ position: "relative" }}>
+                        <input
+                          className="login-input"
+                          style={{ ...inputStyle, paddingRight: 44 }}
+                          id="confirmPassword" name="confirmPassword"
+                          type={showConfirm ? "text" : "password"}
+                          autoComplete="new-password"
+                          required={!isLogin}
+                          value={formData.confirmPassword} onChange={handleChange}
+                          placeholder="••••••••"
+                        />
+                        <button type="button" className="eye-btn" onClick={() => setShowConfirm(!showConfirm)}>
+                          {showConfirm ? <EyeOff size={15} /> : <Eye size={15} />}
+                        </button>
+                      </div>
+                    </Field>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Submit */}
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.4, delay: 0.42 }}
+                style={{ marginTop: 4 }}
+              >
+                <button type="submit" className="submit-btn" disabled={isLoading}>
+                  {isLoading ? "Please wait…" : isLogin ? "Sign in" : "Create account"}
+                </button>
+              </motion.div>
+            </form>
+
+            {/* Switch link */}
+            <motion.p
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.5 }}
+              style={{
+                textAlign: "center", marginTop: 22,
+                fontSize: 13, color: "rgba(255,255,255,0.27)",
+                fontFamily: "'Poppins', sans-serif",
+              }}
+            >
+              {isLogin ? "No account yet? " : "Already have an account? "}
               <button
                 type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                onClick={() => switchTab(!isLogin)}
+                style={{
+                  background: "none", border: "none",
+                  color: YELLOW, fontWeight: 600,
+                  cursor: "pointer", fontSize: 13,
+                  fontFamily: "'Poppins', sans-serif",
+                  textDecoration: "underline", textUnderlineOffset: 3,
+                  transition: "color 0.2s",
+                }}
+                onMouseEnter={e => (e.currentTarget.style.color = YELLOW_DARK)}
+                onMouseLeave={e => (e.currentTarget.style.color = YELLOW)}
               >
-                {showPassword ? (
-                  <EyeOff className="w-5 h-5" />
-                ) : (
-                  <Eye className="w-5 h-5" />
-                )}
+                {isLogin ? "Sign up" : "Sign in"}
               </button>
-            </div>
-          </div>
-
-          {!isLogin && (
-            <div>
-              <label
-                htmlFor="confirmPassword"
-                className="block text-sm font-medium text-gray-700 mb-2"
-              >
-                Confirm Password
-              </label>
-              <div className="relative">
-                <input
-                  id="confirmPassword"
-                  name="confirmPassword"
-                  type={showPassword ? "text" : "password"}
-                  autoComplete="new-password"
-                  required={!isLogin}
-                  value={formData.confirmPassword}
-                  onChange={handleChange}
-                  placeholder="Confirm your password"
-                  className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent transition-all text-sm"
-                />
-              </div>
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={isLoading}
-            style={{ backgroundColor: "#111827", color: "#ffffff" }}
-            className="mt-6 w-full rounded-xl border border-gray-900 bg-gray-900 py-3.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-500 disabled:cursor-not-allowed disabled:border-gray-400 disabled:bg-gray-400 disabled:text-gray-100"
-          >
-            {isLoading ? "Loading..." : isLogin ? "Log in" : "Sign up"}
-          </button>
-        </form>
-
-        {/* ── Divider ── */}
-        <div className="relative my-6">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-gray-200" />
-          </div>
-          <div className="relative flex justify-center text-sm">
-            <span className="px-4 bg-white text-gray-400 uppercase text-xs">
-              OR
-            </span>
-          </div>
+            </motion.p>
+          </motion.div>
         </div>
-
-        {/* ── Google ── */}
-        <div className="space-y-3">
-          <button
-            type="button"
-            className="w-full flex items-center justify-center gap-3 px-4 py-3 border border-gray-300 rounded-xl hover:bg-gray-50 transition-colors text-sm font-medium text-gray-700"
-          >
-            <svg className="w-5 h-5" viewBox="0 0 24 24">
-              <path
-                fill="#4285F4"
-                d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-              />
-              <path
-                fill="#34A853"
-                d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-              />
-              <path
-                fill="#FBBC05"
-                d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-              />
-              <path
-                fill="#EA4335"
-                d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-              />
-            </svg>
-            Continue with Google
-          </button>
-        </div>
-
-        <p className="text-center text-sm text-gray-600 mt-6">
-          {isLogin
-            ? "Don't have an account yet? "
-            : "Already have an account? "}
-          <button
-            type="button"
-            onClick={() => {
-              setIsLogin(!isLogin);
-              setError("");
-            }}
-            className="text-gray-900 font-semibold hover:underline"
-          >
-            {isLogin ? "Sign up" : "Log in"}
-          </button>
-        </p>
       </div>
-    </div>
+    </>
   );
 }

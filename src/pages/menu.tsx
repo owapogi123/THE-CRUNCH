@@ -1,17 +1,20 @@
 import { useState, useCallback, useEffect } from "react";
-import {
-  Search,
-  ShoppingBag,
-  Trash2,
-  Check,
-  X,
-  ChevronRight,
-  Minus,
-  Plus,
-  UtensilsCrossed,
-} from "lucide-react";
+import { Search, Minus, Plus, Trash2, UtensilsCrossed, Check, Clock, Calendar, Hash } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { api } from "../lib/api";
 import { Sidebar } from "@/components/Sidebar";
+
+// ─── FONT INJECTION ───────────────────────────────────────────────────────────
+
+if (typeof document !== "undefined" && !document.getElementById("poppins-font")) {
+  const link = document.createElement("link");
+  link.id = "poppins-font";
+  link.rel = "stylesheet";
+  link.href = "https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap";
+  document.head.appendChild(link);
+}
+
+const FONT = "'Poppins', sans-serif";
 
 // ─── TYPES ────────────────────────────────────────────────────────────────────
 
@@ -47,34 +50,32 @@ interface OrderResponse {
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 
-const CARD_COLORS: string[] = [
-  "#FEF3C7",
-  "#D1FAE5",
-  "#DBEAFE",
-  "#FCE7F3",
-  "#EDE9FE",
-  "#FEE2E2",
-  "#F0FDF4",
-  "#FFF7ED",
-];
-
-const cardColor = (id: number): string => CARD_COLORS[id % CARD_COLORS.length];
-
 const isMenuFood = (item: MenuItem): boolean =>
   item.category.toUpperCase().includes("MENU FOOD");
+
+const formatPrice = (n: number): string => {
+  const fixed = n.toFixed(2);
+  const [int, dec] = fixed.split(".");
+  const intFormatted = int.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return dec === "00" ? intFormatted : `${intFormatted}.${dec}`;
+};
+
+const getNow = () => {
+  const now = new Date();
+  const date = now.toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" });
+  const time = now.toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", hour12: true });
+  return { date, time };
+};
 
 function mapProducts(data: Record<string, unknown>[]): MenuItem[] {
   const dedupedMap = new Map<string, Record<string, unknown>>();
   for (const p of data ?? []) {
     if (p.isRawMaterial) continue;
-    const key = String(p.product_name ?? p.name ?? "")
-      .trim()
-      .toLowerCase();
+    const key = String(p.product_name ?? p.name ?? "").trim().toLowerCase();
     const existing = dedupedMap.get(key);
     if (
       !existing ||
-      Number(p.product_id ?? p.id ?? 0) >
-        Number(existing.product_id ?? existing.id ?? 0)
+      Number(p.product_id ?? p.id ?? 0) > Number(existing.product_id ?? existing.id ?? 0)
     ) {
       dedupedMap.set(key, p);
     }
@@ -89,117 +90,89 @@ function mapProducts(data: Record<string, unknown>[]): MenuItem[] {
   }));
 }
 
-// ─── ANIMATIONS (shared style objects) ────────────────────────────────────────
-
-const ANIM = {
-  slideIn: "slideIn 0.18s cubic-bezier(.34,1.56,.64,1)",
-  fadeIn: "fadeIn 0.3s ease",
-  scaleIn: "scaleIn 0.22s cubic-bezier(.34,1.56,.64,1)",
-  popIn: "popIn 0.35s 0.1s cubic-bezier(.34,1.56,.64,1) both",
-  spin: "spin 0.7s linear infinite",
-} as const;
-
-// Keyframes injected once at module level — a single minimal <style> just for @keyframes,
-// which cannot be expressed as inline styles or Tailwind utilities.
-const KEYFRAMES = `
-  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
-  @keyframes slideIn { from { opacity:0; transform:translateY(10px) } to { opacity:1; transform:translateY(0) } }
-  @keyframes fadeIn  { from { opacity:0 } to { opacity:1 } }
-  @keyframes scaleIn { from { opacity:0; transform:scale(0.93) translateY(12px) } to { opacity:1; transform:scale(1) translateY(0) } }
-  @keyframes popIn   { from { opacity:0; transform:scale(0.5) } to { opacity:1; transform:scale(1) } }
-  @keyframes spin    { to   { transform:rotate(360deg) } }
-  ::-webkit-scrollbar       { width:4px }
-  ::-webkit-scrollbar-track { background:transparent }
-  ::-webkit-scrollbar-thumb { background:#e5e7eb; border-radius:4px }
-`;
-
-// Injected once outside the component so it never re-renders
-if (
-  typeof document !== "undefined" &&
-  !document.getElementById("cashier-keyframes")
-) {
-  const tag = document.createElement("style");
-  tag.id = "cashier-keyframes";
-  tag.textContent = KEYFRAMES;
-  document.head.appendChild(tag);
-}
-
-// ─── SUB-COMPONENTS ───────────────────────────────────────────────────────────
+// ─── PRODUCT CARD ─────────────────────────────────────────────────────────────
 
 interface ProductCardProps {
   item: MenuItem;
   onAdd: (item: MenuItem) => void;
-  isPopping: boolean;
+  inCart: boolean;
 }
 
-function ProductCard({ item, onAdd, isPopping }: ProductCardProps) {
+function ProductCard({ item, onAdd, inCart }: ProductCardProps) {
   const isOut = item.remainingStock <= 0 && !isMenuFood(item);
-  const bg = cardColor(item.id);
 
   return (
-    <button
-      onClick={() => {
-        if (!isOut) onAdd(item);
-      }}
+    <motion.button
+      layout
+      onClick={() => { if (!isOut) onAdd(item); }}
       disabled={isOut}
+      whileHover={!isOut ? { y: -2 } : {}}
+      whileTap={!isOut ? { scale: 0.97 } : {}}
+      transition={{ type: "spring", stiffness: 400, damping: 25 }}
+      className="relative w-full text-left overflow-hidden focus:outline-none"
       style={{
-        fontFamily: "'DM Sans', sans-serif",
-        transform: isPopping ? "scale(0.94)" : "scale(1)",
-        transition:
-          "transform 0.15s cubic-bezier(.34,1.56,.64,1), box-shadow 0.2s, opacity 0.2s",
-        opacity: isOut ? 0.55 : 1,
+        borderRadius: 14,
+        background: "#ffffff",
+        border: `1.5px solid ${inCart ? "#111827" : "#efefef"}`,
+        opacity: isOut ? 0.4 : 1,
         cursor: isOut ? "not-allowed" : "pointer",
+        boxShadow: inCart ? "0 0 0 3px rgba(17,24,39,0.08)" : "0 1px 3px rgba(0,0,0,0.05)",
+        fontFamily: FONT,
       }}
-      className="group relative bg-white rounded-2xl overflow-hidden border border-gray-100 text-left w-full flex flex-col hover:shadow-lg hover:border-gray-200"
     >
       <div
         className="w-full aspect-square flex items-center justify-center"
-        style={{ background: isOut ? "#F3F4F6" : bg }}
+        style={{ background: "#f9f9f9" }}
       >
         <UtensilsCrossed
-          className="w-10 h-10"
-          style={{ color: isOut ? "#D1D5DB" : "#92400E", opacity: 0.4 }}
+          className="w-7 h-7"
+          style={{ color: isOut ? "#e5e7eb" : "#d1d5db" }}
         />
       </div>
 
-      <div className="p-3">
-        <p className="text-xs font-semibold text-gray-800 leading-snug line-clamp-2 mb-1">
+      <div className="p-3 pt-2.5">
+        <p
+          className="text-xs font-medium leading-snug line-clamp-2 mb-2"
+          style={{ color: "#111827" }}
+        >
           {item.name}
         </p>
         <div className="flex items-center justify-between">
-          <span className="text-sm font-bold text-gray-900">₱{item.price}</span>
+          <span className="text-sm font-semibold" style={{ color: "#111827" }}>
+            ₱{formatPrice(item.price)}
+          </span>
           {!isMenuFood(item) && (
             <span
-              className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+              className="text-[10px] font-medium px-1.5 py-0.5 rounded-md"
               style={{
-                background: isOut ? "#FEE2E2" : "#DCFCE7",
-                color: isOut ? "#EF4444" : "#16A34A",
+                background: isOut ? "#fef2f2" : "#f3f4f6",
+                color: isOut ? "#ef4444" : "#6b7280",
               }}
             >
-              {isOut ? "OUT" : item.remainingStock}
+              {isOut ? "Out" : item.remainingStock}
             </span>
           )}
         </div>
       </div>
 
-      {!isOut && (
-        <div
-          className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-          style={{ background: "rgba(15,23,42,0.06)" }}
-        >
-          <div
-            className="w-8 h-8 rounded-full flex items-center justify-center"
-            style={{ background: "rgba(255,255,255,0.9)" }}
+      <AnimatePresence>
+        {inCart && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.5 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.5 }}
+            className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center"
+            style={{ background: "#111827" }}
           >
-            <Plus className="w-4 h-4 text-gray-700" />
-          </div>
-        </div>
-      )}
-    </button>
+            <Check className="w-3 h-3 text-white" strokeWidth={2.5} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.button>
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── CART ROW ─────────────────────────────────────────────────────────────────
 
 interface CartRowProps {
   item: CartItem;
@@ -209,57 +182,75 @@ interface CartRowProps {
 
 function CartRow({ item, onRemove, onQty }: CartRowProps) {
   return (
-    <div
-      className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 bg-gray-50"
-      style={{ animation: ANIM.slideIn }}
+    <motion.div
+      layout
+      initial={{ opacity: 0, x: 16 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: 16 }}
+      transition={{ type: "spring", stiffness: 350, damping: 28 }}
+      className="flex items-center gap-2 py-3"
+      style={{ borderBottom: "1px solid #f5f5f5", fontFamily: FONT }}
     >
+      {/* Icon */}
       <div
-        className="w-10 h-10 rounded-lg shrink-0 flex items-center justify-center"
-        style={{ background: cardColor(item.id) }}
+        className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0"
+        style={{ background: "#f3f4f6" }}
       >
-        <UtensilsCrossed className="w-4 h-4 text-amber-800 opacity-50" />
+        <UtensilsCrossed className="w-3.5 h-3.5" style={{ color: "#9ca3af" }} />
       </div>
 
-      <div className="flex-1 min-w-0">
-        <p className="text-xs font-semibold text-gray-800 truncate">
+      {/* Name + unit price — fixed width so it never gets squeezed */}
+      <div style={{ width: 72, minWidth: 72 }}>
+        <p className="text-xs font-semibold truncate" style={{ color: "#111827" }}>
           {item.name}
         </p>
-        <p className="text-xs font-bold text-gray-500 mt-0.5">₱{item.price}</p>
-
-        <div className="flex items-center gap-1.5 mt-1">
-          <button
-            onClick={() => onQty(item.id, -1)}
-            className="w-6 h-6 rounded-lg bg-white border border-gray-200 flex items-center justify-center hover:bg-gray-100 transition-colors"
-          >
-            <Minus className="w-3 h-3 text-gray-500" />
-          </button>
-          <span className="w-5 text-center text-xs font-bold text-gray-800">
-            {item.quantity}
-          </span>
-          <button
-            onClick={() => onQty(item.id, 1)}
-            className="w-6 h-6 rounded-lg bg-white border border-gray-200 flex items-center justify-center hover:bg-gray-100 transition-colors"
-          >
-            <Plus className="w-3 h-3 text-gray-500" />
-          </button>
-        </div>
+        <p className="text-[11px] mt-0.5 font-medium truncate" style={{ color: "#9ca3af" }}>
+          ₱{formatPrice(item.price)}
+        </p>
       </div>
 
-      <span className="text-xs font-bold text-gray-800 w-12 text-right">
-        ₱{item.price * item.quantity}
+      {/* Qty controls */}
+      <div
+        className="flex items-center gap-1 rounded-xl p-0.5 shrink-0"
+        style={{ background: "#f3f4f6" }}
+      >
+        <button
+          onClick={() => onQty(item.id, -1)}
+          className="w-6 h-6 rounded-lg flex items-center justify-center transition-colors hover:bg-white"
+        >
+          <Minus className="w-3 h-3" style={{ color: "#6b7280" }} />
+        </button>
+        <span className="w-5 text-center text-xs font-bold" style={{ color: "#111827" }}>
+          {item.quantity}
+        </span>
+        <button
+          onClick={() => onQty(item.id, 1)}
+          className="w-6 h-6 rounded-lg flex items-center justify-center transition-colors hover:bg-white"
+        >
+          <Plus className="w-3 h-3" style={{ color: "#6b7280" }} />
+        </button>
+      </div>
+
+      {/* Subtotal — fixed width, right-aligned */}
+      <span
+        className="text-xs font-bold text-right shrink-0"
+        style={{ color: "#111827", width: 56 }}
+      >
+        ₱{formatPrice(item.price * item.quantity)}
       </span>
 
+      {/* Remove */}
       <button
         onClick={() => onRemove(item.id)}
-        className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-red-50 transition-colors"
+        className="w-6 h-6 flex items-center justify-center rounded-lg transition-colors hover:bg-gray-100 shrink-0"
       >
-        <Trash2 className="w-3.5 h-3.5 text-gray-300 hover:text-red-400 transition-colors" />
+        <Trash2 className="w-3 h-3" style={{ color: "#d1d5db" }} />
       </button>
-    </div>
+    </motion.div>
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── SUCCESS MODAL ────────────────────────────────────────────────────────────
 
 interface SuccessModalProps {
   show: boolean;
@@ -267,6 +258,8 @@ interface SuccessModalProps {
   orderNumber: string;
   savedCart: CartItem[];
   paidAmount: number;
+  orderType: string;
+  paymentMethod: string;
 }
 
 function SuccessModal({
@@ -275,124 +268,193 @@ function SuccessModal({
   orderNumber,
   savedCart,
   paidAmount,
+  orderType,
+  paymentMethod,
 }: SuccessModalProps) {
-  if (!show) return null;
-
-  const date = new Date().toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  const { date, time } = getNow();
 
   return (
-    <>
-      <div
-        className="fixed inset-0 z-50"
-        style={{
-          background: "rgba(0,0,0,0.45)",
-          backdropFilter: "blur(4px)",
-          animation: ANIM.fadeIn,
-        }}
-        onClick={onClose}
-      />
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
-        <div
-          className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden relative pointer-events-auto"
-          style={{ animation: ANIM.scaleIn }}
-        >
-          <button
+    <AnimatePresence>
+      {show && (
+        <>
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-50"
+            style={{ background: "rgba(0,0,0,0.3)" }}
             onClick={onClose}
-            className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-xl bg-gray-100 hover:bg-gray-200 transition-colors z-10"
-          >
-            <X className="w-4 h-4 text-gray-500" />
-          </button>
+          />
 
-          <div className="flex">
-            {/* Left */}
-            <div
-              className="w-2/5 p-8 flex flex-col items-center justify-center"
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.94, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.94, y: 20 }}
+              transition={{ type: "spring", stiffness: 360, damping: 30 }}
+              className="bg-white w-full max-w-sm pointer-events-auto overflow-hidden"
               style={{
-                background:
-                  "linear-gradient(160deg, #052e16 0%, #14532d 50%, #166534 100%)",
+                borderRadius: 24,
+                boxShadow: "0 20px 60px rgba(0,0,0,0.12)",
+                fontFamily: FONT,
               }}
             >
-              <div
-                className="w-16 h-16 rounded-full flex items-center justify-center mb-4"
-                style={{
-                  background: "rgba(255,255,255,0.15)",
-                  animation: ANIM.popIn,
-                }}
-              >
-                <Check className="w-8 h-8 text-white" strokeWidth={2.5} />
+              {/* Top: icon + heading */}
+              <div className="flex flex-col items-center pt-10 pb-6 px-8 text-center">
+                <motion.div
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  transition={{ type: "spring", stiffness: 460, damping: 24, delay: 0.08 }}
+                  className="w-16 h-16 rounded-full flex items-center justify-center mb-6"
+                  style={{ background: "#f3f4f6", border: "2px solid #e5e7eb" }}
+                >
+                  <Check className="w-7 h-7" style={{ color: "#6ee7b7" }} strokeWidth={2.5} />
+                </motion.div>
+
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.18 }}
+                >
+                  <p className="text-base font-bold mb-3" style={{ color: "#111827" }}>
+                    Your order has been placed
+                  </p>
+                  <p className="text-sm font-normal leading-relaxed" style={{ color: "#9ca3af" }}>
+                    Good job! Your order {orderNumber},
+                    <br />
+                    we'll start preparing your delicious meal right away!
+                  </p>
+                </motion.div>
+
+                <motion.div
+                  initial={{ scaleX: 0 }}
+                  animate={{ scaleX: 1 }}
+                  transition={{ delay: 0.3, duration: 0.4, ease: "easeOut" }}
+                  className="mt-5 h-0.5 w-10 rounded-full"
+                  style={{ background: "#6ee7b7", transformOrigin: "center" }}
+                />
               </div>
-              <h2 className="text-white font-bold text-lg text-center mb-1">
-                Order Placed!
-              </h2>
-              <p className="text-green-300 text-xs text-center mb-6">
-                Payment processed.
-              </p>
-              <p className="text-green-200 text-[11px] text-center font-mono mb-5">
-                {orderNumber}
-              </p>
 
-              <button
-                onClick={onClose}
-                className="w-full py-2.5 rounded-xl text-sm font-bold text-green-900 mb-2 hover:opacity-90 transition-opacity"
-                style={{ background: "#4ade80" }}
+              <div style={{ borderTop: "1px solid #f3f4f6" }} />
+
+              {/* Info: ID, Date, Time */}
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.26 }}
+                className="grid grid-cols-3"
               >
-                Got It
-              </button>
-              <button
-                onClick={onClose}
-                className="w-full py-2.5 rounded-xl text-sm font-semibold text-white/80 hover:bg-white/10 transition-colors"
-                style={{ border: "1px solid rgba(255,255,255,0.2)" }}
+                {[
+                  { icon: <Hash className="w-3 h-3" />, label: "Order ID", value: orderNumber },
+                  { icon: <Calendar className="w-3 h-3" />, label: "Date", value: date },
+                  { icon: <Clock className="w-3 h-3" />, label: "Time", value: time },
+                ].map(({ icon, label, value }, i) => (
+                  <div
+                    key={label}
+                    className="flex flex-col items-center py-4 px-2 text-center"
+                    style={{ borderRight: i < 2 ? "1px solid #f3f4f6" : "none" }}
+                  >
+                    <span style={{ color: "#d1d5db" }}>{icon}</span>
+                    <p className="text-[10px] font-semibold mt-1 uppercase tracking-wide" style={{ color: "#9ca3af" }}>
+                      {label}
+                    </p>
+                    <p className="text-[11px] font-semibold mt-0.5 leading-tight" style={{ color: "#374151" }}>
+                      {value}
+                    </p>
+                  </div>
+                ))}
+              </motion.div>
+
+              <div style={{ borderTop: "1px solid #f3f4f6" }} />
+
+              {/* Order type + payment badges */}
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.3 }}
+                className="px-6 pt-4 pb-2 flex gap-2"
               >
-                New Order
-              </button>
-            </div>
+                <span
+                  className="text-[11px] font-semibold px-3 py-1 rounded-full capitalize"
+                  style={{ background: "#f3f4f6", color: "#6b7280" }}
+                >
+                  {orderType}
+                </span>
+                <span
+                  className="text-[11px] font-semibold px-3 py-1 rounded-full capitalize"
+                  style={{ background: "#f3f4f6", color: "#6b7280" }}
+                >
+                  {paymentMethod}
+                </span>
+              </motion.div>
 
-            {/* Right */}
-            <div className="flex-1 p-8">
-              <div className="flex items-center justify-between mb-1">
-                <h3 className="text-sm font-bold text-gray-800">
-                  Order Summary
-                </h3>
-                <span className="text-xs text-gray-400">{date}</span>
-              </div>
-              <div className="w-full h-px bg-gray-100 mb-4" />
-
-              <div className="space-y-2 max-h-52 overflow-y-auto mb-4 pr-1">
+              {/* Items list */}
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.33 }}
+                className="px-6 pb-3 max-h-36 overflow-y-auto"
+              >
                 {savedCart.map((item) => (
                   <div
                     key={item.id}
-                    className="flex items-center justify-between"
+                    className="flex items-center justify-between py-2"
+                    style={{ borderBottom: "1px dashed #f3f4f6" }}
                   >
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-gray-700">{item.name}</span>
-                      <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-xs font-medium truncate" style={{ color: "#6b7280" }}>
+                        {item.name}
+                      </span>
+                      <span
+                        className="text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0"
+                        style={{ background: "#f3f4f6", color: "#9ca3af" }}
+                      >
                         ×{item.quantity}
                       </span>
                     </div>
-                    <span className="text-xs font-semibold text-gray-800">
-                      ₱{item.price * item.quantity}
+                    <span className="text-xs font-semibold ml-2 shrink-0" style={{ color: "#374151" }}>
+                      ₱{formatPrice(item.price * item.quantity)}
                     </span>
                   </div>
                 ))}
+              </motion.div>
+
+              {/* Total */}
+              <div
+                className="mx-6 mb-4 px-4 py-3 rounded-2xl flex items-center justify-between"
+                style={{ background: "#f9fafb", border: "1px solid #f3f4f6" }}
+              >
+                <span className="text-sm font-semibold" style={{ color: "#6b7280" }}>Total Paid</span>
+                <span className="text-lg font-bold" style={{ color: "#111827" }}>
+                  ₱{formatPrice(paidAmount)}
+                </span>
               </div>
 
-              <div className="border-t-2 border-dashed border-gray-100 pt-4 flex items-center justify-between">
-                <span className="text-sm text-gray-500 font-medium">
-                  Total Paid
-                </span>
-                <span className="text-2xl font-bold text-green-600">
-                  ₱{paidAmount}
-                </span>
+              {/* Actions */}
+              <div className="px-6 pb-7 space-y-2">
+                <motion.button
+                  whileHover={{ opacity: 0.88 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={onClose}
+                  className="w-full py-3.5 rounded-2xl text-sm font-semibold"
+                  style={{ background: "#111827", color: "#fff" }}
+                >
+                  New Order
+                </motion.button>
+                <button
+                  onClick={onClose}
+                  className="w-full py-2.5 rounded-2xl text-sm font-medium transition-colors hover:bg-gray-50"
+                  style={{ color: "#9ca3af" }}
+                >
+                  Close
+                </button>
               </div>
-            </div>
+            </motion.div>
           </div>
-        </div>
-      </div>
-    </>
+        </>
+      )}
+    </AnimatePresence>
   );
 }
 
@@ -400,23 +462,22 @@ function SuccessModal({
 
 export default function CashierView() {
   const [products, setProducts] = useState<MenuItem[]>([]);
-  const [isLoadingProducts, setIsLoading] = useState<boolean>(false);
-  const [productsError, setProductsError] = useState<string>("");
-  const [selectedCat, setSelectedCat] = useState<string>("ALL");
-  const [search, setSearch] = useState<string>("");
+  const [isLoadingProducts, setIsLoading] = useState(false);
+  const [productsError, setProductsError] = useState("");
+  const [selectedCat, setSelectedCat] = useState("ALL");
+  const [search, setSearch] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [orderType, setOrderType] = useState<
-    "dine-in" | "take-out" | "delivery"
-  >("dine-in");
-  const [paymentMethod, setPaymentMethod] = useState<"cash" | "e-payment">(
-    "cash",
-  );
-  const [poppingId, setPoppingId] = useState<number | null>(null);
-  const [showSuccess, setShowSuccess] = useState<boolean>(false);
+  const [orderType, setOrderType] = useState<"dine-in" | "take-out" | "delivery">("dine-in");
+  const [paymentMethod, setPaymentMethod] = useState<"cash" | "e-payment">("cash");
+  const [showSuccess, setShowSuccess] = useState(false);
   const [savedCart, setSavedCart] = useState<CartItem[]>([]);
-  const [paidAmount, setPaidAmount] = useState<number>(0);
-  const [orderNumber, setOrderNumber] = useState<string>("");
-  const [isPlacingOrder, setIsPlacingOrder] = useState<boolean>(false);
+  const [savedOrderType, setSavedOrderType] = useState("dine-in");
+  const [savedPaymentMethod, setSavedPaymentMethod] = useState("cash");
+  const [paidAmount, setPaidAmount] = useState(0);
+  const [orderNumber, setOrderNumber] = useState("");
+  const [isPlacingOrder, setIsPlacingOrder] = useState(false);
+
+  // ── Fetch menu from /inventory ──────────────────────────────────────────────
   useEffect(() => {
     setIsLoading(true);
     api
@@ -429,12 +490,9 @@ export default function CashierView() {
       .finally(() => setIsLoading(false));
   }, []);
 
-  const categories: string[] = [
-    "ALL",
-    ...Array.from(new Set(products.map((p) => p.category))),
-  ];
+  const categories = ["ALL", ...Array.from(new Set(products.map((p) => p.category)))];
 
-  const filtered: MenuItem[] = products.filter(
+  const filtered = products.filter(
     (p) =>
       (selectedCat === "ALL" || p.category === selectedCat) &&
       p.name.toLowerCase().includes(search.toLowerCase()),
@@ -443,27 +501,24 @@ export default function CashierView() {
   const totalQty = cart.reduce((s, i) => s + i.quantity, 0);
   const totalPrice = cart.reduce((s, i) => s + i.price * i.quantity, 0);
 
+  // ── Cart actions ────────────────────────────────────────────────────────────
   const addToCart = useCallback((item: MenuItem) => {
     if (item.remainingStock <= 0 && !isMenuFood(item)) return;
-    setPoppingId(item.id);
-    setTimeout(() => setPoppingId(null), 200);
     setCart((prev) => {
       const existing = prev.find((c) => c.id === item.id);
       if (existing) {
         const next = existing.quantity + 1;
         if (next > item.remainingStock && !isMenuFood(item)) return prev;
-        return prev.map((c) =>
-          c.id === item.id ? { ...c, quantity: next } : c,
-        );
+        return prev.map((c) => (c.id === item.id ? { ...c, quantity: next } : c));
       }
       return [...prev, { ...item, quantity: 1 }];
     });
   }, []);
 
-  const removeFromCart = (id: number): void =>
+  const removeFromCart = (id: number) =>
     setCart((prev) => prev.filter((c) => c.id !== id));
 
-  const updateQty = (id: number, delta: number): void => {
+  const updateQty = (id: number, delta: number) => {
     const product = products.find((p) => p.id === id);
     const stock = product?.remainingStock ?? 0;
     const menuFood = product ? isMenuFood(product) : false;
@@ -479,7 +534,8 @@ export default function CashierView() {
     );
   };
 
-  const handlePayment = async (): Promise<void> => {
+  // ── Submit order to /orders ─────────────────────────────────────────────────
+  const handlePayment = async () => {
     if (cart.length === 0 || isPlacingOrder) return;
     setIsPlacingOrder(true);
 
@@ -499,21 +555,19 @@ export default function CashierView() {
 
     try {
       const response = await api.post<OrderResponse>("/orders", payload);
-      const num =
-        response?.orderNumber ??
-        `#${Math.floor(10000 + Math.random() * 90000)}`;
+      const num = response?.orderNumber ?? `#${Math.floor(10000 + Math.random() * 90000)}`;
       setSavedCart([...cart]);
+      setSavedOrderType(orderType);
+      setSavedPaymentMethod(paymentMethod);
       setPaidAmount(total);
       setOrderNumber(num);
       setShowSuccess(true);
+      // Optimistically deduct stock for non-menu-food items
       setProducts((prev) =>
         prev.map((p) => {
           const ordered = cart.find((c) => c.id === p.id);
           if (!ordered || isMenuFood(p)) return p;
-          return {
-            ...p,
-            remainingStock: Math.max(0, p.remainingStock - ordered.quantity),
-          };
+          return { ...p, remainingStock: Math.max(0, p.remainingStock - ordered.quantity) };
         }),
       );
     } catch (err) {
@@ -524,7 +578,7 @@ export default function CashierView() {
     }
   };
 
-  const handleCloseModal = (): void => {
+  const handleCloseModal = () => {
     setShowSuccess(false);
     setCart([]);
     setSavedCart([]);
@@ -532,281 +586,280 @@ export default function CashierView() {
     setPaymentMethod("cash");
   };
 
-  // ── Pay button styles (inline, replacing .pay-btn) ──
-  const payBtnStyle: React.CSSProperties = {
-    background: "linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%)",
-    color: "white",
-    transition: "transform 0.12s, box-shadow 0.15s, opacity 0.15s",
-    opacity: isPlacingOrder || cart.length === 0 ? 0.5 : 1,
-    cursor: isPlacingOrder || cart.length === 0 ? "not-allowed" : "pointer",
-  };
-
   return (
     <>
       <Sidebar />
 
       <div
-        className="flex h-screen bg-gray-50 overflow-hidden"
-        style={{ fontFamily: "'DM Sans', sans-serif" }}
+        className="flex h-screen overflow-hidden"
+        style={{ fontFamily: FONT, background: "#fafafa", paddingLeft: 80 }}
       >
-        {/* ── Main panel ── */}
-        <div className="flex-1 flex flex-col min-w-0 overflow-hidden pl-20">
+        {/* ── Left: Menu ── */}
+        <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+
           {/* Header */}
-          <div className="bg-white border-b border-gray-100 px-6 py-4 flex items-center justify-between">
-            <div>
-              <p className="text-[11px] text-gray-400 font-medium tracking-wide uppercase">
-                Menu · Cashier
-              </p>
-              <h1 className="text-lg font-bold text-gray-900 mt-0.5">
-                Cashier View
+          <div
+            className="px-8 py-5 flex items-center gap-4"
+            style={{ background: "#fff", borderBottom: "1px solid #f0f0f0" }}
+          >
+            <div className="flex-1">
+              <h1 className="text-base font-bold" style={{ color: "#111827" }}>
+                Menu
               </h1>
             </div>
-            <div className="flex items-center gap-2 text-xs text-gray-400">
-              <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-              Online
+            <div className="relative">
+              <Search
+                className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5"
+                style={{ color: "#d1d5db" }}
+              />
+              <input
+                type="text"
+                placeholder="Search…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-9 pr-4 py-2 text-xs rounded-xl focus:outline-none focus:ring-1 focus:ring-gray-200"
+                style={{
+                  background: "#f7f7f7",
+                  border: "1px solid #efefef",
+                  color: "#374151",
+                  width: 200,
+                  fontFamily: FONT,
+                }}
+              />
             </div>
           </div>
 
-          {/* Menu area */}
-          <div className="flex-1 overflow-y-auto p-5">
-            {/* Search */}
-            <div className="relative mb-4 max-w-xs">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" />
-              <input
-                type="text"
-                placeholder="Search items…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-9 pr-4 py-2.5 text-sm rounded-xl border border-gray-200 bg-white text-gray-700 placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:border-transparent"
-              />
-            </div>
+          {/* Category tabs */}
+          <div
+            className="px-8 py-3 flex items-center gap-1 overflow-x-auto"
+            style={{ background: "#fff", borderBottom: "1px solid #f5f5f5" }}
+          >
+            {categories.map((cat) => (
+              <button
+                key={cat}
+                onClick={() => setSelectedCat(cat)}
+                className="px-3 py-1.5 text-xs rounded-lg whitespace-nowrap focus:outline-none transition-all"
+                style={{
+                  color: selectedCat === cat ? "#111827" : "#9ca3af",
+                  background: selectedCat === cat ? "#f3f4f6" : "transparent",
+                  fontWeight: selectedCat === cat ? 600 : 400,
+                  fontFamily: FONT,
+                }}
+              >
+                {cat === "ALL" ? "All" : cat}
+              </button>
+            ))}
+          </div>
 
-            {/* Category pills */}
-            <div className="flex flex-wrap gap-2 mb-5">
-              {categories.map((cat) => (
-                <button
-                  key={cat}
-                  onClick={() => setSelectedCat(cat)}
-                  className="px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-all"
-                  style={
-                    selectedCat === cat
-                      ? {
-                          background: "#0f172a",
-                          color: "#fff",
-                          borderColor: "#0f172a",
-                        }
-                      : {
-                          background: "#fff",
-                          color: "#6b7280",
-                          borderColor: "#e5e7eb",
-                        }
-                  }
-                  onMouseEnter={(e) => {
-                    if (selectedCat !== cat) {
-                      (e.currentTarget as HTMLButtonElement).style.borderColor =
-                        "#9ca3af";
-                      (e.currentTarget as HTMLButtonElement).style.color =
-                        "#374151";
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (selectedCat !== cat) {
-                      (e.currentTarget as HTMLButtonElement).style.borderColor =
-                        "#e5e7eb";
-                      (e.currentTarget as HTMLButtonElement).style.color =
-                        "#6b7280";
-                    }
-                  }}
-                >
-                  {cat === "ALL" ? "All Items" : cat}
-                </button>
-              ))}
-            </div>
-
-            {/* Product grid */}
-            <div
-              className="grid gap-3"
-              style={{
-                gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
-              }}
-            >
-              {isLoadingProducts && (
-                <p className="col-span-full text-center text-sm text-gray-400 py-16">
-                  Loading menu items...
-                </p>
-              )}
-              {!isLoadingProducts && productsError && (
-                <p className="col-span-full text-center text-sm text-red-400 py-16">
-                  {productsError}
-                </p>
-              )}
-              {!isLoadingProducts &&
-                !productsError &&
-                filtered.map((item, idx) => (
-                  <div
-                    key={item.id}
-                    style={{ animation: `slideIn 0.2s ${idx * 0.03}s both` }}
-                  >
-                    <ProductCard
-                      item={item}
-                      onAdd={addToCart}
-                      isPopping={poppingId === item.id}
-                    />
+          {/* Product grid */}
+          <div className="flex-1 overflow-y-auto p-6">
+            {isLoadingProducts && (
+              <div className="flex items-center justify-center h-full">
+                <motion.div
+                  animate={{ rotate: 360 }}
+                  transition={{ repeat: Infinity, duration: 0.8, ease: "linear" }}
+                  className="w-6 h-6 rounded-full border-2"
+                  style={{ borderColor: "#e5e7eb", borderTopColor: "#9ca3af" }}
+                />
+              </div>
+            )}
+            {!isLoadingProducts && productsError && (
+              <div className="flex items-center justify-center h-full">
+                <p className="text-sm" style={{ color: "#ef4444", fontFamily: FONT }}>{productsError}</p>
+              </div>
+            )}
+            {!isLoadingProducts && !productsError && (
+              <motion.div
+                layout
+                className="grid gap-3"
+                style={{ gridTemplateColumns: "repeat(auto-fill, minmax(138px, 1fr))" }}
+              >
+                <AnimatePresence>
+                  {filtered.map((item, idx) => (
+                    <motion.div
+                      key={item.id}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ delay: idx * 0.02, duration: 0.18 }}
+                    >
+                      <ProductCard
+                        item={item}
+                        onAdd={addToCart}
+                        inCart={cart.some((c) => c.id === item.id)}
+                      />
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+                {filtered.length === 0 && (
+                  <div className="col-span-full flex flex-col items-center justify-center py-24">
+                    <UtensilsCrossed className="w-8 h-8 mb-3" style={{ color: "#e5e7eb" }} />
+                    <p className="text-sm" style={{ color: "#d1d5db", fontFamily: FONT }}>
+                      No items found
+                    </p>
                   </div>
-                ))}
-              {!isLoadingProducts &&
-                !productsError &&
-                filtered.length === 0 && (
-                  <p className="col-span-full text-center text-sm text-gray-400 py-16">
-                    No items found.
-                  </p>
                 )}
-            </div>
+              </motion.div>
+            )}
           </div>
         </div>
 
-        {/* ── Cart ── */}
+        {/* ── Right: Cart ── */}
         <div
-          className="bg-white border-l border-gray-100 flex flex-col"
-          style={{ width: 320, flexShrink: 0 }}
+          className="flex flex-col"
+          style={{
+            width: 300,
+            flexShrink: 0,
+            background: "#fff",
+            borderLeft: "1px solid #f0f0f0",
+          }}
         >
-          <div className="px-5 pt-5 pb-3 border-b border-gray-50 flex items-center justify-between">
-            <h2 className="text-sm font-bold text-gray-900">Order List</h2>
-            {totalQty > 0 && (
-              <span
-                className="text-xs font-bold px-2 py-0.5 rounded-full"
-                style={{ background: "#0f172a", color: "#fff" }}
-              >
-                {totalQty}
-              </span>
-            )}
+          {/* Cart header */}
+          <div
+            className="px-6 pt-6 pb-4 flex items-center justify-between"
+            style={{ borderBottom: "1px solid #f5f5f5" }}
+          >
+            <div>
+              <h2 className="text-sm font-bold" style={{ color: "#111827", fontFamily: FONT }}>
+                Order
+              </h2>
+              <p className="text-xs font-medium mt-0.5" style={{ color: "#9ca3af" }}>
+                {totalQty === 0 ? "No items yet" : `${totalQty} item${totalQty > 1 ? "s" : ""}`}
+              </p>
+            </div>
+            <AnimatePresence>
+              {totalQty > 0 && (
+                <motion.span
+                  initial={{ scale: 0, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0, opacity: 0 }}
+                  transition={{ type: "spring", stiffness: 500, damping: 28 }}
+                  className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                  style={{ background: "#111827", color: "#fff" }}
+                >
+                  {totalQty}
+                </motion.span>
+              )}
+            </AnimatePresence>
           </div>
 
-          <div className="flex-1 overflow-y-auto px-5 py-3 space-y-2">
-            {cart.length === 0 ? (
-              <div
-                className="h-full flex flex-col items-center justify-center text-center pb-8"
-                style={{ animation: ANIM.fadeIn }}
-              >
-                <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-3 bg-slate-50">
-                  <ShoppingBag className="w-7 h-7 text-gray-200" />
-                </div>
-                <p className="text-sm font-medium text-gray-400">
-                  Cart is empty
-                </p>
-                <p className="text-xs text-gray-300 mt-1">Tap an item to add</p>
-              </div>
-            ) : (
-              cart.map((item) => (
-                <CartRow
-                  key={item.id}
-                  item={item}
-                  onRemove={removeFromCart}
-                  onQty={updateQty}
-                />
-              ))
-            )}
+          {/* Cart items */}
+          <div className="flex-1 overflow-y-auto px-6">
+            <AnimatePresence>
+              {cart.length === 0 ? (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="flex flex-col items-center justify-center h-full pb-10 text-center"
+                >
+                  <div
+                    className="w-12 h-12 rounded-2xl flex items-center justify-center mb-3"
+                    style={{ background: "#f3f4f6" }}
+                  >
+                    <UtensilsCrossed className="w-5 h-5" style={{ color: "#e5e7eb" }} />
+                  </div>
+                  <p className="text-xs font-medium" style={{ color: "#d1d5db", fontFamily: FONT }}>
+                    Add items to start
+                  </p>
+                </motion.div>
+              ) : (
+                cart.map((item) => (
+                  <CartRow
+                    key={item.id}
+                    item={item}
+                    onRemove={removeFromCart}
+                    onQty={updateQty}
+                  />
+                ))
+              )}
+            </AnimatePresence>
           </div>
 
-          {cart.length > 0 && (
-            <div
-              className="px-5 py-4 border-t border-gray-100"
-              style={{ animation: ANIM.slideIn }}
-            >
-              <div
-                className="rounded-xl p-3.5 mb-3"
-                style={{ background: "#F8FAFC", border: "1px solid #F1F5F9" }}
+          {/* Cart footer */}
+          <AnimatePresence>
+            {cart.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 12 }}
+                transition={{ type: "spring", stiffness: 350, damping: 28 }}
+                className="px-6 pb-6 pt-4"
+                style={{ borderTop: "1px solid #f5f5f5" }}
               >
-                <div className="flex justify-between text-xs text-gray-400 mb-1.5">
-                  <span>Items</span>
-                  <span>{totalQty}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Total</span>
-                  <span className="text-xl font-bold text-gray-900">
-                    ₱{totalPrice}
+                {/* Total */}
+                <div className="flex items-center justify-between mb-4">
+                  <span className="text-xs font-semibold" style={{ color: "#9ca3af" }}>Total</span>
+                  <span className="text-xl font-bold" style={{ color: "#111827", fontFamily: FONT }}>
+                    ₱{formatPrice(totalPrice)}
                   </span>
                 </div>
-              </div>
 
-              <div className="grid grid-cols-2 gap-2 mb-3">
-                <select
-                  value={orderType}
-                  onChange={(e) =>
-                    setOrderType(
-                      e.target.value as "dine-in" | "take-out" | "delivery",
-                    )
-                  }
-                  className="border border-gray-200 rounded-xl px-2.5 py-2 text-xs bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-slate-300"
-                >
-                  <option value="dine-in">Dine In</option>
-                  <option value="take-out">Take Out</option>
-                  <option value="delivery">Delivery</option>
-                </select>
-                <select
-                  value={paymentMethod}
-                  onChange={(e) =>
-                    setPaymentMethod(e.target.value as "cash" | "e-payment")
-                  }
-                  className="border border-gray-200 rounded-xl px-2.5 py-2 text-xs bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-slate-300"
-                >
-                  <option value="cash">Cash</option>
-                  <option value="e-payment">E-Payment</option>
-                </select>
-              </div>
+                {/* Order type + payment method selects */}
+                <div className="grid grid-cols-2 gap-2 mb-3">
+                  <select
+                    value={orderType}
+                    onChange={(e) => setOrderType(e.target.value as "dine-in" | "take-out" | "delivery")}
+                    className="rounded-xl px-3 py-2 text-xs focus:outline-none"
+                    style={{
+                      border: "1px solid #f0f0f0",
+                      background: "#fafafa",
+                      color: "#374151",
+                      fontFamily: FONT,
+                    }}
+                  >
+                    <option value="dine-in">Dine in</option>
+                    <option value="take-out">Take out</option>
+                    <option value="delivery">Delivery</option>
+                  </select>
+                  <select
+                    value={paymentMethod}
+                    onChange={(e) => setPaymentMethod(e.target.value as "cash" | "e-payment")}
+                    className="rounded-xl px-3 py-2 text-xs focus:outline-none"
+                    style={{
+                      border: "1px solid #f0f0f0",
+                      background: "#fafafa",
+                      color: "#374151",
+                      fontFamily: FONT,
+                    }}
+                  >
+                    <option value="cash">Cash</option>
+                    <option value="e-payment">E-Payment</option>
+                  </select>
+                </div>
 
-              <button
-                onClick={() => {
-                  void handlePayment();
-                }}
-                disabled={isPlacingOrder || cart.length === 0}
-                className="w-full py-3.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2"
-                style={payBtnStyle}
-                onMouseEnter={(e) => {
-                  if (!isPlacingOrder && cart.length > 0) {
-                    (e.currentTarget as HTMLButtonElement).style.transform =
-                      "translateY(-1px)";
-                    (e.currentTarget as HTMLButtonElement).style.boxShadow =
-                      "0 8px 24px rgba(15,23,42,0.25)";
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.transform =
-                    "translateY(0)";
-                  (e.currentTarget as HTMLButtonElement).style.boxShadow =
-                    "none";
-                }}
-                onMouseDown={(e) => {
-                  if (!isPlacingOrder && cart.length > 0)
-                    (e.currentTarget as HTMLButtonElement).style.transform =
-                      "scale(0.98)";
-                }}
-                onMouseUp={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.transform =
-                    "translateY(-1px)";
-                }}
-              >
-                {isPlacingOrder ? (
-                  <>
-                    <div
-                      className="w-4 h-4 border-2 rounded-full"
-                      style={{
-                        borderColor: "rgba(255,255,255,0.3)",
-                        borderTopColor: "white",
-                        animation: ANIM.spin,
-                      }}
-                    />
-                    Processing…
-                  </>
-                ) : (
-                  <>
-                    Pay ₱{totalPrice}
-                    <ChevronRight className="w-4 h-4" />
-                  </>
-                )}
-              </button>
-            </div>
-          )}
+                {/* Pay button */}
+                <motion.button
+                  onClick={() => { void handlePayment(); }}
+                  disabled={isPlacingOrder || cart.length === 0}
+                  whileHover={{ opacity: 0.88 }}
+                  whileTap={{ scale: 0.98 }}
+                  transition={{ duration: 0.12 }}
+                  className="w-full py-3.5 rounded-2xl text-sm font-semibold flex items-center justify-center gap-2"
+                  style={{
+                    background: "#111827",
+                    color: "#fff",
+                    opacity: isPlacingOrder ? 0.5 : 1,
+                    cursor: isPlacingOrder ? "not-allowed" : "pointer",
+                    fontFamily: FONT,
+                  }}
+                >
+                  {isPlacingOrder ? (
+                    <>
+                      <motion.div
+                        animate={{ rotate: 360 }}
+                        transition={{ repeat: Infinity, duration: 0.7, ease: "linear" }}
+                        className="w-4 h-4 rounded-full border-2"
+                        style={{ borderColor: "rgba(255,255,255,0.3)", borderTopColor: "#fff" }}
+                      />
+                      Processing…
+                    </>
+                  ) : (
+                    `Pay ₱${formatPrice(totalPrice)}`
+                  )}
+                </motion.button>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
 
@@ -816,6 +869,8 @@ export default function CashierView() {
         orderNumber={orderNumber}
         savedCart={savedCart}
         paidAmount={paidAmount}
+        orderType={savedOrderType}
+        paymentMethod={savedPaymentMethod}
       />
     </>
   );
