@@ -20,6 +20,12 @@ router.post("/register", async (req, res) => {
       });
     }
 
+    if (password.length < 8) {
+      return res.status(400).json({
+        message: "Password must be at least 8 characters long",
+      });
+    }
+
     // Validate role — default to 'customer' if not provided
     const allowedRoles = [
       "administrator",
@@ -73,6 +79,12 @@ router.post("/login", async (req, res) => {
     if (!loginIdentifier || !password) {
       return res.status(400).json({
         message: "Email or username and password required",
+      });
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({
+        message: "Password must be at least 8 characters long",
       });
     }
 
