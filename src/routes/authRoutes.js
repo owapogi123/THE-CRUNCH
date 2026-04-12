@@ -88,7 +88,7 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    // ✅ Single query — checks all roles at once
+    // ✅ Single query — checks all roles at once 
     const [rows] = await db.query(
       `SELECT id, username, email, password_hash, role 
        FROM users 
