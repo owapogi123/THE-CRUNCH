@@ -1,569 +1,458 @@
 import { useRef, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion, useInView, useScroll, useTransform, type Variants } from 'framer-motion';
+import { motion, useInView, useScroll, useTransform } from 'framer-motion';
 
-const fadeUp: Variants = {
-  hidden: { opacity: 0, y: 52 },
-  visible: (i = 0) => ({
-    opacity: 1, y: 0,
-    transition: { delay: i * 0.1, duration: 0.8, ease: [0.22, 1, 0.36, 1] },
-  }),
-};
-const fadeLeft: Variants = {
-  hidden:  { opacity: 0, x: -64 },
-  visible: { opacity: 1, x: 0, transition: { duration: 0.9, ease: [0.22, 1, 0.36, 1] } },
-};
-const fadeRight: Variants = {
-  hidden:  { opacity: 0, x: 64 },
-  visible: { opacity: 1, x: 0, transition: { duration: 0.9, ease: [0.22, 1, 0.36, 1] } },
-};
+const PP = "'Poppins', sans-serif";
+
+function getAuth(): boolean {
+  const t = localStorage.getItem('authToken');
+  const f = localStorage.getItem('isAuthenticated') === 'true';
+  if (!t || !f) {
+    ['authToken', 'isAuthenticated', 'userName', 'userRole', 'userId'].forEach(k => localStorage.removeItem(k));
+    return false;
+  }
+  return true;
+}
 
 function Reveal({
-  children,
-  variants = fadeUp,
-  custom = 0,
-  style = {},
+  children, delay = 0, dir = 'up', style = {},
 }: {
-  children: React.ReactNode;
-  variants?: Variants;
-  custom?: number;
+  children: React.ReactNode; delay?: number;
+  dir?: 'up' | 'left' | 'right' | 'none';
   style?: React.CSSProperties;
 }) {
-  const ref = useRef(null);
-  const inView = useInView(ref, { once: true, margin: '-80px' });
+  const ref = useRef<HTMLDivElement>(null);
+  const inView = useInView(ref, { once: true, margin: '-60px' });
+  const init =
+    dir === 'up' ? { opacity: 0, y: 40 } :
+    dir === 'left' ? { opacity: 0, x: -40 } :
+    dir === 'right' ? { opacity: 0, x: 40 } :
+    { opacity: 0 };
   return (
-    <motion.div
-      ref={ref}
-      variants={variants}
-      initial="hidden"
-      animate={inView ? 'visible' : 'hidden'}
-      custom={custom}
-      style={style}
-    >
+    <motion.div ref={ref} initial={init}
+      animate={inView ? { opacity: 1, y: 0, x: 0 } : init}
+      transition={{ delay, duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+      style={style}>
       {children}
     </motion.div>
   );
 }
 
-function Label({ children }: { children: React.ReactNode }) {
+function Marquee({ items }: { items: string[] }) {
+  const rep = [...items, ...items, ...items];
   return (
-    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
-      <div style={{ width: 32, height: 1, background: '#f5c842', flexShrink: 0 }} />
-      <span style={{
-        fontSize: 11, fontWeight: 600, letterSpacing: '0.26em',
-        textTransform: 'uppercase' as const, color: '#f5c842',
-        fontFamily: "'Poppins', sans-serif",
-      }}>
-        {children}
-      </span>
+    <div style={{ overflow: 'hidden', height: 48, background: '#f5c842', display: 'flex', alignItems: 'center' }}>
+      <motion.div
+        animate={{ x: [0, '-33.33%'] }}
+        transition={{ repeat: Infinity, duration: 28, ease: 'linear' }}
+        style={{ display: 'flex', whiteSpace: 'nowrap' }}>
+        {rep.map((item, i) => (
+          <span key={i} style={{
+            fontFamily: PP, fontSize: 11, fontWeight: 700,
+            letterSpacing: '0.2em', textTransform: 'uppercase',
+            color: '#1a0a00', padding: '0 32px',
+            display: 'inline-flex', alignItems: 'center', gap: 32,
+          }}>
+            <span style={{ width: 4, height: 4, borderRadius: '50%', background: 'rgba(26,10,0,0.25)', display: 'inline-block' }} />
+            {item}
+          </span>
+        ))}
+      </motion.div>
     </div>
   );
 }
 
+const marqueeItems = ['Fresh Daily', '7 Bold Flavors', '250+ Branches', 'Since 2021', 'Quezon City', 'Boneless Fried Chicken', 'Made with Love', 'Fast Service'];
+
 const perks = [
-  { title: 'Fresh Daily',     desc: 'Ingredients sourced and prepped every single morning — no shortcuts, ever.' },
-  { title: 'Fast Service',    desc: 'Hot and crispy, from our fryer to your hands in minutes.' },
-  { title: 'Made with Love',  desc: "Every order is crafted like it's going to family." },
-  { title: 'Bold Flavors',    desc: '7 signature sauces crafted to satisfy any mood or craving.' },
-  { title: 'Community First', desc: 'Built for the neighborhood, grown by the neighborhood.' },
-  { title: '250+ Branches',   desc: 'From Luzon to Mindanao — The Crunch is everywhere you are.' },
+  { num: '01', title: 'Fresh Daily', desc: 'Ingredients sourced and prepped every morning — no shortcuts, ever.' },
+  { num: '02', title: 'Fast Service', desc: 'Hot and crispy, from our fryer to your hands in minutes.' },
+  { num: '03', title: 'Made with Love', desc: 'Every order is crafted like it is going to family.' },
+  { num: '04', title: 'Bold Flavors', desc: '7 signature sauces crafted to satisfy any mood or craving.' },
+  { num: '05', title: 'Community First', desc: 'Built for the neighborhood, grown by the neighborhood.' },
+  { num: '06', title: '250+ Branches', desc: 'From Luzon to Mindanao — The Crunch is everywhere you are.' },
 ];
-
-const stats = [
-  { value: '250+', label: 'Branches Nationwide' },
-  { value: '7',    label: 'Signature Flavors'   },
-  { value: '2021', label: 'Founded'              },
-  { value: '∞',    label: 'Happy Customers'      },
-];
-
-const PP = "'Poppins', sans-serif";
-
-// ─── Helper: same logic as Products.tsx ──────────────────────────────────────
-function getIsAuthenticated(): boolean {
-  const token = localStorage.getItem('authToken')
-  const flag  = localStorage.getItem('isAuthenticated') === 'true'
-  if (!token || !flag) {
-    localStorage.removeItem('authToken')
-    localStorage.removeItem('isAuthenticated')
-    localStorage.removeItem('userName')
-    localStorage.removeItem('userRole')
-    localStorage.removeItem('userId')
-    return false
-  }
-  return true
-}
 
 export default function AboutTheCrunch() {
   const navigate = useNavigate();
   const [scrolled, setScrolled] = useState(false);
-
-  // ── Auth state — mirrors Products.tsx ────────────────────────────────────
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => getIsAuthenticated())
+  const [isAuthenticated, setIsAuthenticated] = useState(() => getAuth());
 
   useEffect(() => {
-    setIsAuthenticated(getIsAuthenticated())
-    const sync = () => setIsAuthenticated(getIsAuthenticated())
-    window.addEventListener('authChange', sync)
-    return () => window.removeEventListener('authChange', sync)
-  }, [])
+    setIsAuthenticated(getAuth());
+    const sync = () => setIsAuthenticated(getAuth());
+    window.addEventListener('authChange', sync);
+    return () => window.removeEventListener('authChange', sync);
+  }, []);
 
   const handleLogout = () => {
-    localStorage.removeItem('authToken')
-    localStorage.removeItem('isAuthenticated')
-    localStorage.removeItem('userName')
-    localStorage.removeItem('userRole')
-    localStorage.removeItem('userId')
-    window.dispatchEvent(new Event('authChange'))
-    navigate('/login')
-  }
-  // ─────────────────────────────────────────────────────────────────────────
-
-  const heroRef = useRef<HTMLElement>(null);
-  const { scrollYProgress } = useScroll({ target: heroRef, offset: ['start start', 'end start'] });
-  const heroImgY    = useTransform(scrollYProgress, [0, 1], ['0%', '20%']);
-  const heroTextY   = useTransform(scrollYProgress, [0, 1], ['0%', '30%']);
-  const heroOpacity = useTransform(scrollYProgress, [0, 0.65], [1, 0]);
+    ['authToken', 'isAuthenticated', 'userName', 'userRole', 'userId'].forEach(k => localStorage.removeItem(k));
+    window.dispatchEvent(new Event('authChange'));
+    navigate('/login');
+  };
 
   useEffect(() => {
-    const fn = () => setScrolled(window.scrollY > 40);
-    window.addEventListener('scroll', fn);
+    const fn = () => setScrolled(window.scrollY > 20);
+    window.addEventListener('scroll', fn, { passive: true });
     return () => window.removeEventListener('scroll', fn);
   }, []);
 
-  const scrollTop = () => window.scrollTo({ top: 0, behavior: 'smooth' });
+  const heroRef = useRef<HTMLDivElement>(null);
+  const { scrollYProgress } = useScroll({ target: heroRef, offset: ['start start', 'end start'] });
+  const imgY = useTransform(scrollYProgress, [0, 1], ['0%', '25%']);
+  const txtY = useTransform(scrollYProgress, [0, 1], ['0%', '15%']);
 
   return (
-    <div style={{ fontFamily: PP, background: '#0e0c0a', minHeight: '100vh', color: '#f0ede8' }}>
+    <div style={{ fontFamily: PP, background: '#0a0806', color: '#ede9e2', overflowX: 'hidden' }}>
+      <link href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,300;0,400;0,500;0,600;0,700;0,900;1,700;1,900&display=swap" rel="stylesheet" />
 
-      <link
-        href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,700;1,800;1,900&display=swap"
-        rel="stylesheet"
-      />
-
-      <motion.nav
-        initial={{ y: -80, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ duration: 0.75, ease: [0.22, 1, 0.36, 1] }}
+      {/* ── NAV ── */}
+      <motion.header
+        initial={{ opacity: 0, y: -16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.6 }}
         style={{
-          position: 'fixed', top: 0, left: 0, right: 0, zIndex: 500,
-          padding: '0 6vw', height: 68,
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          background: scrolled ? 'rgba(14,12,10,0.93)' : 'transparent',
-          backdropFilter: scrolled ? 'blur(22px)' : 'none',
-          WebkitBackdropFilter: scrolled ? 'blur(22px)' : 'none',
-          borderBottom: scrolled ? '1px solid rgba(240,237,232,0.07)' : 'none',
-          transition: 'background 0.45s ease, border-bottom 0.45s ease',
-        }}
-      >
-        <button onClick={scrollTop} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-          <span style={{ fontFamily: PP, fontSize: 22, fontWeight: 900, color: '#f0ede8', letterSpacing: '-0.03em', lineHeight: 1 }}>
+          position: 'fixed', top: 0, left: 0, right: 0, zIndex: 900, height: 64,
+          background: scrolled ? 'rgba(10,8,6,0.9)' : 'transparent',
+          backdropFilter: scrolled ? 'blur(20px)' : 'none',
+          WebkitBackdropFilter: scrolled ? 'blur(20px)' : 'none',
+          borderBottom: scrolled ? '1px solid rgba(245,200,66,0.1)' : 'none',
+          transition: 'all 0.35s ease',
+          display: 'flex', alignItems: 'center',
+          padding: '0 40px', justifyContent: 'space-between',
+        }}>
+        <button
+          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 32, height: 32, borderRadius: 8, background: '#f5c842', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <span style={{ fontFamily: PP, fontSize: 12, fontWeight: 900, color: '#1a0a00', letterSpacing: '-0.04em' }}>TC</span>
+          </div>
+          <span style={{ fontFamily: PP, fontSize: 15, fontWeight: 800, color: '#ede9e2', letterSpacing: '-0.02em' }}>
             The <span style={{ color: '#f5c842' }}>Crunch</span>
           </span>
         </button>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          {[
-            { label: 'Home',  path: '/' },
-            { label: 'Menu',  path: '/usersmenu' },
-            { label: 'About', path: '/aboutthecrunch' },
-          ].map((item) => (
-            <motion.button
-              key={item.label}
-              whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
-              onClick={() => navigate(item.path)}
+        <nav style={{ display: 'flex', gap: 4 }}>
+          {[{ l: 'Home', p: '/' }, { l: 'Menu', p: '/usersmenu' }, { l: 'About', p: '/aboutthecrunch' }].map(({ l, p }) => (
+            <motion.button key={l} whileTap={{ scale: 0.96 }} onClick={() => navigate(p)}
               style={{
                 background: 'none', border: 'none', cursor: 'pointer',
-                fontFamily: PP, fontSize: 13.5, fontWeight: 500,
-                color: 'rgba(240,237,232,0.5)', padding: '7px 14px', borderRadius: 8,
-                transition: 'color 0.2s, background 0.2s',
+                fontFamily: PP, fontSize: 13, fontWeight: 500,
+                color: p === '/aboutthecrunch' ? '#f5c842' : 'rgba(237,233,226,0.5)',
+                padding: '6px 14px', borderRadius: 8, transition: 'all 0.2s',
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = '#f0ede8'; e.currentTarget.style.background = 'rgba(240,237,232,0.07)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(240,237,232,0.5)'; e.currentTarget.style.background = 'transparent'; }}
-            >
-              {item.label}
-            </motion.button>
+              onMouseEnter={e => { e.currentTarget.style.color = '#ede9e2'; e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; }}
+              onMouseLeave={e => { e.currentTarget.style.color = p === '/aboutthecrunch' ? '#f5c842' : 'rgba(237,233,226,0.5)'; e.currentTarget.style.background = 'transparent'; }}
+            >{l}</motion.button>
           ))}
+        </nav>
 
-          <div style={{ width: 1, height: 16, background: 'rgba(240,237,232,0.12)', margin: '0 8px' }} />
-
-          {/* ── Auth-aware buttons ── */}
+        <div style={{ display: 'flex', gap: 8 }}>
           {isAuthenticated ? (
-            <motion.button
-              whileHover={{ scale: 1.02, backgroundColor: '#e6b800' }}
-              whileTap={{ scale: 0.97 }}
-              onClick={handleLogout}
-              style={{ background: '#f5c842', border: 'none', borderRadius: 9, padding: '9px 22px', fontSize: 13, fontWeight: 700, color: '#111', cursor: 'pointer', fontFamily: PP, transition: 'background 0.2s' }}
-            >
+            <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} onClick={handleLogout}
+              style={{ background: '#f5c842', border: 'none', borderRadius: 8, padding: '8px 20px', fontSize: 12.5, fontWeight: 700, color: '#1a0a00', cursor: 'pointer', fontFamily: PP }}>
               Log Out
             </motion.button>
           ) : (
             <>
-              <motion.button
-                whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
-                onClick={() => navigate('/login')}
-                style={{ background: 'none', border: '1px solid rgba(240,237,232,0.18)', borderRadius: 9, padding: '8px 18px', fontSize: 13, fontWeight: 600, color: '#f0ede8', cursor: 'pointer', fontFamily: PP, letterSpacing: '0.02em', transition: 'background 0.2s', marginRight: 6 }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(240,237,232,0.08)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
-              >
+              <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} onClick={() => navigate('/login')}
+                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: '8px 18px', fontSize: 12.5, fontWeight: 500, color: '#ede9e2', cursor: 'pointer', fontFamily: PP }}>
                 Log In
               </motion.button>
-
-              <motion.button
-                whileHover={{ scale: 1.03, backgroundColor: '#e6b800' }} whileTap={{ scale: 0.97 }}
-                onClick={() => navigate('/login?tab=signup')}
-                style={{ background: '#f5c842', border: 'none', borderRadius: 9, padding: '9px 22px', fontSize: 13, fontWeight: 700, color: '#111', cursor: 'pointer', fontFamily: PP, letterSpacing: '0.02em', transition: 'background 0.2s' }}
-              >
+              <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} onClick={() => navigate('/login?tab=signup')}
+                style={{ background: '#f5c842', border: 'none', borderRadius: 8, padding: '8px 20px', fontSize: 12.5, fontWeight: 700, color: '#1a0a00', cursor: 'pointer', fontFamily: PP }}>
                 Sign Up
               </motion.button>
             </>
           )}
         </div>
-      </motion.nav>
+      </motion.header>
 
-      <section ref={heroRef} style={{ position: 'relative', height: '100vh', overflow: 'hidden', display: 'flex', alignItems: 'flex-end' }}>
+      {/* ── HERO ── */}
+      <div ref={heroRef} style={{ height: '100vh', display: 'grid', gridTemplateColumns: '1fr 1fr', overflow: 'hidden', position: 'relative' }}>
+        <div style={{
+          background: '#0a0806',
+          display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
+          padding: '0 56px 88px', position: 'relative', zIndex: 2,
+        }}>
+          <div style={{ position: 'absolute', right: 0, top: '15%', bottom: '15%', width: 1, background: 'linear-gradient(to bottom, transparent, rgba(245,200,66,0.28), transparent)' }} />
 
-        <motion.div
-          style={{ position: 'absolute', inset: '-12%', y: heroImgY }}
-          initial={{ scale: 1.18, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ duration: 1.8, ease: [0.22, 1, 0.36, 1] }}
-        >
-          <img
-            src="https://shorturl.at/01YLe"
-            alt="Crispy fried chicken"
-            style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center' }}
-          />
-          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(8,6,4,0.97) 0%, rgba(8,6,4,0.52) 45%, rgba(8,6,4,0.08) 100%)' }} />
-          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(75deg, rgba(8,6,4,0.65) 0%, transparent 55%)' }} />
-        </motion.div>
+          <motion.div style={{ y: txtY }}>
+            <motion.p initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3, duration: 0.6 }}
+              style={{ fontFamily: PP, fontSize: 10, fontWeight: 700, letterSpacing: '0.3em', textTransform: 'uppercase', color: '#f5c842', marginBottom: 24 }}>
+              Since 2021 — Quezon City, PH
+            </motion.p>
 
-        <div style={{ position: 'absolute', inset: 0, backgroundImage: "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E\")", pointerEvents: 'none', zIndex: 2 }} />
+            <motion.h1 initial={{ opacity: 0, y: 36 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45, duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
+              style={{ fontFamily: PP, fontWeight: 900, fontSize: 'clamp(48px, 6vw, 88px)', lineHeight: 0.9, letterSpacing: '-0.03em', color: '#ede9e2', margin: '0 0 28px' }}>
+              The<br />
+              <em style={{ color: '#f5c842', fontStyle: 'italic' }}>Crunch</em><br />
+              Fairview.
+            </motion.h1>
 
-        <motion.div style={{ position: 'relative', zIndex: 10, padding: '0 6vw 88px', maxWidth: 900, y: heroTextY, opacity: heroOpacity }}>
-          <motion.div
-            initial={{ opacity: 0, x: -24 }} animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.5, duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 12, marginBottom: 28 }}
-          >
-            <div style={{ width: 36, height: 1, background: '#f5c842' }} />
-            <span style={{ fontFamily: PP, fontSize: 11, fontWeight: 600, letterSpacing: '0.28em', textTransform: 'uppercase' as const, color: '#f5c842' }}>
-              Since 2021 · Quezon City
-            </span>
+            <motion.p initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.65, duration: 0.7 }}
+              style={{ fontFamily: PP, fontSize: 14, color: 'rgba(237,233,226,0.45)', lineHeight: 1.9, maxWidth: 340, fontWeight: 300, marginBottom: 40 }}>
+              One of the leading Boneless Fried Chicken brands in the Philippines. Serving deliciousness at 250+ branches nationwide.
+            </motion.p>
+
+            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.82, duration: 0.6 }}
+              style={{ display: 'flex', gap: 12 }}>
+              <motion.button whileHover={{ scale: 1.03, y: -2 }} whileTap={{ scale: 0.97 }} onClick={() => navigate('/usersmenu')}
+                style={{ background: '#f5c842', border: 'none', borderRadius: 10, padding: '13px 32px', fontSize: 13, fontWeight: 700, color: '#1a0a00', cursor: 'pointer', fontFamily: PP }}>
+                Order Now
+              </motion.button>
+              <motion.button whileHover={{ scale: 1.03, y: -2 }} whileTap={{ scale: 0.97 }}
+                onClick={() => document.getElementById('story')?.scrollIntoView({ behavior: 'smooth' })}
+                style={{ background: 'transparent', border: '1px solid rgba(237,233,226,0.15)', borderRadius: 10, padding: '13px 32px', fontSize: 13, fontWeight: 500, color: 'rgba(237,233,226,0.6)', cursor: 'pointer', fontFamily: PP }}>
+                Our Story
+              </motion.button>
+            </motion.div>
           </motion.div>
-
-          <motion.h1
-            initial={{ opacity: 0, y: 44 }} animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.62, duration: 1.0, ease: [0.22, 1, 0.36, 1] }}
-            style={{
-              fontFamily: PP,
-              fontSize: 'clamp(52px, 9vw, 108px)',
-              fontWeight: 900, color: '#f0ede8',
-              lineHeight: 0.95, margin: '0 0 34px',
-              letterSpacing: '-0.03em',
-            }}
-          >
-            The Crunch<br />
-            <em style={{ fontStyle: 'italic', color: '#f5c842' }}>Fairview.</em>
-          </motion.h1>
-
-          <motion.p
-            initial={{ opacity: 0, y: 28 }} animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.82, duration: 0.8 }}
-            style={{ fontFamily: PP, fontSize: 'clamp(15px, 1.8vw, 19px)', color: 'rgba(240,237,232,0.62)', lineHeight: 1.82, maxWidth: 540, fontWeight: 300, marginBottom: 48 }}
-          >
-            One of the leading Boneless Fried Chicken Brands in the Philippines.<br />
-            Serving Deliciousness at 200+ Branches Nationwide.
-          </motion.p>
-
-          <motion.div
-            initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 1.02, duration: 0.7 }}
-            style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}
-          >
-            <motion.button
-              whileHover={{ scale: 1.04, backgroundColor: '#e6b800' }} whileTap={{ scale: 0.97 }}
-              onClick={() => navigate('/usersmenu')}
-              style={{ background: '#f5c842', color: '#111', border: 'none', borderRadius: 12, padding: '15px 38px', fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: PP, letterSpacing: '0.02em', transition: 'background 0.2s' }}
-            >
-              Explore Menu
-            </motion.button>
-            <motion.button
-              whileHover={{ scale: 1.04, borderColor: 'rgba(240,237,232,0.35)' }} whileTap={{ scale: 0.97 }}
-              onClick={() => document.getElementById('about-vision')?.scrollIntoView({ behavior: 'smooth' })}
-              style={{ background: 'rgba(240,237,232,0.07)', color: '#f0ede8', border: '1px solid rgba(240,237,232,0.18)', borderRadius: 12, padding: '15px 38px', fontSize: 14, fontWeight: 500, cursor: 'pointer', fontFamily: PP, backdropFilter: 'blur(10px)', transition: 'all 0.2s' }}
-            >
-              Our Story
-            </motion.button>
-          </motion.div>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1.6 }}
-          style={{ position: 'absolute', bottom: 40, right: '6vw', zIndex: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}
-        >
-          <span style={{ fontFamily: PP, fontSize: 10, letterSpacing: '0.22em', textTransform: 'uppercase' as const, color: 'rgba(240,237,232,0.28)', writingMode: 'vertical-rl' }}>
-            Scroll
-          </span>
-          <motion.div
-            animate={{ y: [0, 12, 0] }}
-            transition={{ repeat: Infinity, duration: 2.0, ease: 'easeInOut' }}
-            style={{ width: 1, height: 60, background: 'linear-gradient(to bottom, rgba(245,200,66,0.55), transparent)' }}
-          />
-        </motion.div>
-      </section>
-
-      <div style={{ background: '#f5c842', padding: '32px 6vw', position: 'relative', zIndex: 2 }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)' }}>
-          {stats.map((s, i) => (
-            <Reveal key={s.label} custom={i} variants={fadeUp}>
-              <div style={{ textAlign: 'center', padding: '0 28px', borderRight: i < stats.length - 1 ? '1px solid rgba(17,17,17,0.14)' : 'none' }}>
-                <div style={{ fontFamily: PP, fontSize: 'clamp(30px, 3.8vw, 46px)', fontWeight: 900, color: '#111', lineHeight: 1 }}>
-                  {s.value}
-                </div>
-                <div style={{ fontFamily: PP, fontSize: 10.5, fontWeight: 600, color: 'rgba(17,17,17,0.5)', letterSpacing: '0.13em', textTransform: 'uppercase' as const, marginTop: 7 }}>
-                  {s.label}
-                </div>
-              </div>
-            </Reveal>
-          ))}
         </div>
+
+        <div style={{ position: 'relative', overflow: 'hidden' }}>
+          <motion.div style={{ y: imgY, position: 'absolute', inset: '-15%' }}
+            initial={{ scale: 1.1, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ duration: 1.6, ease: [0.16, 1, 0.3, 1] }}>
+            <img src="https://shorturl.at/01YLe" alt="Crispy fried chicken"
+              style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center' }} />
+            <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to right, rgba(10,8,6,0.5) 0%, transparent 40%)' }} />
+            <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(10,8,6,0.65) 0%, transparent 50%)' }} />
+          </motion.div>
+
+          <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 1.1, duration: 0.6 }}
+            style={{ position: 'absolute', bottom: 72, left: 36, display: 'flex', gap: 10, zIndex: 10 }}>
+            {[{ v: '250+', l: 'Branches' }, { v: '7', l: 'Flavors' }, { v: '2021', l: 'Est.' }].map(s => (
+              <div key={s.l} style={{
+                background: 'rgba(10,8,6,0.75)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)',
+                border: '1px solid rgba(245,200,66,0.15)', borderRadius: 12, padding: '12px 18px', textAlign: 'center',
+              }}>
+                <div style={{ fontFamily: PP, fontSize: 20, fontWeight: 800, color: '#f5c842', lineHeight: 1 }}>{s.v}</div>
+                <div style={{ fontFamily: PP, fontSize: 9, fontWeight: 600, color: 'rgba(237,233,226,0.35)', letterSpacing: '0.12em', textTransform: 'uppercase', marginTop: 5 }}>{s.l}</div>
+              </div>
+            ))}
+          </motion.div>
+        </div>
+
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1.8 }}
+          style={{ position: 'absolute', bottom: 32, left: '50%', transform: 'translateX(-50%)', zIndex: 20 }}>
+          <motion.div animate={{ y: [0, 8, 0] }} transition={{ repeat: Infinity, duration: 2, ease: 'easeInOut' }}
+            style={{ width: 20, height: 32, border: '1.5px solid rgba(245,200,66,0.3)', borderRadius: 12, display: 'flex', justifyContent: 'center', paddingTop: 6 }}>
+            <motion.div animate={{ y: [0, 7, 0], opacity: [1, 0.2, 1] }} transition={{ repeat: Infinity, duration: 2, ease: 'easeInOut' }}
+              style={{ width: 3, height: 6, borderRadius: 3, background: '#f5c842' }} />
+          </motion.div>
+        </motion.div>
       </div>
 
-      <section id="about-vision" style={{ padding: '128px 6vw', background: '#0e0c0a', position: 'relative', overflow: 'hidden' }}>
-        <div style={{ position: 'absolute', top: '15%', left: '-8%', width: 640, height: 640, borderRadius: '50%', background: 'radial-gradient(circle, rgba(245,200,66,0.048) 0%, transparent 65%)', pointerEvents: 'none' }} />
+      {/* ── MARQUEE ── */}
+      <Marquee items={marqueeItems} />
 
-        <div style={{ maxWidth: 1200, margin: '0 auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 88, alignItems: 'center' }}>
-          <Reveal variants={fadeLeft}>
-            <div style={{ position: 'relative' }}>
-              <div style={{ position: 'absolute', inset: -18, borderRadius: 42, border: '1px solid rgba(245,200,66,0.1)', pointerEvents: 'none' }} />
-              <div style={{ borderRadius: 28, overflow: 'hidden', boxShadow: '0 48px 110px rgba(0,0,0,0.55)', position: 'relative' }}>
-                <img
-                  src="https://shorturl.at/v3t6W"
-                  alt="The Crunch chicken"
-                  style={{ width: '100%', height: '440px', objectFit: 'cover', display: 'block', filter: 'brightness(0.88) saturate(1.1)' }}
-                />
-                <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(8,6,4,0.42) 0%, transparent 55%)' }} />
+      {/* ── STORY ── */}
+      <section id="story" style={{ background: '#0e0c0a', padding: '112px 0' }}>
+        <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 48px', display: 'grid', gridTemplateColumns: '5fr 4fr', gap: 80, alignItems: 'center' }}>
+          <Reveal dir="left">
+            <div style={{ position: 'relative', paddingBottom: 52, paddingRight: 52 }}>
+              <div style={{ borderRadius: 20, overflow: 'hidden' }}>
+                <img src="https://shorturl.at/v3t6W" alt="The Crunch"
+                  style={{ width: '100%', height: 460, objectFit: 'cover', display: 'block' }} />
               </div>
-              <motion.div
-                animate={{ y: [-6, 6, -6] }}
-                transition={{ repeat: Infinity, duration: 4.0, ease: 'easeInOut' }}
-                style={{ position: 'absolute', bottom: -30, right: -22, background: '#f5c842', borderRadius: 22, padding: '20px 26px', boxShadow: '0 18px 52px rgba(245,200,66,0.28)', textAlign: 'center', minWidth: 108 }}
-              >
-                <div style={{ fontFamily: PP, fontSize: 44, fontWeight: 900, color: '#111', lineHeight: 1 }}>7</div>
-                <div style={{ fontFamily: PP, fontSize: 9, fontWeight: 700, color: 'rgba(17,17,17,0.55)', letterSpacing: '0.16em', textTransform: 'uppercase' as const, marginTop: 5 }}>Flavors</div>
+              <motion.div animate={{ y: [-4, 4, -4] }} transition={{ repeat: Infinity, duration: 4.5, ease: 'easeInOut' }}
+                style={{ position: 'absolute', bottom: 0, right: 0, background: '#f5c842', borderRadius: 18, padding: '22px 28px', minWidth: 132, textAlign: 'center' }}>
+                <div style={{ fontFamily: PP, fontSize: 48, fontWeight: 900, color: '#1a0a00', lineHeight: 1 }}>7</div>
+                <div style={{ fontFamily: PP, fontSize: 9, fontWeight: 700, color: 'rgba(26,10,0,0.5)', letterSpacing: '0.18em', textTransform: 'uppercase', marginTop: 6 }}>Signature Flavors</div>
               </motion.div>
-              <motion.div
-                animate={{ y: [4, -4, 4] }}
-                transition={{ repeat: Infinity, duration: 4.4, ease: 'easeInOut', delay: 0.6 }}
-                style={{ position: 'absolute', top: 26, left: -22, background: 'rgba(14,12,10,0.92)', backdropFilter: 'blur(14px)', border: '1px solid rgba(245,200,66,0.18)', borderRadius: 14, padding: '12px 20px', boxShadow: '0 14px 40px rgba(0,0,0,0.45)' }}
-              >
-                <div style={{ fontFamily: PP, fontSize: 11, fontWeight: 600, color: '#f5c842', letterSpacing: '0.1em', textTransform: 'uppercase' as const }}>⭐ Top Rated</div>
-                <div style={{ fontFamily: PP, fontSize: 12, color: 'rgba(240,237,232,0.48)', marginTop: 3, fontWeight: 300 }}>Fairview, QC</div>
+              <motion.div animate={{ y: [3, -3, 3] }} transition={{ repeat: Infinity, duration: 5, ease: 'easeInOut', delay: 0.6 }}
+                style={{ position: 'absolute', top: -16, left: 24, background: 'rgba(14,12,10,0.9)', border: '1px solid rgba(245,200,66,0.2)', borderRadius: 12, padding: '10px 18px', backdropFilter: 'blur(16px)' }}>
+                <div style={{ fontFamily: PP, fontSize: 10, fontWeight: 700, color: '#f5c842', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Est. 2021</div>
+                <div style={{ fontFamily: PP, fontSize: 11, color: 'rgba(237,233,226,0.35)', fontWeight: 300, marginTop: 2 }}>Fairview, QC</div>
               </motion.div>
             </div>
           </Reveal>
 
-          <Reveal variants={fadeRight}>
-            <Label>What We Are</Label>
-            <h2 style={{
-              fontFamily: PP,
-              fontSize: 'clamp(38px, 4.2vw, 56px)',
-              fontWeight: 800, lineHeight: 1.08,
-              color: '#f0ede8', letterSpacing: '-0.022em',
-              margin: '0 0 28px',
-            }}>
-              Our<br /><em style={{ color: '#f5c842', fontStyle: 'italic' }}>Vision</em>
-            </h2>
-            <p style={{ fontFamily: PP, fontSize: 16, color: 'rgba(240,237,232,0.52)', lineHeight: 1.92, marginBottom: 20, fontWeight: 300 }}>
-              Through a shared commitment to excellence we are dedicated to the uncompromising quality of our food and service while taking exceptional care of our guests and staff.
-            </p>
-            <p style={{ fontFamily: PP, fontSize: 16, color: 'rgba(240,237,232,0.52)', lineHeight: 1.92, fontWeight: 300, marginBottom: 40 }}>
-              We will continuously strive to surpass our own accomplishments and be recognized as one of the most progressive and sustainable businesses in the country with more than 250 branches by 2024.
-            </p>
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              {['Premium Chicken', 'Bold Sauces', 'Fast Service'].map((tag) => (
-                <span key={tag} style={{ fontFamily: PP, fontSize: 12, fontWeight: 600, padding: '6px 16px', borderRadius: 20, background: 'rgba(245,200,66,0.09)', border: '1px solid rgba(245,200,66,0.2)', color: '#f5c842', letterSpacing: '0.04em' }}>
-                  {tag}
-                </span>
-              ))}
+          <Reveal dir="right">
+            <div>
+              <p style={{ fontFamily: PP, fontSize: 10, fontWeight: 700, letterSpacing: '0.28em', textTransform: 'uppercase', color: '#f5c842', margin: '0 0 14px' }}>Our Vision</p>
+              <h2 style={{ fontFamily: PP, fontWeight: 900, fontSize: 'clamp(32px, 3.5vw, 48px)', color: '#ede9e2', lineHeight: 1.1, letterSpacing: '-0.02em', margin: '0 0 28px' }}>
+                Excellence<br />in Every<br /><em style={{ color: '#f5c842' }}>Bite.</em>
+              </h2>
+              <div style={{ width: 40, height: 2, background: 'rgba(245,200,66,0.3)', marginBottom: 28 }} />
+              <p style={{ fontFamily: PP, fontSize: 14.5, color: 'rgba(237,233,226,0.45)', lineHeight: 1.95, fontWeight: 300, marginBottom: 16 }}>
+                Through a shared commitment to excellence we are dedicated to the uncompromising quality of our food and service while taking exceptional care of our guests and staff.
+              </p>
+              <p style={{ fontFamily: PP, fontSize: 14.5, color: 'rgba(237,233,226,0.45)', lineHeight: 1.95, fontWeight: 300, marginBottom: 40 }}>
+                We continuously strive to surpass our own accomplishments and be recognized as one of the most progressive and sustainable businesses in the country.
+              </p>
+              <div style={{ display: 'flex', gap: 36 }}>
+                {[{ v: '2021', l: 'Founded' }, { v: '250+', l: 'Locations' }].map(s => (
+                  <div key={s.l}>
+                    <div style={{ fontFamily: PP, fontSize: 32, fontWeight: 900, color: '#f5c842', lineHeight: 1 }}>{s.v}</div>
+                    <div style={{ fontFamily: PP, fontSize: 9, fontWeight: 600, color: 'rgba(237,233,226,0.28)', letterSpacing: '0.15em', textTransform: 'uppercase', marginTop: 8 }}>{s.l}</div>
+                  </div>
+                ))}
+              </div>
             </div>
           </Reveal>
         </div>
       </section>
 
-      <section style={{ background: '#151210', padding: '128px 6vw', position: 'relative', overflow: 'hidden' }}>
-        <div style={{ position: 'absolute', top: -100, right: -100, width: 520, height: 520, borderRadius: '50%', background: 'radial-gradient(circle, rgba(245,200,66,0.055) 0%, transparent 65%)', pointerEvents: 'none' }} />
-        <div style={{ position: 'absolute', bottom: -120, left: '18%', width: 440, height: 440, borderRadius: '50%', background: 'radial-gradient(circle, rgba(245,200,66,0.038) 0%, transparent 65%)', pointerEvents: 'none' }} />
-
-        <div style={{ maxWidth: 1200, margin: '0 auto' }}>
+      {/* ── MISSION ── */}
+      <section style={{ background: '#080604', padding: '100px 0', position: 'relative', overflow: 'hidden' }}>
+        <div style={{
+          position: 'absolute', inset: 0, pointerEvents: 'none',
+          backgroundImage: 'linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px)',
+          backgroundSize: '72px 72px',
+        }} />
+        <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 48px', position: 'relative' }}>
           <Reveal>
-            <Label>Our Mission</Label>
+            <p style={{ fontFamily: PP, fontSize: 10, fontWeight: 700, letterSpacing: '0.28em', textTransform: 'uppercase', color: '#f5c842', marginBottom: 40 }}>Our Mission</p>
           </Reveal>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 88, alignItems: 'center', marginTop: 48 }}>
-            <Reveal variants={fadeLeft}>
-              <h2 style={{
-                fontFamily: PP,
-                fontSize: 'clamp(42px, 5.2vw, 72px)',
-                fontWeight: 900, color: '#f0ede8',
-                lineHeight: 1.03, letterSpacing: '-0.028em', margin: 0,
-              }}>
-                Flavor for
-                <em style={{ color: '#f5c842', display: 'block', fontStyle: 'italic' }}>Everyone,</em>
-                Every Day.
-              </h2>
-            </Reveal>
-
-            <Reveal variants={fadeRight}>
-              <p style={{ fontFamily: PP, fontSize: 17, color: 'rgba(240,237,232,0.55)', lineHeight: 1.92, fontWeight: 300, marginBottom: 38 }}>
+          <Reveal delay={0.05}>
+            <h2 style={{ fontFamily: PP, fontSize: 'clamp(52px, 8.5vw, 120px)', fontWeight: 900, color: '#ede9e2', lineHeight: 0.9, letterSpacing: '-0.04em', margin: '0 0 14px' }}>Flavor</h2>
+          </Reveal>
+          <Reveal delay={0.1}>
+            <h2 style={{ fontFamily: PP, fontSize: 'clamp(52px, 8.5vw, 120px)', fontWeight: 900, fontStyle: 'italic', color: '#f5c842', lineHeight: 0.9, letterSpacing: '-0.04em', margin: '0 0 14px', paddingLeft: '6vw' }}>for Everyone,</h2>
+          </Reveal>
+          <Reveal delay={0.14}>
+            <h2 style={{ fontFamily: PP, fontSize: 'clamp(52px, 8.5vw, 120px)', fontWeight: 900, color: '#ede9e2', lineHeight: 0.9, letterSpacing: '-0.04em', margin: '0 0 64px' }}>Every Day.</h2>
+          </Reveal>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 72, alignItems: 'end' }}>
+            <Reveal dir="left" delay={0.16}>
+              <p style={{ fontFamily: PP, fontSize: 16, color: 'rgba(237,233,226,0.42)', lineHeight: 1.95, fontWeight: 300, margin: 0 }}>
                 To serve more people with a unique style of high quality boneless fried chicken, and to help Filipinos start a profitable and easy to manage business.
               </p>
-              <div style={{ height: 2, width: 72, background: '#f5c842', borderRadius: 2, marginBottom: 38 }} />
-              <motion.button
-                whileHover={{ scale: 1.04, backgroundColor: '#e6b800' }} whileTap={{ scale: 0.97 }}
-                onClick={() => navigate('/usersmenu')}
-                style={{ background: '#f5c842', color: '#111', border: 'none', borderRadius: 12, padding: '15px 36px', fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: PP, letterSpacing: '0.02em', transition: 'background 0.2s' }}
-              >
-                See the Menu
-              </motion.button>
+            </Reveal>
+            <Reveal dir="right" delay={0.2}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 20 }}>
+                <div style={{ width: '100%', height: 1, background: 'rgba(245,200,66,0.15)' }} />
+                <motion.button whileHover={{ scale: 1.03, y: -2 }} whileTap={{ scale: 0.97 }} onClick={() => navigate('/usersmenu')}
+                  style={{ background: '#f5c842', border: 'none', borderRadius: 10, padding: '14px 40px', fontSize: 13.5, fontWeight: 700, color: '#1a0a00', cursor: 'pointer', fontFamily: PP }}>
+                  See the Menu
+                </motion.button>
+              </div>
             </Reveal>
           </div>
         </div>
       </section>
 
-      <section style={{ padding: '128px 6vw', background: '#0e0c0a' }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto' }}>
+      {/* ── PERKS ── */}
+      <section style={{ background: '#0e0c0a', padding: '96px 0' }}>
+        <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 48px' }}>
           <Reveal>
-            <div style={{ marginBottom: 76, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: 28 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 56, gap: 20 }}>
               <div>
-                <Label>Why The Crunch</Label>
-                <h2 style={{
-                  fontFamily: PP,
-                  fontSize: 'clamp(36px, 4.2vw, 54px)',
-                  fontWeight: 800, color: '#f0ede8',
-                  margin: '4px 0 0', letterSpacing: '-0.022em',
-                }}>
-                  What Sets<br /><em style={{ color: '#f5c842', fontStyle: 'italic' }}>Us Apart</em>
-                </h2>
+                <p style={{ fontFamily: PP, fontSize: 10, fontWeight: 700, letterSpacing: '0.28em', textTransform: 'uppercase', color: '#f5c842', margin: '0 0 12px' }}>Why The Crunch</p>
+                <h2 style={{ fontFamily: PP, fontSize: 'clamp(30px, 3.5vw, 48px)', fontWeight: 900, color: '#ede9e2', letterSpacing: '-0.02em', margin: 0 }}>What Sets Us Apart</h2>
               </div>
-              <p style={{ fontFamily: PP, fontSize: 15, color: 'rgba(240,237,232,0.38)', maxWidth: 300, lineHeight: 1.78, fontWeight: 300 }}>
-                Six reasons why The Crunch has become the go-to chicken brand for Filipinos everywhere.
+              <p style={{ fontFamily: PP, fontSize: 13.5, color: 'rgba(237,233,226,0.28)', maxWidth: 260, lineHeight: 1.8, fontWeight: 300, margin: 0 }}>
+                Six reasons why The Crunch has become the go-to chicken brand for Filipinos.
               </p>
             </div>
           </Reveal>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
             {perks.map((perk, i) => (
-              <Reveal key={perk.title} custom={i} variants={fadeUp}>
-                <motion.div
-                  whileHover={{ y: -8, borderColor: 'rgba(245,200,66,0.28)' }}
+              <Reveal key={perk.num} delay={i * 0.06}>
+                <motion.div whileHover={{ background: 'rgba(245,200,66,0.03)' }}
                   style={{
-                    background: '#151210', borderRadius: 24, padding: '40px 32px',
-                    border: '1px solid rgba(240,237,232,0.07)',
-                    transition: 'border-color 0.3s',
-                    height: '100%', boxSizing: 'border-box' as const,
-                    position: 'relative', overflow: 'hidden',
-                  }}
-                >
-                  <div style={{ position: 'absolute', top: 0, left: 32, right: 32, height: 2, background: 'linear-gradient(90deg, transparent, rgba(245,200,66,0.28), transparent)', borderRadius: 2 }} />
-                  <div style={{ fontSize: 30, marginBottom: 20, lineHeight: 1 }}></div>
-                  <h3 style={{ fontFamily: PP, fontSize: 16, fontWeight: 700, color: '#f0ede8', marginBottom: 10, letterSpacing: '-0.01em' }}>{perk.title}</h3>
-                  <p style={{ fontFamily: PP, fontSize: 13.5, color: 'rgba(240,237,232,0.4)', lineHeight: 1.78, fontWeight: 300, margin: 0 }}>{perk.desc}</p>
+                    padding: '32px 36px',
+                    borderTop: '1px solid rgba(255,255,255,0.06)',
+                    borderRight: i % 2 === 0 ? '1px solid rgba(255,255,255,0.06)' : 'none',
+                    display: 'flex', gap: 24, alignItems: 'flex-start',
+                    transition: 'background 0.2s',
+                  }}>
+                  <span style={{ fontFamily: PP, fontSize: 10, fontWeight: 700, color: '#f5c842', letterSpacing: '0.06em', minWidth: 26, marginTop: 2 }}>{perk.num}</span>
+                  <div>
+                    <h3 style={{ fontFamily: PP, fontSize: 15, fontWeight: 700, color: '#ede9e2', margin: '0 0 8px' }}>{perk.title}</h3>
+                    <p style={{ fontFamily: PP, fontSize: 13, color: 'rgba(237,233,226,0.35)', lineHeight: 1.8, fontWeight: 300, margin: 0 }}>{perk.desc}</p>
+                  </div>
                 </motion.div>
               </Reveal>
             ))}
+            <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', borderRight: '1px solid rgba(255,255,255,0.06)' }} />
+            <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }} />
           </div>
         </div>
       </section>
 
-      <section style={{ margin: '0 4vw 108px', borderRadius: 36, overflow: 'hidden', position: 'relative', minHeight: 440, display: 'flex', alignItems: 'center' }}>
-        <img
-          src="https://shorturl.at/mWMOx"
-          alt="Chicken feast"
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', filter: 'brightness(0.52) saturate(1.08)' }}
-        />
-        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to right, rgba(8,6,4,0.9) 0%, rgba(8,6,4,0.6) 52%, rgba(8,6,4,0.12) 100%)' }} />
-        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(8,6,4,0.48) 0%, transparent 60%)' }} />
-        <div style={{ position: 'absolute', right: '9%', top: '50%', transform: 'translateY(-50%)', width: 330, height: 330, borderRadius: '50%', border: '1px solid rgba(245,200,66,0.1)', pointerEvents: 'none' }} />
-        <div style={{ position: 'absolute', right: '6.5%', top: '50%', transform: 'translateY(-50%)', width: 440, height: 440, borderRadius: '50%', border: '1px solid rgba(245,200,66,0.055)', pointerEvents: 'none' }} />
-
-        <div style={{ position: 'relative', zIndex: 10, padding: '64px 76px', maxWidth: 600 }}>
+      {/* ── CTA ── */}
+      <section style={{ position: 'relative', height: '85vh', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ position: 'absolute', inset: 0 }}>
+          <img src="https://shorturl.at/mWMOx" alt="Chicken feast"
+            style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', filter: 'brightness(0.35) saturate(1.1)' }} />
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(10,8,6,0.5)' }} />
+        </div>
+        <div style={{ position: 'relative', zIndex: 10, textAlign: 'center', padding: '0 40px', maxWidth: 800 }}>
           <Reveal>
-            <Label>Now Serving</Label>
-            <h2 style={{
-              fontFamily: PP,
-              fontSize: 'clamp(36px, 4.8vw, 58px)',
-              fontWeight: 900, color: '#f0ede8',
-              lineHeight: 1.04, marginBottom: 22, letterSpacing: '-0.022em',
-            }}>
-              Ready to taste<br />
-              <em style={{ color: '#f5c842', fontStyle: 'italic' }}>The Crunch?</em>
+            <p style={{ fontFamily: PP, fontSize: 10, fontWeight: 700, letterSpacing: '0.28em', textTransform: 'uppercase', color: '#f5c842', marginBottom: 24 }}>Now Serving</p>
+            <h2 style={{ fontFamily: PP, fontSize: 'clamp(44px, 7vw, 96px)', fontWeight: 900, color: '#ede9e2', lineHeight: 0.9, letterSpacing: '-0.035em', margin: '0 0 28px' }}>
+              Ready to taste<br /><em style={{ color: '#f5c842' }}>The Crunch?</em>
             </h2>
-            <p style={{ fontFamily: PP, fontSize: 16, color: 'rgba(240,237,232,0.62)', marginBottom: 42, fontWeight: 300, lineHeight: 1.82, maxWidth: 430 }}>
+            <p style={{ fontFamily: PP, fontSize: 15.5, color: 'rgba(237,233,226,0.5)', fontWeight: 300, lineHeight: 1.85, maxWidth: 440, margin: '0 auto 44px' }}>
               Visit us today and experience the crispiest chicken in town. Dine in, takeout, or order for your whole crew.
             </p>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-              <motion.button
-                whileHover={{ scale: 1.04, backgroundColor: '#e6b800' }} whileTap={{ scale: 0.97 }}
-                onClick={() => navigate('/usersmenu')}
-                style={{ background: '#f5c842', color: '#111', border: 'none', borderRadius: 12, padding: '15px 40px', fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: PP, letterSpacing: '0.03em', transition: 'background 0.2s' }}
-              >
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
+              <motion.button whileHover={{ scale: 1.04, y: -2 }} whileTap={{ scale: 0.97 }} onClick={() => navigate('/usersmenu')}
+                style={{ background: '#f5c842', color: '#1a0a00', border: 'none', borderRadius: 10, padding: '15px 44px', fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: PP }}>
                 Order Now
               </motion.button>
-              <motion.button
-                whileHover={{ scale: 1.04, borderColor: 'rgba(240,237,232,0.38)' }} whileTap={{ scale: 0.97 }}
-                onClick={() => navigate('/')}
-                style={{ background: 'rgba(240,237,232,0.07)', color: '#f0ede8', border: '1.5px solid rgba(240,237,232,0.2)', borderRadius: 12, padding: '15px 40px', fontSize: 14, fontWeight: 500, cursor: 'pointer', fontFamily: PP, backdropFilter: 'blur(10px)', transition: 'all 0.2s' }}
-              >
-                Learn More
+              <motion.button whileHover={{ scale: 1.04, y: -2 }} whileTap={{ scale: 0.97 }} onClick={() => navigate('/')}
+                style={{ background: 'rgba(255,255,255,0.07)', backdropFilter: 'blur(12px)', color: '#ede9e2', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, padding: '15px 44px', fontSize: 14, fontWeight: 500, cursor: 'pointer', fontFamily: PP }}>
+                Back to Home
               </motion.button>
             </div>
           </Reveal>
         </div>
       </section>
 
-      <footer style={{ borderTop: '1px solid rgba(240,237,232,0.07)', padding: '56px 6vw 42px', position: 'relative', zIndex: 1 }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 36, marginBottom: 44 }}>
-          <div>
-            <button onClick={scrollTop} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'block', marginBottom: 12 }}>
-              <span style={{ fontFamily: PP, fontSize: 20, fontWeight: 900, color: '#f0ede8', letterSpacing: '-0.03em' }}>
-                The <span style={{ color: '#f5c842' }}>Crunch</span>
-              </span>
-            </button>
-            <p style={{ fontFamily: PP, fontSize: 13, color: 'rgba(240,237,232,0.28)', margin: 0, lineHeight: 1.68, maxWidth: 220, fontWeight: 300 }}>
-              Crispy, saucy, always fresh.<br />Fairview, Dahlia, Quezon City.
-            </p>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 12 }}>
-            <span style={{ fontFamily: PP, fontSize: 10, fontWeight: 700, color: 'rgba(240,237,232,0.18)', letterSpacing: '0.14em', textTransform: 'uppercase' as const }}>
-              Follow Us
-            </span>
-            <div style={{ display: 'flex', gap: 28 }}>
+      {/* ── FOOTER ── */}
+      <footer style={{ background: '#080604', borderTop: '1px solid rgba(255,255,255,0.05)', padding: '60px 48px 36px' }}>
+        <div style={{ maxWidth: 1200, margin: '0 auto' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 48, marginBottom: 52 }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+                <div style={{ width: 34, height: 34, borderRadius: 9, background: '#f5c842', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <span style={{ fontFamily: PP, fontSize: 13, fontWeight: 900, color: '#1a0a00', letterSpacing: '-0.04em' }}>TC</span>
+                </div>
+                <span style={{ fontFamily: PP, fontSize: 16, fontWeight: 800, color: '#ede9e2' }}>
+                  The <span style={{ color: '#f5c842' }}>Crunch</span>
+                </span>
+              </div>
+              <p style={{ fontFamily: PP, fontSize: 13, color: 'rgba(237,233,226,0.25)', lineHeight: 1.85, maxWidth: 240, fontWeight: 300, margin: 0 }}>
+                Crispy, saucy, always fresh.<br />Fairview, Dahlia, Quezon City.
+              </p>
+            </div>
+            <div>
+              <p style={{ fontFamily: PP, fontSize: 9, fontWeight: 700, color: 'rgba(237,233,226,0.15)', letterSpacing: '0.2em', textTransform: 'uppercase', marginBottom: 16 }}>Navigate</p>
+              {[{ l: 'Home', p: '/' }, { l: 'Menu', p: '/usersmenu' }, { l: 'About', p: '/aboutthecrunch' }].map(({ l, p }) => (
+                <motion.button key={l} whileHover={{ x: 3 }} onClick={() => navigate(p)}
+                  style={{ display: 'block', background: 'none', border: 'none', cursor: 'pointer', fontFamily: PP, fontSize: 13.5, fontWeight: 400, color: 'rgba(237,233,226,0.32)', padding: '5px 0', textAlign: 'left', transition: 'color 0.2s' }}
+                  onMouseEnter={e => { e.currentTarget.style.color = '#f5c842'; }}
+                  onMouseLeave={e => { e.currentTarget.style.color = 'rgba(237,233,226,0.32)'; }}
+                >{l}</motion.button>
+              ))}
+            </div>
+            <div>
+              <p style={{ fontFamily: PP, fontSize: 9, fontWeight: 700, color: 'rgba(237,233,226,0.15)', letterSpacing: '0.2em', textTransform: 'uppercase', marginBottom: 16 }}>Follow</p>
               {[
-                { label: 'Instagram', href: 'https://www.instagram.com/thecrunchfairview' },
-                { label: 'Facebook',  href: 'https://www.facebook.com/thecrunchfairview' },
-              ].map((s) => (
-                <a
-                  key={s.label} href={s.href} target="_blank" rel="noopener noreferrer"
-                  style={{ fontFamily: PP, fontSize: 14, fontWeight: 500, color: 'rgba(240,237,232,0.42)', textDecoration: 'none', transition: 'color 0.2s' }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = '#f5c842'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(240,237,232,0.42)'; }}
-                >
-                  {s.label}
-                </a>
+                { l: 'Instagram', h: 'https://www.instagram.com/thecrunchfairview' },
+                { l: 'Facebook', h: 'https://www.facebook.com/thecrunchfairview' },
+              ].map(s => (
+                <motion.a key={s.l} href={s.h} target="_blank" rel="noopener noreferrer"
+                  whileHover={{ x: 3 }}
+                  style={{ display: 'block', fontFamily: PP, fontSize: 13.5, fontWeight: 400, color: 'rgba(237,233,226,0.32)', textDecoration: 'none', padding: '5px 0', transition: 'color 0.2s' }}
+                  onMouseEnter={e => { e.currentTarget.style.color = '#f5c842'; }}
+                  onMouseLeave={e => { e.currentTarget.style.color = 'rgba(237,233,226,0.32)'; }}
+                >{s.l}</motion.a>
               ))}
             </div>
           </div>
-        </div>
-
-        <div style={{ maxWidth: 1200, margin: '0 auto', paddingTop: 26, borderTop: '1px solid rgba(240,237,232,0.06)', textAlign: 'center' as const }}>
-          <span style={{ fontFamily: PP, fontSize: 12, color: 'rgba(240,237,232,0.15)', fontWeight: 300 }}>
-            © {new Date().getFullYear()} The Crunch Fairview Dahlia Quezon City · All rights reserved
-          </span>
+          <div style={{ borderTop: '1px solid rgba(255,255,255,0.04)', paddingTop: 24, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+            <span style={{ fontFamily: PP, fontSize: 11.5, color: 'rgba(237,233,226,0.1)', fontWeight: 300 }}>
+              © {new Date().getFullYear()} The Crunch Fairview Dahlia Quezon City · All rights reserved
+            </span>
+            <span style={{ fontFamily: PP, fontSize: 11.5, color: 'rgba(237,233,226,0.1)', fontWeight: 300 }}>Fairview, Dahlia, QC 1118</span>
+          </div>
         </div>
       </footer>
-
     </div>
   );
 }

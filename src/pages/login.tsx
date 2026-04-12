@@ -14,7 +14,6 @@ if (typeof document !== "undefined" && !document.getElementById("login-fonts")) 
   document.head.appendChild(link);
 }
 
-
 // ── Field component ───────────────────────────────────────────────────────────
 interface FieldProps {
   label: string;
@@ -32,7 +31,8 @@ function Field({ label, children, delay = 0, extra }: FieldProps) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
         <label style={{
           fontFamily: "'Poppins', sans-serif",
-          fontSize: 11, fontWeight: 500,
+          fontSize: 11,
+          fontWeight: 500,
           color: "rgba(255,255,255,0.4)",
           letterSpacing: "0.7px",
           textTransform: "uppercase",
@@ -56,7 +56,12 @@ export default function Login() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [formData, setFormData] = useState({ email: "", password: "", confirmPassword: "", name: "" });
+  const [formData, setFormData] = useState({
+    email: "",
+    password: "",
+    confirmPassword: "",
+    name: "",
+  });
 
   const cardRef = useRef<HTMLDivElement>(null);
   const [tilt, setTilt] = useState({ x: 0, y: 0 });
@@ -76,12 +81,18 @@ export default function Login() {
     const dy = (e.clientY - cy) / (rect.height / 2);
     setTilt({ x: dy * -5, y: dx * 5 });
   };
+
   const handleMouseLeave = () => setTilt({ x: 0, y: 0 });
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) =>
     setFormData({ ...formData, [e.target.name]: e.target.value });
 
-  const persistAuth = (data: { token: string; username: string; role: string; userId: number | string }) => {
+  const persistAuth = (data: {
+    token: string;
+    username: string;
+    role: string;
+    userId: number | string;
+  }) => {
     localStorage.setItem("authToken", data.token);
     localStorage.setItem("isAuthenticated", "true");
     localStorage.setItem("userName", data.username);
@@ -130,7 +141,10 @@ export default function Login() {
         persistAuth(data);
         navigate("/products");
       } catch (err: any) {
-        if (err.message?.toLowerCase().includes("login") || err.message?.toLowerCase().includes("credential")) {
+        if (
+          err.message?.toLowerCase().includes("login") ||
+          err.message?.toLowerCase().includes("credential")
+        ) {
           setError("");
           setIsLogin(true);
           setFormData({ email: formData.email, password: "", confirmPassword: "", name: "" });
@@ -151,14 +165,17 @@ export default function Login() {
     setShowConfirm(false);
   };
 
+  const YELLOW = "#F5C518";
+  const YELLOW_DARK = "#D4A800";
+
   const inputStyle: React.CSSProperties = {
     width: "100%",
-    background: "rgba(255,255,255,0.12)",
-    border: "1px solid rgba(255,255,255,0.22)",
-    borderRadius: 14,
+    background: "rgba(255,255,255,0.08)",
+    border: "1px solid rgba(255,255,255,0.14)",
+    borderRadius: 12,
     backdropFilter: "blur(12px)",
     WebkitBackdropFilter: "blur(12px)",
-    boxShadow: "0 2px 12px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.12)",
+    boxShadow: "0 2px 12px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.08)",
     padding: "13px 16px",
     color: "#fff",
     fontSize: 14,
@@ -168,47 +185,39 @@ export default function Login() {
     transition: "border-color 0.3s ease, background 0.3s ease, box-shadow 0.35s ease",
   };
 
-  // Brand yellow
-  const YELLOW = "#F5C518";
-  const YELLOW_DARK = "#D4A800";
-
   return (
     <>
       <style>{`
-        @keyframes gradientShift {
-          0%   { background-position: 0% 50%; }
-          50%  { background-position: 100% 50%; }
-          100% { background-position: 0% 50%; }
-        }
-        @keyframes orbFloat1 {
-          0%,100% { transform: translate(0,0) scale(1); }
-          50%      { transform: translate(20px,-25px) scale(1.06); }
-        }
-        @keyframes orbFloat2 {
-          0%,100% { transform: translate(0,0) scale(1); }
-          50%      { transform: translate(-18px,20px) scale(1.04); }
-        }
         @keyframes shimmer {
           0%   { background-position: -300px 0; }
           100% { background-position: 300px 0; }
         }
+
         .login-input:focus {
-          border-color: rgba(245,197,24,0.6) !important;
-          background: rgba(255,255,255,0.16) !important;
-          box-shadow: 0 0 0 3px rgba(245,197,24,0.12), inset 0 1px 0 rgba(255,255,255,0.18) !important;
+          border-color: rgba(245,197,24,0.55) !important;
+          background: rgba(255,255,255,0.12) !important;
+          box-shadow: 0 0 0 3px rgba(245,197,24,0.10), inset 0 1px 0 rgba(255,255,255,0.14) !important;
         }
-        .login-input::placeholder { color: rgba(255,255,255,0.2); }
+        .login-input::placeholder {
+          color: rgba(255,255,255,0.18);
+        }
+
         .tab-pill {
-          background: none; border: none; cursor: pointer;
+          background: none;
+          border: none;
+          cursor: pointer;
           font-family: 'Poppins', sans-serif;
-          font-size: 13px; font-weight: 500;
-          padding: 10px 24px; border-radius: 0;
+          font-size: 13px;
+          font-weight: 500;
+          padding: 10px 24px;
           position: relative;
           transition: color 0.3s ease;
         }
         .tab-pill::after {
           content: '';
-          position: absolute; bottom: -1px; left: 0; right: 0; height: 2px;
+          position: absolute;
+          bottom: -1px; left: 0; right: 0;
+          height: 2px;
           background: #F5C518;
           border-radius: 2px 2px 0 0;
           transform: scaleX(0);
@@ -216,45 +225,77 @@ export default function Login() {
         }
         .tab-pill.active  { color: #F5C518; font-weight: 600; }
         .tab-pill.active::after { transform: scaleX(1); }
-        .tab-pill.inactive { color: rgba(255,255,255,0.35); }
-        .tab-pill.inactive:hover { color: rgba(255,255,255,0.6); }
+        .tab-pill.inactive { color: rgba(255,255,255,0.32); }
+        .tab-pill.inactive:hover { color: rgba(255,255,255,0.55); }
+
         .submit-btn {
-          width: 100%; padding: 14px;
-          border-radius: 12px; border: none;
+          width: 100%;
+          padding: 14px;
+          border-radius: 12px;
+          border: none;
           font-family: 'Poppins', sans-serif;
-          font-weight: 700; font-size: 14px;
-          cursor: pointer; position: relative; overflow: hidden;
-          background: #F5C518; color: #0a0a0a;
-          transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.23,1,0.32,1), background 0.3s ease;
+          font-weight: 700;
+          font-size: 14px;
+          cursor: pointer;
+          position: relative;
+          overflow: hidden;
+          background: #F5C518;
+          color: #0a0a0a;
           letter-spacing: 0.2px;
+          transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.23,1,0.32,1), background 0.3s ease;
         }
-        .submit-btn:hover:not(:disabled) { background: #D4A800; transform: translateY(-1px); }
-        .submit-btn:active:not(:disabled) { transform: scale(0.985); }
-        .submit-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+        .submit-btn:hover:not(:disabled) {
+          background: #D4A800;
+          transform: translateY(-1px);
+        }
+        .submit-btn:active:not(:disabled) {
+          transform: scale(0.985);
+        }
+        .submit-btn:disabled {
+          opacity: 0.35;
+          cursor: not-allowed;
+        }
         .submit-btn::after {
           content: '';
-          position: absolute; inset: 0;
-          background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+          position: absolute;
+          inset: 0;
+          background: linear-gradient(90deg, transparent, rgba(255,255,255,0.28), transparent);
           background-size: 300px 100%;
           animation: shimmer 2.6s infinite;
         }
+
         .eye-btn {
-          position: absolute; right: 14px; top: 50%;
+          position: absolute;
+          right: 14px;
+          top: 50%;
           transform: translateY(-50%);
-          background: none; border: none; cursor: pointer;
-          color: rgba(255,255,255,0.28); display: flex;
-          align-items: center; padding: 0;
+          background: none;
+          border: none;
+          cursor: pointer;
+          color: rgba(255,255,255,0.25);
+          display: flex;
+          align-items: center;
+          padding: 0;
           transition: color 0.2s;
         }
         .eye-btn:hover { color: #F5C518; }
+
         @media (max-width: 480px) {
           .login-card { padding: 28px 20px 24px !important; }
         }
       `}</style>
 
-      <div style={{ minHeight: "100vh", position: "relative", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Poppins', sans-serif", overflow: "hidden" }}>
+      <div style={{
+        minHeight: "100vh",
+        position: "relative",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontFamily: "'Poppins', sans-serif",
+        overflow: "hidden",
+      }}>
 
-        {/* ── FULL SCREEN BACKGROUND IMAGE ── */}
+        {/* ── Background image ── */}
         <div style={{
           position: "absolute", inset: 0,
           backgroundImage: "url('https://shorturl.at/IyJkH')",
@@ -262,51 +303,60 @@ export default function Login() {
           backgroundPosition: "center",
           backgroundRepeat: "no-repeat",
         }} />
-        {/* Dark overlay */}
+
+        {/* ── Dark overlay ── */}
         <div style={{
           position: "absolute", inset: 0,
-          background: "linear-gradient(135deg, rgba(5,3,1,0.82) 0%, rgba(10,7,2,0.70) 50%, rgba(14,9,0,0.80) 100%)",
+          background: "linear-gradient(135deg, rgba(5,3,1,0.84) 0%, rgba(10,7,2,0.72) 50%, rgba(14,9,0,0.82) 100%)",
         }} />
-        {/* Warm bottom vignette */}
+
+        {/* ── Warm bottom vignette ── */}
         <div style={{
           position: "absolute", inset: 0,
-          background: "radial-gradient(ellipse at 50% 110%, rgba(212,134,10,0.22) 0%, transparent 55%)",
+          background: "radial-gradient(ellipse at 50% 110%, rgba(212,134,10,0.20) 0%, transparent 55%)",
           pointerEvents: "none",
         }} />
 
-        {/* ── LOGO TOP LEFT ── */}
+        {/* ── Logo top-left ── */}
         <motion.div
           initial={{ opacity: 0, y: -12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, ease: [0.23, 1, 0.32, 1] }}
-          style={{ position: "absolute", top: 32, left: 36, zIndex: 10, display: "inline-flex", alignItems: "center", gap: 10 }}
+          style={{
+            position: "absolute", top: 32, left: 36, zIndex: 10,
+            display: "inline-flex", alignItems: "center", gap: 10,
+          }}
         >
           <div style={{
             width: 30, height: 30, borderRadius: 8,
             background: "#F5C518",
             display: "flex", alignItems: "center", justifyContent: "center",
-            boxShadow: "0 4px 12px rgba(245,197,24,0.4)",
+            boxShadow: "0 4px 12px rgba(245,197,24,0.38)",
           }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0a0a0a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+              stroke="#0a0a0a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M3 11l19-9-9 19-2-8-8-2z" />
             </svg>
           </div>
-          <span style={{ color: "#fff", fontFamily: "'Poppins', sans-serif", fontWeight: 600, fontSize: 14, textShadow: "0 1px 8px rgba(0,0,0,0.6)" }}>
-            The Crunch Dahlia Fairview
+          <span style={{
+            color: "#fff",
+            fontFamily: "'Poppins', sans-serif",
+            fontWeight: 600, fontSize: 14,
+            textShadow: "0 1px 8px rgba(0,0,0,0.6)",
+          }}>
+            The Crunch Dahlia Fairview Branch
           </span>
         </motion.div>
 
-        {/* ── CARD WRAPPER ── */}
-        <div
-          style={{
-            position: "relative", zIndex: 5,
-            width: "100%", display: "flex",
-            alignItems: "center", justifyContent: "center",
-            padding: "100px 24px 40px",
-          }}
-        >
+        {/* ── Card wrapper ── */}
+        <div style={{
+          position: "relative", zIndex: 5,
+          width: "100%",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          padding: "100px 24px 40px",
+        }}>
 
-          {/* ── CARD ── */}
+          {/* ── Card ── */}
           <motion.div
             ref={cardRef}
             className="login-card"
@@ -319,31 +369,31 @@ export default function Login() {
               width: "100%",
               maxWidth: 420,
               background: "rgba(255,255,255,0.04)",
-              border: "1px solid rgba(255,255,255,0.22)",
+              border: "1px solid rgba(255,255,255,0.14)",
               borderRadius: 24,
               padding: "36px 36px 32px",
               backdropFilter: "blur(24px)",
               WebkitBackdropFilter: "blur(24px)",
-              boxShadow: "0 24px 80px rgba(0,0,0,0.6), 0 0 0 0.5px rgba(255,255,255,0.05) inset",
+              boxShadow: "0 24px 80px rgba(0,0,0,0.6), inset 0 0 0 0.5px rgba(255,255,255,0.05)",
               transform: `perspective(900px) rotateX(${tilt.x}deg) rotateY(${tilt.y}deg)`,
               transition: "transform 0.6s cubic-bezier(0.23, 1, 0.32, 1)",
               position: "relative",
               overflow: "hidden",
             }}
           >
-            {/* Card inner glow — yellow tint on top edge */}
+            {/* Inner top-edge glow */}
             <div style={{
               position: "absolute", top: 0, left: "20%", right: "20%", height: 1,
-              background: "linear-gradient(90deg, transparent, rgba(245,197,24,0.35), transparent)",
+              background: "linear-gradient(90deg, transparent, rgba(245,197,24,0.30), transparent)",
               pointerEvents: "none",
             }} />
 
-            {/* Heading */}
+            {/* ── Heading ── */}
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4, delay: 0.2 }}
-              style={{ marginBottom: 28 }}
+              style={{ marginBottom: 24 }}
             >
               <h1 style={{
                 fontFamily: "'Poppins', sans-serif",
@@ -353,55 +403,65 @@ export default function Login() {
               }}>
                 {isLogin ? "Welcome back" : "Create account"}
               </h1>
-              <p style={{ color: "rgba(255,255,255,0.3)", fontSize: 13, fontWeight: 300, margin: 0 }}>
+              <p style={{
+                color: "rgba(255,255,255,0.28)",
+                fontSize: 13, fontWeight: 300, margin: 0,
+              }}>
                 {isLogin ? "Sign in to your workspace" : "Get started with your team"}
               </p>
             </motion.div>
 
-            {/* Tab switcher */}
+            {/* ── Tab switcher ── */}
             <motion.div
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4, delay: 0.25 }}
               style={{
-                display: "inline-flex", gap: 0,
-                marginBottom: 28,
-                borderBottom: "1px solid rgba(255,255,255,0.1)",
+                display: "inline-flex",
+                marginBottom: 26,
+                borderBottom: "1px solid rgba(255,255,255,0.08)",
               }}
             >
-              <button className={`tab-pill ${isLogin ? "active" : "inactive"}`} onClick={() => switchTab(true)}>
+              <button
+                className={`tab-pill ${isLogin ? "active" : "inactive"}`}
+                onClick={() => switchTab(true)}
+              >
                 Sign In
               </button>
-              <button className={`tab-pill ${!isLogin ? "active" : "inactive"}`} onClick={() => switchTab(false)}>
+              <button
+                className={`tab-pill ${!isLogin ? "active" : "inactive"}`}
+                onClick={() => switchTab(false)}
+              >
                 Sign Up
               </button>
             </motion.div>
 
-            {/* Form */}
+            {/* ── Form ── */}
             <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 18 }}>
 
-              {/* Error */}
+              {/* ── Error message — clean text only, no box ── */}
               <AnimatePresence>
                 {error && (
-                  <motion.div
+                  <motion.p
                     key="error"
-                    initial={{ opacity: 0, y: -8, height: 0 }}
-                    animate={{ opacity: 1, y: 0, height: "auto" }}
-                    exit={{ opacity: 0, y: -8, height: 0 }}
-                    transition={{ duration: 0.25 }}
+                    initial={{ opacity: 0, y: -6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -6 }}
+                    transition={{ duration: 0.22 }}
                     style={{
-                      background: "rgba(239,68,68,0.1)",
-                      border: "1px solid rgba(239,68,68,0.28)",
-                      color: "#fca5a5", fontSize: 13,
+                      margin: 0,
+                      fontSize: 13,
                       fontFamily: "'Poppins', sans-serif",
+                      color: "#fca5a5",
+                      textAlign: "center",
                     }}
                   >
                     {error}
-                  </motion.div>
+                  </motion.p>
                 )}
               </AnimatePresence>
 
-              {/* Full name — sign up only */}
+              {/* ── Full name — sign up only ── */}
               <AnimatePresence>
                 {!isLogin && (
                   <motion.div
@@ -416,9 +476,13 @@ export default function Login() {
                       <input
                         className="login-input"
                         style={inputStyle}
-                        id="name" name="name" type="text"
-                        required={!isLogin} autoComplete="name"
-                        value={formData.name} onChange={handleChange}
+                        id="name"
+                        name="name"
+                        type="text"
+                        required={!isLogin}
+                        autoComplete="name"
+                        value={formData.name}
+                        onChange={handleChange}
                         placeholder="Your full name"
                       />
                     </Field>
@@ -426,31 +490,40 @@ export default function Login() {
                 )}
               </AnimatePresence>
 
-              {/* Email */}
+              {/* ── Email ── */}
               <Field label="Email Address" delay={0.3}>
                 <input
                   className="login-input"
                   style={inputStyle}
-                  id="email" name="email" type="email"
-                  required autoComplete="email"
-                  value={formData.email} onChange={handleChange}
+                  id="email"
+                  name="email"
+                  type="email"
+                  required
+                  autoComplete="email"
+                  value={formData.email}
+                  onChange={handleChange}
                   placeholder="you@example.com"
                 />
               </Field>
 
-              {/* Password */}
+              {/* ── Password ── */}
               <Field
                 label="Password"
                 delay={0.36}
                 extra={
                   isLogin ? (
-                    <a href="#" style={{
-                      fontSize: 11, color: "rgba(255,255,255,0.3)",
-                      textDecoration: "none", fontFamily: "'Poppins', sans-serif",
-                      letterSpacing: "0.3px", transition: "color 0.2s",
-                    }}
-                    onMouseEnter={e => (e.currentTarget.style.color = YELLOW)}
-                    onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.3)")}
+                    <a
+                      href="#"
+                      style={{
+                        fontSize: 11,
+                        color: "rgba(255,255,255,0.28)",
+                        textDecoration: "none",
+                        fontFamily: "'Poppins', sans-serif",
+                        letterSpacing: "0.3px",
+                        transition: "color 0.2s",
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.color = YELLOW)}
+                      onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.28)")}
                     >
                       Forgot password?
                     </a>
@@ -461,24 +534,35 @@ export default function Login() {
                   <input
                     className="login-input"
                     style={{ ...inputStyle, paddingRight: 44 }}
-                    id="password" name="password"
+                    id="password"
+                    name="password"
                     type={showPassword ? "text" : "password"}
                     autoComplete={isLogin ? "current-password" : "new-password"}
-                    required value={formData.password} onChange={handleChange}
+                    required
+                    value={formData.password}
+                    onChange={handleChange}
                     placeholder="••••••••"
                   />
-                  <button type="button" className="eye-btn" onClick={() => setShowPassword(!showPassword)}>
+                  <button
+                    type="button"
+                    className="eye-btn"
+                    onClick={() => setShowPassword(!showPassword)}
+                  >
                     {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
                   </button>
                 </div>
                 {!isLogin && (
-                  <p style={{ marginTop: 6, fontSize: 11, color: "rgba(255,255,255,0.2)", fontFamily: "'Poppins', sans-serif" }}>
+                  <p style={{
+                    marginTop: 6, fontSize: 11,
+                    color: "rgba(255,255,255,0.18)",
+                    fontFamily: "'Poppins', sans-serif",
+                  }}>
                     Min. 8 characters with letters and numbers.
                   </p>
                 )}
               </Field>
 
-              {/* Confirm password — sign up only */}
+              {/* ── Confirm password — sign up only ── */}
               <AnimatePresence>
                 {!isLogin && (
                   <motion.div
@@ -494,14 +578,20 @@ export default function Login() {
                         <input
                           className="login-input"
                           style={{ ...inputStyle, paddingRight: 44 }}
-                          id="confirmPassword" name="confirmPassword"
+                          id="confirmPassword"
+                          name="confirmPassword"
                           type={showConfirm ? "text" : "password"}
                           autoComplete="new-password"
                           required={!isLogin}
-                          value={formData.confirmPassword} onChange={handleChange}
+                          value={formData.confirmPassword}
+                          onChange={handleChange}
                           placeholder="••••••••"
                         />
-                        <button type="button" className="eye-btn" onClick={() => setShowConfirm(!showConfirm)}>
+                        <button
+                          type="button"
+                          className="eye-btn"
+                          onClick={() => setShowConfirm(!showConfirm)}
+                        >
                           {showConfirm ? <EyeOff size={15} /> : <Eye size={15} />}
                         </button>
                       </div>
@@ -510,27 +600,33 @@ export default function Login() {
                 )}
               </AnimatePresence>
 
-              {/* Submit */}
+              {/* ── Submit ── */}
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.4, delay: 0.42 }}
                 style={{ marginTop: 4 }}
               >
-                <button type="submit" className="submit-btn" disabled={isLoading}>
+                <button
+                  type="submit"
+                  className="submit-btn"
+                  disabled={isLoading}
+                >
                   {isLoading ? "Please wait…" : isLogin ? "Sign in" : "Create account"}
                 </button>
               </motion.div>
             </form>
 
-            {/* Switch link */}
+            {/* ── Switch link ── */}
             <motion.p
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.5 }}
               style={{
-                textAlign: "center", marginTop: 22,
-                fontSize: 13, color: "rgba(255,255,255,0.27)",
+                textAlign: "center",
+                marginTop: 22,
+                fontSize: 13,
+                color: "rgba(255,255,255,0.25)",
                 fontFamily: "'Poppins', sans-serif",
               }}
             >
@@ -539,11 +635,15 @@ export default function Login() {
                 type="button"
                 onClick={() => switchTab(!isLogin)}
                 style={{
-                  background: "none", border: "none",
-                  color: YELLOW, fontWeight: 600,
-                  cursor: "pointer", fontSize: 13,
+                  background: "none",
+                  border: "none",
+                  color: YELLOW,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  fontSize: 13,
                   fontFamily: "'Poppins', sans-serif",
-                  textDecoration: "underline", textUnderlineOffset: 3,
+                  textDecoration: "underline",
+                  textUnderlineOffset: 3,
                   transition: "color 0.2s",
                 }}
                 onMouseEnter={e => (e.currentTarget.style.color = YELLOW_DARK)}

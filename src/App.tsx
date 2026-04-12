@@ -134,7 +134,7 @@ export default function App() {
       />
       <Route
         path="/sales-reports"
-        element={protect(<SalesReports />, ["administrator"])}
+        element={protect(<SalesReports />, ["administrator", "cashier"])}
       />
       <Route
         path="/menu"
