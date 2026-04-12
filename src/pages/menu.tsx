@@ -42,6 +42,7 @@ interface OrderPayload {
   total: number;
   order_type: "dine-in" | "take-out" | "delivery";
   payment_method: "cash" | "e-payment";
+  cashierId: number | null;
 }
 
 interface OrderResponse {
@@ -539,6 +540,7 @@ export default function CashierView() {
     if (cart.length === 0 || isPlacingOrder) return;
     setIsPlacingOrder(true);
 
+    const cashierId = localStorage.getItem("userId");
     const total = cart.reduce((s, i) => s + i.price * i.quantity, 0);
     const payload: OrderPayload = {
       items: cart.map((i) => ({
@@ -551,6 +553,7 @@ export default function CashierView() {
       total,
       order_type: orderType,
       payment_method: paymentMethod,
+      cashierId: cashierId ? Number(cashierId) : null,
     };
 
     try {
