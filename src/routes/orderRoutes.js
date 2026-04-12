@@ -33,10 +33,14 @@ router.get("/", async (req, res) => {
       `SELECT o.Order_ID as id, o.Total_Amount as total, o.Status as status, o.Order_Date as date,
                     o.Order_Type as orderType, p.Payment_Type as paymentMethod,
                     oi.Product_ID as productId, oi.Quantity as quantity, oi.Subtotal as subtotal,
-                    m.Product_Name as productName, m.Price as price
+                    COALESCE(m.Product_Name, pr.name) as productName,
+                    COALESCE(m.Price, pr.price) as price,
+                    u.username as cashierName
              FROM orders o
              LEFT JOIN order_item oi ON o.Order_ID = oi.Order_ID
-             LEFT JOIN menu m ON m.Product_ID = oi.Product_ID
+             LEFT JOIN Menu m ON m.Product_ID = oi.Product_ID
+             LEFT JOIN products pr ON pr.id = oi.Product_ID
+             LEFT JOIN users u ON u.id = o.Cashier_ID
              LEFT JOIN (
                 SELECT p1.Order_ID, p1.Payment_Type
                 FROM payments p1
@@ -125,11 +129,14 @@ router.post("/", async (req, res) => {
       total,
       customerId,
       cashierId,
+      cashier_id,
       orderType,
       order_type,
       paymentMethod,
       payment_method,
     } = req.body;
+
+    const resolvedCashierId = cashierId ?? cashier_id ?? null;
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: "Order items are required" });
@@ -145,7 +152,7 @@ router.post("/", async (req, res) => {
 
     const [orderResult] = await conn.query(
       "INSERT INTO orders (Total_Amount, Customer_ID, Cashier_ID, Order_Type, Status) VALUES (?,?,?,?,?)",
-      [total, customerId || null, cashierId || null, finalOrderType, "Pending"],
+      [total, customerId || null, resolvedCashierId, finalOrderType, "Pending"],
     );
     const orderId = orderResult.insertId;
 
@@ -214,14 +221,26 @@ router.post("/", async (req, res) => {
 
     await conn.query(
       "INSERT INTO Payments (Order_ID, Payment_Type, Payment_Status, ProcessBy) VALUES (?,?,?,?)",
-      [orderId, finalPaymentMethod, "Pending", cashierId || null],
+      [orderId, finalPaymentMethod, "Pending", resolvedCashierId],
     );
 
     await conn.commit();
     res.json({ message: "Order placed", orderId, orderNumber: `#${orderId}` });
   } catch (err) {
     if (conn) await conn.rollback();
-    console.error(err);
+    console.error(
+      "ORDER POST ERROR:",
+      JSON.stringify(
+        {
+          message: err.message,
+          code: err.code,
+          sqlMessage: err.sqlMessage,
+          sql: err.sql,
+        },
+        null,
+        2,
+      ),
+    );
     res.status(500).json({ message: "DB error", error: err.message });
   } finally {
     if (conn) conn.release();
@@ -259,7 +278,19 @@ router.patch("/:id", async (req, res) => {
 
     res.json({ message: "Order updated", id, status });
   } catch (err) {
-    console.error(err);
+    console.error(
+      "ORDER PATCH ERROR:",
+      JSON.stringify(
+        {
+          message: err.message,
+          code: err.code,
+          sqlMessage: err.sqlMessage,
+          sql: err.sql,
+        },
+        null,
+        2,
+      ),
+    );
     res.status(500).json({ message: "DB error", error: err.message });
   }
 });
