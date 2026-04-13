@@ -17,6 +17,7 @@ import {
   CalendarDays,
   X,
   RotateCcw,
+  ChevronDown,
 } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { api } from "@/lib/api";
@@ -63,6 +64,7 @@ interface Order {
   orderType: string;
   status: string;
   paymentCategory: string;
+  cashierName?: string;
   riderPickupTime?: string | null;
 }
 
@@ -263,6 +265,7 @@ function normalizeLogType(status: Status): LogType {
 interface RefundModalProps {
   open: boolean;
   log: SaleLog | null;
+  order: Order | null;
   onConfirm: () => void;
   onClose: () => void;
   loading: boolean;
@@ -271,13 +274,22 @@ interface RefundModalProps {
 function RefundModal({
   open,
   log,
+  order,
   onConfirm,
   onClose,
   loading,
 }: RefundModalProps) {
+  const id = log?.id ?? (order ? `#${order.id}` : "");
+  const product =
+    log?.product ??
+    (order ? order.items.map((i) => i.name).join(", ") : "");
+  const total = log?.total ?? order?.total ?? 0;
+  const cashierName = log?.cashierName ?? order?.cashierName ?? "—";
+  const paymentMethod = log?.paymentMethod ?? order?.paymentCategory ?? "—";
+
   return (
     <AnimatePresence>
-      {open && log && (
+      {open && (log || order) && (
         <>
           <motion.div
             key="backdrop"
@@ -290,46 +302,40 @@ function RefundModal({
               position: "fixed",
               inset: 0,
               zIndex: 300,
-              background: "rgba(0,0,0,0.4)",
+              background: "rgba(0,0,0,0.35)",
               backdropFilter: "blur(4px)",
             }}
           />
           <motion.div
             key="modal"
-            initial={{ opacity: 0, scale: 0.92, y: 16 }}
+            initial={{ opacity: 0, scale: 0.93, y: 16 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.92, y: 16 }}
+            exit={{ opacity: 0, scale: 0.93, y: 16 }}
             transition={{ duration: 0.24, ease: "easeOut" }}
             style={{
               position: "fixed",
-              top: "29%",
-              left: "37%",
+              top: "50%",
+              left: "50%",
               transform: "translate(-50%, -50%)",
               zIndex: 301,
-              width: 400,
+              width: 460,
               background: "#fff",
               borderRadius: 20,
-              boxShadow: "0 20px 60px rgba(0,0,0,0.2)",
+              boxShadow: "0 16px 48px rgba(0,0,0,0.12)",
               fontFamily: "'Poppins', sans-serif",
               overflow: "hidden",
+              border: "1px solid #e2e8f0",
             }}
           >
-            {/* Red accent bar */}
-            <div
-              style={{
-                height: 5,
-                background: "linear-gradient(90deg, #dc2626, #ef4444)",
-              }}
-            />
+            <div style={{ height: 4, background: "#e2e8f0" }} />
 
-            <div style={{ padding: "24px 24px 20px" }}>
-              {/* Icon + title */}
+            <div style={{ padding: "24px 24px 22px" }}>
               <div
                 style={{
                   display: "flex",
                   alignItems: "center",
                   gap: 12,
-                  marginBottom: 16,
+                  marginBottom: 18,
                 }}
               >
                 <div
@@ -348,14 +354,7 @@ function RefundModal({
                   <RotateCcw size={18} color="#dc2626" />
                 </div>
                 <div>
-                  <p
-                    style={{
-                      margin: 0,
-                      fontSize: 15,
-                      fontWeight: 700,
-                      color: "#0f172a",
-                    }}
-                  >
+                  <p style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#0f172a" }}>
                     Confirm Refund
                   </p>
                   <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>
@@ -364,7 +363,6 @@ function RefundModal({
                 </div>
               </div>
 
-              {/* Details card */}
               <div
                 style={{
                   background: "#f8fafc",
@@ -374,22 +372,23 @@ function RefundModal({
                   marginBottom: 20,
                   display: "flex",
                   flexDirection: "column",
-                  gap: 8,
+                  gap: 10,
                 }}
               >
                 {[
-                  { label: "Transaction ID", value: log.id },
-                  { label: "Product", value: log.product },
-                  { label: "Amount", value: `₱${log.total.toLocaleString()}` },
-                  { label: "Cashier", value: log.cashierName },
-                  { label: "Payment", value: log.paymentMethod },
+                  { label: "Transaction ID", value: id },
+                  { label: "Product", value: product },
+                  { label: "Amount", value: `₱${total.toLocaleString()}` },
+                  { label: "Cashier", value: cashierName },
+                  { label: "Payment", value: paymentMethod },
                 ].map((f) => (
                   <div
                     key={f.label}
                     style={{
                       display: "flex",
                       justifyContent: "space-between",
-                      alignItems: "center",
+                      alignItems: "flex-start",
+                      gap: 16,
                     }}
                   >
                     <span
@@ -399,6 +398,8 @@ function RefundModal({
                         fontWeight: 600,
                         letterSpacing: 0.5,
                         textTransform: "uppercase",
+                        flexShrink: 0,
+                        paddingTop: 2,
                       }}
                     >
                       {f.label}
@@ -408,6 +409,10 @@ function RefundModal({
                         fontSize: 13,
                         fontWeight: 600,
                         color: f.label === "Amount" ? "#dc2626" : "#1e293b",
+                        textAlign: "right",
+                        wordBreak: "break-word",
+                        maxWidth: "65%",
+                        lineHeight: 1.5,
                       }}
                     >
                       {f.value}
@@ -416,25 +421,14 @@ function RefundModal({
                 ))}
               </div>
 
-              <p
-                style={{
-                  margin: "0 0 20px",
-                  fontSize: 12,
-                  color: "#64748b",
-                  lineHeight: 1.6,
-                }}
-              >
+              <p style={{ margin: "0 0 20px", fontSize: 12, color: "#64748b", lineHeight: 1.65 }}>
                 Are you sure you want to refund{" "}
-                <strong>₱{log.total.toLocaleString()}</strong> for{" "}
-                <strong>{log.product}</strong>? The order status will be updated
-                to{" "}
-                <span style={{ color: "#2563eb", fontWeight: 600 }}>
-                  Refunded
-                </span>
-                .
+                <strong style={{ color: "#0f172a" }}>₱{total.toLocaleString()}</strong>{" "}
+                for <strong style={{ color: "#0f172a" }}>{product}</strong>? The order status
+                will be updated to{" "}
+                <span style={{ color: "#2563eb", fontWeight: 600 }}>Refunded</span>.
               </p>
 
-              {/* Buttons */}
               <div style={{ display: "flex", gap: 10 }}>
                 <button
                   onClick={onClose}
@@ -451,6 +445,7 @@ function RefundModal({
                     cursor: loading ? "not-allowed" : "pointer",
                     fontFamily: "'Poppins', sans-serif",
                     opacity: loading ? 0.6 : 1,
+                    transition: "opacity 0.15s",
                   }}
                 >
                   Cancel
@@ -463,9 +458,7 @@ function RefundModal({
                     padding: "11px 0",
                     borderRadius: 12,
                     border: "none",
-                    background: loading
-                      ? "#f87171"
-                      : "linear-gradient(135deg, #dc2626, #b91c1c)",
+                    background: loading ? "#f87171" : "#dc2626",
                     fontSize: 13,
                     fontWeight: 600,
                     color: "#fff",
@@ -475,18 +468,15 @@ function RefundModal({
                     alignItems: "center",
                     justifyContent: "center",
                     gap: 6,
-                    transition: "opacity 0.15s",
+                    transition: "background 0.15s, opacity 0.15s",
+                    opacity: loading ? 0.85 : 1,
                   }}
                 >
                   {loading ? (
                     <>
                       <motion.span
                         animate={{ rotate: 360 }}
-                        transition={{
-                          repeat: Infinity,
-                          duration: 0.8,
-                          ease: "linear",
-                        }}
+                        transition={{ repeat: Infinity, duration: 0.8, ease: "linear" }}
                         style={{ display: "inline-block" }}
                       >
                         <RotateCcw size={13} />
@@ -508,7 +498,7 @@ function RefundModal({
   );
 }
 
-// ─── Drum Column ─────────────────────────────────────────────────────────────
+// ─── Drum Column ──────────────────────────────────────────────────────────────
 
 interface DrumColProps {
   label: string;
@@ -602,6 +592,7 @@ function DrumCol({ label, items, selectedIndex, onChange }: DrumColProps) {
       innerRef.current.style.transform = `translateY(${newY}px)`;
       updateItems(clampIdx(-newY / ITEM_H));
     }
+
     function onMouseUp() {
       const s = state.current;
       if (!s.dragging) return;
@@ -660,14 +651,7 @@ function DrumCol({ label, items, selectedIndex, onChange }: DrumColProps) {
   }
 
   return (
-    <div
-      style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-      }}
-    >
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center" }}>
       <p
         style={{
           fontSize: 10,
@@ -681,51 +665,27 @@ function DrumCol({ label, items, selectedIndex, onChange }: DrumColProps) {
       >
         {label}
       </p>
-      <div
-        style={{
-          position: "relative",
-          height: 180,
-          width: "100%",
-          overflow: "hidden",
-        }}
-      >
+      <div style={{ position: "relative", height: 180, width: "100%", overflow: "hidden" }}>
         <div
           style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            right: 0,
-            height: 64,
-            zIndex: 2,
+            position: "absolute", top: 0, left: 0, right: 0, height: 64, zIndex: 2,
             pointerEvents: "none",
             background: "linear-gradient(to bottom, #fff 20%, transparent)",
           }}
         />
         <div
           style={{
-            position: "absolute",
-            bottom: 0,
-            left: 0,
-            right: 0,
-            height: 64,
-            zIndex: 2,
+            position: "absolute", bottom: 0, left: 0, right: 0, height: 64, zIndex: 2,
             pointerEvents: "none",
             background: "linear-gradient(to top, #fff 20%, transparent)",
           }}
         />
         <div
           style={{
-            position: "absolute",
-            top: "50%",
-            left: 6,
-            right: 6,
-            height: ITEM_H,
-            marginTop: -ITEM_H / 2,
-            borderRadius: 10,
-            background: "rgba(74,28,28,0.07)",
-            border: "0.5px solid rgba(74,28,28,0.18)",
-            zIndex: 1,
-            pointerEvents: "none",
+            position: "absolute", top: "50%", left: 6, right: 6,
+            height: ITEM_H, marginTop: -ITEM_H / 2,
+            borderRadius: 10, background: "rgba(74,28,28,0.07)",
+            border: "0.5px solid rgba(74,28,28,0.18)", zIndex: 1, pointerEvents: "none",
           }}
         />
         <div
@@ -736,26 +696,18 @@ function DrumCol({ label, items, selectedIndex, onChange }: DrumColProps) {
           onTouchEnd={onTouchEnd}
           onWheel={onWheel}
           style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            paddingTop: 72,
-            paddingBottom: 72,
+            display: "flex", flexDirection: "column", alignItems: "center",
+            paddingTop: 72, paddingBottom: 72,
             transform: `translateY(${-selectedIndex * ITEM_H}px)`,
-            cursor: "grab",
-            userSelect: "none",
-            willChange: "transform",
+            cursor: "grab", userSelect: "none", willChange: "transform",
           }}
         >
           {items.map((item, i) => (
             <div
               key={i}
               style={{
-                height: ITEM_H,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: "100%",
+                height: ITEM_H, display: "flex", alignItems: "center",
+                justifyContent: "center", width: "100%",
                 fontSize: i === selectedIndex ? 17 : 14,
                 fontWeight: i === selectedIndex ? 600 : 400,
                 color: i === selectedIndex ? "#4A1C1C" : "#94a3b8",
@@ -782,23 +734,14 @@ interface DrumDatePickerProps {
   onClose: () => void;
 }
 
-function DrumDatePicker({
-  open,
-  title,
-  initial,
-  onApply,
-  onClose,
-}: DrumDatePickerProps) {
+function DrumDatePicker({ open, title, initial, onApply, onClose }: DrumDatePickerProps) {
   const [monthIdx, setMonthIdx] = useState(initial.getMonth());
   const [dayIdx, setDayIdx] = useState(initial.getDate() - 1);
   const [yearIdx, setYearIdx] = useState(YEAR_OFFSET);
   const [days, setDays] = useState<number[]>([]);
 
   const now = new Date();
-  const years = Array.from(
-    { length: 10 },
-    (_, i) => now.getFullYear() - YEAR_OFFSET + i,
-  );
+  const years = Array.from({ length: 10 }, (_, i) => now.getFullYear() - YEAR_OFFSET + i);
 
   useEffect(() => {
     const year = years[yearIdx] ?? now.getFullYear();
@@ -832,12 +775,7 @@ function DrumDatePicker({
             exit={{ opacity: 0, backdropFilter: "blur(0px)" }}
             transition={{ duration: 0.28 }}
             onClick={onClose}
-            style={{
-              position: "fixed",
-              inset: 0,
-              zIndex: 200,
-              background: "rgba(0,0,0,0.35)",
-            }}
+            style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.35)" }}
           />
           <motion.div
             key="sheet"
@@ -846,71 +784,31 @@ function DrumDatePicker({
             exit={{ opacity: 0, scale: 0.9, y: 20 }}
             transition={{ duration: 0.28, ease: "easeOut" }}
             style={{
-              position: "absolute",
-              top: "30%",
-              left: "35%",
-              transform: "translate(-50%, -50%)",
-              zIndex: 201,
-              width: 420,
-              background: "#fff",
-              borderRadius: 20,
-              border: "0.5px solid #e2e8f0",
-              paddingBottom: 32,
+              position: "absolute", top: "30%", left: "35%",
+              transform: "translate(-50%, -50%)", zIndex: 201,
+              width: 420, background: "#fff", borderRadius: 20,
+              border: "0.5px solid #e2e8f0", paddingBottom: 32,
               fontFamily: "'Poppins', sans-serif",
               boxShadow: "0 10px 40px rgba(0,0,0,0.18)",
             }}
           >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "center",
-                paddingTop: 12,
-                marginBottom: 4,
-              }}
-            >
-              <div
-                style={{
-                  width: 36,
-                  height: 4,
-                  borderRadius: 99,
-                  background: "#e2e8f0",
-                }}
-              />
+            <div style={{ display: "flex", justifyContent: "center", paddingTop: 12, marginBottom: 4 }}>
+              <div style={{ width: 36, height: 4, borderRadius: 99, background: "#e2e8f0" }} />
             </div>
             <div
               style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "12px 20px 14px",
-                borderBottom: "0.5px solid #f1f5f9",
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                padding: "12px 20px 14px", borderBottom: "0.5px solid #f1f5f9",
               }}
             >
-              <p
-                style={{
-                  fontSize: 15,
-                  fontWeight: 600,
-                  color: "#0f172a",
-                  margin: 0,
-                }}
-              >
-                {title}
-              </p>
+              <p style={{ fontSize: 15, fontWeight: 600, color: "#0f172a", margin: 0 }}>{title}</p>
               <button
                 onClick={onClose}
                 style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: "50%",
-                  border: "0.5px solid #e2e8f0",
-                  background: "#f8fafc",
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: 16,
-                  color: "#94a3b8",
-                  lineHeight: 1,
+                  width: 28, height: 28, borderRadius: "50%",
+                  border: "0.5px solid #e2e8f0", background: "#f8fafc",
+                  cursor: "pointer", display: "flex", alignItems: "center",
+                  justifyContent: "center", fontSize: 16, color: "#94a3b8", lineHeight: 1,
                 }}
               >
                 ×
@@ -918,61 +816,24 @@ function DrumDatePicker({
             </div>
             <div
               style={{
-                display: "flex",
-                gap: 0,
-                padding: "8px 16px 0",
-                justifyContent: "center",
-                maxWidth: 360,
-                margin: "0 auto",
+                display: "flex", gap: 0, padding: "8px 16px 0",
+                justifyContent: "center", maxWidth: 360, margin: "0 auto",
               }}
             >
-              <DrumCol
-                label="Month"
-                items={MONTHS as unknown as string[]}
-                selectedIndex={monthIdx}
-                onChange={setMonthIdx}
-              />
-              <div
-                style={{
-                  width: 1,
-                  background: "#f1f5f9",
-                  margin: "40px 4px 0",
-                }}
-              />
-              <DrumCol
-                label="Day"
-                items={days}
-                selectedIndex={Math.min(dayIdx, days.length - 1)}
-                onChange={setDayIdx}
-              />
-              <div
-                style={{
-                  width: 1,
-                  background: "#f1f5f9",
-                  margin: "40px 4px 0",
-                }}
-              />
-              <DrumCol
-                label="Year"
-                items={years}
-                selectedIndex={yearIdx}
-                onChange={setYearIdx}
-              />
+              <DrumCol label="Month" items={MONTHS as unknown as string[]} selectedIndex={monthIdx} onChange={setMonthIdx} />
+              <div style={{ width: 1, background: "#f1f5f9", margin: "40px 4px 0" }} />
+              <DrumCol label="Day" items={days} selectedIndex={Math.min(dayIdx, days.length - 1)} onChange={setDayIdx} />
+              <div style={{ width: 1, background: "#f1f5f9", margin: "40px 4px 0" }} />
+              <DrumCol label="Year" items={years} selectedIndex={yearIdx} onChange={setYearIdx} />
             </div>
             <div style={{ display: "flex", gap: 10, padding: "20px 20px 0" }}>
               <button
                 onClick={onClose}
                 style={{
-                  flex: 1,
-                  padding: "11px 0",
-                  borderRadius: 12,
-                  border: "0.5px solid #e2e8f0",
-                  background: "#f8fafc",
-                  fontSize: 13,
-                  fontWeight: 500,
-                  color: "#64748b",
-                  cursor: "pointer",
-                  fontFamily: "'Poppins', sans-serif",
+                  flex: 1, padding: "11px 0", borderRadius: 12,
+                  border: "0.5px solid #e2e8f0", background: "#f8fafc",
+                  fontSize: 13, fontWeight: 500, color: "#64748b",
+                  cursor: "pointer", fontFamily: "'Poppins', sans-serif",
                 }}
               >
                 Cancel
@@ -980,16 +841,9 @@ function DrumDatePicker({
               <button
                 onClick={handleApply}
                 style={{
-                  flex: 2,
-                  padding: "11px 0",
-                  borderRadius: 12,
-                  border: "none",
-                  background: "#4A1C1C",
-                  fontSize: 13,
-                  fontWeight: 600,
-                  color: "#fff",
-                  cursor: "pointer",
-                  fontFamily: "'Poppins', sans-serif",
+                  flex: 2, padding: "11px 0", borderRadius: 12, border: "none",
+                  background: "#4A1C1C", fontSize: 13, fontWeight: 600,
+                  color: "#fff", cursor: "pointer", fontFamily: "'Poppins', sans-serif",
                 }}
               >
                 Apply
@@ -1015,12 +869,7 @@ function RevenueDropdown({
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const periods: Period[] = [
-    "Today",
-    "Last 7 Days",
-    "Last 30 Days",
-    "All Time",
-  ];
+  const periods: Period[] = ["Today", "Last 7 Days", "Last 30 Days", "All Time"];
   const revenue = getRevenueForPeriod(logs, period);
 
   const now = new Date();
@@ -1035,23 +884,15 @@ function RevenueDropdown({
     start.setHours(0, 0, 0, 0);
   }
 
-  const inPeriod =
-    period === "All Time"
-      ? logs
-      : logs.filter((l) => l._dateObj >= start && l._dateObj <= now);
-  const completedCount = inPeriod.filter(
-    (l) => l.status === "Completed",
-  ).length;
+  const inPeriod = period === "All Time" ? logs : logs.filter((l) => l._dateObj >= start && l._dateObj <= now);
+  const completedCount = inPeriod.filter((l) => l.status === "Completed").length;
   const pendingCount = inPeriod.filter((l) => l.status === "Pending").length;
-  const cancelledCount = inPeriod.filter(
-    (l) => l.status === "Cancelled",
-  ).length;
+  const cancelledCount = inPeriod.filter((l) => l.status === "Cancelled").length;
   const refundedCount = inPeriod.filter((l) => l.status === "Refunded").length;
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node))
-        setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     }
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
@@ -1063,47 +904,21 @@ function RevenueDropdown({
         whileHover={{ boxShadow: "0 4px 20px rgba(0,0,0,0.08)" }}
         onClick={() => setOpen(!open)}
         style={{
-          background: "#fff",
-          border: "1px solid #e2e8f0",
-          borderRadius: 16,
-          padding: "18px 20px",
-          cursor: "pointer",
-          boxShadow: "0 2px 10px rgba(0,0,0,0.05)",
-          userSelect: "none",
+          background: "#fff", border: "1px solid #e2e8f0", borderRadius: 16,
+          padding: "18px 20px", cursor: "pointer",
+          boxShadow: "0 2px 10px rgba(0,0,0,0.05)", userSelect: "none",
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: 10,
-          }}
-        >
-          <span
-            style={{
-              color: "#94a3b8",
-              fontSize: 10,
-              fontWeight: 600,
-              letterSpacing: 1.2,
-              textTransform: "uppercase",
-            }}
-          >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+          <span style={{ color: "#94a3b8", fontSize: 10, fontWeight: 600, letterSpacing: 1.2, textTransform: "uppercase" }}>
             Total Revenue
           </span>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ color: "#64748b", fontSize: 12, fontWeight: 500 }}>
-              {period}
-            </span>
+            <span style={{ color: "#64748b", fontSize: 12, fontWeight: 500 }}>{period}</span>
             <motion.span
               animate={{ rotate: open ? 180 : 0 }}
               transition={{ duration: 0.2 }}
-              style={{
-                color: "#94a3b8",
-                fontSize: 10,
-                display: "inline-block",
-                lineHeight: 1,
-              }}
+              style={{ color: "#94a3b8", fontSize: 10, display: "inline-block", lineHeight: 1 }}
             >
               ▼
             </motion.span>
@@ -1116,20 +931,12 @@ function RevenueDropdown({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -5 }}
             transition={{ duration: 0.18 }}
-            style={{
-              color: "#0f172a",
-              fontSize: 28,
-              fontWeight: 700,
-              margin: "0 0 4px",
-              letterSpacing: -0.5,
-            }}
+            style={{ color: "#0f172a", fontSize: 28, fontWeight: 700, margin: "0 0 4px", letterSpacing: -0.5 }}
           >
             ₱{revenue.toLocaleString()}
           </motion.p>
         </AnimatePresence>
-        <div
-          style={{ display: "flex", gap: 10, marginTop: 8, flexWrap: "wrap" }}
-        >
+        <div style={{ display: "flex", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
           {[
             { label: "Completed", count: completedCount, color: "#16a34a" },
             { label: "Pending", count: pendingCount, color: "#d97706" },
@@ -1139,12 +946,8 @@ function RevenueDropdown({
             <span
               key={s.label}
               style={{
-                fontSize: 10,
-                color: s.color,
-                fontWeight: 600,
-                background: `${s.color}12`,
-                padding: "2px 8px",
-                borderRadius: 99,
+                fontSize: 10, color: s.color, fontWeight: 600,
+                background: `${s.color}12`, padding: "2px 8px", borderRadius: 99,
               }}
             >
               {s.label}: {s.count}
@@ -1161,48 +964,27 @@ function RevenueDropdown({
             exit={{ opacity: 0, y: -8, scale: 0.97 }}
             transition={{ duration: 0.18, ease: "easeOut" }}
             style={{
-              position: "absolute",
-              top: "calc(100% + 8px)",
-              right: 0,
-              background: "#fff",
-              border: "1px solid #e2e8f0",
-              borderRadius: 12,
-              boxShadow: "0 8px 30px rgba(0,0,0,0.1)",
-              overflow: "hidden",
-              zIndex: 50,
-              minWidth: "100%",
+              position: "absolute", top: "calc(100% + 8px)", right: 0,
+              background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12,
+              boxShadow: "0 8px 30px rgba(0,0,0,0.1)", overflow: "hidden",
+              zIndex: 50, minWidth: "100%",
             }}
           >
             {periods.map((p) => (
               <motion.div
                 key={p}
                 whileHover={{ background: "#f8fafc" }}
-                onClick={() => {
-                  setPeriod(p);
-                  setOpen(false);
-                }}
+                onClick={() => { setPeriod(p); setOpen(false); }}
                 style={{
-                  padding: "11px 18px",
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
+                  padding: "11px 18px", cursor: "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
                   borderBottom: "1px solid #f8fafc",
                 }}
               >
-                <span
-                  style={{
-                    color: period === p ? "#0f172a" : "#64748b",
-                    fontSize: 13,
-                    fontWeight: period === p ? 600 : 400,
-                    fontFamily: "'Poppins', sans-serif",
-                  }}
-                >
+                <span style={{ color: period === p ? "#0f172a" : "#64748b", fontSize: 13, fontWeight: period === p ? 600 : 400, fontFamily: "'Poppins', sans-serif" }}>
                   {p}
                 </span>
-                {period === p && (
-                  <span style={{ color: "#f97316", fontSize: 12 }}>✓</span>
-                )}
+                {period === p && <span style={{ color: "#f97316", fontSize: 12 }}>✓</span>}
               </motion.div>
             ))}
           </motion.div>
@@ -1217,12 +999,10 @@ function RevenueDropdown({
 interface LogRowProps {
   log: SaleLog;
   index: number;
-  onRefund: (log: SaleLog) => void;
 }
 
-function LogRow({ log, index, onRefund }: LogRowProps) {
+function LogRow({ log, index }: LogRowProps) {
   const [open, setOpen] = useState(false);
-  const canRefund = log.status === "Completed";
 
   return (
     <motion.div
@@ -1234,96 +1014,27 @@ function LogRow({ log, index, onRefund }: LogRowProps) {
         onClick={() => setOpen(!open)}
         whileHover={{ backgroundColor: "#fafafa" }}
         style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 14,
-          padding: "14px 20px",
-          cursor: "pointer",
-          borderBottom: "1px solid #f1f5f9",
-          backgroundColor: "#fff",
-          transition: "background 0.15s",
+          display: "flex", alignItems: "center", gap: 14, padding: "14px 20px",
+          cursor: "pointer", borderBottom: "1px solid #f1f5f9",
+          backgroundColor: "#fff", transition: "background 0.15s",
         }}
       >
-        <div
-          style={{
-            width: 8,
-            height: 8,
-            borderRadius: "50%",
-            background: typeColor[log.type],
-            flexShrink: 0,
-          }}
-        />
-        <span
-          style={{ color: "#94a3b8", fontSize: 12, width: 72, flexShrink: 0 }}
-        >
-          {log.time}
-        </span>
-        <span
-          style={{ color: "#1e293b", fontSize: 13, fontWeight: 500, flex: 1 }}
-        >
-          {log.product}
-        </span>
-        <span
-          style={{ color: "#94a3b8", fontSize: 11, width: 80, flexShrink: 0 }}
-        >
-          {log.paymentMethod}
-        </span>
-        <span
-          style={{
-            color: typeColor[log.type],
-            fontSize: 11,
-            fontWeight: 600,
-            width: 70,
-            textAlign: "center",
-            flexShrink: 0,
-          }}
-        >
-          {log.type}
-        </span>
-        <span
-          style={{ color: "#94a3b8", fontSize: 12, width: 40, flexShrink: 0 }}
-        >
-          ×{log.quantity}
-        </span>
-        <span
-          style={{
-            color:
-              log.status === "Cancelled" || log.status === "Refunded"
-                ? "#dc2626"
-                : "#0f172a",
-            fontSize: 14,
-            fontWeight: 600,
-            width: 100,
-            textAlign: "right",
-            flexShrink: 0,
-            textDecoration:
-              log.status === "Cancelled" ? "line-through" : "none",
-          }}
-        >
+        <div style={{ width: 8, height: 8, borderRadius: "50%", background: typeColor[log.type], flexShrink: 0 }} />
+        <span style={{ color: "#94a3b8", fontSize: 12, width: 72, flexShrink: 0 }}>{log.time}</span>
+        <span style={{ color: "#1e293b", fontSize: 13, fontWeight: 500, flex: 1 }}>{log.product}</span>
+        <span style={{ color: "#94a3b8", fontSize: 11, width: 80, flexShrink: 0 }}>{log.paymentMethod}</span>
+        <span style={{ color: typeColor[log.type], fontSize: 11, fontWeight: 600, width: 70, textAlign: "center", flexShrink: 0 }}>{log.type}</span>
+        <span style={{ color: "#94a3b8", fontSize: 12, width: 40, flexShrink: 0 }}>×{log.quantity}</span>
+        <span style={{ color: "#0f172a", fontSize: 14, fontWeight: 600, width: 100, textAlign: "right", flexShrink: 0 }}>
           {log.total === 0 ? "—" : `₱${Math.abs(log.total).toLocaleString()}`}
         </span>
-        <span
-          style={{
-            color: statusColor[log.status],
-            fontSize: 11,
-            fontWeight: 600,
-            width: 80,
-            textAlign: "right",
-            flexShrink: 0,
-          }}
-        >
-          {log.status}
+        <span style={{ color: statusColor["Completed"], fontSize: 11, fontWeight: 600, width: 80, textAlign: "right", flexShrink: 0 }}>
+          Completed
         </span>
         <motion.span
           animate={{ rotate: open ? 180 : 0 }}
           transition={{ duration: 0.2 }}
-          style={{
-            color: "#cbd5e1",
-            fontSize: 10,
-            width: 16,
-            textAlign: "center",
-            flexShrink: 0,
-          }}
+          style={{ color: "#cbd5e1", fontSize: 10, width: 16, textAlign: "center", flexShrink: 0 }}
         >
           ▼
         </motion.span>
@@ -1336,128 +1047,37 @@ function LogRow({ log, index, onRefund }: LogRowProps) {
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
             transition={{ duration: 0.22, ease: "easeInOut" }}
-            style={{
-              overflow: "hidden",
-              background: "#f8fafc",
-              borderBottom: "1px solid #f1f5f9",
-            }}
+            style={{ overflow: "hidden", background: "#f8fafc", borderBottom: "1px solid #f1f5f9" }}
           >
-            <div
-              style={{
-                padding: "14px 20px 14px 42px",
-                display: "flex",
-                gap: 32,
-                flexWrap: "wrap",
-                alignItems: "flex-end",
-                justifyContent: "space-between",
-              }}
-            >
-              {/* Detail fields */}
-              <div style={{ display: "flex", gap: 32, flexWrap: "wrap" }}>
-                {[
-                  { label: "Transaction ID", value: log.id },
-                  { label: "Cashier", value: log.cashierName },
-                  { label: "Payment Method", value: log.paymentMethod },
-                  {
-                    label: "Unit Price",
-                    value: `₱${log.unitPrice.toLocaleString()}`,
-                  },
-                  { label: "Quantity", value: `${log.quantity} pcs` },
-                  {
-                    label: "Subtotal",
-                    value: `₱${log.total.toLocaleString()}`,
-                  },
-                  { label: "Order Status", value: log.status },
-                ].map((f) => (
-                  <div key={f.label}>
-                    <p
-                      style={{
-                        color: "#94a3b8",
-                        fontSize: 10,
-                        fontWeight: 600,
-                        letterSpacing: 1,
-                        margin: "0 0 2px",
-                        textTransform: "uppercase",
-                      }}
-                    >
-                      {f.label}
-                    </p>
-                    <p
-                      style={{
-                        color:
-                          f.label === "Order Status"
-                            ? statusColor[log.status as Status]
-                            : f.label === "Cashier"
-                              ? "#4A1C1C"
-                              : "#334155",
-                        fontSize: 13,
-                        fontWeight: f.label === "Cashier" ? 600 : 500,
-                        margin: 0,
-                      }}
-                    >
-                      {f.value}
-                    </p>
-                  </div>
-                ))}
-                {log.note && (
-                  <div>
-                    <p
-                      style={{
-                        color: "#94a3b8",
-                        fontSize: 10,
-                        fontWeight: 600,
-                        letterSpacing: 1,
-                        margin: "0 0 2px",
-                        textTransform: "uppercase",
-                      }}
-                    >
-                      Note
-                    </p>
-                    <p
-                      style={{
-                        color: "#d97706",
-                        fontSize: 13,
-                        fontWeight: 500,
-                        margin: 0,
-                      }}
-                    >
-                      ⚠ {log.note}
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* Refund button — only shown for Completed transactions */}
-              {canRefund && (
-                <motion.button
-                  whileHover={{
-                    scale: 1.03,
-                    boxShadow: "0 4px 16px rgba(220,38,38,0.18)",
-                  }}
-                  whileTap={{ scale: 0.97 }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onRefund(log);
-                  }}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    padding: "8px 16px",
-                    borderRadius: 10,
-                    border: "1px solid #fecaca",
-                    background: "#fef2f2",
-                    color: "#dc2626",
-                    fontSize: 12,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    fontFamily: "'Poppins', sans-serif",
-                    transition: "all 0.15s",
-                    flexShrink: 0,
-                  }}
-                >
-                  <RotateCcw size={13} /> Refund
-                </motion.button>
+            <div style={{ padding: "14px 20px 14px 42px", display: "flex", gap: 32, flexWrap: "wrap", alignItems: "flex-end" }}>
+              {[
+                { label: "Transaction ID", value: log.id },
+                { label: "Cashier", value: log.cashierName },
+                { label: "Payment Method", value: log.paymentMethod },
+                { label: "Unit Price", value: `₱${log.unitPrice.toLocaleString()}` },
+                { label: "Quantity", value: `${log.quantity} pcs` },
+                { label: "Subtotal", value: `₱${log.total.toLocaleString()}` },
+                { label: "Order Status", value: "Completed" },
+              ].map((f) => (
+                <div key={f.label}>
+                  <p style={{ color: "#94a3b8", fontSize: 10, fontWeight: 600, letterSpacing: 1, margin: "0 0 2px", textTransform: "uppercase" }}>
+                    {f.label}
+                  </p>
+                  <p style={{
+                    color: f.label === "Order Status" ? statusColor["Completed"] : f.label === "Cashier" ? "#4A1C1C" : "#334155",
+                    fontSize: 13,
+                    fontWeight: f.label === "Cashier" ? 600 : 500,
+                    margin: 0,
+                  }}>
+                    {f.value}
+                  </p>
+                </div>
+              ))}
+              {log.note && (
+                <div>
+                  <p style={{ color: "#94a3b8", fontSize: 10, fontWeight: 600, letterSpacing: 1, margin: "0 0 2px", textTransform: "uppercase" }}>Note</p>
+                  <p style={{ color: "#d97706", fontSize: 13, fontWeight: 500, margin: 0 }}>⚠ {log.note}</p>
+                </div>
               )}
             </div>
           </motion.div>
@@ -1471,21 +1091,8 @@ function LogRow({ log, index, onRefund }: LogRowProps) {
 
 function EmptyState({ message }: { message: string }) {
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      style={{ padding: 60, textAlign: "center", color: "#cbd5e1" }}
-    >
-      <p
-        style={{
-          fontSize: 14,
-          fontWeight: 600,
-          margin: "0 0 6px",
-          color: "#94a3b8",
-        }}
-      >
-        No transactions yet
-      </p>
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ padding: 60, textAlign: "center", color: "#cbd5e1" }}>
+      <p style={{ fontSize: 14, fontWeight: 600, margin: "0 0 6px", color: "#94a3b8" }}>No completed transactions yet</p>
       <p style={{ fontSize: 12, margin: 0 }}>{message}</p>
     </motion.div>
   );
@@ -1500,80 +1107,22 @@ function SummaryBar({ logs }: { logs: SaleLog[] }) {
   const refunded = logs.filter((l) => l.status === "Refunded");
 
   const stats = [
-    {
-      label: "Completed Sales",
-      value: `₱${completed.reduce((s, l) => s + l.total, 0).toLocaleString()}`,
-      sub: `${completed.length} items`,
-      color: "#16a34a",
-      bg: "#f0fdf4",
-      border: "#bbf7d0",
-    },
-    {
-      label: "Pending Orders",
-      value: `₱${pending.reduce((s, l) => s + l.total, 0).toLocaleString()}`,
-      sub: `${pending.length} items`,
-      color: "#d97706",
-      bg: "#fffbeb",
-      border: "#fde68a",
-    },
-    {
-      label: "Cancelled",
-      value: `${cancelled.length} orders`,
-      sub: "voided",
-      color: "#dc2626",
-      bg: "#fef2f2",
-      border: "#fecaca",
-    },
-    {
-      label: "Refunded",
-      value: `₱${refunded.reduce((s, l) => s + l.total, 0).toLocaleString()}`,
-      sub: `${refunded.length} orders`,
-      color: "#2563eb",
-      bg: "#eff6ff",
-      border: "#bfdbfe",
-    },
+    { label: "Completed Sales", value: `₱${completed.reduce((s, l) => s + l.total, 0).toLocaleString()}`, sub: `${completed.length} items`, color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0" },
+    { label: "Pending Orders", value: `₱${pending.reduce((s, l) => s + l.total, 0).toLocaleString()}`, sub: `${pending.length} items`, color: "#d97706", bg: "#fffbeb", border: "#fde68a" },
+    { label: "Cancelled", value: `${cancelled.length} orders`, sub: "voided", color: "#dc2626", bg: "#fef2f2", border: "#fecaca" },
+    { label: "Refunded", value: `₱${refunded.reduce((s, l) => s + l.total, 0).toLocaleString()}`, sub: `${refunded.length} orders`, color: "#2563eb", bg: "#eff6ff", border: "#bfdbfe" },
   ];
 
   return (
-    <div
-      style={{ display: "flex", gap: 16, marginBottom: 24, flexWrap: "wrap" }}
-    >
+    <div style={{ display: "flex", gap: 16, marginBottom: 24, flexWrap: "wrap" }}>
       {stats.map((s) => (
         <motion.div
           key={s.label}
           whileHover={{ y: -2, boxShadow: "0 4px 16px rgba(0,0,0,0.08)" }}
-          style={{
-            flex: 1,
-            minWidth: 160,
-            background: s.bg,
-            border: `1px solid ${s.border}`,
-            borderRadius: 14,
-            padding: "16px 20px",
-            boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
-          }}
+          style={{ flex: 1, minWidth: 160, background: s.bg, border: `1px solid ${s.border}`, borderRadius: 14, padding: "16px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}
         >
-          <p
-            style={{
-              color: "#94a3b8",
-              fontSize: 10,
-              fontWeight: 600,
-              margin: "0 0 6px",
-              letterSpacing: 1,
-              textTransform: "uppercase",
-            }}
-          >
-            {s.label}
-          </p>
-          <p
-            style={{
-              color: s.color,
-              fontSize: 22,
-              fontWeight: 700,
-              margin: "0 0 2px",
-            }}
-          >
-            {s.value}
-          </p>
+          <p style={{ color: "#94a3b8", fontSize: 10, fontWeight: 600, margin: "0 0 6px", letterSpacing: 1, textTransform: "uppercase" }}>{s.label}</p>
+          <p style={{ color: s.color, fontSize: 22, fontWeight: 700, margin: "0 0 2px" }}>{s.value}</p>
           <p style={{ color: "#94a3b8", fontSize: 11, margin: 0 }}>{s.sub}</p>
         </motion.div>
       ))}
@@ -1581,14 +1130,192 @@ function SummaryBar({ logs }: { logs: SaleLog[] }) {
   );
 }
 
+// ─── Order Row ────────────────────────────────────────────────────────────────
+
+interface OrderRowProps {
+  order: Order;
+  index: number;
+  onRefund: (order: Order) => void;
+}
+
+function OrderRow({ order, index, onRefund }: OrderRowProps) {
+  const [open, setOpen] = useState(false);
+
+  const statusColor2: Record<string, { bg: string; text: string }> = {
+    Completed: { bg: "#f0fdf4", text: "#16a34a" },
+    Pending:   { bg: "#fffbeb", text: "#d97706" },
+    Cancelled: { bg: "#fef2f2", text: "#dc2626" },
+    Refunded:  { bg: "#eff6ff", text: "#2563eb" },
+  };
+  const sc = statusColor2[order.status] ?? { bg: "#f1f5f9", text: "#64748b" };
+
+  const orderTypeBadge: Record<string, { bg: string; text: string }> = {
+    "take-out": { bg: "#fffbeb", text: "#d97706" },
+    delivery:   { bg: "#eff6ff", text: "#2563eb" },
+    "dine-in":  { bg: "#fff1f2", text: "#e11d48" },
+  };
+  const otb = orderTypeBadge[order.orderType] ?? { bg: "#f1f5f9", text: "#64748b" };
+
+  const fmtDate = (v?: string | null) => {
+    const d = parseDateSafe(v);
+    return !d ? "-" : d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  };
+  const fmtTime = (v?: string | null) => {
+    const d = parseDateSafe(v);
+    return !d ? "-" : d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
+  };
+
+  const totalQty = order.items.reduce((s, i) => s + i.quantity, 0);
+  const canRefund = order.status === "Completed";
+
+  return (
+    <>
+      <TableRow
+        className="border-gray-100 hover:bg-gray-50 transition-colors cursor-pointer"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <TableCell className="font-medium text-gray-900">
+          <div className="flex items-center gap-2">
+            <motion.div animate={{ rotate: open ? 180 : 0 }} transition={{ duration: 0.2 }} className="text-gray-400">
+              <ChevronDown size={14} />
+            </motion.div>
+            {order.orderNumber}
+          </div>
+        </TableCell>
+        <TableCell className="text-gray-600 whitespace-nowrap">{fmtDate(order.date)}</TableCell>
+        <TableCell className="text-gray-800 text-base font-semibold whitespace-nowrap">{fmtTime(order.date)}</TableCell>
+        <TableCell>
+          <span style={{ background: otb.bg, color: otb.text, fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 99 }}>
+            {order.orderType === "dine-in" ? "Dine In" : order.orderType === "take-out" ? "Take Out" : order.orderType || "-"}
+          </span>
+        </TableCell>
+        <TableCell>
+          <span style={{ background: sc.bg, color: sc.text, fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 99 }}>
+            {order.status}
+          </span>
+        </TableCell>
+        <TableCell className="text-blue-600 font-medium">{order.paymentCategory}</TableCell>
+        <TableCell className="font-semibold text-gray-900 text-right">₱{order.total.toLocaleString()}</TableCell>
+      </TableRow>
+
+      <AnimatePresence>
+        {open && (
+          <tr>
+            <td colSpan={7} style={{ padding: 0, border: "none" }}>
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.22, ease: "easeInOut" }}
+                style={{ overflow: "hidden" }}
+              >
+                <div style={{ background: "#f8fafc", borderBottom: "2px solid #e2e8f0", padding: "20px 24px 20px 36px" }}>
+                  <div style={{ display: "flex", gap: 0, flexWrap: "wrap", marginBottom: 16 }}>
+                    {[
+                      { label: "Order ID", value: order.orderNumber },
+                      { label: "Date", value: fmtDate(order.date) },
+                      { label: "Time", value: fmtTime(order.date) },
+                      { label: "Cashier", value: order.cashierName || "—" },
+                      { label: "Total Qty", value: `${totalQty} pcs` },
+                      { label: "Subtotal", value: `₱${order.total.toLocaleString()}` },
+                      { label: "Payment", value: order.paymentCategory },
+                      { label: "Order Status", value: order.status, isStatus: true },
+                    ].map((f, i) => (
+                      <div
+                        key={f.label}
+                        style={{
+                          minWidth: 130, flex: "0 0 auto", paddingRight: 32, paddingBottom: 12,
+                          borderRight: i < 7 ? "1px solid #e2e8f0" : "none",
+                          marginRight: i < 7 ? 32 : 0,
+                        }}
+                      >
+                        <p style={{ color: "#94a3b8", fontSize: 9, fontWeight: 700, letterSpacing: 1.2, margin: "0 0 4px", textTransform: "uppercase" }}>
+                          {f.label}
+                        </p>
+                        <p style={{
+                          margin: 0, fontSize: 13,
+                          fontWeight: f.label === "Cashier" || f.label === "Subtotal" ? 700 : 500,
+                          color: (f as any).isStatus ? (statusColor2[order.status]?.text ?? "#64748b")
+                            : f.label === "Subtotal" ? "#0f172a"
+                            : f.label === "Cashier" ? "#4A1C1C"
+                            : "#334155",
+                        }}>
+                          {f.value}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ marginBottom: 16 }}>
+                    <p style={{ color: "#94a3b8", fontSize: 9, fontWeight: 700, letterSpacing: 1.2, margin: "0 0 8px", textTransform: "uppercase" }}>
+                      Items Ordered
+                    </p>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {order.items.length > 0 ? (
+                        order.items.map((item, idx) => (
+                          <div
+                            key={idx}
+                            style={{
+                              background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8,
+                              padding: "6px 12px", fontSize: 12, fontWeight: 500, color: "#334155",
+                              display: "flex", alignItems: "center", gap: 6,
+                            }}
+                          >
+                            <span style={{ background: "#f1f5f9", borderRadius: 4, padding: "1px 6px", fontSize: 11, fontWeight: 700, color: "#64748b" }}>
+                              ×{item.quantity}
+                            </span>
+                            {item.name}
+                            <span style={{ color: "#94a3b8", fontSize: 11 }}>₱{item.price.toLocaleString()}</span>
+                          </div>
+                        ))
+                      ) : (
+                        <span style={{ color: "#cbd5e1", fontSize: 12 }}>No items</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {canRefund && (
+                    <motion.button
+                      whileHover={{ scale: 1.02, boxShadow: "0 4px 16px rgba(220,38,38,0.18)" }}
+                      whileTap={{ scale: 0.97 }}
+                      onClick={(e) => { e.stopPropagation(); onRefund(order); }}
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 6,
+                        padding: "8px 18px", borderRadius: 10, border: "1px solid #fecaca",
+                        background: "#fef2f2", color: "#dc2626", fontSize: 12, fontWeight: 600,
+                        cursor: "pointer", fontFamily: "'Poppins', sans-serif",
+                      }}
+                    >
+                      <RotateCcw size={13} /> Refund Order
+                    </motion.button>
+                  )}
+                </div>
+              </motion.div>
+            </td>
+          </tr>
+        )}
+      </AnimatePresence>
+    </>
+  );
+}
+
 // ─── Orders Tab ───────────────────────────────────────────────────────────────
 
-function OrdersTab({ orders }: { orders: Order[] }) {
+const ORDER_STATUS_FILTERS = ["All", "Completed", "Pending", "Cancelled", "Refunded"] as const;
+type OrderStatusFilter = (typeof ORDER_STATUS_FILTERS)[number];
+
+interface OrdersTabProps {
+  orders: Order[];
+  onRefund: (order: Order) => void;
+}
+
+function OrdersTab({ orders, onRefund }: OrdersTabProps) {
   const now = new Date();
   const [currentPage, setCurrentPage] = useState(1);
   const [fromDate, setFromDate] = useState<Date | null>(null);
   const [toDate, setToDate] = useState<Date | null>(null);
   const [activeQuick, setActiveQuick] = useState<QuickKey | null>("all");
+  const [statusFilter, setStatusFilter] = useState<OrderStatusFilter>("All");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerTarget, setPickerTarget] = useState<"from" | "to">("from");
   const [pickerInitial, setPickerInitial] = useState<Date>(now);
@@ -1632,57 +1359,23 @@ function OrdersTab({ orders }: { orders: Order[] }) {
     setCurrentPage(1);
   }
 
-  const filtered = filterOrdersByRange(orders, fromDate, toDate);
+  function handleStatusFilter(s: OrderStatusFilter) {
+    setStatusFilter(s);
+    setCurrentPage(1);
+  }
+
+  const dateFiltered = filterOrdersByRange(orders, fromDate, toDate);
+  const filtered = statusFilter === "All" ? dateFiltered : dateFiltered.filter((o) => o.status === statusFilter);
+
   const totalPages = Math.max(1, Math.ceil(filtered.length / ORDER_PAGE_SIZE));
   const sorted = [...filtered].sort(
-    (a, b) =>
-      (parseDateSafe(b.date)?.getTime() ?? -Infinity) -
-      (parseDateSafe(a.date)?.getTime() ?? -Infinity),
+    (a, b) => (parseDateSafe(b.date)?.getTime() ?? -Infinity) - (parseDateSafe(a.date)?.getTime() ?? -Infinity),
   );
-  const paginated = sorted.slice(
-    (currentPage - 1) * ORDER_PAGE_SIZE,
-    currentPage * ORDER_PAGE_SIZE,
-  );
+  const paginated = sorted.slice((currentPage - 1) * ORDER_PAGE_SIZE, currentPage * ORDER_PAGE_SIZE);
+
   const totalRevenue = filtered.reduce((sum, o) => sum + o.total, 0);
-  const completedCount = filtered.filter(
-    (o) => o.status === "Completed",
-  ).length;
+  const completedCount = filtered.filter((o) => o.status === "Completed").length;
   const hasRange = !!(fromDate || toDate);
-
-  const statusBadgeClass = (s: string) =>
-    s === "Completed"
-      ? "bg-green-50 text-green-700 hover:bg-green-50 rounded-lg font-medium border-0"
-      : s === "Pending"
-        ? "bg-yellow-50 text-yellow-700 hover:bg-yellow-50 rounded-lg font-medium border-0"
-        : "bg-red-50 text-red-700 hover:bg-red-50 rounded-lg font-medium border-0";
-
-  const orderTypeBadgeClass = (t: string) =>
-    t === "take-out"
-      ? "bg-amber-50 text-amber-700 hover:bg-amber-50 rounded-lg font-medium border-0"
-      : t === "delivery"
-        ? "bg-blue-50 text-blue-700 hover:bg-blue-50 rounded-lg font-medium border-0"
-        : "bg-rose-50 text-rose-700 hover:bg-rose-50 rounded-lg font-medium border-0";
-
-  const fmtDate = (v?: string | null) => {
-    const d = parseDateSafe(v);
-    return !d
-      ? "-"
-      : d.toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        });
-  };
-  const fmtTime = (v?: string | null) => {
-    const d = parseDateSafe(v);
-    return !d
-      ? "-"
-      : d.toLocaleTimeString("en-US", {
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: true,
-        });
-  };
 
   return (
     <>
@@ -1697,17 +1390,12 @@ function OrdersTab({ orders }: { orders: Order[] }) {
       <Card className="bg-white rounded-2xl p-6 shadow-md border-0">
         <div className="flex items-start justify-between mb-4 flex-wrap gap-4">
           <div>
-            <h3 className="text-base font-semibold text-gray-800">Orders</h3>
-            {hasRange && (
+            <h3 className="text-base font-semibold text-gray-800">Order History</h3>
+            {(hasRange || statusFilter !== "All") && (
               <p className="text-xs text-gray-400 mt-0.5">
                 {filtered.length} order{filtered.length !== 1 ? "s" : ""} ·{" "}
-                <span className="text-green-600 font-medium">
-                  {completedCount} completed
-                </span>{" "}
-                ·{" "}
-                <span className="text-gray-600 font-medium">
-                  ₱{totalRevenue.toLocaleString()} revenue
-                </span>
+                <span className="text-green-600 font-medium">{completedCount} completed</span> ·{" "}
+                <span className="text-gray-600 font-medium">₱{totalRevenue.toLocaleString()} revenue</span>
               </p>
             )}
           </div>
@@ -1727,19 +1415,14 @@ function OrdersTab({ orders }: { orders: Order[] }) {
               {toDate ? formatDisplayDate(toDate) : "Select date"}
             </button>
             {hasRange && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 rounded-lg text-gray-400 hover:text-gray-600"
-                onClick={clearRange}
-              >
+              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-gray-400 hover:text-gray-600" onClick={clearRange}>
                 <X className="h-4 w-4" />
               </Button>
             )}
           </div>
         </div>
 
-        <div className="flex gap-2 flex-wrap mb-5">
+        <div className="flex gap-2 flex-wrap mb-4">
           {QUICK_RANGES.map((r) => (
             <button
               key={r.key}
@@ -1751,82 +1434,52 @@ function OrdersTab({ orders }: { orders: Order[] }) {
           ))}
         </div>
 
+        <div className="flex gap-2 flex-wrap mb-5">
+          {ORDER_STATUS_FILTERS.map((s) => {
+            const colorMap: Record<OrderStatusFilter, string> = {
+              All:       "bg-[#0f172a] text-white border-[#0f172a]",
+              Completed: "bg-green-700 text-white border-green-700",
+              Pending:   "bg-yellow-600 text-white border-yellow-600",
+              Cancelled: "bg-red-600 text-white border-red-600",
+              Refunded:  "bg-blue-600 text-white border-blue-600",
+            };
+            const active = statusFilter === s;
+            return (
+              <button
+                key={s}
+                onClick={() => handleStatusFilter(s)}
+                className={`text-xs font-semibold px-3 py-1 rounded-full border transition-colors ${active ? colorMap[s] : "bg-gray-50 text-gray-500 border-gray-200 hover:border-gray-300 hover:text-gray-700"}`}
+              >
+                {s}
+              </button>
+            );
+          })}
+        </div>
+
         <Table>
           <TableHeader>
             <TableRow className="border-gray-200 hover:bg-transparent">
-              <TableHead className="text-gray-700 font-semibold">
-                Order ID
-              </TableHead>
-              <TableHead className="text-gray-700 font-semibold">
-                Date
-              </TableHead>
-              <TableHead className="text-gray-700 font-semibold">
-                Time
-              </TableHead>
-              <TableHead className="text-gray-700 font-semibold">
-                Order Type
-              </TableHead>
-              <TableHead className="text-gray-700 font-semibold">
-                Status
-              </TableHead>
-              <TableHead className="text-gray-700 font-semibold">
-                Payment
-              </TableHead>
-              <TableHead className="text-gray-700 font-semibold text-right">
-                Amount
-              </TableHead>
+              <TableHead className="text-gray-700 font-semibold">Order ID</TableHead>
+              <TableHead className="text-gray-700 font-semibold">Date</TableHead>
+              <TableHead className="text-gray-700 font-semibold">Time</TableHead>
+              <TableHead className="text-gray-700 font-semibold">Order Type</TableHead>
+              <TableHead className="text-gray-700 font-semibold">Status</TableHead>
+              <TableHead className="text-gray-700 font-semibold">Payment</TableHead>
+              <TableHead className="text-gray-700 font-semibold text-right">Amount</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {filtered.length === 0 ? (
               <TableRow>
-                <TableCell
-                  colSpan={7}
-                  className="text-center text-gray-400 py-10"
-                >
+                <TableCell colSpan={7} className="text-center text-gray-400 py-10">
                   {orders.length === 0
                     ? "No orders yet. Orders will appear here once the cashier processes them."
-                    : "No orders found for the selected date range."}
+                    : "No orders found for the selected filters."}
                 </TableCell>
               </TableRow>
             ) : (
-              paginated.map((order) => (
-                <TableRow
-                  key={order.id}
-                  className="border-gray-100 hover:bg-gray-50 transition-colors"
-                >
-                  <TableCell className="font-medium text-gray-900">
-                    {order.orderNumber}
-                  </TableCell>
-                  <TableCell className="text-gray-600 whitespace-nowrap">
-                    {fmtDate(order.date)}
-                  </TableCell>
-                  <TableCell className="text-gray-800 text-base font-semibold whitespace-nowrap">
-                    {fmtTime(order.date)}
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant="secondary"
-                      className={orderTypeBadgeClass(order.orderType)}
-                    >
-                      {order.orderType || "-"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant="secondary"
-                      className={statusBadgeClass(order.status)}
-                    >
-                      {order.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-blue-600 font-medium">
-                    {order.paymentCategory}
-                  </TableCell>
-                  <TableCell className="font-semibold text-gray-900 text-right">
-                    ₱{order.total.toLocaleString()}
-                  </TableCell>
-                </TableRow>
+              paginated.map((order, i) => (
+                <OrderRow key={order.id} order={order} index={i} onRefund={onRefund} />
               ))
             )}
           </TableBody>
@@ -1835,41 +1488,22 @@ function OrdersTab({ orders }: { orders: Order[] }) {
         {filtered.length > ORDER_PAGE_SIZE && (
           <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
             <span className="text-sm text-gray-500">
-              Showing {(currentPage - 1) * ORDER_PAGE_SIZE + 1}–
-              {Math.min(currentPage * ORDER_PAGE_SIZE, filtered.length)} of{" "}
-              {filtered.length} orders
+              Showing {(currentPage - 1) * ORDER_PAGE_SIZE + 1}–{Math.min(currentPage * ORDER_PAGE_SIZE, filtered.length)} of {filtered.length} orders
             </span>
             <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-8 w-8 rounded-lg"
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                disabled={currentPage === 1}
-              >
+              <Button variant="outline" size="icon" className="h-8 w-8 rounded-lg" onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage === 1}>
                 <ChevronLeft className="h-4 w-4" />
               </Button>
               {Array.from({ length: totalPages }, (_, i) => i + 1)
-                .filter(
-                  (p) =>
-                    p === 1 ||
-                    p === totalPages ||
-                    Math.abs(p - currentPage) <= 1,
-                )
+                .filter((p) => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1)
                 .reduce<(number | "...")[]>((acc, p, idx, arr) => {
-                  if (idx > 0 && p - (arr[idx - 1] as number) > 1)
-                    acc.push("...");
+                  if (idx > 0 && p - (arr[idx - 1] as number) > 1) acc.push("...");
                   acc.push(p);
                   return acc;
                 }, [])
                 .map((p, idx) =>
                   p === "..." ? (
-                    <span
-                      key={`ellipsis-${idx}`}
-                      className="text-gray-400 text-sm px-1"
-                    >
-                      ...
-                    </span>
+                    <span key={`ellipsis-${idx}`} className="text-gray-400 text-sm px-1">...</span>
                   ) : (
                     <Button
                       key={p}
@@ -1882,15 +1516,7 @@ function OrdersTab({ orders }: { orders: Order[] }) {
                     </Button>
                   ),
                 )}
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-8 w-8 rounded-lg"
-                onClick={() =>
-                  setCurrentPage((p) => Math.min(totalPages, p + 1))
-                }
-                disabled={currentPage === totalPages}
-              >
+              <Button variant="outline" size="icon" className="h-8 w-8 rounded-lg" onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}>
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
@@ -1906,132 +1532,86 @@ function OrdersTab({ orders }: { orders: Order[] }) {
 export default function SalesReports() {
   const [activeTab, setActiveTab] = useState<TabKey>("logs");
   const [search, setSearch] = useState("");
-  const [filterStatus, setFilterStatus] = useState<string>("All");
   const [period, setPeriod] = useState<Period>("Today");
   const [logs, setLogs] = useState<SaleLog[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
-  const [refundTarget, setRefundTarget] = useState<SaleLog | null>(null);
+  const [refundLog, setRefundLog] = useState<SaleLog | null>(null);
+  const [refundOrder, setRefundOrder] = useState<Order | null>(null);
   const [refundLoading, setRefundLoading] = useState(false);
 
-  // ── Fetch from backend ─────────────────────────────────────────────────────
-const fetchSalesData = async () => {
-  try {
-    const rows = await api.get<RawOrderRow[]>("/orders");
-    if (!rows?.length) {
-      setLogs([]);
-      setOrders([]);
-      return;
-    }
+  const fetchSalesData = async () => {
+    try {
+      const rows = await api.get<RawOrderRow[]>("/orders");
+      if (!rows?.length) { setLogs([]); setOrders([]); return; }
 
-    // Group rows by order ID first
-    const orderMap: Record<
-      number,
-      {
-        rows: RawOrderRow[];
-        total: number;
-        date: string;
-        orderType: string;
-        status: string;
-        paymentMethod: string;
-        cashierName: string;
-      }
-    > = {};
+      const orderMap: Record<number, { rows: RawOrderRow[]; total: number; date: string; orderType: string; status: string; paymentMethod: string; cashierName: string }> = {};
 
-    rows.forEach((r) => {
-      if (!orderMap[r.id]) {
-        orderMap[r.id] = {
-          rows: [],
-          total: Number(r.total) || 0,
-          date: r.date ?? "",
-          orderType: r.orderType ?? r.order_type ?? "Order",
-          status: r.status ?? "",
-          paymentMethod:
-            (r.paymentMethod ?? r.payment_method ?? "cash").toString().trim() ||
-            "cash",
-          cashierName: (r.cashierName ?? "").toString().trim() || "Unknown",
-        };
-      }
-      orderMap[r.id].rows.push(r);
-    });
-
-    const mappedLogs: SaleLog[] = [];
-    const grouped: Record<number, Order> = {};
-
-    Object.entries(orderMap).forEach(([idStr, order]) => {
-      const orderId = Number(idStr);
-      const orderDate = order.date ? new Date(order.date) : new Date();
-      const status = normalizeStatus(order.status);
-
-      // Combine all product names into one label
-      const productNames = order.rows
-        .map((r) => r.productName)
-        .filter(Boolean)
-        .join(", ");
-
-      // Sum quantities across all items
-      const totalQty = order.rows.reduce(
-        (sum, r) => sum + (Number(r.quantity) || 0),
-        0,
-      );
-
-      mappedLogs.push({
-        id: `order-${orderId}`,
-        orderId,
-        date: orderDate.toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        }),
-        time: orderDate.toLocaleTimeString("en-US", {
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: true,
-        }),
-        type: normalizeLogType(status),
-        product: productNames || `Order #${orderId}`,
-        category: order.orderType,
-        quantity: totalQty,
-        unitPrice: order.total,
-        total: order.total,
-        status,
-        paymentMethod: order.paymentMethod,
-        operator: order.cashierName,
-        cashierName: order.cashierName,
-        _dateObj: orderDate,
+      rows.forEach((r) => {
+        if (!orderMap[r.id]) {
+          orderMap[r.id] = {
+            rows: [],
+            total: Number(r.total) || 0,
+            date: r.date ?? "",
+            orderType: r.orderType ?? r.order_type ?? "Order",
+            status: r.status ?? "",
+            paymentMethod: (r.paymentMethod ?? r.payment_method ?? "cash").toString().trim() || "cash",
+            cashierName: (r.cashierName ?? "").toString().trim() || "Unknown",
+          };
+        }
+        orderMap[r.id].rows.push(r);
       });
 
-      // Build orders tab data
-      grouped[orderId] = {
-        id: orderId,
-        orderNumber: `#${orderId}`,
-        items: order.rows.map((r) => ({
-          name: r.productName ?? "",
-          price: Number(r.price) || 0,
-          quantity: Number(r.quantity) || 1,
-        })),
-        total: order.total,
-        date: order.date ?? "",
-        time: orderDate.toLocaleTimeString("en-US", {
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: true,
-        }),
-        orderType: order.orderType,
-        status,
-        paymentCategory: order.paymentMethod,
-      };
-    });
+      const allLogs: SaleLog[] = [];
+      const grouped: Record<number, Order> = {};
 
-    setLogs(
-      mappedLogs.sort((a, b) => b._dateObj.getTime() - a._dateObj.getTime()),
-    );
-    setOrders(Object.values(grouped));
-  } catch (err) {
-    console.error("Failed to fetch sales reports data:", err);
-    setLogs([]);
-    setOrders([]);
-  }
-};
+      Object.entries(orderMap).forEach(([idStr, order]) => {
+        const orderId = Number(idStr);
+        const orderDate = order.date ? new Date(order.date) : new Date();
+        const status = normalizeStatus(order.status);
+        const productNames = order.rows.map((r) => r.productName).filter(Boolean).join(", ");
+        const totalQty = order.rows.reduce((sum, r) => sum + (Number(r.quantity) || 0), 0);
+
+        allLogs.push({
+          id: `order-${orderId}`,
+          orderId,
+          date: orderDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+          time: orderDate.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true }),
+          type: normalizeLogType(status),
+          product: productNames || `Order #${orderId}`,
+          category: order.orderType,
+          quantity: totalQty,
+          unitPrice: order.total,
+          total: order.total,
+          status,
+          paymentMethod: order.paymentMethod,
+          operator: order.cashierName,
+          cashierName: order.cashierName,
+          _dateObj: orderDate,
+        });
+
+        grouped[orderId] = {
+          id: orderId,
+          orderNumber: `#${orderId}`,
+          items: order.rows.map((r) => ({ name: r.productName ?? "", price: Number(r.price) || 0, quantity: Number(r.quantity) || 1 })),
+          total: order.total,
+          date: order.date ?? "",
+          time: orderDate.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true }),
+          orderType: order.orderType,
+          status,
+          paymentCategory: order.paymentMethod,
+          cashierName: order.cashierName,
+        };
+      });
+
+      const sortedLogs = allLogs.sort((a, b) => b._dateObj.getTime() - a._dateObj.getTime());
+      setLogs(sortedLogs);
+      setOrders(Object.values(grouped));
+    } catch (err) {
+      console.error("Failed to fetch sales reports data:", err);
+      setLogs([]);
+      setOrders([]);
+    }
+  };
 
   useEffect(() => {
     fetchSalesData();
@@ -2039,196 +1619,185 @@ const fetchSalesData = async () => {
     return () => clearInterval(interval);
   }, []);
 
-  // ── Refund handler — PATCHes order status via backend ─────────────────────
   async function handleRefundConfirm() {
-    if (!refundTarget) return;
+    const orderId = refundLog?.orderId ?? refundOrder?.id;
+    if (!orderId) return;
     setRefundLoading(true);
     try {
-      await api.patch(`/orders/${refundTarget.orderId}`, {
-        status: "Refunded",
-      });
+      await api.patch(`/orders/${orderId}`, { status: "Refunded" });
       await fetchSalesData();
     } catch (err) {
       console.error("Refund failed:", err);
     } finally {
       setRefundLoading(false);
-      setRefundTarget(null);
+      setRefundLog(null);
+      setRefundOrder(null);
     }
   }
 
-  // ── Filter logs ────────────────────────────────────────────────────────────
-  const filteredLogs = logs.filter((l) => {
-    const matchStatus = filterStatus === "All" || l.status === filterStatus;
+  const refundModalOpen = !!(refundLog || refundOrder);
+  const completedLogs = logs.filter((l) => l.status === "Completed");
+  const filteredLogs = completedLogs.filter((l) => {
     const q = search.toLowerCase();
-    const matchSearch =
+    return (
       l.id.toLowerCase().includes(q) ||
       l.product.toLowerCase().includes(q) ||
       l.paymentMethod.toLowerCase().includes(q) ||
-      l.cashierName.toLowerCase().includes(q);
-    return matchStatus && matchSearch;
+      l.cashierName.toLowerCase().includes(q)
+    );
   });
 
   const grouped = groupByDate(filteredLogs);
   const dates = Object.keys(grouped);
 
-  const TAB_STYLES = (key: TabKey) =>
-    `text-xs font-semibold px-4 py-2 rounded-full border transition-colors cursor-pointer ${
-      activeTab === key
-        ? "bg-[#0f172a] text-white border-[#0f172a]"
-        : "bg-white text-gray-500 border-gray-200 hover:border-gray-300 hover:text-gray-700"
-    }`;
+  // ─── Tab definitions ───────────────────────────────────────────────────────
+  const tabs: { key: TabKey; label: string; count: number; icon: React.ReactNode }[] = [
+    {
+      key: "logs",
+      label: "Sales Logs",
+      count: completedLogs.length,
+      icon: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="5" y="2" width="14" height="20" rx="2" />
+          <path d="M9 7h6M9 11h6M9 15h4" />
+        </svg>
+      ),
+    },
+    {
+      key: "orders",
+      label: "Order History",
+      count: orders.length,
+      icon: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 8v4l2 2" />
+          <circle cx="12" cy="12" r="9" />
+        </svg>
+      ),
+    },
+  ];
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "#f8fafc",
-        fontFamily: "'Poppins', sans-serif",
-      }}
-    >
+    <div style={{ minHeight: "100vh", background: "#f8fafc", fontFamily: "'Poppins', sans-serif" }}>
       <Sidebar />
 
-      {/* Refund confirmation modal */}
       <RefundModal
-        open={!!refundTarget}
-        log={refundTarget}
+        open={refundModalOpen}
+        log={refundLog}
+        order={refundOrder}
         onConfirm={handleRefundConfirm}
-        onClose={() => !refundLoading && setRefundTarget(null)}
+        onClose={() => { if (!refundLoading) { setRefundLog(null); setRefundOrder(null); } }}
         loading={refundLoading}
       />
 
       <div style={{ padding: "40px 40px 40px 88px" }}>
-        {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: -12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4 }}
-          style={{
-            display: "flex",
-            alignItems: "flex-start",
-            justifyContent: "space-between",
-            flexWrap: "wrap",
-            gap: 20,
-            marginBottom: 28,
-          }}
+          style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 20, marginBottom: 28 }}
         >
           <div>
-            <p
-              style={{
-                color: "#f97316",
-                fontSize: 11,
-                fontWeight: 700,
-                letterSpacing: 2,
-                margin: "0 0 6px",
-              }}
-            >
-              THE CRUNCH
-            </p>
-            <h1
-              style={{
-                margin: 0,
-                fontSize: 26,
-                fontWeight: 700,
-                color: "#0f172a",
-              }}
-            >
-              Sales & Reports
-            </h1>
-            <p style={{ margin: "6px 0 0", color: "#94a3b8", fontSize: 13 }}>
-              Transaction history & audit trail
-            </p>
+            <p style={{ color: "#f97316", fontSize: 11, fontWeight: 700, letterSpacing: 2, margin: "0 0 6px" }}>THE CRUNCH</p>
+            <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, color: "#0f172a" }}>Sales & Reports</h1>
+            <p style={{ margin: "6px 0 0", color: "#94a3b8", fontSize: 13 }}>Transaction history & audit trail</p>
           </div>
           <RevenueDropdown period={period} setPeriod={setPeriod} logs={logs} />
         </motion.div>
 
-        {/* Summary */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.1 }}
-        >
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
           <SummaryBar logs={logs} />
         </motion.div>
 
-        {/* Tabs */}
-        <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-          <button
-            className={TAB_STYLES("logs")}
-            onClick={() => setActiveTab("logs")}
-          >
-            Sales Logs
-          </button>
-          <button
-            className={TAB_STYLES("orders")}
-            onClick={() => setActiveTab("orders")}
-          >
-            Orders
-          </button>
+        {/* ─── Updated pill tabs ─────────────────────────────────────────── */}
+        <div
+          style={{
+            display: "inline-flex",
+            gap: 4,
+            marginBottom: 20,
+            background: "#f1f5f9",
+            borderRadius: 99,
+            padding: 4,
+          }}
+        >
+          {tabs.map(({ key, label, count, icon }) => {
+            const active = activeTab === key;
+            return (
+              <button
+                key={key}
+                onClick={() => setActiveTab(key)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 7,
+                  padding: "7px 14px",
+                  borderRadius: 99,
+                  border: "none",
+                  background: active ? "#fff" : "transparent",
+                  cursor: "pointer",
+                  fontFamily: "'Poppins', sans-serif",
+                  fontSize: 13,
+                  fontWeight: active ? 600 : 500,
+                  color: active ? "#0f172a" : "#94a3b8",
+                  boxShadow: active ? "0 1px 6px rgba(0,0,0,0.10)" : "none",
+                  transition: "all 0.2s",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <span style={{ color: active ? "#0f172a" : "#94a3b8", display: "flex", alignItems: "center" }}>
+                  {icon}
+                </span>
+                {label}
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    minWidth: 20,
+                    height: 20,
+                    padding: "0 6px",
+                    borderRadius: 99,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    background: active ? "#0f172a" : "#cbd5e1",
+                    color: active ? "#fff" : "#64748b",
+                    transition: "all 0.2s",
+                  }}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
         </div>
 
-        {/* ── Sales Logs ── */}
         {activeTab === "logs" && (
           <>
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.15, duration: 0.35 }}
-              style={{
-                display: "flex",
-                gap: 10,
-                marginBottom: 20,
-                alignItems: "center",
-                flexWrap: "wrap",
-              }}
+              style={{ display: "flex", gap: 10, marginBottom: 20, alignItems: "center", flexWrap: "wrap" }}
             >
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search product, cashier, payment method, or transaction ID..."
                 style={{
-                  flex: 1,
-                  minWidth: 220,
-                  background: "#fff",
-                  border: "1px solid #e2e8f0",
-                  borderRadius: 99,
-                  padding: "10px 18px",
-                  fontSize: 13,
-                  color: "#1e293b",
-                  outline: "none",
-                  fontFamily: "'Poppins', sans-serif",
+                  flex: 1, minWidth: 220, background: "#fff", border: "1px solid #e2e8f0",
+                  borderRadius: 99, padding: "10px 18px", fontSize: 13, color: "#1e293b",
+                  outline: "none", fontFamily: "'Poppins', sans-serif",
                   boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
                 }}
               />
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {(
-                  [
-                    "All",
-                    "Completed",
-                    "Pending",
-                    "Cancelled",
-                    "Refunded",
-                  ] as const
-                ).map((s) => (
-                  <motion.button
-                    key={s}
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() => setFilterStatus(s)}
-                    style={{
-                      background: filterStatus === s ? "#0f172a" : "#fff",
-                      border: "1px solid #e2e8f0",
-                      borderRadius: 99,
-                      color: filterStatus === s ? "#fff" : "#64748b",
-                      padding: "8px 18px",
-                      fontSize: 12,
-                      fontWeight: 500,
-                      cursor: "pointer",
-                      fontFamily: "'Poppins', sans-serif",
-                      transition: "all 0.15s",
-                    }}
-                  >
-                    {s}
-                  </motion.button>
-                ))}
+              <div
+                style={{
+                  display: "flex", alignItems: "center", gap: 6, padding: "8px 14px",
+                  borderRadius: 99, background: "#f0fdf4", border: "1px solid #bbf7d0",
+                  fontSize: 12, fontWeight: 600, color: "#16a34a",
+                }}
+              >
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#16a34a", display: "inline-block" }} />
+                Showing completed sales only
               </div>
             </motion.div>
 
@@ -2236,23 +1805,12 @@ const fetchSalesData = async () => {
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2, duration: 0.35 }}
-              style={{
-                background: "#fff",
-                borderRadius: 16,
-                border: "1px solid #e2e8f0",
-                overflow: "hidden",
-                boxShadow: "0 1px 8px rgba(0,0,0,0.05)",
-              }}
+              style={{ background: "#fff", borderRadius: 16, border: "1px solid #e2e8f0", overflow: "hidden", boxShadow: "0 1px 8px rgba(0,0,0,0.05)" }}
             >
-              {/* Column headers */}
               <div
                 style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 14,
-                  padding: "10px 20px",
-                  borderBottom: "1px solid #f1f5f9",
-                  background: "#f8fafc",
+                  display: "flex", alignItems: "center", gap: 14, padding: "10px 20px",
+                  borderBottom: "1px solid #f1f5f9", background: "#f8fafc",
                 }}
               >
                 <div style={{ width: 8, flexShrink: 0 }} />
@@ -2268,13 +1826,8 @@ const fetchSalesData = async () => {
                   <span
                     key={col.label}
                     style={{
-                      color: "#94a3b8",
-                      fontSize: 10,
-                      fontWeight: 600,
-                      letterSpacing: 1,
-                      ...(col.flex
-                        ? { flex: col.flex }
-                        : { width: col.width, flexShrink: 0 }),
+                      color: "#94a3b8", fontSize: 10, fontWeight: 600, letterSpacing: 1,
+                      ...(col.flex ? { flex: col.flex } : { width: col.width, flexShrink: 0 }),
                       ...(col.align ? { textAlign: col.align as any } : {}),
                     }}
                   >
@@ -2286,55 +1839,26 @@ const fetchSalesData = async () => {
 
               <AnimatePresence>
                 {dates.length === 0 ? (
-                  <EmptyState
-                    key="empty"
-                    message="Orders placed from the cashier view will appear here automatically."
-                  />
+                  <EmptyState key="empty" message="Completed orders from the cashier view will appear here automatically." />
                 ) : (
                   dates.map((date) => {
                     const entries = grouped[date];
-                    const dayRevenue = entries
-                      .filter(
-                        (l) =>
-                          l.status !== "Cancelled" && l.status !== "Refunded",
-                      )
-                      .reduce((s, l) => s + l.total, 0);
+                    const dayRevenue = entries.reduce((s, l) => s + l.total, 0);
                     return (
                       <div key={date}>
                         <div
                           style={{
-                            padding: "8px 20px",
-                            background: "#f8fafc",
-                            borderBottom: "1px solid #f1f5f9",
-                            borderTop: "1px solid #f1f5f9",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
+                            padding: "8px 20px", background: "#f8fafc",
+                            borderBottom: "1px solid #f1f5f9", borderTop: "1px solid #f1f5f9",
+                            display: "flex", alignItems: "center", justifyContent: "space-between",
                           }}
                         >
-                          <span
-                            style={{
-                              color: "#64748b",
-                              fontSize: 11,
-                              fontWeight: 600,
-                              letterSpacing: 0.5,
-                            }}
-                          >
-                            {date}
-                          </span>
+                          <span style={{ color: "#64748b", fontSize: 11, fontWeight: 600, letterSpacing: 0.5 }}>{date}</span>
                           <span style={{ color: "#cbd5e1", fontSize: 11 }}>
-                            {entries.length} records · ₱
-                            {dayRevenue.toLocaleString()} revenue
+                            {entries.length} records · ₱{dayRevenue.toLocaleString()} revenue
                           </span>
                         </div>
-                        {entries.map((log, i) => (
-                          <LogRow
-                            key={log.id}
-                            log={log}
-                            index={i}
-                            onRefund={(l) => setRefundTarget(l)}
-                          />
-                        ))}
+                        {entries.map((log, i) => <LogRow key={log.id} log={log} index={i} />)}
                       </div>
                     );
                   })
@@ -2342,28 +1866,15 @@ const fetchSalesData = async () => {
               </AnimatePresence>
             </motion.div>
 
-            <p
-              style={{
-                color: "#cbd5e1",
-                fontSize: 11,
-                textAlign: "center",
-                marginTop: 20,
-                fontWeight: 500,
-              }}
-            >
-              {filteredLogs.length} of {logs.length} line items
+            <p style={{ color: "#cbd5e1", fontSize: 11, textAlign: "center", marginTop: 20, fontWeight: 500 }}>
+              {filteredLogs.length} of {completedLogs.length} completed sales
             </p>
           </>
         )}
 
-        {/* ── Orders Tab ── */}
         {activeTab === "orders" && (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3 }}
-          >
-            <OrdersTab orders={orders} />
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
+            <OrdersTab orders={orders} onRefund={(order) => setRefundOrder(order)} />
           </motion.div>
         )}
       </div>
