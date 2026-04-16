@@ -14,6 +14,7 @@ import { useNotifications } from "@/lib/NotificationContext";
 type WithdrawalType = "initial" | "supplementary" | "return";
 type StockStatus = "critical" | "low" | "normal";
 type Tab = "dashboard" | "withdrawal" | "alerts" | "suppliers" | "purchases";
+type DashboardSummaryKey = "products" | "withdrawn" | "wasted" | "returned";
 export type POStatus = "Draft" | "Ordered" | "Received" | "Cancelled";
 
 export interface POItem {
@@ -173,6 +174,9 @@ function toNumber(v: unknown, fb = 0): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : fb;
 }
+function fmtInt(v: unknown): string {
+  return Math.round(toNumber(v)).toLocaleString();
+}
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: { "Content-Type": "application/json" },
@@ -203,7 +207,13 @@ const api = {
     quantity: number;
     recorded_by: string | null;
   }) =>
-    apiFetch<{ success: boolean }>("/stock-status/spoilage", {
+    apiFetch<{
+      success: boolean;
+      product_id: number;
+      quantity: number;
+      dailyWithdrawn: number;
+      wasted: number;
+    }>("/stock-status/spoilage", {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -650,16 +660,33 @@ function KPICard({
   value,
   sub,
   accent,
+  onClick,
 }: {
   label: string;
   value: string;
   sub: string;
   accent: string;
+  onClick?: () => void;
 }) {
+  const interactive = typeof onClick === "function";
+
   return (
     <motion.div
       variants={itemVariants}
-      className={`bg-white rounded-2xl p-5 shadow-sm border border-slate-100 border-t-4 ${KPI_ACCENT[accent].border}`}
+      className={`bg-white rounded-2xl p-5 shadow-sm border border-slate-100 border-t-4 ${KPI_ACCENT[accent].border} ${interactive ? "cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md" : ""}`}
+      onClick={onClick}
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      onKeyDown={
+        interactive
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick?.();
+              }
+            }
+          : undefined
+      }
     >
       <p className="text-xs text-slate-400 font-medium">{label}</p>
       <p
@@ -668,6 +695,11 @@ function KPICard({
         {value}
       </p>
       <p className="text-xs text-slate-400 mt-1">{sub}</p>
+      {interactive && (
+        <p className="text-[11px] text-slate-500 mt-3 font-medium">
+          Click to view summary
+        </p>
+      )}
     </motion.div>
   );
 }
@@ -689,6 +721,104 @@ function SectionCard({
       </div>
       {children}
     </div>
+  );
+}
+
+function DashboardSummaryModal({
+  open,
+  title,
+  subtitle,
+  totalLabel,
+  totalValue,
+  rows,
+  emptyMessage,
+  onClose,
+}: {
+  open: boolean;
+  title: string;
+  subtitle: string;
+  totalLabel: string;
+  totalValue: string;
+  rows: Array<{
+    id: string;
+    name: string;
+    value: string;
+    meta: string;
+  }>;
+  emptyMessage: string;
+  onClose: () => void;
+}) {
+  if (!open) return null;
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4"
+        onClick={onClose}
+      >
+        <motion.div
+          initial={{ opacity: 0, y: 12, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 12, scale: 0.98 }}
+          className="w-full max-w-3xl max-h-[85vh] overflow-hidden rounded-3xl bg-white shadow-2xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="px-6 py-5 border-b border-slate-100 flex items-start justify-between gap-4">
+            <div>
+              <p className="text-lg font-semibold text-slate-800">{title}</p>
+              <p className="text-sm text-slate-500 mt-1">{subtitle}</p>
+            </div>
+            <button
+              onClick={onClose}
+              className="text-slate-400 hover:text-slate-700 transition-colors text-lg"
+            >
+              ×
+            </button>
+          </div>
+
+          <div className="px-6 py-5 border-b border-slate-100 bg-slate-50/80">
+            <p className="text-xs uppercase tracking-wider font-semibold text-slate-500">
+              {totalLabel}
+            </p>
+            <p className="text-3xl font-bold text-slate-800 mt-1">
+              {totalValue}
+            </p>
+          </div>
+
+          <div className="max-h-[52vh] overflow-y-auto p-6">
+            {rows.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-400">
+                {emptyMessage}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {rows.map((row) => (
+                  <div
+                    key={row.id}
+                    className="rounded-2xl border border-slate-100 bg-white px-4 py-3 flex items-center justify-between gap-4"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-800 truncate">
+                        {row.name}
+                      </p>
+                      <p className="text-xs text-slate-500 mt-1">{row.meta}</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-sm font-bold text-slate-800">
+                        {row.value}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
   );
 }
 
@@ -1694,7 +1824,7 @@ function StockAlertRestockBanner({
                       );
                       const deficit = Math.max(
                         0,
-                        +(p.reorderPoint - p.mainStock).toFixed(2),
+                        Math.round(p.reorderPoint - p.mainStock),
                       );
                       return (
                         <div
@@ -2569,6 +2699,8 @@ export default function StockManager() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [dashboardSummary, setDashboardSummary] =
+    useState<DashboardSummaryKey | null>(null);
   const [wdProductId, setWdProductId] = useState<number | null>(null);
   const [wdQty, setWdQty] = useState("");
   const [wdType, setWdType] = useState<WithdrawalType>("initial");
@@ -2899,7 +3031,7 @@ export default function StockManager() {
       return `No withdrawal today for ${selectedSpoilageProduct.product_name}`;
     if (spoilageAmount === 0) return "Enter spoilage amount";
     if (spoilageAmount > withdrawnToday)
-      return `Cannot exceed withdrawn amount (${withdrawnToday.toFixed(1)} ${selectedSpoilageProduct.unit})`;
+      return `Cannot exceed withdrawn amount (${fmtInt(withdrawnToday)} ${selectedSpoilageProduct.unit})`;
     return "";
   }, [selectedSpoilageProduct, withdrawnToday, spoilageAmount]);
   const totalWithdrawn = products.reduce(
@@ -2908,6 +3040,88 @@ export default function StockManager() {
   );
   const totalWasted = products.reduce((s, p) => s + toNumber(p.wasted), 0);
   const totalReturned = products.reduce((s, p) => s + toNumber(p.returned), 0);
+  const dashboardSummaryConfig = useMemo(() => {
+    const productRows = [...products]
+      .sort((a, b) => a.product_name.localeCompare(b.product_name))
+      .map((p) => ({
+        id: `product-${p.product_id}`,
+        name: p.product_name,
+        value: `${fmtInt(p.mainStock)} ${p.unit}`,
+        meta: `${p.category} · reorder point ${fmtInt(p.reorderPoint)}`,
+      }));
+    const withdrawnRows = [...products]
+      .filter((p) => toNumber(p.dailyWithdrawn) > 0)
+      .sort((a, b) => toNumber(b.dailyWithdrawn) - toNumber(a.dailyWithdrawn))
+      .map((p) => ({
+        id: `withdrawn-${p.product_id}`,
+        name: p.product_name,
+        value: `${fmtInt(p.dailyWithdrawn)} ${p.unit}`,
+        meta: `${p.category} · main stock ${fmtInt(p.mainStock)} ${p.unit}`,
+      }));
+    const wastedRows = [...products]
+      .filter((p) => toNumber(p.wasted) > 0)
+      .sort((a, b) => toNumber(b.wasted) - toNumber(a.wasted))
+      .map((p) => ({
+        id: `wasted-${p.product_id}`,
+        name: p.product_name,
+        value: `${fmtInt(p.wasted)} ${p.unit}`,
+        meta: `${p.category} · withdrawn today ${fmtInt(p.dailyWithdrawn)} ${p.unit}`,
+      }));
+    const returnedRows = [...products]
+      .filter((p) => toNumber(p.returned) > 0)
+      .sort((a, b) => toNumber(b.returned) - toNumber(a.returned))
+      .map((p) => ({
+        id: `returned-${p.product_id}`,
+        name: p.product_name,
+        value: `${fmtInt(p.returned)} ${p.unit}`,
+        meta: `${p.category} · current stock ${fmtInt(p.mainStock)} ${p.unit}`,
+      }));
+
+    return {
+      products: {
+        title: "Total Products Summary",
+        subtitle: "All inventory items currently tracked in stock manager.",
+        totalLabel: "Total Products",
+        totalValue: products.length.toString(),
+        rows: productRows,
+        emptyMessage: "No products found in inventory.",
+      },
+      withdrawn: {
+        title: "Withdrawn Today Summary",
+        subtitle: "Items pulled from storage for kitchen use today.",
+        totalLabel: "Total Withdrawn",
+        totalValue: fmtInt(totalWithdrawn),
+        rows: withdrawnRows,
+        emptyMessage: "No products have been withdrawn today.",
+      },
+      wasted: {
+        title: "Wasted Today Summary",
+        subtitle: "Recorded spoilage and other waste for the day.",
+        totalLabel: "Total Wasted",
+        totalValue: fmtInt(totalWasted),
+        rows: wastedRows,
+        emptyMessage: "No wasted items recorded today.",
+      },
+      returned: {
+        title: "Returned Today Summary",
+        subtitle: "Items or quantities returned back into stock today.",
+        totalLabel: "Total Returned",
+        totalValue: fmtInt(totalReturned),
+        rows: returnedRows,
+        emptyMessage: "No returned items recorded today.",
+      },
+    } satisfies Record<
+      DashboardSummaryKey,
+      {
+        title: string;
+        subtitle: string;
+        totalLabel: string;
+        totalValue: string;
+        rows: Array<{ id: string; name: string; value: string; meta: string }>;
+        emptyMessage: string;
+      }
+    >;
+  }, [products, totalReturned, totalWasted, totalWithdrawn]);
   const wholeChickenProducts = products.filter(isWholeChicken);
   const choppedChickenProducts = products.filter(isChoppedChicken);
   const filteredHistory = useMemo(() => {
@@ -3187,23 +3401,18 @@ export default function StockManager() {
     const product = selectedSpoilageProduct;
     setSubmitting(true);
     try {
-      await api.postSpoilage({
+      const result = await api.postSpoilage({
         product_id: product.product_id,
         quantity: qty,
         recorded_by: null,
-      });
-      const updatedStock = Math.max(0, +(product.mainStock - qty).toFixed(2));
-      await api.updateStock(product.inventory_id, {
-        stock: updatedStock,
-        wasted: +(product.wasted + qty).toFixed(2),
       });
       setProducts((prev) =>
         prev.map((p) =>
           p.product_id === adjProductId
             ? {
                 ...p,
-                mainStock: updatedStock,
-                wasted: +(p.wasted + qty).toFixed(2),
+                dailyWithdrawn: result.dailyWithdrawn,
+                wasted: result.wasted,
               }
             : p,
         ),
@@ -3557,24 +3766,28 @@ export default function StockManager() {
                         value={products.length.toString()}
                         sub="in inventory"
                         accent="slate"
+                        onClick={() => setDashboardSummary("products")}
                       />
                       <KPICard
                         label="Withdrawn Today"
-                        value={totalWithdrawn.toFixed(1)}
+                        value={fmtInt(totalWithdrawn)}
                         sub="units pulled"
                         accent="indigo"
+                        onClick={() => setDashboardSummary("withdrawn")}
                       />
                       <KPICard
                         label="Wasted Today"
-                        value={totalWasted.toFixed(2)}
+                        value={fmtInt(totalWasted)}
                         sub="units spoiled"
                         accent="rose"
+                        onClick={() => setDashboardSummary("wasted")}
                       />
                       <KPICard
                         label="Returned Today"
-                        value={totalReturned.toFixed(2)}
+                        value={fmtInt(totalReturned)}
                         sub="units returned"
                         accent="emerald"
+                        onClick={() => setDashboardSummary("returned")}
                       />
                     </motion.div>
 
@@ -3845,7 +4058,7 @@ export default function StockManager() {
                               {products.map((p) => (
                                 <option key={p.product_id} value={p.product_id}>
                                   {p.product_name} (
-                                  {p.dailyWithdrawn.toFixed(1)} {p.unit}{" "}
+                                  {fmtInt(p.dailyWithdrawn)} {p.unit}{" "}
                                   withdrawn today)
                                 </option>
                               ))}
@@ -3858,9 +4071,7 @@ export default function StockManager() {
                                 <p className="text-sm font-semibold text-rose-700">
                                   Available for spoilage:{" "}
                                   <span className="font-bold">
-                                    {selectedSpoilageProduct.dailyWithdrawn.toFixed(
-                                      1,
-                                    )}{" "}
+                                    {fmtInt(selectedSpoilageProduct.dailyWithdrawn)}{" "}
                                     {selectedSpoilageProduct.unit}
                                   </span>
                                 </p>
@@ -3892,14 +4103,14 @@ export default function StockManager() {
                                 type="number"
                                 value={adjQty}
                                 onChange={handleSpoilageInputChange}
-                                placeholder="0.0"
+                                placeholder="0"
                               />
                               {selectedSpoilageProduct && (
                                 <button
                                   type="button"
                                   onClick={() =>
                                     setAdjQty(
-                                      selectedSpoilageProduct.dailyWithdrawn.toString(),
+                                      fmtInt(selectedSpoilageProduct.dailyWithdrawn),
                                     )
                                   }
                                   disabled={
@@ -3908,9 +4119,7 @@ export default function StockManager() {
                                   className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-indigo-600 hover:text-indigo-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                   Max (
-                                  {selectedSpoilageProduct.dailyWithdrawn.toFixed(
-                                    1,
-                                  )}
+                                  {fmtInt(selectedSpoilageProduct.dailyWithdrawn)}
                                   )
                                 </button>
                               )}
@@ -4093,25 +4302,25 @@ export default function StockManager() {
                             {[
                               {
                                 label: "Total Received",
-                                value: reportData.totalReceived.toFixed(1),
+                                value: fmtInt(reportData.totalReceived),
                                 accent: "border-t-emerald-400",
                                 text: "text-emerald-600",
                               },
                               {
                                 label: "Total Withdrawn",
-                                value: reportData.totalWithdrawn.toFixed(1),
+                                value: fmtInt(reportData.totalWithdrawn),
                                 accent: "border-t-indigo-400",
                                 text: "text-indigo-600",
                               },
                               {
                                 label: "Total Returned",
-                                value: reportData.totalReturned.toFixed(1),
+                                value: fmtInt(reportData.totalReturned),
                                 accent: "border-t-amber-400",
                                 text: "text-amber-600",
                               },
                               {
                                 label: "Total Wasted",
-                                value: reportData.totalWasted.toFixed(2),
+                                value: fmtInt(reportData.totalWasted),
                                 accent: "border-t-rose-400",
                                 text: "text-rose-500",
                               },
@@ -4625,9 +4834,9 @@ export default function StockManager() {
                             </motion.div>
                             {items.map((p, i) => {
                               const status = getStockStatus(p);
-                              const deficit = +(
-                                p.reorderPoint - p.mainStock
-                              ).toFixed(2);
+                              const deficit = Math.round(
+                                p.reorderPoint - p.mainStock,
+                              );
                               return (
                                 <motion.div
                                   key={p.inventory_id}
@@ -5810,6 +6019,18 @@ export default function StockManager() {
             </motion.div>
           )}
         </AnimatePresence>
+        {dashboardSummary && (
+          <DashboardSummaryModal
+            open={dashboardSummary !== null}
+            title={dashboardSummaryConfig[dashboardSummary].title}
+            subtitle={dashboardSummaryConfig[dashboardSummary].subtitle}
+            totalLabel={dashboardSummaryConfig[dashboardSummary].totalLabel}
+            totalValue={dashboardSummaryConfig[dashboardSummary].totalValue}
+            rows={dashboardSummaryConfig[dashboardSummary].rows}
+            emptyMessage={dashboardSummaryConfig[dashboardSummary].emptyMessage}
+            onClose={() => setDashboardSummary(null)}
+          />
+        )}
       </div>
     </>
   );
