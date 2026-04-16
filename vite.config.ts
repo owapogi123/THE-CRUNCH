@@ -12,8 +12,8 @@ export default defineConfig(({ mode }) => {
 
     resolve: {
       alias: {
-        "@": path.resolve(__dirname, "src"),
-      },
+        "@": path.resolve(__dirname, "./src")
+      }
     },
 
     server: {
@@ -26,15 +26,15 @@ export default defineConfig(({ mode }) => {
           secure: false,
           ws: true,
           headers: {
-            "ngrok-skip-browser-warning": "true",
-          },
-        },
-      },
+            "ngrok-skip-browser-warning": "true"
+          }
+        }
+      }
     },
 
     build: {
       outDir: "dist",
-      sourcemap: false,
+      sourcemap: false
     },
 
     preview: {
@@ -43,9 +43,9 @@ export default defineConfig(({ mode }) => {
         "/api": {
           target: apiTarget,
           changeOrigin: true,
-          secure: false,
-        },
-      },
-    },
+          secure: false
+        }
+      }
+    }
   };
 });

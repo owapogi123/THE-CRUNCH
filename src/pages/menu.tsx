@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   Search,
   Minus,
@@ -10,6 +10,7 @@ import {
   Calendar,
   Hash,
   ChevronDown,
+  Delete,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { api } from "../lib/api";
@@ -70,6 +71,8 @@ interface OrderPayload {
   vat_exempt_amount: number;
   cashierId: number | null;
   table_id: number | null;
+  cash_tendered?: number;
+  change_amount?: number;
 }
 
 interface OrderResponse {
@@ -105,7 +108,13 @@ const getNow = () => {
 function computePricing(gross: number, customerType: CustomerType) {
   if (customerType === "regular") {
     const vatAmount = gross * (VAT_RATE / (1 + VAT_RATE));
-    return { gross, vatExemptAmount: 0, vatAmount, discountAmount: 0, amountDue: gross };
+    return {
+      gross,
+      vatExemptAmount: 0,
+      vatAmount,
+      discountAmount: 0,
+      amountDue: gross,
+    };
   }
   const vatExemptBase = gross / (1 + VAT_RATE);
   const discountAmount = vatExemptBase * DISCOUNT_RATE;
@@ -562,6 +571,407 @@ function CustomSelect({
   );
 }
 
+// ─── AMOUNT ENTRY MODAL ───────────────────────────────────────────────────────
+/**
+ * Shown before final order submission.
+ * For cash payments: cashier enters tendered amount, sees change.
+ * For e-payment: just a confirmation step with no numpad.
+ */
+function AmountEntryModal({
+  show,
+  amountDue,
+  paymentMethod,
+  onConfirm,
+  onCancel,
+}: {
+  show: boolean;
+  amountDue: number;
+  paymentMethod: "cash" | "e-payment";
+  onConfirm: (cashTendered: number) => void;
+  onCancel: () => void;
+}) {
+  const [input, setInput] = useState("");
+
+  // Reset input whenever the modal opens
+  useEffect(() => {
+    if (show) setInput("");
+  }, [show]);
+
+  const cashTendered = parseFloat(input) || 0;
+  const change = cashTendered - amountDue;
+  const hasEnough = cashTendered >= amountDue;
+
+  // Numpad key handler
+  const handleKey = (key: string) => {
+    if (key === "⌫") {
+      setInput((prev) => prev.slice(0, -1));
+      return;
+    }
+    if (key === "00") {
+      setInput((prev) => (prev === "" ? "" : prev + "00"));
+      return;
+    }
+    // Prevent more than one decimal point
+    if (key === "." && input.includes(".")) return;
+    // Limit to 2 decimal places
+    const dotIdx = input.indexOf(".");
+    if (dotIdx !== -1 && input.length - dotIdx > 2) return;
+    setInput((prev) => prev + key);
+  };
+
+  const NUMPAD_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "0", "00"];
+
+  // Quick-fill buttons for common cash denominations
+  const QUICK_AMOUNTS = [50, 100, 200, 500, 1000].filter((d) => d >= amountDue);
+
+  return (
+    <AnimatePresence>
+      {show && (
+        <>
+          {/* Blurred backdrop */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            onClick={onCancel}
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 60,
+              backdropFilter: "blur(3px)",
+              WebkitBackdropFilter: "blur(3px)",
+              background: "rgba(0,0,0,0.35)",
+            }}
+          />
+
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 61,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 16,
+              pointerEvents: "none",
+            }}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 10 }}
+              transition={{ type: "spring", stiffness: 380, damping: 30 }}
+              style={{
+                background: "#fff",
+                width: "100%",
+                maxWidth: 320,
+                borderRadius: 20,
+                overflow: "hidden",
+                border: "1px solid #ebebeb",
+                pointerEvents: "auto",
+                fontFamily: FONT,
+              }}
+            >
+              {/* Header — amount due */}
+              <div
+                style={{
+                  padding: "22px 22px 16px",
+                  borderBottom: "1px solid #f5f5f5",
+                }}
+              >
+                <p
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 600,
+                    color: "#bbb",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.07em",
+                    marginBottom: 4,
+                  }}
+                >
+                  Amount due
+                </p>
+                <p style={{ fontSize: 28, fontWeight: 600, color: "#111", margin: 0 }}>
+                  ₱{formatPrice(amountDue)}
+                </p>
+              </div>
+
+              <div style={{ padding: "14px 18px 18px" }}>
+                {paymentMethod === "cash" ? (
+                  <>
+                    {/* Tendered display */}
+                    <p
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 600,
+                        color: "#bbb",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.07em",
+                        marginBottom: 6,
+                      }}
+                    >
+                      Cash tendered
+                    </p>
+                    <div
+                      style={{
+                        background: "#fafafa",
+                        border: `1.5px solid ${input ? "#111" : "#e5e5e5"}`,
+                        borderRadius: 10,
+                        padding: "10px 14px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        marginBottom: 10,
+                        minHeight: 44,
+                      }}
+                    >
+                      <span style={{ fontSize: 14, color: "#aaa" }}>₱</span>
+                      <span
+                        style={{
+                          fontSize: 20,
+                          fontWeight: 600,
+                          color: input ? "#111" : "#ccc",
+                          flex: 1,
+                          letterSpacing: "-0.3px",
+                        }}
+                      >
+                        {input || "0"}
+                      </span>
+                    </div>
+
+                    {/* Quick-fill denominations */}
+                    {QUICK_AMOUNTS.length > 0 && (
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: 5,
+                          marginBottom: 10,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        {QUICK_AMOUNTS.slice(0, 5).map((amt) => (
+                          <motion.button
+                            key={amt}
+                            whileTap={{ scale: 0.94 }}
+                            onClick={() => setInput(String(amt))}
+                            style={{
+                              padding: "4px 10px",
+                              borderRadius: 7,
+                              border: "1px solid #efefef",
+                              background: "#f7f7f7",
+                              fontSize: 11,
+                              fontWeight: 500,
+                              color: "#555",
+                              cursor: "pointer",
+                              fontFamily: FONT,
+                            }}
+                          >
+                            ₱{amt}
+                          </motion.button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Change & tendered summary */}
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr",
+                        gap: 8,
+                        marginBottom: 12,
+                      }}
+                    >
+                      <div
+                        style={{
+                          background: "#fafafa",
+                          border: "1px solid #f0f0f0",
+                          borderRadius: 10,
+                          padding: "10px 12px",
+                        }}
+                      >
+                        <p style={{ fontSize: 10, color: "#bbb", marginBottom: 3 }}>
+                          Change
+                        </p>
+                        <p
+                          style={{
+                            fontSize: 16,
+                            fontWeight: 600,
+                            color: hasEnough && input ? "#16a34a" : "#ddd",
+                            margin: 0,
+                          }}
+                        >
+                          ₱{hasEnough && input ? formatPrice(change) : "—"}
+                        </p>
+                      </div>
+                      <div
+                        style={{
+                          background: "#fafafa",
+                          border: "1px solid #f0f0f0",
+                          borderRadius: 10,
+                          padding: "10px 12px",
+                        }}
+                      >
+                        <p style={{ fontSize: 10, color: "#bbb", marginBottom: 3 }}>
+                          Tendered
+                        </p>
+                        <p
+                          style={{
+                            fontSize: 16,
+                            fontWeight: 600,
+                            color: input ? "#111" : "#ddd",
+                            margin: 0,
+                          }}
+                        >
+                          {input ? `₱${formatPrice(cashTendered)}` : "—"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Insufficient amount warning */}
+                    <AnimatePresence>
+                      {input && !hasEnough && (
+                        <motion.p
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: "auto" }}
+                          exit={{ opacity: 0, height: 0 }}
+                          style={{
+                            fontSize: 11,
+                            color: "#f87171",
+                            marginBottom: 8,
+                            fontWeight: 500,
+                          }}
+                        >
+                          ₱{formatPrice(amountDue - cashTendered)} short
+                        </motion.p>
+                      )}
+                    </AnimatePresence>
+
+                    {/* Numpad */}
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(3, 1fr)",
+                        gap: 6,
+                        marginBottom: 10,
+                      }}
+                    >
+                      {NUMPAD_KEYS.map((key) => (
+                        <motion.button
+                          key={key}
+                          whileTap={{ scale: 0.9 }}
+                          onClick={() => handleKey(key)}
+                          style={{
+                            padding: "12px",
+                            borderRadius: 9,
+                            border: "1px solid #eee",
+                            background: key === "⌫" ? "#fafafa" : "#fff",
+                            fontSize: key === "⌫" ? 13 : 15,
+                            fontWeight: 500,
+                            color: key === "⌫" ? "#999" : "#222",
+                            cursor: "pointer",
+                            fontFamily: FONT,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          {key === "⌫" ? (
+                            <Delete style={{ width: 14, height: 14, color: "#999" }} />
+                          ) : (
+                            key
+                          )}
+                        </motion.button>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  /* E-payment: just a confirmation message */
+                  <div
+                    style={{
+                      textAlign: "center",
+                      padding: "20px 0 16px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 48,
+                        height: 48,
+                        borderRadius: "50%",
+                        background: "#f0fdf4",
+                        border: "1px solid #bbf7d0",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        margin: "0 auto 12px",
+                      }}
+                    >
+                      <Check style={{ width: 20, height: 20, color: "#22c55e" }} strokeWidth={2.5} />
+                    </div>
+                    <p style={{ fontSize: 13, fontWeight: 500, color: "#111", marginBottom: 4 }}>
+                      E-payment confirmed?
+                    </p>
+                    <p style={{ fontSize: 11, color: "#bbb", lineHeight: 1.6 }}>
+                      Ensure the payment of{" "}
+                      <strong style={{ color: "#111" }}>₱{formatPrice(amountDue)}</strong> has
+                      been received before confirming.
+                    </p>
+                  </div>
+                )}
+
+                {/* Confirm button */}
+                <motion.button
+                  whileHover={{ opacity: 0.88 }}
+                  whileTap={{ scale: 0.98 }}
+                  disabled={paymentMethod === "cash" && (!input || !hasEnough)}
+                  onClick={() =>
+                    onConfirm(paymentMethod === "cash" ? cashTendered : amountDue)
+                  }
+                  style={{
+                    width: "100%",
+                    padding: "13px",
+                    background: "#16a34a",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 12,
+                    fontSize: 13,
+                    fontWeight: 500,
+                    fontFamily: FONT,
+                    cursor:
+                      paymentMethod === "cash" && (!input || !hasEnough)
+                        ? "not-allowed"
+                        : "pointer",
+                    opacity: paymentMethod === "cash" && (!input || !hasEnough) ? 0.4 : 1,
+                    marginBottom: 6,
+                  }}
+                >
+                  Confirm Payment
+                </motion.button>
+                <motion.button
+                  whileTap={{ scale: 0.97 }}
+                  onClick={onCancel}
+                  style={{
+                    width: "100%",
+                    padding: "9px",
+                    background: "transparent",
+                    color: "#bbb",
+                    border: "none",
+                    fontSize: 12,
+                    fontFamily: FONT,
+                    cursor: "pointer",
+                  }}
+                >
+                  Cancel
+                </motion.button>
+              </div>
+            </motion.div>
+          </div>
+        </>
+      )}
+    </AnimatePresence>
+  );
+}
+
 // ─── SUCCESS MODAL ────────────────────────────────────────────────────────────
 function SuccessModal({
   show,
@@ -569,6 +979,8 @@ function SuccessModal({
   orderNumber,
   savedCart,
   paidAmount,
+  cashTendered,
+  changeAmount,
   orderType,
   paymentMethod,
   customerType,
@@ -580,6 +992,8 @@ function SuccessModal({
   orderNumber: string;
   savedCart: CartItem[];
   paidAmount: number;
+  cashTendered: number;
+  changeAmount: number;
   orderType: string;
   paymentMethod: string;
   customerType: CustomerType;
@@ -597,7 +1011,6 @@ function SuccessModal({
     <AnimatePresence>
       {show && (
         <>
-          {/* Blurred white backdrop */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -607,10 +1020,10 @@ function SuccessModal({
             style={{
               position: "fixed",
               inset: 0,
-              zIndex: 50,
+              zIndex: 70,
               backdropFilter: "blur(2px)",
-              WebkitBackdropFilter: "blur(1px)",
-              background: "rgba(144, 142, 142, 0.6)",
+              WebkitBackdropFilter: "blur(2px)",
+              background: "rgba(144,142,142,0.6)",
             }}
           />
 
@@ -618,7 +1031,7 @@ function SuccessModal({
             style={{
               position: "fixed",
               inset: 0,
-              zIndex: 50,
+              zIndex: 71,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -677,12 +1090,12 @@ function SuccessModal({
                   transition={{ delay: 0.16 }}
                 >
                   <p style={{ fontSize: 14, fontWeight: 600, color: "#111", marginBottom: 5 }}>
-                    Your order has been placed
+                    Order placed successfully
                   </p>
                   <p style={{ fontSize: 11, color: "#aaa", lineHeight: 1.65, fontWeight: 400 }}>
-                    Good job! Your order {orderNumber},
+                    Order {orderNumber} is confirmed.
                     <br />
-                    we'll start preparing your meal right away!
+                    We'll start preparing right away!
                   </p>
                 </motion.div>
 
@@ -703,7 +1116,7 @@ function SuccessModal({
 
               <div style={{ borderTop: "1px solid #f5f5f5" }} />
 
-              {/* Meta */}
+              {/* Meta row */}
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -818,7 +1231,7 @@ function SuccessModal({
                 ))}
               </motion.div>
 
-              {/* Pricing */}
+              {/* Pricing summary */}
               <div
                 style={{
                   margin: "0 16px 14px",
@@ -873,6 +1286,7 @@ function SuccessModal({
                     </span>
                   </div>
                 )}
+
                 <div
                   style={{
                     display: "flex",
@@ -887,11 +1301,37 @@ function SuccessModal({
                     ₱{formatPrice(paidAmount)}
                   </span>
                 </div>
+
+                {/* Change row — only for cash payments */}
+                {paymentMethod === "cash" && changeAmount > 0 && (
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      padding: "8px 14px",
+                      background: "#f0fdf4",
+                      borderTop: "1px dashed #bbf7d0",
+                    }}
+                  >
+                    <span style={{ fontSize: 11, fontWeight: 500, color: "#16a34a" }}>
+                      Change
+                    </span>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: "#16a34a" }}>
+                      ₱{formatPrice(changeAmount)}
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* Actions */}
               <div
-                style={{ padding: "0 16px 20px", display: "flex", flexDirection: "column", gap: 6 }}
+                style={{
+                  padding: "0 16px 20px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 6,
+                }}
               >
                 <motion.button
                   whileHover={{ opacity: 0.88 }}
@@ -938,40 +1378,62 @@ function SuccessModal({
 
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 export default function CashierView() {
+  // ── Product & UI state ──────────────────────────────────────────────────────
   const [products, setProducts] = useState<MenuItem[]>([]);
-  const [isLoadingProducts, setIsLoading] = useState(false);
+  const [isLoadingProducts, setIsLoadingProducts] = useState(false);
   const [productsError, setProductsError] = useState("");
-  const [selectedCat, setSelectedCat] = useState("ALL");
-  const [search, setSearch] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("ALL");
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // ── Cart state ───────────────────────────────────────────────────────────────
   const [cart, setCart] = useState<CartItem[]>([]);
   const [orderType, setOrderType] = useState<"dine-in" | "take-out" | "delivery">("dine-in");
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "e-payment">("cash");
   const [customerType, setCustomerType] = useState<CustomerType>("regular");
 
+  // ── Table state ──────────────────────────────────────────────────────────────
   const [tables, setTables] = useState<TableItem[]>([]);
   const [isLoadingTables, setIsLoadingTables] = useState(false);
   const [selectedTable, setSelectedTable] = useState<number | null>(null);
 
-  const [showSuccess, setShowSuccess] = useState(false);
+  // ── Payment flow state ───────────────────────────────────────────────────────
+  const [showAmountEntry, setShowAmountEntry] = useState(false);   // Step 1: enter cash
+  const [showSuccess, setShowSuccess] = useState(false);           // Step 2: success receipt
+
+  // ── Saved order state (used by SuccessModal) ─────────────────────────────────
   const [savedCart, setSavedCart] = useState<CartItem[]>([]);
   const [savedOrderType, setSavedOrderType] = useState("dine-in");
   const [savedPaymentMethod, setSavedPaymentMethod] = useState("cash");
   const [savedCustomerType, setSavedCustomerType] = useState<CustomerType>("regular");
-  const [savedPricing, setSavedPricing] = useState({ amountDue: 0, discountAmount: 0, vatAmount: 0 });
+  const [savedPricing, setSavedPricing] = useState({
+    amountDue: 0,
+    discountAmount: 0,
+    vatAmount: 0,
+  });
+  const [savedCashTendered, setSavedCashTendered] = useState(0);
+  const [savedChangeAmount, setSavedChangeAmount] = useState(0);
   const [orderNumber, setOrderNumber] = useState("");
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
 
+  // ── Fetch products on mount ──────────────────────────────────────────────────
   useEffect(() => {
-    setIsLoading(true);
+    setIsLoadingProducts(true);
     api
       .get<Record<string, unknown>[]>("/inventory")
-      .then((data) => { setProducts(mapProducts(data ?? [])); setProductsError(""); })
+      .then((data) => {
+        setProducts(mapProducts(data ?? []));
+        setProductsError("");
+      })
       .catch(() => setProductsError("Failed to load menu items."))
-      .finally(() => setIsLoading(false));
+      .finally(() => setIsLoadingProducts(false));
   }, []);
 
+  // ── Fetch tables when dine-in is selected ───────────────────────────────────
   useEffect(() => {
-    if (orderType !== "dine-in") { setSelectedTable(null); return; }
+    if (orderType !== "dine-in") {
+      setSelectedTable(null);
+      return;
+    }
     setIsLoadingTables(true);
     api
       .get<Record<string, unknown>[]>("/tables")
@@ -980,70 +1442,113 @@ export default function CashierView() {
       .finally(() => setIsLoadingTables(false));
   }, [orderType]);
 
-  const TABS = [
+  // ── Category tabs ────────────────────────────────────────────────────────────
+  const CATEGORY_TABS = [
     { key: "ALL", label: "All items", match: [] as string[] },
-    { key: "WHOLE_HALF", label: "Whole & Half Chicken", match: ["WHOLE & HALF CHICKEN", "WHOLE AND HALF CHICKEN", "CHICKEN"] },
-    { key: "RICE_MEALS", label: "Rice Meals", match: ["RICE MEALS", "RICE MEAL", "MENU FOOD"] },
-    { key: "SIDES", label: "Sides", match: ["SIDES", "SIDE DISH", "SIDE DISHES", "SUPPLIES"] },
-    { key: "FRUIT_SODA", label: "Fruit Soda", match: ["FRUIT SODA", "FRUIT SODAS", "DRINKS", "BEVERAGES"] },
+    {
+      key: "WHOLE_HALF",
+      label: "Whole & Half Chicken",
+      match: ["WHOLE & HALF CHICKEN", "WHOLE AND HALF CHICKEN", "CHICKEN"],
+    },
+    {
+      key: "RICE_MEALS",
+      label: "Rice Meals",
+      match: ["RICE MEALS", "RICE MEAL", "MENU FOOD"],
+    },
+    {
+      key: "SIDES",
+      label: "Sides",
+      match: ["SIDES", "SIDE DISH", "SIDE DISHES", "SUPPLIES"],
+    },
+    {
+      key: "FRUIT_SODA",
+      label: "Fruit Soda",
+      match: ["FRUIT SODA", "FRUIT SODAS", "DRINKS", "BEVERAGES"],
+    },
   ];
 
-  const filtered = products.filter((p) => {
-    const catUpper = p.category.toUpperCase();
-    const tabMatch =
-      selectedCat === "ALL" ||
-      (TABS.find((t) => t.key === selectedCat)?.match ?? []).some((m) => catUpper.includes(m));
-    return tabMatch && p.name.toLowerCase().includes(search.toLowerCase());
+  const filteredProducts = products.filter((product) => {
+    const categoryUpper = product.category.toUpperCase();
+    const tabMatches =
+      selectedCategory === "ALL" ||
+      (CATEGORY_TABS.find((t) => t.key === selectedCategory)?.match ?? []).some((m) =>
+        categoryUpper.includes(m)
+      );
+    return tabMatches && product.name.toLowerCase().includes(searchQuery.toLowerCase());
   });
 
-  const totalQty = cart.reduce((s, i) => s + i.quantity, 0);
-  const grossTotal = cart.reduce((s, i) => s + i.price * i.quantity, 0);
+  // ── Cart computed values ─────────────────────────────────────────────────────
+  const totalQuantity = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const grossTotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const pricing = computePricing(grossTotal, customerType);
 
-  const addToCart = useCallback((item: MenuItem) => {
-    if (item.remainingStock <= 0 && !isMenuFood(item)) return;
-    setCart((prev) => {
-      const existing = prev.find((c) => c.id === item.id);
-      if (existing) {
-        const next = existing.quantity + 1;
-        if (next > item.remainingStock && !isMenuFood(item)) return prev;
-        return prev.map((c) => c.id === item.id ? { ...c, quantity: next } : c);
-      }
-      return [...prev, { ...item, quantity: 1 }];
-    });
-  }, []);
+  // ── Cart actions ─────────────────────────────────────────────────────────────
+  const addToCart = useCallback(
+    (item: MenuItem) => {
+      if (item.remainingStock <= 0 && !isMenuFood(item)) return;
+      setCart((prev) => {
+        const existing = prev.find((c) => c.id === item.id);
+        if (existing) {
+          const nextQty = existing.quantity + 1;
+          if (nextQty > item.remainingStock && !isMenuFood(item)) return prev;
+          return prev.map((c) => (c.id === item.id ? { ...c, quantity: nextQty } : c));
+        }
+        return [...prev, { ...item, quantity: 1 }];
+      });
+    },
+    []
+  );
 
-  const removeFromCart = (id: number) => setCart((prev) => prev.filter((c) => c.id !== id));
+  const removeFromCart = (id: number) =>
+    setCart((prev) => prev.filter((c) => c.id !== id));
 
-  const updateQty = (id: number, delta: number) => {
+  const updateCartQty = (id: number, delta: number) => {
     const product = products.find((p) => p.id === id);
     const stock = product?.remainingStock ?? 0;
-    const menuFood = product ? isMenuFood(product) : false;
+    const isFood = product ? isMenuFood(product) : false;
     setCart((prev) =>
       prev
-        .map((c) => {
-          if (c.id !== id) return c;
-          const next = Math.max(0, c.quantity + delta);
-          if (next > stock && !menuFood) return c;
-          return { ...c, quantity: next };
+        .map((item) => {
+          if (item.id !== id) return item;
+          const nextQty = Math.max(0, item.quantity + delta);
+          if (nextQty > stock && !isFood) return item;
+          return { ...item, quantity: nextQty };
         })
-        .filter((c) => c.quantity > 0)
+        .filter((item) => item.quantity > 0)
     );
   };
 
-  const handlePayment = async () => {
+  // ── Payment flow ─────────────────────────────────────────────────────────────
+  /**
+   * Step 1: Open the amount entry modal.
+   * For e-payment, this is a simple confirmation step.
+   */
+  const handlePayButtonClick = () => {
     if (cart.length === 0 || isPlacingOrder) return;
+    setShowAmountEntry(true);
+  };
+
+  /**
+   * Step 2: Cashier has confirmed the cash/e-payment amount.
+   * Submit the order to the API and show the success receipt.
+   */
+  const handleAmountConfirmed = async (cashTendered: number) => {
+    setShowAmountEntry(false);
     setIsPlacingOrder(true);
+
     const { gross, vatExemptAmount, vatAmount, discountAmount, amountDue } =
       computePricing(grossTotal, customerType);
+
+    const changeAmount = Math.max(0, cashTendered - amountDue);
     const cashierId = localStorage.getItem("userId");
+
     const payload: OrderPayload = {
-      items: cart.map((i) => ({
-        product_id: i.id,
-        qty: i.quantity,
-        subtotal: i.price * i.quantity,
-        name: i.name,
-        price: i.price,
+      items: cart.map((item) => ({
+        product_id: item.id,
+        qty: item.quantity,
+        subtotal: item.price * item.quantity,
+        name: item.name,
+        price: item.price,
       })),
       total: amountDue,
       order_type: orderType,
@@ -1054,38 +1559,58 @@ export default function CashierView() {
       vat_exempt_amount: vatExemptAmount,
       cashierId: cashierId ? Number(cashierId) : null,
       table_id: orderType === "dine-in" ? selectedTable : null,
+      cash_tendered: paymentMethod === "cash" ? cashTendered : undefined,
+      change_amount: paymentMethod === "cash" ? changeAmount : undefined,
     };
+
     try {
       const response = await api.post<OrderResponse>("/orders", payload);
-      const num = response?.orderNumber ?? `#${Math.floor(10000 + Math.random() * 90000)}`;
+      const num =
+        response?.orderNumber ?? `#${Math.floor(10000 + Math.random() * 90000)}`;
+
+      // Snapshot order details for the receipt modal
       setSavedCart([...cart]);
       setSavedOrderType(orderType);
       setSavedPaymentMethod(paymentMethod);
       setSavedCustomerType(customerType);
       setSavedPricing({ amountDue, discountAmount, vatAmount });
+      setSavedCashTendered(cashTendered);
+      setSavedChangeAmount(changeAmount);
       setOrderNumber(num);
       setShowSuccess(true);
+
+      // Deduct stock for non-food items
       setProducts((prev) =>
-        prev.map((p) => {
-          const ordered = cart.find((c) => c.id === p.id);
-          if (!ordered || isMenuFood(p)) return p;
-          return { ...p, remainingStock: Math.max(0, p.remainingStock - ordered.quantity) };
+        prev.map((product) => {
+          const orderedItem = cart.find((c) => c.id === product.id);
+          if (!orderedItem || isMenuFood(product)) return product;
+          return {
+            ...product,
+            remainingStock: Math.max(0, product.remainingStock - orderedItem.quantity),
+          };
         })
       );
+
+      // Mark selected table as occupied
       if (selectedTable !== null) {
         setTables((prev) =>
-          prev.map((t) => t.id === selectedTable ? { ...t, status: "occupied" } : t)
+          prev.map((t) =>
+            t.id === selectedTable ? { ...t, status: "occupied" } : t
+          )
         );
       }
     } catch (err) {
-      console.error("Order failed:", err);
+      console.error("Order submission failed:", err);
       alert("Failed to submit order. Please try again.");
     } finally {
       setIsPlacingOrder(false);
     }
   };
 
-  const handleCloseModal = () => {
+  /**
+   * Close success modal and reset all order state for a fresh order.
+   */
+  const handleCloseSuccessModal = () => {
     setShowSuccess(false);
     setCart([]);
     setSavedCart([]);
@@ -1093,14 +1618,15 @@ export default function CashierView() {
     setPaymentMethod("cash");
     setCustomerType("regular");
     setSelectedTable(null);
+    setSavedCashTendered(0);
+    setSavedChangeAmount(0);
   };
 
+  // ─────────────────────────────────────────────────────────────────────────────
   return (
     <>
-      {/* Sidebar unchanged */}
       <Sidebar />
 
-      {/* Hide scrollbars globally for this view */}
       <style>{`
         * { scrollbar-width: none; }
         *::-webkit-scrollbar { display: none; }
@@ -1116,9 +1642,16 @@ export default function CashierView() {
           paddingLeft: 80,
         }}
       >
-        {/* ── LEFT: Menu ── */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, overflow: "hidden" }}>
-
+        {/* ── LEFT: Menu ─────────────────────────────────────────────────────── */}
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            minWidth: 0,
+            overflow: "hidden",
+          }}
+        >
           {/* Header */}
           <div
             style={{
@@ -1132,10 +1665,26 @@ export default function CashierView() {
             }}
           >
             <div>
-              <p style={{ fontSize: 10, fontWeight: 500, color: "#bbb", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 2 }}>
+              <p
+                style={{
+                  fontSize: 10,
+                  fontWeight: 500,
+                  color: "#bbb",
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                  marginBottom: 2,
+                }}
+              >
                 Cashier
               </p>
-              <h1 style={{ fontSize: 22, fontWeight: 600, color: "#111", letterSpacing: "-0.3px" }}>
+              <h1
+                style={{
+                  fontSize: 22,
+                  fontWeight: 600,
+                  color: "#111",
+                  letterSpacing: "-0.3px",
+                }}
+              >
                 Menu
               </h1>
             </div>
@@ -1156,8 +1705,8 @@ export default function CashierView() {
               <input
                 type="text"
                 placeholder="Search menu…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
                 style={{
                   border: "none",
                   background: "transparent",
@@ -1171,7 +1720,7 @@ export default function CashierView() {
             </div>
           </div>
 
-          {/* Tabs */}
+          {/* Category tabs */}
           <div
             style={{
               display: "flex",
@@ -1182,10 +1731,10 @@ export default function CashierView() {
               overflow: "hidden",
             }}
           >
-            {TABS.map((tab) => (
+            {CATEGORY_TABS.map((tab) => (
               <motion.button
                 key={tab.key}
-                onClick={() => setSelectedCat(tab.key)}
+                onClick={() => setSelectedCategory(tab.key)}
                 whileTap={{ scale: 0.95 }}
                 style={{
                   padding: "5px 13px",
@@ -1195,9 +1744,9 @@ export default function CashierView() {
                   border: "1px solid transparent",
                   cursor: "pointer",
                   whiteSpace: "nowrap",
-                  fontWeight: selectedCat === tab.key ? 500 : 400,
-                  color: selectedCat === tab.key ? "#fff" : "#aaa",
-                  background: selectedCat === tab.key ? "#111" : "transparent",
+                  fontWeight: selectedCategory === tab.key ? 500 : 400,
+                  color: selectedCategory === tab.key ? "#fff" : "#aaa",
+                  background: selectedCategory === tab.key ? "#111" : "transparent",
                   transition: "all 0.15s",
                 }}
               >
@@ -1209,18 +1758,40 @@ export default function CashierView() {
           {/* Product grid */}
           <div style={{ flex: 1, overflowY: "auto", padding: "16px 24px 20px" }}>
             {isLoadingProducts && (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%" }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  height: "100%",
+                }}
+              >
                 <motion.div
                   animate={{ rotate: 360 }}
                   transition={{ repeat: Infinity, duration: 0.8, ease: "linear" }}
-                  style={{ width: 20, height: 20, borderRadius: "50%", border: "2px solid #eee", borderTopColor: "#555" }}
+                  style={{
+                    width: 20,
+                    height: 20,
+                    borderRadius: "50%",
+                    border: "2px solid #eee",
+                    borderTopColor: "#555",
+                  }}
                 />
               </div>
             )}
 
             {!isLoadingProducts && productsError && (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%" }}>
-                <p style={{ fontSize: 13, color: "#f87171", fontFamily: FONT }}>{productsError}</p>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  height: "100%",
+                }}
+              >
+                <p style={{ fontSize: 13, color: "#f87171", fontFamily: FONT }}>
+                  {productsError}
+                </p>
               </div>
             )}
 
@@ -1235,7 +1806,7 @@ export default function CashierView() {
                 }}
               >
                 <AnimatePresence>
-                  {filtered.map((item, idx) => (
+                  {filteredProducts.map((item, idx) => (
                     <motion.div
                       key={item.id}
                       initial={{ opacity: 0, y: 8 }}
@@ -1252,7 +1823,7 @@ export default function CashierView() {
                   ))}
                 </AnimatePresence>
 
-                {filtered.length === 0 && (
+                {filteredProducts.length === 0 && (
                   <div
                     style={{
                       gridColumn: "1 / -1",
@@ -1265,7 +1836,9 @@ export default function CashierView() {
                     }}
                   >
                     <UtensilsCrossed style={{ width: 28, height: 28, color: "#ddd" }} />
-                    <p style={{ fontSize: 12, color: "#ccc", fontFamily: FONT }}>No items found</p>
+                    <p style={{ fontSize: 12, color: "#ccc", fontFamily: FONT }}>
+                      No items found
+                    </p>
                   </div>
                 )}
               </motion.div>
@@ -1273,7 +1846,7 @@ export default function CashierView() {
           </div>
         </div>
 
-        {/* ── RIGHT: Cart ── */}
+        {/* ── RIGHT: Cart ─────────────────────────────────────────────────────── */}
         <div
           style={{
             width: 268,
@@ -1296,15 +1869,24 @@ export default function CashierView() {
             }}
           >
             <div>
-              <h2 style={{ fontSize: 13, fontWeight: 600, color: "#111", fontFamily: FONT }}>
+              <h2
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: "#111",
+                  fontFamily: FONT,
+                }}
+              >
                 Current Order
               </h2>
               <p style={{ fontSize: 11, color: "#bbb", marginTop: 1, fontFamily: FONT }}>
-                {totalQty === 0 ? "No items yet" : `${totalQty} item${totalQty > 1 ? "s" : ""}`}
+                {totalQuantity === 0
+                  ? "No items yet"
+                  : `${totalQuantity} item${totalQuantity > 1 ? "s" : ""}`}
               </p>
             </div>
             <AnimatePresence>
-              {totalQty > 0 && (
+              {totalQuantity > 0 && (
                 <motion.span
                   initial={{ scale: 0, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
@@ -1320,7 +1902,7 @@ export default function CashierView() {
                     fontFamily: FONT,
                   }}
                 >
-                  {totalQty}
+                  {totalQuantity}
                 </motion.span>
               )}
             </AnimatePresence>
@@ -1344,11 +1926,18 @@ export default function CashierView() {
                   }}
                 >
                   <UtensilsCrossed style={{ width: 28, height: 28, color: "#ddd" }} />
-                  <p style={{ fontSize: 12, color: "#ccc", fontFamily: FONT }}>Add items to start</p>
+                  <p style={{ fontSize: 12, color: "#ccc", fontFamily: FONT }}>
+                    Add items to start
+                  </p>
                 </motion.div>
               ) : (
                 cart.map((item) => (
-                  <CartRow key={item.id} item={item} onRemove={removeFromCart} onQty={updateQty} />
+                  <CartRow
+                    key={item.id}
+                    item={item}
+                    onRemove={removeFromCart}
+                    onQty={updateCartQty}
+                  />
                 ))
               )}
             </AnimatePresence>
@@ -1362,9 +1951,13 @@ export default function CashierView() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 10 }}
                 transition={{ type: "spring", stiffness: 350, damping: 28 }}
-                style={{ padding: "14px 18px 18px", borderTop: "1px solid #f5f5f5", flexShrink: 0 }}
+                style={{
+                  padding: "14px 18px 18px",
+                  borderTop: "1px solid #f5f5f5",
+                  flexShrink: 0,
+                }}
               >
-                {/* Pricing */}
+                {/* Pricing breakdown */}
                 <div
                   style={{
                     background: "#fafafa",
@@ -1374,51 +1967,108 @@ export default function CashierView() {
                     marginBottom: 10,
                   }}
                 >
-                  <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", borderBottom: "1px dashed #f0f0f0" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      padding: "8px 12px",
+                      borderBottom: "1px dashed #f0f0f0",
+                    }}
+                  >
                     <span style={{ fontSize: 11, color: "#bbb" }}>Subtotal</span>
-                    <span style={{ fontSize: 11, fontWeight: 500, color: "#999" }}>₱{formatPrice(grossTotal)}</span>
+                    <span style={{ fontSize: 11, fontWeight: 500, color: "#999" }}>
+                      ₱{formatPrice(grossTotal)}
+                    </span>
                   </div>
 
                   {customerType === "regular" ? (
-                    <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", borderBottom: "1px dashed #f0f0f0" }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        padding: "8px 12px",
+                        borderBottom: "1px dashed #f0f0f0",
+                      }}
+                    >
                       <span style={{ fontSize: 11, color: "#bbb" }}>VAT (12% incl.)</span>
-                      <span style={{ fontSize: 11, fontWeight: 500, color: "#999" }}>₱{formatPrice(pricing.vatAmount)}</span>
+                      <span style={{ fontSize: 11, fontWeight: 500, color: "#999" }}>
+                        ₱{formatPrice(pricing.vatAmount)}
+                      </span>
                     </div>
                   ) : (
                     <>
-                      <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", borderBottom: "1px dashed #f0f0f0" }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          padding: "8px 12px",
+                          borderBottom: "1px dashed #f0f0f0",
+                        }}
+                      >
                         <span style={{ fontSize: 11, color: "#bbb" }}>VAT exempt</span>
-                        <span style={{ fontSize: 11, fontWeight: 500, color: "#999" }}>−₱{formatPrice(grossTotal - pricing.vatExemptAmount)}</span>
+                        <span style={{ fontSize: 11, fontWeight: 500, color: "#999" }}>
+                          −₱{formatPrice(grossTotal - pricing.vatExemptAmount)}
+                        </span>
                       </div>
                       <motion.div
                         initial={{ opacity: 0, height: 0 }}
                         animate={{ opacity: 1, height: "auto" }}
                         exit={{ opacity: 0, height: 0 }}
                         transition={{ duration: 0.18 }}
-                        style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", borderBottom: "1px dashed #f0f0f0", overflow: "hidden" }}
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          padding: "8px 12px",
+                          borderBottom: "1px dashed #f0f0f0",
+                          overflow: "hidden",
+                        }}
                       >
-                        <span style={{ fontSize: 11, color: "#22c55e", fontWeight: 500 }}>20% discount</span>
-                        <span style={{ fontSize: 11, fontWeight: 600, color: "#22c55e" }}>−₱{formatPrice(pricing.discountAmount)}</span>
+                        <span style={{ fontSize: 11, color: "#22c55e", fontWeight: 500 }}>
+                          20% discount
+                        </span>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: "#22c55e" }}>
+                          −₱{formatPrice(pricing.discountAmount)}
+                        </span>
                       </motion.div>
                     </>
                   )}
 
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 12px", background: "#f5f5f5" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      padding: "10px 12px",
+                      background: "#f5f5f5",
+                    }}
+                  >
                     <span style={{ fontSize: 12, fontWeight: 500, color: "#777" }}>Total</span>
                     <motion.span
                       key={pricing.amountDue}
                       initial={{ scale: 0.95, opacity: 0.6 }}
                       animate={{ scale: 1, opacity: 1 }}
                       transition={{ duration: 0.15 }}
-                      style={{ fontSize: 19, fontWeight: 600, color: "#111", fontFamily: FONT }}
+                      style={{
+                        fontSize: 19,
+                        fontWeight: 600,
+                        color: "#111",
+                        fontFamily: FONT,
+                      }}
                     >
                       ₱{formatPrice(pricing.amountDue)}
                     </motion.span>
                   </div>
                 </div>
 
-                {/* Order type + payment */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 6 }}>
+                {/* Order type & payment method selects */}
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: 6,
+                    marginBottom: 6,
+                  }}
+                >
                   <CustomSelect
                     value={orderType}
                     onChange={(v) => setOrderType(v as typeof orderType)}
@@ -1450,7 +2100,7 @@ export default function CashierView() {
                   />
                 </div>
 
-                {/* Table picker */}
+                {/* Table picker (dine-in only) */}
                 <AnimatePresence>
                   {orderType === "dine-in" && (
                     <motion.div
@@ -1471,9 +2121,9 @@ export default function CashierView() {
                   )}
                 </AnimatePresence>
 
-                {/* Pay button */}
+                {/* Pay button — opens amount entry modal */}
                 <motion.button
-                  onClick={() => { void handlePayment(); }}
+                  onClick={handlePayButtonClick}
                   disabled={isPlacingOrder || cart.length === 0}
                   whileHover={{ opacity: 0.88 }}
                   whileTap={{ scale: 0.98 }}
@@ -1522,12 +2172,24 @@ export default function CashierView() {
         </div>
       </div>
 
+      {/* ── Amount Entry Modal (Step 1) ──────────────────────────────────────── */}
+      <AmountEntryModal
+        show={showAmountEntry}
+        amountDue={pricing.amountDue}
+        paymentMethod={paymentMethod}
+        onConfirm={(cashTendered) => { void handleAmountConfirmed(cashTendered); }}
+        onCancel={() => setShowAmountEntry(false)}
+      />
+
+      {/* ── Success / Receipt Modal (Step 2) ────────────────────────────────── */}
       <SuccessModal
         show={showSuccess}
-        onClose={handleCloseModal}
+        onClose={handleCloseSuccessModal}
         orderNumber={orderNumber}
         savedCart={savedCart}
         paidAmount={savedPricing.amountDue}
+        cashTendered={savedCashTendered}
+        changeAmount={savedChangeAmount}
         orderType={savedOrderType}
         paymentMethod={savedPaymentMethod}
         customerType={savedCustomerType}
