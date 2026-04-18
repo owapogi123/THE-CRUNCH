@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   Search,
   Minus,
@@ -572,11 +572,6 @@ function CustomSelect({
 }
 
 // ─── AMOUNT ENTRY MODAL ───────────────────────────────────────────────────────
-/**
- * Shown before final order submission.
- * For cash payments: cashier enters tendered amount, sees change.
- * For e-payment: just a confirmation step with no numpad.
- */
 function AmountEntryModal({
   show,
   amountDue,
@@ -591,44 +586,45 @@ function AmountEntryModal({
   onCancel: () => void;
 }) {
   const [input, setInput] = useState("");
+  const [gcashConfirmed, setGcashConfirmed] = useState(false);
 
-  // Reset input whenever the modal opens
+  // Reset state whenever modal opens
   useEffect(() => {
-    if (show) setInput("");
+    if (show) {
+      setInput("");
+      setGcashConfirmed(false);
+    }
   }, [show]);
 
+  // ── Cash helpers ─────────────────────────────────────────────────────────────
   const cashTendered = parseFloat(input) || 0;
-  const change = cashTendered - amountDue;
-  const hasEnough = cashTendered >= amountDue;
+  const change       = cashTendered - amountDue;
+  const hasEnough    = cashTendered >= amountDue;
 
-  // Numpad key handler
   const handleKey = (key: string) => {
-    if (key === "⌫") {
-      setInput((prev) => prev.slice(0, -1));
-      return;
-    }
-    if (key === "00") {
-      setInput((prev) => (prev === "" ? "" : prev + "00"));
-      return;
-    }
-    // Prevent more than one decimal point
+    if (key === "⌫") { setInput((p) => p.slice(0, -1)); return; }
+    if (key === "00") { setInput((p) => (p === "" ? "" : p + "00")); return; }
     if (key === "." && input.includes(".")) return;
-    // Limit to 2 decimal places
     const dotIdx = input.indexOf(".");
     if (dotIdx !== -1 && input.length - dotIdx > 2) return;
-    setInput((prev) => prev + key);
+    setInput((p) => p + key);
   };
 
-  const NUMPAD_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "0", "00"];
-
-  // Quick-fill buttons for common cash denominations
+  const NUMPAD_KEYS   = ["1","2","3","4","5","6","7","8","9","⌫","0","00"];
   const QUICK_AMOUNTS = [50, 100, 200, 500, 1000].filter((d) => d >= amountDue);
+
+  // ── GCash: cashier manually confirms they received payment ───────────────────
+  const handleGcashConfirm = () => {
+    setGcashConfirmed(true);
+    // Brief flash of the success state before receipt opens
+    setTimeout(() => onConfirm(amountDue), 700);
+  };
 
   return (
     <AnimatePresence>
       {show && (
         <>
-          {/* Blurred backdrop */}
+          {/* Backdrop */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -674,12 +670,7 @@ function AmountEntryModal({
               }}
             >
               {/* Header — amount due */}
-              <div
-                style={{
-                  padding: "22px 22px 16px",
-                  borderBottom: "1px solid #f5f5f5",
-                }}
-              >
+              <div style={{ padding: "22px 22px 16px", borderBottom: "1px solid #f5f5f5" }}>
                 <p
                   style={{
                     fontSize: 10,
@@ -698,9 +689,12 @@ function AmountEntryModal({
               </div>
 
               <div style={{ padding: "14px 18px 18px" }}>
+
+                {/* ══════════════════════════════════════════
+                    CASH BRANCH — unchanged from original
+                    ══════════════════════════════════════════ */}
                 {paymentMethod === "cash" ? (
                   <>
-                    {/* Tendered display */}
                     <p
                       style={{
                         fontSize: 10,
@@ -713,6 +707,8 @@ function AmountEntryModal({
                     >
                       Cash tendered
                     </p>
+
+                    {/* Amount display */}
                     <div
                       style={{
                         background: "#fafafa",
@@ -742,14 +738,7 @@ function AmountEntryModal({
 
                     {/* Quick-fill denominations */}
                     {QUICK_AMOUNTS.length > 0 && (
-                      <div
-                        style={{
-                          display: "flex",
-                          gap: 5,
-                          marginBottom: 10,
-                          flexWrap: "wrap",
-                        }}
-                      >
+                      <div style={{ display: "flex", gap: 5, marginBottom: 10, flexWrap: "wrap" }}>
                         {QUICK_AMOUNTS.slice(0, 5).map((amt) => (
                           <motion.button
                             key={amt}
@@ -790,9 +779,7 @@ function AmountEntryModal({
                           padding: "10px 12px",
                         }}
                       >
-                        <p style={{ fontSize: 10, color: "#bbb", marginBottom: 3 }}>
-                          Change
-                        </p>
+                        <p style={{ fontSize: 10, color: "#bbb", marginBottom: 3 }}>Change</p>
                         <p
                           style={{
                             fontSize: 16,
@@ -812,9 +799,7 @@ function AmountEntryModal({
                           padding: "10px 12px",
                         }}
                       >
-                        <p style={{ fontSize: 10, color: "#bbb", marginBottom: 3 }}>
-                          Tendered
-                        </p>
+                        <p style={{ fontSize: 10, color: "#bbb", marginBottom: 3 }}>Tendered</p>
                         <p
                           style={{
                             fontSize: 16,
@@ -828,7 +813,7 @@ function AmountEntryModal({
                       </div>
                     </div>
 
-                    {/* Insufficient amount warning */}
+                    {/* Insufficient warning */}
                     <AnimatePresence>
                       {input && !hasEnough && (
                         <motion.p
@@ -884,85 +869,274 @@ function AmountEntryModal({
                         </motion.button>
                       ))}
                     </div>
-                  </>
-                ) : (
-                  /* E-payment: just a confirmation message */
-                  <div
-                    style={{
-                      textAlign: "center",
-                      padding: "20px 0 16px",
-                    }}
-                  >
-                    <div
+
+                    {/* Confirm button */}
+                    <motion.button
+                      whileHover={{ opacity: 0.88 }}
+                      whileTap={{ scale: 0.98 }}
+                      disabled={!input || !hasEnough}
+                      onClick={() => onConfirm(cashTendered)}
                       style={{
-                        width: 48,
-                        height: 48,
-                        borderRadius: "50%",
-                        background: "#f0fdf4",
-                        border: "1px solid #bbf7d0",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        margin: "0 auto 12px",
+                        width: "100%",
+                        padding: "13px",
+                        background: "#16a34a",
+                        color: "#fff",
+                        border: "none",
+                        borderRadius: 12,
+                        fontSize: 13,
+                        fontWeight: 500,
+                        fontFamily: FONT,
+                        cursor: !input || !hasEnough ? "not-allowed" : "pointer",
+                        opacity: !input || !hasEnough ? 0.4 : 1,
+                        marginBottom: 6,
                       }}
                     >
-                      <Check style={{ width: 20, height: 20, color: "#22c55e" }} strokeWidth={2.5} />
-                    </div>
-                    <p style={{ fontSize: 13, fontWeight: 500, color: "#111", marginBottom: 4 }}>
-                      E-payment confirmed?
-                    </p>
-                    <p style={{ fontSize: 11, color: "#bbb", lineHeight: 1.6 }}>
-                      Ensure the payment of{" "}
-                      <strong style={{ color: "#111" }}>₱{formatPrice(amountDue)}</strong> has
-                      been received before confirming.
-                    </p>
-                  </div>
-                )}
+                      Confirm Payment
+                    </motion.button>
+                    <motion.button
+                      whileTap={{ scale: 0.97 }}
+                      onClick={onCancel}
+                      style={{
+                        width: "100%",
+                        padding: "9px",
+                        background: "transparent",
+                        color: "#bbb",
+                        border: "none",
+                        fontSize: 12,
+                        fontFamily: FONT,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Cancel
+                    </motion.button>
+                  </>
+                ) : (
+                  /* ══════════════════════════════════════════
+                     GCASH / E-PAYMENT BRANCH
+                     Static QR + cashier manually confirms.
+                     No polling, no mock data, no localStorage.
+                     ══════════════════════════════════════════ */
+                  <AnimatePresence mode="wait">
 
-                {/* Confirm button */}
-                <motion.button
-                  whileHover={{ opacity: 0.88 }}
-                  whileTap={{ scale: 0.98 }}
-                  disabled={paymentMethod === "cash" && (!input || !hasEnough)}
-                  onClick={() =>
-                    onConfirm(paymentMethod === "cash" ? cashTendered : amountDue)
-                  }
-                  style={{
-                    width: "100%",
-                    padding: "13px",
-                    background: "#16a34a",
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: 12,
-                    fontSize: 13,
-                    fontWeight: 500,
-                    fontFamily: FONT,
-                    cursor:
-                      paymentMethod === "cash" && (!input || !hasEnough)
-                        ? "not-allowed"
-                        : "pointer",
-                    opacity: paymentMethod === "cash" && (!input || !hasEnough) ? 0.4 : 1,
-                    marginBottom: 6,
-                  }}
-                >
-                  Confirm Payment
-                </motion.button>
-                <motion.button
-                  whileTap={{ scale: 0.97 }}
-                  onClick={onCancel}
-                  style={{
-                    width: "100%",
-                    padding: "9px",
-                    background: "transparent",
-                    color: "#bbb",
-                    border: "none",
-                    fontSize: 12,
-                    fontFamily: FONT,
-                    cursor: "pointer",
-                  }}
-                >
-                  Cancel
-                </motion.button>
+                    {/* ── Waiting for cashier to confirm ── */}
+                    {!gcashConfirmed && (
+                      <motion.div
+                        key="gcash-idle"
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -6 }}
+                        transition={{ duration: 0.18 }}
+                      >
+                        {/* GCash QR card */}
+                        <div
+                          style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: "center",
+                            background: "#fafafa",
+                            border: "1px solid #f0f0f0",
+                            borderRadius: 14,
+                            padding: "16px 16px 12px",
+                            marginBottom: 14,
+                          }}
+                        >
+                          {/* GCash label */}
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                              marginBottom: 12,
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: 24,
+                                height: 24,
+                                borderRadius: 7,
+                                background: "#0070BA",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                              }}
+                            >
+                              <span
+                                style={{ color: "#fff", fontSize: 12, fontWeight: 700 }}
+                              >
+                                G
+                              </span>
+                            </div>
+                            <span
+                              style={{
+                                fontSize: 13,
+                                fontWeight: 600,
+                                color: "#0070BA",
+                                letterSpacing: "-0.2px",
+                              }}
+                            >
+                              GCash
+                            </span>
+                          </div>
+
+                          {
+                            /* QR CODE NI BALDERAMOS */
+                          }
+                          <img
+                            src="/gcashQR1.png"
+                            alt="GCash QR Code"
+                            style={{
+                              width: 164,
+                              height: 164,
+                              borderRadius: 10,
+                              objectFit: "contain",
+                              background: "#fff",
+                              border: "1px solid #efefef",
+                            }}
+                          />
+
+                          <p
+                            style={{
+                              fontSize: 10,
+                              color: "#aaa",
+                              marginTop: 10,
+                              textAlign: "center",
+                              lineHeight: 1.6,
+                            }}
+                          >
+                            Ask customer to scan with GCash app
+                          </p>
+                          <p
+                            style={{
+                              fontSize: 14,
+                              fontWeight: 600,
+                              color: "#111",
+                              marginTop: 2,
+                            }}
+                          >
+                            ₱{formatPrice(amountDue)}
+                          </p>
+                        </div>
+
+                        {/* Instruction for cashier */}
+                        <div
+                          style={{
+                            background: "#fffbeb",
+                            border: "1px solid #fde68a",
+                            borderRadius: 10,
+                            padding: "9px 12px",
+                            marginBottom: 14,
+                            display: "flex",
+                            alignItems: "flex-start",
+                            gap: 8,
+                          }}
+                        >
+                          <span style={{ fontSize: 13, marginTop: 1 }}>💡</span>
+                          <p
+                            style={{
+                              fontSize: 11,
+                              color: "#92400e",
+                              lineHeight: 1.55,
+                              margin: 0,
+                            }}
+                          >
+                            Check your GCash app to confirm you received{" "}
+                            <strong>₱{formatPrice(amountDue)}</strong>, then tap the
+                            button below.
+                          </p>
+                        </div>
+
+                        {/* Cashier confirms receipt */}
+                        <motion.button
+                          whileHover={{ opacity: 0.88 }}
+                          whileTap={{ scale: 0.98 }}
+                          onClick={handleGcashConfirm}
+                          style={{
+                            width: "100%",
+                            padding: "13px",
+                            background: "#0070BA",
+                            color: "#fff",
+                            border: "none",
+                            borderRadius: 12,
+                            fontSize: 13,
+                            fontWeight: 500,
+                            fontFamily: FONT,
+                            cursor: "pointer",
+                            marginBottom: 6,
+                          }}
+                        >
+                          Payment Received
+                        </motion.button>
+                        <motion.button
+                          whileTap={{ scale: 0.97 }}
+                          onClick={onCancel}
+                          style={{
+                            width: "100%",
+                            padding: "9px",
+                            background: "transparent",
+                            color: "#bbb",
+                            border: "none",
+                            fontSize: 12,
+                            fontFamily: FONT,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Cancel
+                        </motion.button>
+                      </motion.div>
+                    )}
+
+                    {/* ── Confirmed flash — auto-closes in 700ms ── */}
+                    {gcashConfirmed && (
+                      <motion.div
+                        key="gcash-confirmed"
+                        initial={{ opacity: 0, scale: 0.92 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ type: "spring", stiffness: 420, damping: 26 }}
+                        style={{ textAlign: "center", padding: "32px 0 28px" }}
+                      >
+                        <motion.div
+                          initial={{ scale: 0 }}
+                          animate={{ scale: 1 }}
+                          transition={{
+                            type: "spring",
+                            stiffness: 500,
+                            damping: 24,
+                            delay: 0.05,
+                          }}
+                          style={{
+                            width: 56,
+                            height: 56,
+                            borderRadius: "50%",
+                            background: "#f0fdf4",
+                            border: "1px solid #bbf7d0",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            margin: "0 auto 14px",
+                          }}
+                        >
+                          <Check
+                            style={{ width: 22, height: 22, color: "#22c55e" }}
+                            strokeWidth={2.5}
+                          />
+                        </motion.div>
+                        <p
+                          style={{
+                            fontSize: 14,
+                            fontWeight: 600,
+                            color: "#111",
+                            marginBottom: 4,
+                          }}
+                        >
+                          Payment confirmed!
+                        </p>
+                        <p style={{ fontSize: 11, color: "#bbb" }}>
+                          Opening receipt…
+                        </p>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                )}
               </div>
             </motion.div>
           </div>
@@ -1302,7 +1476,7 @@ function SuccessModal({
                   </span>
                 </div>
 
-                {/* Change row — only for cash payments */}
+                {/* Change row — only for cash */}
                 {paymentMethod === "cash" && changeAmount > 0 && (
                   <div
                     style={{
@@ -1397,8 +1571,8 @@ export default function CashierView() {
   const [selectedTable, setSelectedTable] = useState<number | null>(null);
 
   // ── Payment flow state ───────────────────────────────────────────────────────
-  const [showAmountEntry, setShowAmountEntry] = useState(false);   // Step 1: enter cash
-  const [showSuccess, setShowSuccess] = useState(false);           // Step 2: success receipt
+  const [showAmountEntry, setShowAmountEntry] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
 
   // ── Saved order state (used by SuccessModal) ─────────────────────────────────
   const [savedCart, setSavedCart] = useState<CartItem[]>([]);
@@ -1479,33 +1653,30 @@ export default function CashierView() {
 
   // ── Cart computed values ─────────────────────────────────────────────────────
   const totalQuantity = cart.reduce((sum, item) => sum + item.quantity, 0);
-  const grossTotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const pricing = computePricing(grossTotal, customerType);
+  const grossTotal    = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const pricing       = computePricing(grossTotal, customerType);
 
   // ── Cart actions ─────────────────────────────────────────────────────────────
-  const addToCart = useCallback(
-    (item: MenuItem) => {
-      if (item.remainingStock <= 0 && !isMenuFood(item)) return;
-      setCart((prev) => {
-        const existing = prev.find((c) => c.id === item.id);
-        if (existing) {
-          const nextQty = existing.quantity + 1;
-          if (nextQty > item.remainingStock && !isMenuFood(item)) return prev;
-          return prev.map((c) => (c.id === item.id ? { ...c, quantity: nextQty } : c));
-        }
-        return [...prev, { ...item, quantity: 1 }];
-      });
-    },
-    []
-  );
+  const addToCart = useCallback((item: MenuItem) => {
+    if (item.remainingStock <= 0 && !isMenuFood(item)) return;
+    setCart((prev) => {
+      const existing = prev.find((c) => c.id === item.id);
+      if (existing) {
+        const nextQty = existing.quantity + 1;
+        if (nextQty > item.remainingStock && !isMenuFood(item)) return prev;
+        return prev.map((c) => (c.id === item.id ? { ...c, quantity: nextQty } : c));
+      }
+      return [...prev, { ...item, quantity: 1 }];
+    });
+  }, []);
 
   const removeFromCart = (id: number) =>
     setCart((prev) => prev.filter((c) => c.id !== id));
 
   const updateCartQty = (id: number, delta: number) => {
     const product = products.find((p) => p.id === id);
-    const stock = product?.remainingStock ?? 0;
-    const isFood = product ? isMenuFood(product) : false;
+    const stock   = product?.remainingStock ?? 0;
+    const isFood  = product ? isMenuFood(product) : false;
     setCart((prev) =>
       prev
         .map((item) => {
@@ -1519,28 +1690,20 @@ export default function CashierView() {
   };
 
   // ── Payment flow ─────────────────────────────────────────────────────────────
-  /**
-   * Step 1: Open the amount entry modal.
-   * For e-payment, this is a simple confirmation step.
-   */
   const handlePayButtonClick = () => {
     if (cart.length === 0 || isPlacingOrder) return;
     setShowAmountEntry(true);
   };
 
-  /**
-   * Step 2: Cashier has confirmed the cash/e-payment amount.
-   * Submit the order to the API and show the success receipt.
-   */
   const handleAmountConfirmed = async (cashTendered: number) => {
     setShowAmountEntry(false);
     setIsPlacingOrder(true);
 
-    const { gross, vatExemptAmount, vatAmount, discountAmount, amountDue } =
+    const { vatExemptAmount, vatAmount, discountAmount, amountDue } =
       computePricing(grossTotal, customerType);
 
     const changeAmount = Math.max(0, cashTendered - amountDue);
-    const cashierId = localStorage.getItem("userId");
+    const cashierId    = localStorage.getItem("userId");
 
     const payload: OrderPayload = {
       items: cart.map((item) => ({
@@ -1568,7 +1731,6 @@ export default function CashierView() {
       const num =
         response?.orderNumber ?? `#${Math.floor(10000 + Math.random() * 90000)}`;
 
-      // Snapshot order details for the receipt modal
       setSavedCart([...cart]);
       setSavedOrderType(orderType);
       setSavedPaymentMethod(paymentMethod);
@@ -1607,9 +1769,6 @@ export default function CashierView() {
     }
   };
 
-  /**
-   * Close success modal and reset all order state for a fresh order.
-   */
   const handleCloseSuccessModal = () => {
     setShowSuccess(false);
     setCart([]);
@@ -1869,14 +2028,7 @@ export default function CashierView() {
             }}
           >
             <div>
-              <h2
-                style={{
-                  fontSize: 13,
-                  fontWeight: 600,
-                  color: "#111",
-                  fontFamily: FONT,
-                }}
-              >
+              <h2 style={{ fontSize: 13, fontWeight: 600, color: "#111", fontFamily: FONT }}>
                 Current Order
               </h2>
               <p style={{ fontSize: 11, color: "#bbb", marginTop: 1, fontFamily: FONT }}>
@@ -2060,7 +2212,7 @@ export default function CashierView() {
                   </div>
                 </div>
 
-                {/* Order type & payment method selects */}
+                {/* Order type & payment method */}
                 <div
                   style={{
                     display: "grid",
@@ -2121,7 +2273,7 @@ export default function CashierView() {
                   )}
                 </AnimatePresence>
 
-                {/* Pay button — opens amount entry modal */}
+                {/* Pay button */}
                 <motion.button
                   onClick={handlePayButtonClick}
                   disabled={isPlacingOrder || cart.length === 0}
@@ -2172,7 +2324,7 @@ export default function CashierView() {
         </div>
       </div>
 
-      {/* ── Amount Entry Modal (Step 1) ──────────────────────────────────────── */}
+      {/* ── Amount Entry Modal ───────────────────────────────────────────────── */}
       <AmountEntryModal
         show={showAmountEntry}
         amountDue={pricing.amountDue}
@@ -2181,7 +2333,7 @@ export default function CashierView() {
         onCancel={() => setShowAmountEntry(false)}
       />
 
-      {/* ── Success / Receipt Modal (Step 2) ────────────────────────────────── */}
+      {/* ── Success / Receipt Modal ──────────────────────────────────────────── */}
       <SuccessModal
         show={showSuccess}
         onClose={handleCloseSuccessModal}
