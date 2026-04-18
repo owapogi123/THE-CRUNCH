@@ -98,9 +98,55 @@ async function ensureBatchesTable() {
   );
 }
 
+async function ensureKitchenBatchesTable() {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS kitchen_batches (
+      kitchen_batch_id INT PRIMARY KEY AUTO_INCREMENT,
+      storage_batch_id INT NULL,
+      product_id INT NOT NULL,
+      withdrawn_qty DECIMAL(10,2) NOT NULL,
+      used_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
+      returned_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
+      unit VARCHAR(20) DEFAULT 'kg',
+      expiry_date DATE NULL,
+      withdrawn_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      status ENUM('active','reconciled') DEFAULT 'active',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (storage_batch_id) REFERENCES batches(batch_id) ON DELETE SET NULL,
+      FOREIGN KEY (product_id) REFERENCES products(id)
+    )
+  `);
+}
+
 function toNumber(value, fallback = 0) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
+}
+
+async function getKitchenBatchById(conn, kitchenBatchId) {
+  const [rows] = await conn.query(
+    `SELECT
+       kb.kitchen_batch_id,
+       kb.storage_batch_id,
+       kb.product_id,
+       COALESCE(p.name, m.Product_Name, CONCAT('Product ', kb.product_id)) AS product_name,
+       COALESCE(kb.withdrawn_qty, 0) AS withdrawn_qty,
+       COALESCE(kb.used_qty, 0) AS used_qty,
+       COALESCE(kb.returned_qty, 0) AS returned_qty,
+       COALESCE(kb.unit, 'kg') AS unit,
+       kb.expiry_date,
+       kb.withdrawn_at,
+       kb.status
+     FROM kitchen_batches kb
+     LEFT JOIN products p ON p.id = kb.product_id
+     LEFT JOIN Menu m ON m.Product_ID = kb.product_id
+     WHERE kb.kitchen_batch_id = ?
+     LIMIT 1`,
+    [kitchenBatchId],
+  );
+
+  return rows[0] || null;
 }
 
 async function reconcileDefaultBatchForStock(conn, productId) {
@@ -152,6 +198,431 @@ async function reconcileDefaultBatchForStock(conn, productId) {
 
   return { created: true, addedQty: missingQty };
 }
+
+router.get("/kitchen", async (_req, res) => {
+  try {
+    await ensureBatchesTable();
+    await ensureKitchenBatchesTable();
+
+    const [rows] = await db.query(
+      `SELECT
+         kb.kitchen_batch_id,
+         kb.storage_batch_id,
+         kb.product_id,
+         COALESCE(p.name, m.Product_Name, CONCAT('Product ', kb.product_id)) AS product_name,
+         COALESCE(kb.withdrawn_qty, 0) AS withdrawn_qty,
+         COALESCE(kb.used_qty, 0) AS used_qty,
+         COALESCE(kb.returned_qty, 0) AS returned_qty,
+         COALESCE(kb.unit, 'kg') AS unit,
+         kb.expiry_date,
+         kb.withdrawn_at,
+         kb.status
+       FROM kitchen_batches kb
+       LEFT JOIN products p ON p.id = kb.product_id
+       LEFT JOIN Menu m ON m.Product_ID = kb.product_id
+       WHERE DATE(kb.withdrawn_at) = CURDATE()
+       ORDER BY kb.withdrawn_at DESC, kb.kitchen_batch_id DESC`,
+    );
+
+    res.json(rows);
+  } catch (err) {
+    console.error("Error fetching kitchen batches:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/kitchen/today", async (_req, res) => {
+  try {
+    await ensureBatchesTable();
+    await ensureKitchenBatchesTable();
+
+    const [rows] = await db.query(
+      `SELECT
+         kb.kitchen_batch_id,
+         kb.storage_batch_id,
+         kb.product_id,
+         COALESCE(p.name, m.Product_Name, CONCAT('Product ', kb.product_id)) AS product_name,
+         COALESCE(kb.withdrawn_qty, 0) AS withdrawn_qty,
+         COALESCE(kb.used_qty, 0) AS used_qty,
+         COALESCE(kb.returned_qty, 0) AS returned_qty,
+         COALESCE(kb.unit, 'kg') AS unit,
+         kb.expiry_date,
+         kb.withdrawn_at,
+         kb.status
+       FROM kitchen_batches kb
+       LEFT JOIN products p ON p.id = kb.product_id
+       LEFT JOIN Menu m ON m.Product_ID = kb.product_id
+       WHERE DATE(kb.withdrawn_at) = CURDATE()
+       ORDER BY kb.withdrawn_at DESC, kb.kitchen_batch_id DESC`,
+    );
+
+    res.json(rows);
+  } catch (err) {
+    console.error("Error fetching today's kitchen batches:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/kitchen", async (req, res) => {
+  const { product_id, quantity, storage_batch_id } = req.body;
+
+  const productId = toNumber(product_id);
+  const qty = toNumber(quantity);
+  const storageBatchId =
+    storage_batch_id == null ? null : toNumber(storage_batch_id);
+
+  if (!productId || qty <= 0) {
+    return res
+      .status(400)
+      .json({ error: "product_id and quantity are required" });
+  }
+
+  let conn;
+  try {
+    await ensureBatchesTable();
+    await ensureKitchenBatchesTable();
+
+    conn = await db.getConnection();
+    await conn.beginTransaction();
+
+    let unit = "kg";
+    let expiryDate = null;
+    let resolvedStorageBatchId = storageBatchId;
+
+    if (resolvedStorageBatchId) {
+      const [storageRows] = await conn.query(
+        `SELECT batch_id, unit, expiry_date
+         FROM batches
+         WHERE batch_id = ?
+         LIMIT 1`,
+        [resolvedStorageBatchId],
+      );
+
+      if (storageRows.length > 0) {
+        unit = storageRows[0].unit || unit;
+        expiryDate = storageRows[0].expiry_date || null;
+      } else {
+        resolvedStorageBatchId = null;
+      }
+    }
+
+    if (!resolvedStorageBatchId) {
+      const [fallbackRows] = await conn.query(
+        `SELECT batch_id, unit, expiry_date
+         FROM batches
+         WHERE product_id = ?
+         ORDER BY updated_at DESC, batch_id DESC
+         LIMIT 1`,
+        [productId],
+      );
+
+      if (fallbackRows.length > 0) {
+        resolvedStorageBatchId = fallbackRows[0].batch_id;
+        unit = fallbackRows[0].unit || unit;
+        expiryDate = fallbackRows[0].expiry_date || null;
+      }
+    }
+
+    const [insertResult] = await conn.query(
+      `INSERT INTO kitchen_batches
+         (storage_batch_id, product_id, withdrawn_qty, used_qty, returned_qty, unit, expiry_date, withdrawn_at, status)
+       VALUES (?, ?, ?, 0, 0, ?, ?, NOW(), 'active')`,
+      [resolvedStorageBatchId, productId, qty, unit, expiryDate],
+    );
+
+    const created = await getKitchenBatchById(conn, insertResult.insertId);
+    await conn.commit();
+    res.status(201).json(created);
+  } catch (err) {
+    if (conn) await conn.rollback();
+    console.error("Error creating kitchen batch:", err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+router.patch("/kitchen/:kitchen_batch_id/supplement", async (req, res) => {
+  const kitchenBatchId = toNumber(req.params.kitchen_batch_id);
+  const qty = toNumber(req.body.qty);
+  const storageBatchId =
+    req.body.storage_batch_id == null
+      ? null
+      : toNumber(req.body.storage_batch_id);
+
+  if (!kitchenBatchId || qty <= 0) {
+    return res
+      .status(400)
+      .json({ error: "kitchen_batch_id and qty are required" });
+  }
+
+  let conn;
+  try {
+    await ensureBatchesTable();
+    await ensureKitchenBatchesTable();
+
+    conn = await db.getConnection();
+    await conn.beginTransaction();
+
+    const existing = await getKitchenBatchById(conn, kitchenBatchId);
+    if (!existing) {
+      await conn.rollback();
+      return res.status(404).json({ error: "Kitchen batch not found" });
+    }
+
+    let nextStorageBatchId = existing.storage_batch_id;
+    let nextUnit = existing.unit;
+    let nextExpiryDate = existing.expiry_date;
+
+    if (storageBatchId) {
+      const [storageRows] = await conn.query(
+        `SELECT batch_id, unit, expiry_date
+         FROM batches
+         WHERE batch_id = ?
+         LIMIT 1`,
+        [storageBatchId],
+      );
+
+      if (storageRows.length > 0) {
+        nextStorageBatchId = storageRows[0].batch_id;
+        nextUnit = storageRows[0].unit || nextUnit;
+        nextExpiryDate = storageRows[0].expiry_date || nextExpiryDate;
+      }
+    }
+
+    await conn.query(
+      `UPDATE kitchen_batches
+       SET withdrawn_qty = COALESCE(withdrawn_qty, 0) + ?,
+           storage_batch_id = ?,
+           unit = ?,
+           expiry_date = ?,
+           status = 'active'
+       WHERE kitchen_batch_id = ?`,
+      [qty, nextStorageBatchId, nextUnit, nextExpiryDate, kitchenBatchId],
+    );
+
+    const updated = await getKitchenBatchById(conn, kitchenBatchId);
+    await conn.commit();
+    res.json(updated);
+  } catch (err) {
+    if (conn) await conn.rollback();
+    console.error("Error supplementing kitchen batch:", err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+router.patch("/kitchen/:kitchen_batch_id/return", async (req, res) => {
+  const kitchenBatchId = toNumber(req.params.kitchen_batch_id);
+  const requestedQty =
+    req.body && req.body.qty !== undefined ? toNumber(req.body.qty) : null;
+  const recordedBy =
+    req.body && req.body.recorded_by !== undefined ? req.body.recorded_by : null;
+
+  if (!kitchenBatchId) {
+    return res.status(400).json({ error: "Invalid kitchen_batch_id" });
+  }
+
+  let conn;
+  try {
+    await ensureBatchesTable();
+    await ensureKitchenBatchesTable();
+
+    conn = await db.getConnection();
+    await conn.beginTransaction();
+
+    const existing = await getKitchenBatchById(conn, kitchenBatchId);
+    if (!existing) {
+      await conn.rollback();
+      return res.status(404).json({ error: "Kitchen batch not found" });
+    }
+
+    const remainingUnused = +(
+      toNumber(existing.withdrawn_qty) -
+      toNumber(existing.used_qty) -
+      toNumber(existing.returned_qty)
+    ).toFixed(2);
+
+    const qty =
+      requestedQty == null || requestedQty <= 0 ? remainingUnused : requestedQty;
+
+    if (qty <= 0) {
+      await conn.rollback();
+      return res.status(400).json({ error: "No unused quantity left to return" });
+    }
+
+    if (qty > remainingUnused) {
+      await conn.rollback();
+      return res.status(400).json({
+        error: `Return quantity exceeds unused amount (${remainingUnused})`,
+      });
+    }
+
+    let targetStorageBatchId = existing.storage_batch_id;
+
+    if (!targetStorageBatchId) {
+      const [fallbackRows] = await conn.query(
+        `SELECT batch_id
+         FROM batches
+         WHERE product_id = ?
+         ORDER BY updated_at DESC, batch_id DESC
+         LIMIT 1`,
+        [existing.product_id],
+      );
+
+      if (!fallbackRows.length) {
+        await conn.rollback();
+        return res.status(404).json({ error: "No storage batch found for return" });
+      }
+
+      targetStorageBatchId = fallbackRows[0].batch_id;
+    }
+
+    await conn.query(
+      `UPDATE batches
+       SET remaining_qty = COALESCE(remaining_qty, 0) + ?,
+           returned_qty = COALESCE(returned_qty, 0) + ?,
+           status = CASE
+             WHEN COALESCE(remaining_qty, 0) + ? > 0 THEN 'returned'
+             ELSE status
+           END
+       WHERE batch_id = ?`,
+      [qty, qty, qty, targetStorageBatchId],
+    );
+
+    await conn.query(
+      `INSERT INTO Stock_Status (Product_ID, Type, Quantity, Status_Date, RecordedBy)
+       VALUES (?, 'return', ?, NOW(), ?)`,
+      [
+        existing.product_id,
+        qty,
+        Number.isInteger(recordedBy) ? recordedBy : null,
+      ],
+    );
+
+    await conn.query(
+      `UPDATE Inventory
+       SET Stock = COALESCE(Stock, 0) + ?,
+           Daily_Withdrawn = GREATEST(COALESCE(Daily_Withdrawn, 0) - ?, 0),
+           Returned = COALESCE(Returned, 0) + ?,
+           Last_Update = NOW()
+       WHERE Product_ID = ?`,
+      [qty, qty, qty, existing.product_id],
+    );
+
+    await conn.query(
+      `UPDATE Menu
+       SET Stock = COALESCE(Stock, 0) + ?
+       WHERE Product_ID = ?`,
+      [qty, existing.product_id],
+    );
+
+    await conn.query(
+      `UPDATE products
+       SET quantity = COALESCE(quantity, 0) + ?
+       WHERE id = ?`,
+      [qty, existing.product_id],
+    );
+
+    const nextReturnedQty = +(toNumber(existing.returned_qty) + qty).toFixed(2);
+    const nextUsedQty = toNumber(existing.used_qty);
+    const nextStatus =
+      nextUsedQty + nextReturnedQty >= toNumber(existing.withdrawn_qty)
+        ? "reconciled"
+        : "active";
+
+    await conn.query(
+      `UPDATE kitchen_batches
+       SET storage_batch_id = ?,
+           returned_qty = ?,
+           status = ?
+       WHERE kitchen_batch_id = ?`,
+      [targetStorageBatchId, nextReturnedQty, nextStatus, kitchenBatchId],
+    );
+
+    const updated = await getKitchenBatchById(conn, kitchenBatchId);
+    await conn.commit();
+    res.json(updated);
+  } catch (err) {
+    if (conn) await conn.rollback();
+    console.error("Error returning kitchen batch stock:", err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+router.patch("/kitchen/:kitchen_batch_id/reconcile", async (req, res) => {
+  const kitchenBatchId = toNumber(req.params.kitchen_batch_id);
+
+  if (!kitchenBatchId) {
+    return res.status(400).json({ error: "Invalid kitchen_batch_id" });
+  }
+
+  let conn;
+  try {
+    await ensureBatchesTable();
+    await ensureKitchenBatchesTable();
+
+    conn = await db.getConnection();
+    await conn.beginTransaction();
+
+    const existing = await getKitchenBatchById(conn, kitchenBatchId);
+    if (!existing) {
+      await conn.rollback();
+      return res.status(404).json({ error: "Kitchen batch not found" });
+    }
+
+    const requestedUsedQty =
+      req.body && req.body.used_qty !== undefined
+        ? toNumber(req.body.used_qty)
+        : null;
+
+    const requestedReturnedQty =
+      req.body && req.body.returned_qty !== undefined
+        ? toNumber(req.body.returned_qty)
+        : null;
+
+    let nextReturnedQty = toNumber(existing.returned_qty);
+    if (requestedReturnedQty != null && requestedReturnedQty >= 0) {
+      nextReturnedQty = requestedReturnedQty;
+    }
+
+    let nextUsedQty =
+      requestedUsedQty != null && requestedUsedQty >= 0
+        ? requestedUsedQty
+        : +(toNumber(existing.withdrawn_qty) - nextReturnedQty).toFixed(2);
+
+    if (nextUsedQty < 0) nextUsedQty = 0;
+
+    if (nextUsedQty + nextReturnedQty > toNumber(existing.withdrawn_qty)) {
+      await conn.rollback();
+      return res.status(400).json({
+        error: "used_qty and returned_qty cannot exceed withdrawn_qty",
+      });
+    }
+
+    await conn.query(
+      `UPDATE kitchen_batches
+       SET used_qty = ?,
+           returned_qty = ?,
+           status = 'reconciled'
+       WHERE kitchen_batch_id = ?`,
+      [nextUsedQty, nextReturnedQty, kitchenBatchId],
+    );
+
+    const updated = await getKitchenBatchById(conn, kitchenBatchId);
+    await conn.commit();
+    res.json(updated);
+  } catch (err) {
+    if (conn) await conn.rollback();
+    console.error("Error reconciling kitchen batch:", err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    if (conn) conn.release();
+  }
+});
 
 // GET all batches for a product
 router.get("/product/:product_id", async (req, res) => {

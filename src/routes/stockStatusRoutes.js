@@ -148,36 +148,61 @@ router.post("/spoilage", async (req, res) => {
     conn = await db.getConnection();
     await conn.beginTransaction();
 
+    await ensureInventoryRow(conn, product_id);
+
+    const [inventoryRows] = await conn.query(
+      `SELECT
+         COALESCE(Daily_Withdrawn, 0) AS dailyWithdrawn,
+         COALESCE(Wasted, 0) AS wasted
+       FROM Inventory
+       WHERE Product_ID = ?
+       FOR UPDATE`,
+      [product_id],
+    );
+
+    if (inventoryRows.length === 0) {
+      await conn.rollback();
+      return res.status(404).json({ message: "Inventory record not found" });
+    }
+
+    const availableWithdrawn = Number(inventoryRows[0].dailyWithdrawn) || 0;
+    if (availableWithdrawn <= 0) {
+      await conn.rollback();
+      return res.status(400).json({
+        message: "No withdrawn stock available for spoilage.",
+      });
+    }
+    if (qty > availableWithdrawn) {
+      await conn.rollback();
+      return res.status(400).json({
+        message: `Spoilage cannot exceed withdrawn stock (${availableWithdrawn.toFixed(2)} available).`,
+      });
+    }
+
     await conn.query(
       `INSERT INTO Stock_Status (Product_ID, Type, Quantity, Status_Date, RecordedBy)
        VALUES (?, 'spoilage', ?, NOW(), ?)`,
       [product_id, qty, normaliseRecordedBy(recorded_by)],
     );
 
-    await ensureInventoryRow(conn, product_id);
-
     // Spoilage — deducts mainStock only, dailyWithdrawn unchanged
     await conn.query(
       `UPDATE Inventory
-       SET Stock       = GREATEST(COALESCE(Stock, 0) - ?, 0),
-           Wasted      = COALESCE(Wasted, 0) + ?,
-           Last_Update = NOW()
+       SET Daily_Withdrawn = GREATEST(COALESCE(Daily_Withdrawn, 0) - ?, 0),
+           Wasted          = COALESCE(Wasted, 0) + ?,
+           Last_Update     = NOW()
        WHERE Product_ID = ?`,
       [qty, qty, product_id],
     );
 
-    await conn.query(
-      "UPDATE Menu SET Stock = GREATEST(COALESCE(Stock, 0) - ?, 0) WHERE Product_ID = ?",
-      [qty, product_id],
-    );
-
-    await conn.query(
-      "UPDATE products SET quantity = GREATEST(COALESCE(quantity, 0) - ?, 0) WHERE id = ?",
-      [qty, product_id],
-    );
-
     await conn.commit();
-    res.status(201).json({ success: true });
+    res.status(201).json({
+      success: true,
+      product_id,
+      quantity: qty,
+      dailyWithdrawn: +(availableWithdrawn - qty).toFixed(2),
+      wasted: +((Number(inventoryRows[0].wasted) || 0) + qty).toFixed(2),
+    });
   } catch (err) {
     if (conn) await conn.rollback();
     console.error("POST /stock-status/spoilage error:", err);
