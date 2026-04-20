@@ -77,6 +77,7 @@ interface RawOrderRow {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const ORDER_PAGE_SIZE = 10;
+const LOG_PAGE_SIZE = 20;
 const ITEM_H = 36;
 
 const MONTHS = [
@@ -319,8 +320,6 @@ function triggerPrint(revenue: number, period: Period, logs: SaleLog[], orders: 
           padding: 40px 48px;
           font-size: 12px;
         }
-
-        /* ── Header ── */
         .header {
           display: flex;
           justify-content: space-between;
@@ -335,8 +334,6 @@ function triggerPrint(revenue: number, period: Period, logs: SaleLog[], orders: 
         .header-meta { text-align: right; }
         .header-meta p { font-size: 11px; color: #94a3b8; margin-bottom: 2px; }
         .header-meta strong { font-size: 13px; font-weight: 600; color: #334155; }
-
-        /* ── Revenue hero ── */
         .revenue-hero {
           background: #0f172a;
           border-radius: 14px;
@@ -352,37 +349,18 @@ function triggerPrint(revenue: number, period: Period, logs: SaleLog[], orders: 
         .stat-item { text-align: center; }
         .stat-number { font-size: 20px; font-weight: 700; margin-bottom: 2px; }
         .stat-label { font-size: 10px; color: #64748b; }
-
-        /* ── Summary cards ── */
         .summary-grid {
           display: grid;
           grid-template-columns: repeat(4, 1fr);
           gap: 12px;
           margin-bottom: 28px;
         }
-        .summary-card {
-          border-radius: 10px;
-          padding: 14px 16px;
-        }
+        .summary-card { border-radius: 10px; padding: 14px 16px; }
         .summary-card-label { font-size: 9px; font-weight: 700; color: #94a3b8; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px; }
         .summary-card-value { font-size: 20px; font-weight: 700; margin-bottom: 2px; }
         .summary-card-sub { font-size: 10px; color: #94a3b8; }
-
-        /* ── Table section ── */
-        .section-title {
-          font-size: 11px;
-          font-weight: 700;
-          color: #0f172a;
-          text-transform: uppercase;
-          letter-spacing: 1px;
-          margin-bottom: 12px;
-        }
-        table {
-          width: 100%;
-          border-collapse: collapse;
-          table-layout: fixed;
-          font-size: 11px;
-        }
+        .section-title { font-size: 11px; font-weight: 700; color: #0f172a; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+        table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 11px; }
         colgroup col:nth-child(1) { width: 7%; }
         colgroup col:nth-child(2) { width: 11%; }
         colgroup col:nth-child(3) { width: 9%; }
@@ -391,48 +369,17 @@ function triggerPrint(revenue: number, period: Period, logs: SaleLog[], orders: 
         colgroup col:nth-child(6) { width: 11%; }
         colgroup col:nth-child(7) { width: 13%; }
         thead tr { background: #f8fafc; }
-        thead th {
-          padding: 9px 10px;
-          text-align: left;
-          font-size: 9px;
-          font-weight: 700;
-          color: #94a3b8;
-          letter-spacing: 1px;
-          text-transform: uppercase;
-          border-bottom: 1px solid #e2e8f0;
-        }
+        thead th { padding: 9px 10px; text-align: left; font-size: 9px; font-weight: 700; color: #94a3b8; letter-spacing: 1px; text-transform: uppercase; border-bottom: 1px solid #e2e8f0; }
         thead th:last-child { text-align: right; }
-        tbody td {
-          padding: 8px 10px;
-          border-bottom: 1px solid #f1f5f9;
-          word-break: break-word;
-          overflow-wrap: break-word;
-          white-space: normal;
-          vertical-align: top;
-          line-height: 1.4;
-        }
+        tbody td { padding: 8px 10px; border-bottom: 1px solid #f1f5f9; word-break: break-word; overflow-wrap: break-word; white-space: normal; vertical-align: top; line-height: 1.4; }
         tbody td:last-child { text-align: right; font-weight: 700; }
-        tfoot td {
-          padding: 12px 10px;
-          border-top: 2px solid #e2e8f0;
-          font-weight: 700;
-          font-size: 13px;
-        }
+        tfoot td { padding: 12px 10px; border-top: 2px solid #e2e8f0; font-weight: 700; font-size: 13px; }
         tr { page-break-inside: avoid; }
-
-        /* ── Footer ── */
-        .footer {
-          margin-top: 24px;
-          text-align: center;
-          font-size: 10px;
-          color: #cbd5e1;
-        }
-
+        .footer { margin-top: 24px; text-align: center; font-size: 10px; color: #cbd5e1; }
         @page { margin: 12mm; size: A4; }
       </style>
     </head>
     <body>
-
       <div class="header">
         <div>
           <p class="header-brand">The Crunch</p>
@@ -445,7 +392,6 @@ function triggerPrint(revenue: number, period: Period, logs: SaleLog[], orders: 
           <p style="margin-top:2px">${timeLabel}</p>
         </div>
       </div>
-
       <div class="revenue-hero">
         <div>
           <p class="revenue-label">Total Revenue</p>
@@ -470,7 +416,6 @@ function triggerPrint(revenue: number, period: Period, logs: SaleLog[], orders: 
           </div>
         </div>
       </div>
-
       <div class="summary-grid">
         <div class="summary-card" style="background:#f0fdf4;border:1px solid #bbf7d0">
           <p class="summary-card-label">Completed Revenue</p>
@@ -493,22 +438,13 @@ function triggerPrint(revenue: number, period: Period, logs: SaleLog[], orders: 
           <p class="summary-card-sub">${refunded.length} orders</p>
         </div>
       </div>
-
       <p class="section-title">Completed Orders (${completedOrders.length})</p>
-
       <table>
-        <colgroup>
-          <col/><col/><col/><col/><col/><col/><col/>
-        </colgroup>
+        <colgroup><col/><col/><col/><col/><col/><col/><col/></colgroup>
         <thead>
           <tr>
-            <th>Order #</th>
-            <th>Date</th>
-            <th>Time</th>
-            <th>Items</th>
-            <th>Cashier</th>
-            <th>Payment</th>
-            <th style="text-align:right">Amount</th>
+            <th>Order #</th><th>Date</th><th>Time</th><th>Items</th>
+            <th>Cashier</th><th>Payment</th><th style="text-align:right">Amount</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
@@ -519,9 +455,7 @@ function triggerPrint(revenue: number, period: Period, logs: SaleLog[], orders: 
           </tr>
         </tfoot>
       </table>
-
-      <p class="footer">Auto-generated by The Crunch POS System &nbsp;·&nbsp; Confidential</p>
-
+      <p class="footer">Auto-generated by The Crunch POS System · Confidential</p>
     </body>
     </html>
   `;
@@ -806,7 +740,7 @@ function RevenueDropdown({ period, setPeriod, logs, orders }: RevenueDropdownPro
   else if (period === "Last 7 Days")  { start.setDate(now.getDate() - 6);  start.setHours(0, 0, 0, 0); }
   else if (period === "Last 30 Days") { start.setDate(now.getDate() - 29); start.setHours(0, 0, 0, 0); }
 
-  const inPeriod      = period === "All Time" ? logs : logs.filter((l) => l._dateObj >= start && l._dateObj <= now);
+  const inPeriod       = period === "All Time" ? logs : logs.filter((l) => l._dateObj >= start && l._dateObj <= now);
   const completedCount = inPeriod.filter((l) => l.status === "Completed").length;
   const pendingCount   = inPeriod.filter((l) => l.status === "Pending").length;
   const cancelledCount = inPeriod.filter((l) => l.status === "Cancelled").length;
@@ -846,7 +780,6 @@ function RevenueDropdown({ period, setPeriod, logs, orders }: RevenueDropdownPro
       </AnimatePresence>
 
       <div ref={ref} style={{ position: "relative", minWidth: 280, zIndex: 100 }}>
-        {/* Trigger card */}
         <motion.div
           whileHover={{ boxShadow: "0 4px 20px rgba(0,0,0,0.08)" }}
           onClick={() => setOpen(!open)}
@@ -883,7 +816,6 @@ function RevenueDropdown({ period, setPeriod, logs, orders }: RevenueDropdownPro
           </div>
         </motion.div>
 
-        {/* Dropdown */}
         <AnimatePresence>
           {open && (
             <motion.div
@@ -918,7 +850,6 @@ function RevenueDropdown({ period, setPeriod, logs, orders }: RevenueDropdownPro
               ))}
 
               <div style={{ height: 1, background: "#f1f5f9", margin: "4px 0" }} />
-
               <div style={{ padding: "8px 16px 4px" }}>
                 <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: 1.2, color: "#cbd5e1", textTransform: "uppercase" }}>Actions</span>
               </div>
@@ -990,7 +921,7 @@ function RefundModal({ open, log, order, onConfirm, onClose, loading }: RefundMo
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.93, y: 16 }}
             transition={{ duration: 0.24, ease: "easeOut" }}
-            style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", zIndex: 301, width: 460, background: "#fff", borderRadius: 20, boxShadow: "0 16px 48px rgba(0,0,0,0.12)", fontFamily: "'Poppins', sans-serif", overflow: "hidden", border: "1px solid #e2e8f0" }}
+            style={{ position: "fixed", top: "25%", left: "34%", transform: "translate(-50%, -50%)", zIndex: 301, width: 460, background: "#fff", borderRadius: 20, boxShadow: "0 16px 48px rgba(0,0,0,0.12)", fontFamily: "'Poppins', sans-serif", overflow: "hidden", border: "1px solid #e2e8f0" }}
           >
             <div style={{ height: 4, background: "#e2e8f0" }} />
             <div style={{ padding: "24px 24px 22px" }}>
@@ -1154,6 +1085,74 @@ function EmptyState({ message }: { message: string }) {
       <p style={{ fontSize: 14, fontWeight: 600, margin: "0 0 6px", color: "#94a3b8" }}>No completed transactions yet</p>
       <p style={{ fontSize: 12, margin: 0 }}>{message}</p>
     </motion.div>
+  );
+}
+
+// ─── Log Pagination ────────────────────────────────────────────────────────────
+
+interface LogPaginationProps {
+  currentPage: number;
+  totalPages: number;
+  totalCount: number;
+  pageSize: number;
+  onPageChange: (page: number) => void;
+}
+
+function LogPagination({ currentPage, totalPages, totalCount, pageSize, onPageChange }: LogPaginationProps) {
+  if (totalPages <= 1) return null;
+
+  const start = (currentPage - 1) * pageSize + 1;
+  const end   = Math.min(currentPage * pageSize, totalCount);
+
+  const pageNumbers = Array.from({ length: totalPages }, (_, i) => i + 1)
+    .filter((p) => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1)
+    .reduce<(number | "...")[]>((acc, p, idx, arr) => {
+      if (idx > 0 && p - (arr[idx - 1] as number) > 1) acc.push("...");
+      acc.push(p);
+      return acc;
+    }, []);
+
+  return (
+    <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100 px-1">
+      <span className="text-sm text-gray-500">
+        Showing {start}–{end} of {totalCount} sales
+      </span>
+      <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="icon"
+          className="h-8 w-8 rounded-lg"
+          onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+          disabled={currentPage === 1}
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </Button>
+        {pageNumbers.map((p, idx) =>
+          p === "..." ? (
+            <span key={`e-${idx}`} className="text-gray-400 text-sm px-1">...</span>
+          ) : (
+            <Button
+              key={p}
+              variant={currentPage === p ? "default" : "outline"}
+              size="icon"
+              className={`h-8 w-8 rounded-lg text-sm ${currentPage === p ? "bg-[#4A1C1C] hover:bg-[#3a1515] text-white border-0" : ""}`}
+              onClick={() => onPageChange(p as number)}
+            >
+              {p}
+            </Button>
+          )
+        )}
+        <Button
+          variant="outline"
+          size="icon"
+          className="h-8 w-8 rounded-lg"
+          onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+          disabled={currentPage === totalPages}
+        >
+          <ChevronRight className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -1485,6 +1484,7 @@ function OrdersTab({ orders, onRefund }: { orders: Order[]; onRefund: (order: Or
 export default function SalesReports() {
   const [activeTab,     setActiveTab]     = useState<TabKey>("logs");
   const [search,        setSearch]        = useState("");
+  const [logPage,       setLogPage]       = useState(1);
   const [period,        setPeriod]        = useState<Period>("Today");
   const [logs,          setLogs]          = useState<SaleLog[]>([]);
   const [orders,        setOrders]        = useState<Order[]>([]);
@@ -1510,6 +1510,11 @@ export default function SalesReports() {
     const interval = setInterval(fetchSalesData, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  // Reset log page when search changes
+  useEffect(() => {
+    setLogPage(1);
+  }, [search]);
 
   async function handleRefundConfirm() {
     const orderId = refundLog?.orderId ?? refundOrder?.id;
@@ -1538,7 +1543,13 @@ export default function SalesReports() {
     );
   });
 
-  const grouped = groupByDate(filteredLogs);
+  // ── Log pagination ──
+  const logTotalPages = Math.max(1, Math.ceil(filteredLogs.length / LOG_PAGE_SIZE));
+  const paginatedLogs = filteredLogs.slice(
+    (logPage - 1) * LOG_PAGE_SIZE,
+    logPage * LOG_PAGE_SIZE,
+  );
+  const grouped = groupByDate(paginatedLogs);
   const dates   = Object.keys(grouped);
 
   const tabs: { key: TabKey; label: string; count: number; icon: React.ReactNode }[] = [
@@ -1682,6 +1693,19 @@ export default function SalesReports() {
                   })
                 )}
               </AnimatePresence>
+
+              {/* Pagination — only renders when needed */}
+              {filteredLogs.length > LOG_PAGE_SIZE && (
+                <div style={{ padding: "0 16px 16px" }}>
+                  <LogPagination
+                    currentPage={logPage}
+                    totalPages={logTotalPages}
+                    totalCount={filteredLogs.length}
+                    pageSize={LOG_PAGE_SIZE}
+                    onPageChange={(p) => { setLogPage(p); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                  />
+                </div>
+              )}
             </motion.div>
 
             <p style={{ color: "#cbd5e1", fontSize: 11, textAlign: "center", marginTop: 20, fontWeight: 500 }}>
