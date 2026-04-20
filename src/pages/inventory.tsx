@@ -1873,6 +1873,8 @@ function InventoryManagementTab() {
   const [fUnit, setFUnit] = useState<string>(UNIT_OPTIONS[0]);
   const [fStock, setFStock] = useState("");
   const [fDesc, setFDesc] = useState("");
+  const [fImageFile, setFImageFile] = useState<File | null>(null);
+  const [fImagePreview, setFImagePreview] = useState<string>("");
 
   const [eName, setEName] = useState("");
   const [eCat, setECat] = useState("");
@@ -1880,6 +1882,30 @@ function InventoryManagementTab() {
   const [eUnit, setEUnit] = useState<string>(UNIT_OPTIONS[0]);
   const [eStock, setEStock] = useState("");
   const [eDesc, setEDesc] = useState("");
+  const [eImageFile, setEImageFile] = useState<File | null>(null);
+  const [eImagePreview, setEImagePreview] = useState<string>("");
+
+  // ── Image helpers
+  function toBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+  function handleFImageChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFImageFile(file);
+    setFImagePreview(URL.createObjectURL(file));
+  }
+  function handleEImageChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setEImageFile(file);
+    setEImagePreview(URL.createObjectURL(file));
+  }
 
   const loadProducts = async () => {
     try {
@@ -1945,12 +1971,15 @@ function InventoryManagementTab() {
   function resetAddForm() {
     setFName(""); setFCat(""); setFPrice("");
     setFUnit(UNIT_OPTIONS[0]); setFStock(""); setFDesc("");
+    setFImageFile(null); setFImagePreview("");
   }
 
   function openEdit(p: MgmtProduct) {
     setEditProduct(p);
     setEName(p.name); setECat(p.category); setEPrice(p.price);
     setEUnit(p.unit); setEStock(String(p.stock)); setEDesc(p.description ?? "");
+    setEImageFile(null);
+    setEImagePreview(p.image && p.image !== "/img/placeholder.jpg" ? p.image : "");
   }
 
   async function handleAdd() {
@@ -1960,12 +1989,16 @@ function InventoryManagementTab() {
     }
     try {
       setSaving(true);
+      let imageUrl = "/img/placeholder.jpg";
+      if (fImageFile) {
+        imageUrl = await toBase64(fImageFile);
+      }
       await api.post("/products", {
         name: fName.trim(), category: fCat.trim(),
         price: parseFloat(fPrice), unit: fUnit,
         quantity: parseFloat(fStock) || 0,
         description: fDesc.trim() || null,
-        image: "/img/placeholder.jpg",
+        image: imageUrl,
       });
       await loadProducts();
       setShowAdd(false);
@@ -1986,12 +2019,19 @@ function InventoryManagementTab() {
     }
     try {
       setSaving(true);
-      const payload = {
+      let editImageUrl: string | undefined;
+      if (eImageFile) {
+        editImageUrl = await toBase64(eImageFile);
+      } else if (eImagePreview && eImagePreview !== "/img/placeholder.jpg") {
+        editImageUrl = eImagePreview;
+      }
+      const payload: Record<string, unknown> = {
         name: eName.trim(), category: eCat.trim(),
         price: parseFloat(ePrice), unit: eUnit,
         quantity: parseFloat(eStock) || 0,
         description: eDesc.trim() || null,
       };
+      if (editImageUrl) payload.image = editImageUrl;
       const endpointsToTry: string[] = [];
       const pid = editProduct.rawProductId ?? editProduct.id;
       const iid = editProduct.rawInventoryId;
@@ -2194,6 +2234,30 @@ function InventoryManagementTab() {
           </div>
           <FormInput label="Initial Stock" type="number" placeholder="0" value={fStock} onChange={(e) => setFStock(e.target.value)} />
           <FormGroup label="Description (optional)"><textarea className={`${inputClass} resize-none`} rows={2} placeholder="Brief description…" value={fDesc} onChange={(e) => setFDesc(e.target.value)} /></FormGroup>
+          <FormGroup label="Product Image (optional)">
+            <label className="flex flex-col items-center justify-center w-full border-[1.5px] border-dashed border-gray-200 rounded-lg cursor-pointer hover:border-gray-400 hover:bg-gray-50 transition-all overflow-hidden" style={{minHeight: fImagePreview ? "auto" : "80px"}}>
+              {fImagePreview ? (
+                <div className="relative w-full">
+                  <img src={fImagePreview} alt="Preview" className="w-full h-[120px] object-cover" />
+                  <div className="absolute inset-0 bg-black/0 hover:bg-black/20 transition-all flex items-center justify-center">
+                    <span className="opacity-0 hover:opacity-100 text-white text-[11px] font-semibold bg-black/50 px-2 py-1 rounded-md transition-opacity">Change image</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-1 py-5">
+                  <svg className="w-6 h-6 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                  <span className="text-[11px] text-gray-400 font-medium">Click to upload image</span>
+                  <span className="text-[10px] text-gray-300">PNG, JPG up to 5MB</span>
+                </div>
+              )}
+              <input type="file" accept="image/*" className="hidden" onChange={handleFImageChange} />
+            </label>
+            {fImagePreview && (
+              <button type="button" className="mt-[6px] text-[11px] text-red-400 hover:text-red-600 font-semibold bg-transparent border-none cursor-pointer font-[Poppins,sans-serif]" onClick={() => { setFImageFile(null); setFImagePreview(""); }}>
+                Remove image
+              </button>
+            )}
+          </FormGroup>
         </SMModal>
       )}
 
@@ -2212,6 +2276,30 @@ function InventoryManagementTab() {
           </div>
           <FormInput label="Stock Qty" type="number" placeholder="0" value={eStock} onChange={(e) => setEStock(e.target.value)} />
           <FormGroup label="Description (optional)"><textarea className={`${inputClass} resize-none`} rows={2} placeholder="Brief description…" value={eDesc} onChange={(e) => setEDesc(e.target.value)} /></FormGroup>
+          <FormGroup label="Product Image (optional)">
+            <label className="flex flex-col items-center justify-center w-full border-[1.5px] border-dashed border-gray-200 rounded-lg cursor-pointer hover:border-gray-400 hover:bg-gray-50 transition-all overflow-hidden" style={{minHeight: eImagePreview ? "auto" : "80px"}}>
+              {eImagePreview ? (
+                <div className="relative w-full">
+                  <img src={eImagePreview} alt="Preview" className="w-full h-[120px] object-cover" />
+                  <div className="absolute inset-0 bg-black/0 hover:bg-black/20 transition-all flex items-center justify-center">
+                    <span className="opacity-0 hover:opacity-100 text-white text-[11px] font-semibold bg-black/50 px-2 py-1 rounded-md transition-opacity">Change image</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-1 py-5">
+                  <svg className="w-6 h-6 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                  <span className="text-[11px] text-gray-400 font-medium">Click to upload image</span>
+                  <span className="text-[10px] text-gray-300">PNG, JPG up to 5MB</span>
+                </div>
+              )}
+              <input type="file" accept="image/*" className="hidden" onChange={handleEImageChange} />
+            </label>
+            {eImagePreview && (
+              <button type="button" className="mt-[6px] text-[11px] text-red-400 hover:text-red-600 font-semibold bg-transparent border-none cursor-pointer font-[Poppins,sans-serif]" onClick={() => { setEImageFile(null); setEImagePreview(""); }}>
+                Remove image
+              </button>
+            )}
+          </FormGroup>
         </SMModal>
       )}
 
