@@ -3,6 +3,7 @@ import {
   useContext,
   useState,
   useRef,
+  useEffect,
   ReactNode,
 } from "react";
 
@@ -51,9 +52,25 @@ function computeDuration(timeIn: Date, timeOut: Date | null): string {
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
+function readStoredUser(): AuthUser | null {
+  if (typeof window === "undefined") return null;
+
+  const token = localStorage.getItem("authToken");
+  const username = localStorage.getItem("userName");
+  const role = localStorage.getItem("userRole");
+  const userId = localStorage.getItem("userId");
+  const isAuthenticated = localStorage.getItem("isAuthenticated") === "true";
+
+  if (!token || !username || !role || !userId || !isAuthenticated) {
+    return null;
+  }
+
+  return { token, username, role, userId };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [isOnline, setIsOnline] = useState(false);
+  const [user, setUser] = useState<AuthUser | null>(() => readStoredUser());
+  const [isOnline, setIsOnline] = useState(() => !!readStoredUser());
 
   /**
    * attendanceRef is the source of truth.
@@ -120,7 +137,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     syncAttendance(updated);
     setIsOnline(false);
     setUser(null);
+    if (typeof window !== "undefined") {
+      ["authToken", "isAuthenticated", "userName", "userRole", "userId"].forEach(
+        (key) => localStorage.removeItem(key),
+      );
+      window.dispatchEvent(new Event("authChange"));
+    }
   };
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+
+    const syncStoredAuth = () => {
+      const storedUser = readStoredUser();
+      setUser(storedUser);
+      setIsOnline(!!storedUser);
+    };
+
+    window.addEventListener("authChange", syncStoredAuth);
+    window.addEventListener("storage", syncStoredAuth);
+
+    return () => {
+      window.removeEventListener("authChange", syncStoredAuth);
+      window.removeEventListener("storage", syncStoredAuth);
+    };
+  }, []);
 
   return (
     <AuthContext.Provider value={{ user, isOnline, attendance, login, logout }}>

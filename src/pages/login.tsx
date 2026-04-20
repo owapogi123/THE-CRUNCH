@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { Eye, EyeOff } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { authApi } from "../lib/api";
+import { useAuth } from "../context/authcontext";
 
 // ── Inject fonts ──────────────────────────────────────────────────────────────
 if (typeof document !== "undefined" && !document.getElementById("login-fonts")) {
@@ -50,6 +51,7 @@ function Field({ label, children, delay = 0, extra }: FieldProps) {
 export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user, login } = useAuth();
 
   const [isLogin, setIsLogin] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
@@ -70,6 +72,20 @@ export default function Login() {
     const params = new URLSearchParams(location.search);
     if (params.get("tab") === "signup") setIsLogin(false);
   }, [location.search]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const roleHomeMap: Record<string, string> = {
+      administrator: "/dashboard",
+      cashier: "/orders",
+      cook: "/orders",
+      inventory_manager: "/inventory",
+      customer: "/products",
+    };
+
+    navigate(roleHomeMap[user.role] ?? "/", { replace: true });
+  }, [navigate, user]);
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const card = cardRef.current;
@@ -93,6 +109,12 @@ export default function Login() {
     role: string;
     userId: number | string;
   }) => {
+    login({
+      token: data.token,
+      username: data.username,
+      role: data.role,
+      userId: String(data.userId),
+    });
     localStorage.setItem("authToken", data.token);
     localStorage.setItem("isAuthenticated", "true");
     localStorage.setItem("userName", data.username);

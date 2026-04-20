@@ -82,6 +82,7 @@ interface Supplier {
   delivery_schedule: string;
   product_id: number;
   email?: string;
+  // Keep as a comma-separated string for API compatibility.
   products_supplied?: string;
 }
 interface Batch {
@@ -223,6 +224,16 @@ const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  mergeSupplierProducts: (supplier_id: number, products: string[]) =>
+    apiFetch<Supplier>(`/suppliers/${supplier_id}/products`, {
+      method: "PATCH",
+      body: JSON.stringify({ products }),
+    }),
+  removeSupplierProduct: (supplier_id: number, product_name: string) =>
+    apiFetch<Supplier>(
+      `/suppliers/${supplier_id}/products/${encodeURIComponent(product_name)}`,
+      { method: "DELETE" },
+    ),
   deleteSupplier: (id: number) =>
     apiFetch<{ success: boolean }>(`/suppliers/${id}`, { method: "DELETE" }),
   getSupplierHistory: () => apiFetch<SupplierHistory[]>("/suppliers/history"),
@@ -461,11 +472,6 @@ const SUPPLIER_FIELDS: {
     placeholder: "e.g. 0917-123-4567",
   },
   {
-    key: "products_supplied",
-    label: "Supplied Products",
-    placeholder: "e.g. Whole Chicken",
-  },
-  {
     key: "delivery_schedule",
     label: "Delivery Schedule",
     placeholder: "e.g. Mon, Wed, Fri",
@@ -588,6 +594,18 @@ const fmtReceivedDate = (v: string) => {
         year: "numeric",
       });
 };
+function parseSupplierProducts(products_supplied?: string): string[] {
+  if (!products_supplied) return [];
+  return products_supplied
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+function mergeSupplierProducts(existing: string, incoming: string[]): string {
+  const existingArr = parseSupplierProducts(existing);
+  const merged = [...new Set([...existingArr, ...incoming])];
+  return merged.join(", ");
+}
 const getCategoryStyle = (cat: string) => {
   const c = cat.toLowerCase();
   if (c.includes("whole chicken"))
@@ -1367,6 +1385,7 @@ function CreatePOModal({
   onCreate,
   quickOrderProducts,
   allProducts,
+  allSuppliers,
   prefillProduct,
   onShowToast,
 }: {
@@ -1374,6 +1393,7 @@ function CreatePOModal({
   onCreate: (po: Omit<PurchaseOrder, "id">) => Promise<void>;
   quickOrderProducts: Product[];
   allProducts: Product[];
+  allSuppliers: Supplier[];
   prefillProduct?: {
     name: string;
     category: string;
@@ -1382,22 +1402,75 @@ function CreatePOModal({
   } | null;
   onShowToast: (message: string, type: "success" | "error") => void;
 }) {
-  const [supplier, setSupplier] = useState(prefillProduct?.supplier ?? "");
-  const [contact, setContact] = useState("");
-  const [deliveryDate, setDeliveryDate] = useState("");
+  const [selectedSupplierId, setSelectedSupplierId] = useState<number | "">(
+    () => {
+      if (!prefillProduct?.supplier) return "";
+      const found = allSuppliers.find(
+        (s) =>
+          s.supplier_name.trim().toLowerCase() ===
+          prefillProduct.supplier.trim().toLowerCase(),
+      );
+      return found?.supplier_id ?? "";
+    },
+  );
   const [notes, setNotes] = useState("");
   const [showQuickOrder, setShowQuickOrder] = useState(false);
-  const [items, setItems] = useState<Omit<POItem, "id">[]>([
-    prefillProduct
-      ? {
+  const [items, setItems] = useState<Omit<POItem, "id">[]>(() => {
+    if (prefillProduct) {
+      return [
+        {
           name: prefillProduct.name,
           category: prefillProduct.category,
           unit: prefillProduct.unit,
           quantity: 0,
           unitCost: 0,
-        }
-      : { ...EMPTY_PO_ITEM },
-  ]);
+        },
+      ];
+    }
+    return [{ ...EMPTY_PO_ITEM }];
+  });
+
+  const handleSupplierChange = (supplierId: string) => {
+    const id = Number(supplierId);
+    setSelectedSupplierId(id || "");
+
+    const supplier = allSuppliers.find((s) => s.supplier_id === id);
+    if (!supplier) {
+      return;
+    }
+
+    const supplierProducts = parseSupplierProducts(supplier.products_supplied);
+    if (supplierProducts.length > 0) {
+      const autoItems: Omit<POItem, "id">[] = supplierProducts.map((name) => {
+        const match = allProducts.find(
+          (p) => p.product_name.trim().toLowerCase() === name.toLowerCase(),
+        );
+        return {
+          name: match?.product_name ?? name,
+          category: match?.category ?? "",
+          unit: match?.unit ?? "",
+          quantity: match
+            ? Math.max(
+                1,
+                Math.ceil(
+                  toNumber(match.reorderPoint) - toNumber(match.mainStock),
+                ),
+              )
+            : 1,
+          unitCost: 0,
+        };
+      });
+      setItems(autoItems);
+    } else {
+      setItems([{ ...EMPTY_PO_ITEM }]);
+    }
+  };
+
+  const selectedSupplier = allSuppliers.find(
+    (s) => s.supplier_id === selectedSupplierId,
+  );
+  const supplierName = selectedSupplier?.supplier_name ?? "";
+  const contact = selectedSupplier?.contact_number ?? "";
 
   const updateItem = (
     idx: number,
@@ -1433,8 +1506,10 @@ function CreatePOModal({
   );
 
   const handleSubmit = async () => {
-    if (!supplier.trim() || !deliveryDate || items.some((i) => !i.name.trim()))
+    if (!supplierName.trim() || items.some((i) => !i.name.trim())) {
+      onShowToast("Please fill in all required fields.", "error");
       return;
+    }
     const unmatched = items
       .map((i) => i.name.trim())
       .filter(
@@ -1445,17 +1520,19 @@ function CreatePOModal({
       );
     if (unmatched.length > 0) {
       onShowToast(
-        `These items don't match any product in inventory: ${unmatched.join(", ")}. Please correct the names before saving.`,
+        `These items don't match any product in inventory: ${unmatched.join(", ")}.`,
         "error",
       );
       return;
     }
+    const today = new Date().toISOString().split("T")[0];
+
     try {
       await onCreate({
-        supplier,
+        supplier: supplierName,
         contact,
-        date: new Date().toISOString().split("T")[0],
-        deliveryDate,
+        date: today,
+        deliveryDate: today,
         status: "Draft",
         notes,
         items: items.map((item, idx) => ({
@@ -1500,46 +1577,68 @@ function CreatePOModal({
           <CloseBtn onClick={onClose} />
         </div>
         <div className="flex-1 overflow-y-auto overflow-x-hidden px-6 py-5 space-y-5">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {(
-              [
-                [
-                  "Supplier Name",
-                  supplier,
-                  setSupplier,
-                  "e.g. Fresh Farms Co.",
-                ],
-                ["Contact Number", contact, setContact, "09XXXXXXXXX"],
-              ] as [string, string, (v: string) => void, string][]
-            ).map(([label, val, setter, ph]) => (
-              <div key={label}>
-                <label className="text-xs text-gray-400 font-medium block mb-1">
-                  {label}
-                </label>
-                <input
-                  value={val}
-                  onChange={(e) => setter(e.target.value)}
-                  placeholder={ph}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200 placeholder-gray-300"
-                />
-              </div>
-            ))}
-          </div>
           <div>
             <label className="text-xs text-gray-400 font-medium block mb-1">
-              Expected Delivery Date
+              Supplier <span className="text-red-400">*</span>
             </label>
-            <input
-              type="date"
-              value={deliveryDate}
-              onChange={(e) => setDeliveryDate(e.target.value)}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200"
-            />
+            <select
+              value={selectedSupplierId}
+              onChange={(e) => handleSupplierChange(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200 bg-white"
+            >
+              <option value="">- Select a supplier -</option>
+              {allSuppliers.map((s) => (
+                <option key={s.supplier_id} value={s.supplier_id}>
+                  {s.supplier_name}
+                  {s.products_supplied ? ` · ${s.products_supplied}` : ""}
+                </option>
+              ))}
+            </select>
           </div>
+          {selectedSupplier && (
+            <div className="rounded-xl bg-slate-50 border border-slate-100 px-4 py-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold text-slate-800">
+                  {selectedSupplier.supplier_name}
+                </p>
+                {selectedSupplier.delivery_schedule && (
+                  <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg">
+                    {selectedSupplier.delivery_schedule}
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-500">
+                {selectedSupplier.contact_number}
+                {selectedSupplier.email && ` · ${selectedSupplier.email}`}
+              </p>
+              {parseSupplierProducts(selectedSupplier.products_supplied).length >
+                0 && (
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {parseSupplierProducts(selectedSupplier.products_supplied).map(
+                    (p) => (
+                      <span
+                        key={p}
+                        className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-white border border-slate-200 text-slate-600"
+                      >
+                        {p}
+                      </span>
+                    ),
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           <div>
             <div className="flex items-center justify-between mb-2 gap-2">
               <label className="text-xs text-gray-400 font-medium uppercase tracking-wide">
                 Items
+                {selectedSupplier &&
+                  parseSupplierProducts(selectedSupplier.products_supplied)
+                    .length > 0 && (
+                    <span className="ml-2 text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-full normal-case">
+                      auto-filled from supplier history
+                    </span>
+                  )}
               </label>
               <div className="flex items-center gap-3">
                 <button
@@ -3256,6 +3355,35 @@ export default function StockManager() {
       try {
         const created = await api.po.create(po);
         setPoOrders((prev) => [created, ...prev]);
+        const matchedSupplier = suppliers.find(
+          (s) =>
+            s.supplier_name.trim().toLowerCase() ===
+            po.supplier.trim().toLowerCase(),
+        );
+
+        if (matchedSupplier) {
+          const incomingNames = po.items
+            .map((i) => i.name.trim())
+            .filter(Boolean);
+
+          try {
+            const updatedSupplier = await api.mergeSupplierProducts(
+              matchedSupplier.supplier_id,
+              incomingNames,
+            );
+            setSuppliers((prev) =>
+              prev.map((s) =>
+                s.supplier_id === matchedSupplier.supplier_id
+                  ? updatedSupplier
+                  : s,
+              ),
+            );
+          } catch (mergeErr) {
+            console.error("Failed to merge supplier products:", mergeErr);
+          }
+        }
+
+        showToast("Purchase order created.", "success");
       } catch (err) {
         showToast(
           err instanceof Error
@@ -3268,7 +3396,7 @@ export default function StockManager() {
         setPoLoading(false);
       }
     },
-    [showToast],
+    [showToast, suppliers],
   );
 
   // ── Stock Actions ─────────────────────────────────────────────────────────
@@ -5000,7 +5128,9 @@ export default function StockManager() {
                             subtitle="Posts to Suppliers table"
                           >
                             <div className="p-5 grid grid-cols-3 gap-4">
-                              {SUPPLIER_FIELDS.map(
+                              {SUPPLIER_FIELDS.filter(
+                                ({ key }) => key !== "delivery_schedule",
+                              ).map(
                                 ({ key, label, placeholder }) => (
                                   <FormField key={key} label={label}>
                                     <StyledInput
@@ -5019,6 +5149,82 @@ export default function StockManager() {
                                   </FormField>
                                 ),
                               )}
+                              <div className="col-span-3">
+                                <label className="block text-xs font-semibold text-slate-500 mb-1.5">
+                                  Supplied Products
+                                  <span className="ml-1 text-slate-400 font-normal">
+                                    (optional — will auto-update from POs)
+                                  </span>
+                                </label>
+                                <div className="flex flex-wrap gap-2 p-3 border border-slate-200 rounded-xl bg-slate-50 min-h-[48px]">
+                                  {parseSupplierProducts(
+                                    supplierForm.products_supplied,
+                                  ).map((p) => (
+                                    <span
+                                      key={p}
+                                      className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full bg-white border border-slate-200 text-slate-700"
+                                    >
+                                      {p}
+                                      <button
+                                        onClick={() => {
+                                          const updated = parseSupplierProducts(
+                                            supplierForm.products_supplied,
+                                          )
+                                            .filter((x) => x !== p)
+                                            .join(", ");
+                                          setSupplierForm((prev) => ({
+                                            ...prev,
+                                            products_supplied: updated,
+                                          }));
+                                        }}
+                                        className="text-slate-300 hover:text-red-400 transition-colors ml-0.5"
+                                      >
+                                        ×
+                                      </button>
+                                    </span>
+                                  ))}
+                                  <select
+                                    value=""
+                                    onChange={(e) => {
+                                      if (!e.target.value) return;
+                                      const existing = parseSupplierProducts(
+                                        supplierForm.products_supplied,
+                                      );
+                                      if (!existing.includes(e.target.value)) {
+                                        setSupplierForm((prev) => ({
+                                          ...prev,
+                                          products_supplied: [
+                                            ...existing,
+                                            e.target.value,
+                                          ].join(", "),
+                                        }));
+                                      }
+                                    }}
+                                    className="text-xs text-slate-500 bg-transparent border-none outline-none cursor-pointer"
+                                  >
+                                    <option value="">+ Add product</option>
+                                    {products
+                                      .filter(
+                                        (p) =>
+                                          !parseSupplierProducts(
+                                            supplierForm.products_supplied,
+                                          ).includes(p.product_name),
+                                      )
+                                      .map((p) => (
+                                        <option
+                                          key={p.product_id}
+                                          value={p.product_name}
+                                        >
+                                          {p.product_name}
+                                        </option>
+                                      ))}
+                                  </select>
+                                </div>
+                                <p className="text-[11px] text-slate-400 mt-1">
+                                  Products will also be added automatically
+                                  when you create POs for this supplier.
+                                </p>
+                              </div>
                               <div className="col-span-3 pt-1">
                                 <Btn
                                   onClick={addSupplier}
@@ -5094,8 +5300,53 @@ export default function StockManager() {
                                 <td className="py-3.5 px-4 text-slate-600 text-xs">
                                   {s.contact_number}
                                 </td>
-                                <td className="py-3.5 px-4 text-slate-600 text-xs">
-                                  {s.products_supplied ?? "—"}
+                                <td className="py-3.5 px-4">
+                                  {parseSupplierProducts(s.products_supplied).length > 0 ? (
+                                    <div className="flex flex-wrap gap-1">
+                                      {parseSupplierProducts(s.products_supplied).map((p) => (
+                                        <span
+                                          key={p}
+                                          className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200"
+                                        >
+                                          {p}
+                                          <button
+                                            onClick={async () => {
+                                              if (!s.supplier_id) return;
+                                              try {
+                                                const updated =
+                                                  await api.removeSupplierProduct(
+                                                    s.supplier_id,
+                                                    p,
+                                                  );
+                                                setSuppliers((prev) =>
+                                                  prev.map((sup) =>
+                                                    sup.supplier_id ===
+                                                    s.supplier_id
+                                                      ? updated
+                                                      : sup,
+                                                  ),
+                                                );
+                                                showToast(
+                                                  `Removed ${p} from ${s.supplier_name}.`,
+                                                  "success",
+                                                );
+                                              } catch (err) {
+                                                showToast(
+                                                  "Failed to remove product.",
+                                                  "error",
+                                                );
+                                              }
+                                            }}
+                                            className="text-slate-300 hover:text-red-400 transition-colors ml-0.5"
+                                          >
+                                            ×
+                                          </button>
+                                        </span>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <span className="text-xs text-slate-300 italic">No products yet</span>
+                                  )}
                                 </td>
                                 <td className="py-3.5 px-4">
                                   <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg">
@@ -5698,6 +5949,7 @@ export default function StockManager() {
               onCreate={handlePOCreate}
               quickOrderProducts={poQuickOrderProducts}
               allProducts={products}
+              allSuppliers={suppliers}
               prefillProduct={prefillPOProduct}
               onShowToast={showToast}
             />
@@ -6035,3 +6287,4 @@ export default function StockManager() {
     </>
   );
 }
+
