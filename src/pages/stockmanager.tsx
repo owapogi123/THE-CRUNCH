@@ -79,7 +79,6 @@ interface Supplier {
   supplier_id: number;
   supplier_name: string;
   contact_number: string;
-  delivery_schedule: string;
   product_id: number;
   email?: string;
   // Keep as a comma-separated string for API compatibility.
@@ -442,7 +441,6 @@ const EMPTY_PO_ITEM: Omit<POItem, "id"> = {
 const BLANK_SUPPLIER: Omit<Supplier, "supplier_id"> = {
   supplier_name: "",
   contact_number: "",
-  delivery_schedule: "",
   product_id: 0,
   email: "",
   products_supplied: "",
@@ -470,11 +468,6 @@ const SUPPLIER_FIELDS: {
     key: "contact_number",
     label: "Phone Number",
     placeholder: "e.g. 0917-123-4567",
-  },
-  {
-    key: "delivery_schedule",
-    label: "Delivery Schedule",
-    placeholder: "e.g. Mon, Wed, Fri",
   },
 ];
 const RAW_MATERIAL_UNITS = [
@@ -1390,7 +1383,10 @@ function CreatePOModal({
   onShowToast,
 }: {
   onClose: () => void;
-  onCreate: (po: Omit<PurchaseOrder, "id">) => Promise<void>;
+  onCreate: (
+    po: Omit<PurchaseOrder, "id">,
+    meta: { supplierId: number; itemNames: string[] },
+  ) => Promise<void>;
   quickOrderProducts: Product[];
   allProducts: Product[];
   allSuppliers: Supplier[];
@@ -1415,6 +1411,9 @@ function CreatePOModal({
   );
   const [notes, setNotes] = useState("");
   const [showQuickOrder, setShowQuickOrder] = useState(false);
+  const [activeItemSuggestionIndex, setActiveItemSuggestionIndex] = useState<
+    number | null
+  >(null);
   const [items, setItems] = useState<Omit<POItem, "id">[]>(() => {
     if (prefillProduct) {
       return [
@@ -1471,6 +1470,15 @@ function CreatePOModal({
   );
   const supplierName = selectedSupplier?.supplier_name ?? "";
   const contact = selectedSupplier?.contact_number ?? "";
+  const supplierProductNameSet = useMemo(
+    () =>
+      new Set(
+        parseSupplierProducts(selectedSupplier?.products_supplied).map((name) =>
+          name.toLowerCase(),
+        ),
+      ),
+    [selectedSupplier?.products_supplied],
+  );
 
   const updateItem = (
     idx: number,
@@ -1482,6 +1490,46 @@ function CreatePOModal({
     );
   const removeItem = (idx: number) =>
     setItems((p) => p.filter((_, i) => i !== idx));
+  const applyProductToItem = (idx: number, product: Product) => {
+    setItems((prev) =>
+      prev.map((item, i) =>
+        i === idx
+          ? {
+              ...item,
+              name: product.product_name,
+              category: product.category,
+              unit: product.unit,
+            }
+          : item,
+      ),
+    );
+    setActiveItemSuggestionIndex(null);
+  };
+  const getItemSuggestions = (query: string) => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+
+    return allProducts
+      .filter((product) => product.product_name.toLowerCase().includes(q))
+      .sort((a, b) => {
+        const aPriority = supplierProductNameSet.has(
+          a.product_name.toLowerCase(),
+        )
+          ? 0
+          : 1;
+        const bPriority = supplierProductNameSet.has(
+          b.product_name.toLowerCase(),
+        )
+          ? 0
+          : 1;
+
+        return (
+          aPriority - bPriority ||
+          a.product_name.localeCompare(b.product_name)
+        );
+      })
+      .slice(0, 6);
+  };
   const addQuickOrderItem = (product: Product) => {
     setItems((p) => [
       ...p,
@@ -1541,6 +1589,9 @@ function CreatePOModal({
           quantity: toNumber(item.quantity),
           unitCost: toNumber(item.unitCost),
         })),
+      }, {
+        supplierId: Number(selectedSupplierId),
+        itemNames: items.map((item) => item.name.trim()).filter(Boolean),
       });
       onClose();
     } catch {
@@ -1597,16 +1648,9 @@ function CreatePOModal({
           </div>
           {selectedSupplier && (
             <div className="rounded-xl bg-slate-50 border border-slate-100 px-4 py-3 space-y-2">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-semibold text-slate-800">
-                  {selectedSupplier.supplier_name}
-                </p>
-                {selectedSupplier.delivery_schedule && (
-                  <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg">
-                    {selectedSupplier.delivery_schedule}
-                  </span>
-                )}
-              </div>
+              <p className="text-sm font-semibold text-slate-800">
+                {selectedSupplier.supplier_name}
+              </p>
               <p className="text-xs text-slate-500">
                 {selectedSupplier.contact_number}
                 {selectedSupplier.email && ` · ${selectedSupplier.email}`}
@@ -1730,14 +1774,49 @@ function CreatePOModal({
                       <label className="block text-[11px] text-gray-400 mb-1">
                         Item
                       </label>
-                      <input
-                        value={item.name}
-                        onChange={(e) =>
-                          updateItem(idx, "name", e.target.value)
-                        }
-                        placeholder="Item name"
-                        className="w-full min-w-0 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200 placeholder-gray-300"
-                      />
+                      <div className="relative">
+                        <input
+                          value={item.name}
+                          onChange={(e) => {
+                            updateItem(idx, "name", e.target.value);
+                            setActiveItemSuggestionIndex(idx);
+                          }}
+                          onFocus={() => setActiveItemSuggestionIndex(idx)}
+                          onBlur={() => {
+                            setTimeout(() => {
+                              setActiveItemSuggestionIndex((current) =>
+                                current === idx ? null : current,
+                              );
+                            }, 150);
+                          }}
+                          placeholder="Item name"
+                          className="w-full min-w-0 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200 placeholder-gray-300"
+                        />
+                        {activeItemSuggestionIndex === idx &&
+                          getItemSuggestions(item.name).length > 0 && (
+                            <div className="absolute left-0 right-0 top-full mt-1 rounded-lg border border-slate-200 bg-white shadow-lg z-20 overflow-hidden">
+                              {getItemSuggestions(item.name).map((product) => (
+                                <button
+                                  key={product.product_id}
+                                  type="button"
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={() =>
+                                    applyProductToItem(idx, product)
+                                  }
+                                  className="w-full px-3 py-2 text-left text-xs text-slate-600 hover:bg-slate-50 transition-colors"
+                                >
+                                  <span className="block font-medium text-slate-700">
+                                    {product.product_name}
+                                  </span>
+                                  <span className="block text-[11px] text-slate-400">
+                                    {product.category}
+                                    {product.unit ? ` · ${product.unit}` : ""}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                      </div>
                     </div>
                     {[
                       ["Unit", "unit", "kg / pcs"],
@@ -2813,6 +2892,7 @@ export default function StockManager() {
   const [showSupplierForm, setShowSupplierForm] = useState(false);
   const [supplierForm, setSupplierForm] =
     useState<Omit<Supplier, "supplier_id">>(BLANK_SUPPLIER);
+  const [supplierProductInput, setSupplierProductInput] = useState("");
   const [showRawMaterialForm, setShowRawMaterialForm] = useState(false);
   const [rawMaterialForm, setRawMaterialForm] =
     useState<RawMaterialForm>(BLANK_RAW_MATERIAL);
@@ -3090,6 +3170,21 @@ export default function StockManager() {
             (s.products_supplied ?? "").toLowerCase().includes(q),
         );
   }, [suppliers, supplierSearch]);
+  const supplierProductSuggestions = useMemo(() => {
+    const q = supplierProductInput.trim().toLowerCase();
+    const existing = new Set(
+      parseSupplierProducts(supplierForm.products_supplied).map((item) =>
+        item.toLowerCase(),
+      ),
+    );
+
+    return products
+      .filter((product) => !existing.has(product.product_name.toLowerCase()))
+      .filter((product) =>
+        q ? product.product_name.toLowerCase().includes(q) : false,
+      )
+      .slice(0, 6);
+  }, [products, supplierForm.products_supplied, supplierProductInput]);
   const selectedWithdrawalProduct = useMemo(
     () => products.find((p) => p.product_id === wdProductId) ?? null,
     [products, wdProductId],
@@ -3350,36 +3445,53 @@ export default function StockManager() {
   );
 
   const handlePOCreate = useCallback(
-    async (po: Omit<PurchaseOrder, "id">) => {
+    async (
+      po: Omit<PurchaseOrder, "id">,
+      meta: { supplierId: number; itemNames: string[] },
+    ) => {
       setPoLoading(true);
       try {
         const created = await api.po.create(po);
         setPoOrders((prev) => [created, ...prev]);
         const matchedSupplier = suppliers.find(
-          (s) =>
-            s.supplier_name.trim().toLowerCase() ===
-            po.supplier.trim().toLowerCase(),
+          (s) => s.supplier_id === meta.supplierId,
         );
 
         if (matchedSupplier) {
-          const incomingNames = po.items
-            .map((i) => i.name.trim())
-            .filter(Boolean);
+          const incomingNames = meta.itemNames;
 
-          try {
-            const updatedSupplier = await api.mergeSupplierProducts(
-              matchedSupplier.supplier_id,
-              incomingNames,
-            );
+          if (incomingNames.length > 0) {
             setSuppliers((prev) =>
               prev.map((s) =>
                 s.supplier_id === matchedSupplier.supplier_id
-                  ? updatedSupplier
+                  ? {
+                      ...s,
+                      products_supplied: mergeSupplierProducts(
+                        s.products_supplied ?? "",
+                        incomingNames,
+                      ),
+                    }
                   : s,
               ),
             );
+          }
+
+          try {
+            if (incomingNames.length > 0) {
+              await api.mergeSupplierProducts(
+                matchedSupplier.supplier_id,
+                incomingNames,
+              );
+            }
+
+            const refreshedSuppliers = await api.getSuppliers();
+            setSuppliers(refreshedSuppliers);
           } catch (mergeErr) {
             console.error("Failed to merge supplier products:", mergeErr);
+            showToast(
+              "Purchase order saved, but supplier products did not sync.",
+              "error",
+            );
           }
         }
 
@@ -3637,6 +3749,7 @@ export default function StockManager() {
       const created = await api.postSupplier(supplierForm);
       setSuppliers((prev) => [...prev, created]);
       setSupplierForm(BLANK_SUPPLIER);
+      setSupplierProductInput("");
       setShowSupplierForm(false);
       showToast("Supplier added successfully!", "success");
     } catch (err) {
@@ -3647,6 +3760,26 @@ export default function StockManager() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  function addProductToSupplierForm(productName: string) {
+    const trimmedProduct = productName.trim();
+    if (!trimmedProduct) return;
+
+    const existing = parseSupplierProducts(supplierForm.products_supplied);
+    const exists = existing.some(
+      (item) => item.toLowerCase() === trimmedProduct.toLowerCase(),
+    );
+    if (exists) {
+      setSupplierProductInput("");
+      return;
+    }
+
+    setSupplierForm((prev) => ({
+      ...prev,
+      products_supplied: [...existing, trimmedProduct].join(", "),
+    }));
+    setSupplierProductInput("");
   }
 
   async function removeSupplier(id: number) {
@@ -5108,7 +5241,13 @@ export default function StockManager() {
                       className="flex justify-end"
                     >
                       <button
-                        onClick={() => setShowSupplierForm((f) => !f)}
+                        onClick={() =>
+                          setShowSupplierForm((f) => {
+                            const next = !f;
+                            if (!next) setSupplierProductInput("");
+                            return next;
+                          })
+                        }
                         className="px-5 py-2.5 bg-slate-900 text-white text-sm font-medium rounded-xl hover:bg-slate-700 transition-all duration-200 shadow-md shadow-slate-900/20"
                       >
                         {showSupplierForm ? "Cancel" : "Add Supplier"}
@@ -5128,9 +5267,7 @@ export default function StockManager() {
                             subtitle="Posts to Suppliers table"
                           >
                             <div className="p-5 grid grid-cols-3 gap-4">
-                              {SUPPLIER_FIELDS.filter(
-                                ({ key }) => key !== "delivery_schedule",
-                              ).map(
+                              {SUPPLIER_FIELDS.map(
                                 ({ key, label, placeholder }) => (
                                   <FormField key={key} label={label}>
                                     <StyledInput
@@ -5183,46 +5320,53 @@ export default function StockManager() {
                                       </button>
                                     </span>
                                   ))}
-                                  <select
-                                    value=""
-                                    onChange={(e) => {
-                                      if (!e.target.value) return;
-                                      const existing = parseSupplierProducts(
-                                        supplierForm.products_supplied,
-                                      );
-                                      if (!existing.includes(e.target.value)) {
-                                        setSupplierForm((prev) => ({
-                                          ...prev,
-                                          products_supplied: [
-                                            ...existing,
-                                            e.target.value,
-                                          ].join(", "),
-                                        }));
+                                  <div className="relative min-w-[220px] flex-1">
+                                    <input
+                                      type="text"
+                                      value={supplierProductInput}
+                                      onChange={(e) =>
+                                        setSupplierProductInput(
+                                          e.target.value,
+                                        )
                                       }
-                                    }}
-                                    className="text-xs text-slate-500 bg-transparent border-none outline-none cursor-pointer"
-                                  >
-                                    <option value="">+ Add product</option>
-                                    {products
-                                      .filter(
-                                        (p) =>
-                                          !parseSupplierProducts(
-                                            supplierForm.products_supplied,
-                                          ).includes(p.product_name),
-                                      )
-                                      .map((p) => (
-                                        <option
-                                          key={p.product_id}
-                                          value={p.product_name}
-                                        >
-                                          {p.product_name}
-                                        </option>
-                                      ))}
-                                  </select>
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter") {
+                                          e.preventDefault();
+                                          addProductToSupplierForm(
+                                            supplierProductInput,
+                                          );
+                                        }
+                                      }}
+                                      placeholder="Search or type item name"
+                                      className="w-full text-xs text-slate-700 bg-transparent border-none outline-none placeholder:text-slate-400"
+                                    />
+                                    {supplierProductSuggestions.length > 0 && (
+                                      <div className="absolute left-0 right-0 top-full mt-2 rounded-xl border border-slate-200 bg-white shadow-lg z-10 overflow-hidden">
+                                        {supplierProductSuggestions.map(
+                                          (product) => (
+                                            <button
+                                              key={product.product_id}
+                                              type="button"
+                                              onClick={() =>
+                                                addProductToSupplierForm(
+                                                  product.product_name,
+                                                )
+                                              }
+                                              className="w-full px-3 py-2 text-left text-xs text-slate-600 hover:bg-slate-50 transition-colors"
+                                            >
+                                              {product.product_name}
+                                            </button>
+                                          ),
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
                                 <p className="text-[11px] text-slate-400 mt-1">
-                                  Products will also be added automatically
-                                  when you create POs for this supplier.
+                                  Search existing products as you type, or
+                                  press Enter to add a custom item. Products
+                                  will also be added automatically when you
+                                  create POs for this supplier.
                                 </p>
                               </div>
                               <div className="col-span-3 pt-1">
@@ -5261,7 +5405,6 @@ export default function StockManager() {
                                 "Company",
                                 "Contact Number",
                                 "Products Supplied",
-                                "Delivery Schedule",
                                 "",
                               ].map((h) => (
                                 <th
@@ -5347,11 +5490,6 @@ export default function StockManager() {
                                   ) : (
                                     <span className="text-xs text-slate-300 italic">No products yet</span>
                                   )}
-                                </td>
-                                <td className="py-3.5 px-4">
-                                  <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg">
-                                    {s.delivery_schedule}
-                                  </span>
                                 </td>
                                 <td className="py-3.5 px-4 text-right">
                                   <button
