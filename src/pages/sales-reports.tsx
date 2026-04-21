@@ -162,6 +162,27 @@ function filterOrdersByRange(orders: Order[], from: Date | null, to: Date | null
   });
 }
 
+function filterLogsByRange(logs: SaleLog[], from: Date | null, to: Date | null) {
+  if (!from && !to) return logs;
+  return logs.filter((log) => {
+    const d = log._dateObj instanceof Date ? log._dateObj : parseDateSafe(log.date);
+    if (!d) return false;
+    const day = new Date(d);
+    day.setHours(0, 0, 0, 0);
+    if (from) {
+      const f = new Date(from);
+      f.setHours(0, 0, 0, 0);
+      if (day < f) return false;
+    }
+    if (to) {
+      const t = new Date(to);
+      t.setHours(0, 0, 0, 0);
+      if (day > t) return false;
+    }
+    return true;
+  });
+}
+
 function groupByDate(logs: SaleLog[]): Record<string, SaleLog[]> {
   return logs.reduce((acc, l) => {
     if (!acc[l.date]) acc[l.date] = [];
@@ -1482,6 +1503,7 @@ function OrdersTab({ orders, onRefund }: { orders: Order[]; onRefund: (order: Or
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function SalesReports() {
+  const now = new Date();
   const [activeTab,     setActiveTab]     = useState<TabKey>("logs");
   const [search,        setSearch]        = useState("");
   const [logPage,       setLogPage]       = useState(1);
@@ -1491,6 +1513,12 @@ export default function SalesReports() {
   const [refundLog,     setRefundLog]     = useState<SaleLog | null>(null);
   const [refundOrder,   setRefundOrder]   = useState<Order | null>(null);
   const [refundLoading, setRefundLoading] = useState(false);
+  const [logFromDate,   setLogFromDate]   = useState<Date | null>(null);
+  const [logToDate,     setLogToDate]     = useState<Date | null>(null);
+  const [activeLogQuick, setActiveLogQuick] = useState<QuickKey | null>("all");
+  const [logPickerOpen, setLogPickerOpen] = useState(false);
+  const [logPickerTarget, setLogPickerTarget] = useState<"from" | "to">("from");
+  const [logPickerInitial, setLogPickerInitial] = useState<Date>(now);
 
   async function fetchSalesData() {
     try {
@@ -1514,7 +1542,46 @@ export default function SalesReports() {
   // Reset log page when search changes
   useEffect(() => {
     setLogPage(1);
-  }, [search]);
+  }, [search, logFromDate, logToDate]);
+
+  function openLogDatePicker(target: "from" | "to") {
+    setLogPickerTarget(target);
+    setLogPickerInitial(target === "from" ? (logFromDate ?? now) : (logToDate ?? now));
+    setLogPickerOpen(true);
+  }
+
+  function handleLogPickerApply(date: Date) {
+    if (logPickerTarget === "from") {
+      setLogFromDate(date);
+      if (logToDate && date > logToDate) setLogToDate(date);
+    } else {
+      setLogToDate(date);
+      if (logFromDate && date < logFromDate) setLogToDate(logFromDate);
+    }
+    setActiveLogQuick(null);
+    setLogPage(1);
+    setLogPickerOpen(false);
+  }
+
+  function clearLogRange() {
+    setLogFromDate(null);
+    setLogToDate(null);
+    setActiveLogQuick("all");
+    setLogPage(1);
+  }
+
+  function applyLogQuick(key: QuickKey) {
+    setActiveLogQuick(key);
+    if (key === "all") {
+      setLogFromDate(null);
+      setLogToDate(null);
+    } else {
+      const range = getQuickRange(key)!;
+      setLogFromDate(range.from);
+      setLogToDate(range.to);
+    }
+    setLogPage(1);
+  }
 
   async function handleRefundConfirm() {
     const orderId = refundLog?.orderId ?? refundOrder?.id;
@@ -1533,7 +1600,8 @@ export default function SalesReports() {
   }
 
   const completedLogs = logs.filter((l) => l.status === "Completed");
-  const filteredLogs  = completedLogs.filter((l) => {
+  const dateFilteredLogs = filterLogsByRange(completedLogs, logFromDate, logToDate);
+  const filteredLogs  = dateFilteredLogs.filter((l) => {
     const q = search.toLowerCase();
     return (
       l.id.toLowerCase().includes(q) ||
@@ -1551,6 +1619,7 @@ export default function SalesReports() {
   );
   const grouped = groupByDate(paginatedLogs);
   const dates   = Object.keys(grouped);
+  const hasLogRange = !!(logFromDate || logToDate);
 
   const tabs: { key: TabKey; label: string; count: number; icon: React.ReactNode }[] = [
     {
@@ -1582,6 +1651,14 @@ export default function SalesReports() {
         onConfirm={handleRefundConfirm}
         onClose={() => { if (!refundLoading) { setRefundLog(null); setRefundOrder(null); } }}
         loading={refundLoading}
+      />
+
+      <DrumDatePicker
+        open={logPickerOpen}
+        title={logPickerTarget === "from" ? "Select from date" : "Select to date"}
+        initial={logPickerInitial}
+        onApply={handleLogPickerApply}
+        onClose={() => setLogPickerOpen(false)}
       />
 
       <div style={{ padding: "40px 40px 40px 88px" }}>
@@ -1640,11 +1717,44 @@ export default function SalesReports() {
                 placeholder="Search product, cashier, payment method, or transaction ID..."
                 style={{ flex: 1, minWidth: 220, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 99, padding: "10px 18px", fontSize: 13, color: "#1e293b", outline: "none", fontFamily: "'Poppins', sans-serif", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}
               />
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <CalendarDays className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                <button
+                  onClick={() => openLogDatePicker("from")}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 12, border: logFromDate ? "1px solid #4A1C1C" : "1px solid #e5e7eb", background: logFromDate ? "rgba(74,28,28,0.05)" : "#fff", color: logFromDate ? "#4A1C1C" : "#6b7280", fontSize: 13, fontWeight: 500, cursor: "pointer", fontFamily: "'Poppins', sans-serif" }}
+                >
+                  {logFromDate ? formatDisplayDate(logFromDate) : "Select date"}
+                </button>
+                <span style={{ color: "#9ca3af", fontSize: 12 }}>to</span>
+                <button
+                  onClick={() => openLogDatePicker("to")}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 12, border: logToDate ? "1px solid #4A1C1C" : "1px solid #e5e7eb", background: logToDate ? "rgba(74,28,28,0.05)" : "#fff", color: logToDate ? "#4A1C1C" : "#6b7280", fontSize: 13, fontWeight: 500, cursor: "pointer", fontFamily: "'Poppins', sans-serif" }}
+                >
+                  {logToDate ? formatDisplayDate(logToDate) : "Select date"}
+                </button>
+                {hasLogRange && (
+                  <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-gray-400 hover:text-gray-600" onClick={clearLogRange}>
+                    <X className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
               <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 99, background: "#f0fdf4", border: "1px solid #bbf7d0", fontSize: 12, fontWeight: 600, color: "#16a34a" }}>
                 <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#16a34a", display: "inline-block" }} />
                 Showing completed sales only
               </div>
             </motion.div>
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+              {QUICK_RANGES.map((r) => (
+                <button
+                  key={r.key}
+                  onClick={() => applyLogQuick(r.key)}
+                  style={{ fontSize: 12, fontWeight: 600, padding: "6px 12px", borderRadius: 999, border: activeLogQuick === r.key ? "1px solid #4A1C1C" : "1px solid #e5e7eb", background: activeLogQuick === r.key ? "#4A1C1C" : "#f9fafb", color: activeLogQuick === r.key ? "#fff" : "#6b7280", cursor: "pointer", fontFamily: "'Poppins', sans-serif", transition: "all 0.2s" }}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
 
             <motion.div
               initial={{ opacity: 0, y: 12 }}
@@ -1676,7 +1786,7 @@ export default function SalesReports() {
 
               <AnimatePresence>
                 {dates.length === 0 ? (
-                  <EmptyState key="empty" message="Completed orders from the cashier view will appear here automatically." />
+                  <EmptyState key="empty" message={search || hasLogRange ? "No completed sales found for the selected filters." : "Completed orders from the cashier view will appear here automatically."} />
                 ) : (
                   dates.map((date) => {
                     const entries    = grouped[date];
@@ -1710,6 +1820,7 @@ export default function SalesReports() {
 
             <p style={{ color: "#cbd5e1", fontSize: 11, textAlign: "center", marginTop: 20, fontWeight: 500 }}>
               {filteredLogs.length} of {completedLogs.length} completed sales
+              {(search || hasLogRange) && " matching your filters"}
             </p>
           </>
         )}

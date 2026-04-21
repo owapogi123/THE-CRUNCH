@@ -40,6 +40,35 @@ const AuthContext = createContext<AuthContextType | null>(null);
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+function clearStoredAuth() {
+  if (typeof window === "undefined") return;
+  ["authToken", "isAuthenticated", "userName", "userRole", "userId"].forEach(
+    (key) => localStorage.removeItem(key),
+  );
+}
+
+function parseJwtExp(token: string): number | null {
+  try {
+    const [, payload] = token.split(".");
+    if (!payload) return null;
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(
+      normalized.length + ((4 - (normalized.length % 4)) % 4),
+      "=",
+    );
+    const decoded = JSON.parse(atob(padded)) as { exp?: unknown };
+    return typeof decoded.exp === "number" ? decoded.exp : null;
+  } catch {
+    return null;
+  }
+}
+
+function isTokenExpired(token: string): boolean {
+  const exp = parseJwtExp(token);
+  if (!exp) return false;
+  return exp * 1000 <= Date.now();
+}
+
 function computeDuration(timeIn: Date, timeOut: Date | null): string {
   if (!timeOut) return "— ongoing";
   const ms = timeOut.getTime() - timeIn.getTime();
@@ -62,6 +91,11 @@ function readStoredUser(): AuthUser | null {
   const isAuthenticated = localStorage.getItem("isAuthenticated") === "true";
 
   if (!token || !username || !role || !userId || !isAuthenticated) {
+    return null;
+  }
+
+  if (isTokenExpired(token)) {
+    clearStoredAuth();
     return null;
   }
 
@@ -138,9 +172,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsOnline(false);
     setUser(null);
     if (typeof window !== "undefined") {
-      ["authToken", "isAuthenticated", "userName", "userRole", "userId"].forEach(
-        (key) => localStorage.removeItem(key),
-      );
+      clearStoredAuth();
       window.dispatchEvent(new Event("authChange"));
     }
   };
@@ -162,6 +194,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("storage", syncStoredAuth);
     };
   }, []);
+
+  useEffect(() => {
+    if (!user?.token) return undefined;
+
+    const exp = parseJwtExp(user.token);
+    if (!exp) return undefined;
+
+    const msUntilExpiry = exp * 1000 - Date.now();
+    if (msUntilExpiry <= 0) {
+      logout();
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      logout();
+    }, msUntilExpiry);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [user?.token]);
 
   return (
     <AuthContext.Provider value={{ user, isOnline, attendance, login, logout }}>

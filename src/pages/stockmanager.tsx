@@ -1,5 +1,7 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
+import html2canvas from "html2canvas";
+import { jsPDF } from "jspdf";
 import {
   motion,
   AnimatePresence,
@@ -13,7 +15,13 @@ import { useNotifications } from "@/lib/NotificationContext";
 
 type WithdrawalType = "initial" | "supplementary" | "return";
 type StockStatus = "critical" | "low" | "normal";
-type Tab = "dashboard" | "withdrawal" | "alerts" | "suppliers" | "purchases";
+type Tab =
+  | "dashboard"
+  | "withdrawal"
+  | "alerts"
+  | "suppliers"
+  | "purchases"
+  | "purchase-history";
 type DashboardSummaryKey = "products" | "withdrawn" | "wasted" | "returned";
 export type POStatus = "Draft" | "Ordered" | "Received" | "Cancelled";
 
@@ -34,6 +42,7 @@ export interface PurchaseOrder {
   status: POStatus;
   items: POItem[];
   notes: string;
+  receiptNo?: string;
   receivedBy?: string;
   receivedDate?: string;
 }
@@ -324,12 +333,14 @@ const api = {
       }),
     markReceived: (
       id: string,
+      receiptNo: string,
       receivedBy: string,
       itemExpiryDates?: Record<number, string>,
     ) =>
       apiFetch<PurchaseOrder>(`/purchase-orders/${id}/receive`, {
         method: "PATCH",
         body: JSON.stringify({
+          receiptNo,
           receivedBy,
           receivedDate: new Date().toISOString().split("T")[0],
           itemExpiryDates,
@@ -345,7 +356,11 @@ const api = {
 // ─── Storage Batch APIs (unchanged) ─────────────────────────────────────────
 const storageApi = {
   getAll: () => apiFetch<StorageBatch[]>("/batches/active"),
-  withdrawFromStorage: (body: { product_id: number; qty_needed: number }) =>
+  withdrawFromStorage: (body: {
+    product_id: number;
+    qty_needed: number;
+    type?: "initial" | "supplementary";
+  }) =>
     apiFetch<{
       message: string;
       batches_used: Array<{
@@ -417,7 +432,9 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "alerts", label: "Alerts" },
   { id: "suppliers", label: "Suppliers" },
   { id: "purchases", label: "Purchase Orders" },
+  { id: "purchase-history", label: "Purchase Order History" },
 ];
+const PO_HISTORY_PAGE_SIZE = 10;
 const PO_STATUS_STYLES: Record<
   POStatus,
   { bg: string; text: string; dot: string }
@@ -586,6 +603,22 @@ const fmtReceivedDate = (v: string) => {
         day: "numeric",
         year: "numeric",
       });
+};
+const fmtFilterDate = (v: string) => {
+  if (!v) return "Select date";
+  return fmtReceivedDate(v);
+};
+const isDateInRange = (
+  value: string | null | undefined,
+  dateFrom: string,
+  dateTo: string,
+) => {
+  if (!value) return false;
+  const normalized = String(value).split("T")[0];
+  if (!normalized) return false;
+  if (dateFrom && normalized < dateFrom) return false;
+  if (dateTo && normalized > dateTo) return false;
+  return true;
 };
 function parseSupplierProducts(products_supplied?: string): string[] {
   if (!products_supplied) return [];
@@ -1217,17 +1250,29 @@ function PODetailDrawer({
             </p>
           </div>
         )}
-        {order.status === "Received" && order.receivedBy && (
-          <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 space-y-1">
-            <p className="text-xs text-emerald-600 font-medium uppercase tracking-wide">
-              Received
-            </p>
-            <p className="text-sm font-medium text-gray-700">
-              By: {order.receivedBy}
-            </p>
-            <p className="text-sm text-gray-500">On: {order.receivedDate}</p>
-          </div>
-        )}
+        {order.status === "Received" &&
+          (order.receiptNo || order.receivedBy || order.receivedDate) && (
+            <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 space-y-1">
+              <p className="text-xs text-emerald-600 font-medium uppercase tracking-wide">
+                Received
+              </p>
+              {order.receiptNo && (
+                <p className="text-sm font-medium text-gray-700">
+                  Receipt: {order.receiptNo}
+                </p>
+              )}
+              {order.receivedBy && (
+                <p className="text-sm font-medium text-gray-700">
+                  By: {order.receivedBy}
+                </p>
+              )}
+              {order.receivedDate && (
+                <p className="text-sm text-gray-500">
+                  On: {order.receivedDate}
+                </p>
+              )}
+            </div>
+          )}
       </div>
 
       {next && (
@@ -1254,14 +1299,34 @@ function ReceivePOModal({
   order: PurchaseOrder;
   loading: boolean;
   onClose: () => void;
-  onConfirm: (expiryDates: Record<number, string>) => Promise<void>;
+  onConfirm: (details: {
+    receiptNo: string;
+    receivedBy: string;
+    expiryDates: Record<number, string>;
+  }) => Promise<void>;
   onShowToast: (message: string, type: "success" | "error") => void;
 }) {
+  const [receiptNo, setReceiptNo] = useState(order.receiptNo || "");
+  const [receivedBy, setReceivedBy] = useState(order.receivedBy || "");
   const [expiryDates, setExpiryDates] = useState<Record<number, string>>(() =>
     Object.fromEntries(order.items.map((item) => [item.id, ""])),
   );
 
   const handleConfirm = async () => {
+    if (!receiptNo.trim()) {
+      onShowToast(
+        "Please enter the receipt number before completing the order.",
+        "error",
+      );
+      return;
+    }
+    if (!receivedBy.trim()) {
+      onShowToast(
+        "Please enter who received the stock before completing the order.",
+        "error",
+      );
+      return;
+    }
     const missing = order.items.filter((item) => !expiryDates[item.id]?.trim());
     if (missing.length > 0) {
       onShowToast(
@@ -1270,7 +1335,11 @@ function ReceivePOModal({
       );
       return;
     }
-    await onConfirm(expiryDates);
+    await onConfirm({
+      receiptNo: receiptNo.trim(),
+      receivedBy: receivedBy.trim(),
+      expiryDates,
+    });
   };
 
   return (
@@ -1305,6 +1374,32 @@ function ReceivePOModal({
             <p className="text-xs text-slate-500 mt-0.5">
               {order.supplier} · Expected delivery {order.deliveryDate}
             </p>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="rounded-xl border border-slate-100 px-4 py-4">
+              <label className="text-xs font-semibold text-slate-500">
+                Receipt No.
+              </label>
+              <input
+                type="text"
+                value={receiptNo}
+                onChange={(e) => setReceiptNo(e.target.value)}
+                placeholder="e.g. DR-2026-001"
+                className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200"
+              />
+            </div>
+            <div className="rounded-xl border border-slate-100 px-4 py-4">
+              <label className="text-xs font-semibold text-slate-500">
+                Received By
+              </label>
+              <input
+                type="text"
+                value={receivedBy}
+                onChange={(e) => setReceivedBy(e.target.value)}
+                placeholder="Enter staff name"
+                className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200"
+              />
+            </div>
           </div>
           {order.items.map((item) => {
             const current = expiryDates[item.id] || "";
@@ -1373,6 +1468,285 @@ function ReceivePOModal({
   );
 }
 
+function POReceiptModal({
+  order,
+  onClose,
+}: {
+  order: PurchaseOrder;
+  onClose: () => void;
+}) {
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const subtotal = calcPOTotal(order.items);
+  const vat = subtotal * 0.12;
+  const total = subtotal + vat;
+
+  const handlePrint = () => {
+    window.print();
+  };
+
+  const handleDownloadPdf = async () => {
+    const receiptElement = document.getElementById("po-receipt-content");
+    if (!receiptElement) return;
+
+    setDownloadingPdf(true);
+    try {
+      const canvas = await html2canvas(receiptElement, {
+        scale: 2,
+        backgroundColor: "#ffffff",
+      });
+      const imageData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF("p", "mm", "a4");
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 10;
+      const renderWidth = pageWidth - margin * 2;
+      const renderHeight = (canvas.height * renderWidth) / canvas.width;
+      const boundedHeight = Math.min(renderHeight, pageHeight - margin * 2);
+
+      pdf.addImage(
+        imageData,
+        "PNG",
+        margin,
+        margin,
+        renderWidth,
+        boundedHeight,
+      );
+      pdf.save(`receipt-${order.id}.pdf`);
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+    >
+      <style>{`
+        @media print {
+          body * {
+            visibility: hidden;
+          }
+          #po-receipt-content,
+          #po-receipt-content * {
+            visibility: visible;
+          }
+          #po-receipt-content {
+            position: absolute;
+            inset: 0;
+            margin: 0;
+            width: 100%;
+            max-width: none;
+            box-shadow: none !important;
+            border: none !important;
+          }
+        }
+      `}</style>
+      <motion.div
+        initial={{ scale: 0.96, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.96, opacity: 0 }}
+        transition={{ type: "spring", stiffness: 300, damping: 28 }}
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col"
+      >
+        <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-800">
+              Purchase Order Receipt
+            </h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Printable official receipt for completed purchase orders
+            </p>
+          </div>
+          <CloseBtn onClick={onClose} />
+        </div>
+
+        <div className="flex-1 overflow-y-auto bg-slate-50 px-6 py-5">
+          <div
+            id="po-receipt-content"
+            className="mx-auto w-full max-w-3xl rounded-2xl border border-slate-200 bg-white p-8 shadow-sm"
+          >
+            <div className="border-b border-slate-200 pb-6">
+              <p className="text-2xl font-bold text-slate-900">
+                Restaurant Stock System
+              </p>
+              <p className="text-sm text-slate-500 mt-1">Official Receipt</p>
+              <div className="mt-5 grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-slate-400">
+                    Receipt Number
+                  </p>
+                  <p className="font-semibold text-slate-800 mt-1">
+                    {order.receiptNo || "-"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-slate-400">
+                    PO Number
+                  </p>
+                  <p className="font-semibold text-slate-800 mt-1">
+                    {order.id}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-slate-400">
+                    Date Received
+                  </p>
+                  <p className="font-medium text-slate-700 mt-1">
+                    {order.receivedDate
+                      ? fmtReceivedDate(order.receivedDate)
+                      : "-"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-slate-400">
+                    Received By
+                  </p>
+                  <p className="font-medium text-slate-700 mt-1">
+                    {order.receivedBy || "-"}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="py-6 border-b border-slate-200">
+              <p className="text-xs uppercase tracking-wide text-slate-400">
+                Supplier
+              </p>
+              <p className="text-lg font-semibold text-slate-800 mt-2">
+                {order.supplier}
+              </p>
+              <p className="text-sm text-slate-500 mt-1">{order.contact}</p>
+            </div>
+
+            <div className="py-6">
+              <div className="overflow-hidden rounded-xl border border-slate-200">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      {[
+                        "Item",
+                        "Category",
+                        "Qty",
+                        "Unit",
+                        "Unit Cost",
+                        "Amount",
+                      ].map((header) => (
+                        <th
+                          key={header}
+                          className={`px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400 ${
+                            ["Item", "Category"].includes(header)
+                              ? "text-left"
+                              : "text-right"
+                          }`}
+                        >
+                          {header}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {order.items.map((item) => (
+                      <tr key={item.id}>
+                        <td className="px-4 py-3 font-medium text-slate-800">
+                          {item.name}
+                        </td>
+                        <td className="px-4 py-3 text-slate-500">
+                          {item.category}
+                        </td>
+                        <td className="px-4 py-3 text-right text-slate-700">
+                          {item.quantity}
+                        </td>
+                        <td className="px-4 py-3 text-right text-slate-500">
+                          {item.unit}
+                        </td>
+                        <td className="px-4 py-3 text-right text-slate-700">
+                          ₱{toNumber(item.unitCost).toLocaleString()}
+                        </td>
+                        <td className="px-4 py-3 text-right font-semibold text-slate-800">
+                          ₱
+                          {(
+                            toNumber(item.quantity) * toNumber(item.unitCost)
+                          ).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-slate-50">
+                    <tr>
+                      <td
+                        colSpan={5}
+                        className="px-4 py-3 text-right text-slate-500"
+                      >
+                        Subtotal
+                      </td>
+                      <td className="px-4 py-3 text-right font-medium text-slate-700">
+                        ₱{subtotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td
+                        colSpan={5}
+                        className="px-4 py-3 text-right text-slate-500"
+                      >
+                        VAT 12%
+                      </td>
+                      <td className="px-4 py-3 text-right font-medium text-slate-700">
+                        ₱{vat.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td
+                        colSpan={5}
+                        className="px-4 py-3 text-right font-semibold text-slate-800"
+                      >
+                        Total
+                      </td>
+                      <td className="px-4 py-3 text-right text-base font-bold text-slate-900">
+                        ₱{total.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+
+            <div className="border-t border-slate-200 pt-5">
+              <p className="text-xs italic text-slate-400">
+                This serves as your official receipt.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="px-6 py-4 border-t border-gray-100 flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 py-3 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
+          >
+            Close
+          </button>
+          <button
+            onClick={handlePrint}
+            className="flex-1 py-3 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+          >
+            Print
+          </button>
+          <button
+            onClick={handleDownloadPdf}
+            disabled={downloadingPdf}
+            className="flex-1 py-3 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-700 transition-colors disabled:opacity-60"
+          >
+            {downloadingPdf ? "Preparing PDF..." : "Download PDF"}
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 function CreatePOModal({
   onClose,
   onCreate,
@@ -1432,37 +1806,6 @@ function CreatePOModal({
   const handleSupplierChange = (supplierId: string) => {
     const id = Number(supplierId);
     setSelectedSupplierId(id || "");
-
-    const supplier = allSuppliers.find((s) => s.supplier_id === id);
-    if (!supplier) {
-      return;
-    }
-
-    const supplierProducts = parseSupplierProducts(supplier.products_supplied);
-    if (supplierProducts.length > 0) {
-      const autoItems: Omit<POItem, "id">[] = supplierProducts.map((name) => {
-        const match = allProducts.find(
-          (p) => p.product_name.trim().toLowerCase() === name.toLowerCase(),
-        );
-        return {
-          name: match?.product_name ?? name,
-          category: match?.category ?? "",
-          unit: match?.unit ?? "",
-          quantity: match
-            ? Math.max(
-                1,
-                Math.ceil(
-                  toNumber(match.reorderPoint) - toNumber(match.mainStock),
-                ),
-              )
-            : 1,
-          unitCost: 0,
-        };
-      });
-      setItems(autoItems);
-    } else {
-      setItems([{ ...EMPTY_PO_ITEM }]);
-    }
   };
 
   const selectedSupplier = allSuppliers.find(
@@ -1532,7 +1875,6 @@ function CreatePOModal({
   };
   const addQuickOrderItem = (product: Product) => {
     setItems((p) => [
-      ...p,
       {
         name: product.product_name,
         category: product.category,
@@ -1545,8 +1887,32 @@ function CreatePOModal({
         ),
         unitCost: 0,
       },
+      ...p,
     ]);
     setShowQuickOrder(false);
+  };
+  const addSupplierProductItem = (productName: string) => {
+    const match = allProducts.find(
+      (p) => p.product_name.trim().toLowerCase() === productName.toLowerCase(),
+    );
+
+    setItems((prev) => [
+      {
+        name: match?.product_name ?? productName,
+        category: match?.category ?? "",
+        unit: match?.unit ?? "",
+        quantity: match
+          ? Math.max(
+              1,
+              Math.ceil(
+                toNumber(match.reorderPoint) - toNumber(match.mainStock),
+              ),
+            )
+          : 1,
+        unitCost: 0,
+      },
+      ...prev,
+    ]);
   };
   const subtotal = items.reduce(
     (s, i) => s + toNumber(i.quantity) * toNumber(i.unitCost),
@@ -1664,12 +2030,14 @@ function CreatePOModal({
                   {parseSupplierProducts(
                     selectedSupplier.products_supplied,
                   ).map((p) => (
-                    <span
+                    <button
                       key={p}
-                      className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-white border border-slate-200 text-slate-600"
+                      type="button"
+                      onClick={() => addSupplierProductItem(p)}
+                      className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-white border border-slate-200 text-slate-600 hover:border-sky-300 hover:bg-sky-50 hover:text-sky-700 transition-colors"
                     >
                       {p}
-                    </span>
+                    </button>
                   ))}
                 </div>
               )}
@@ -1682,8 +2050,8 @@ function CreatePOModal({
                 {selectedSupplier &&
                   parseSupplierProducts(selectedSupplier.products_supplied)
                     .length > 0 && (
-                    <span className="ml-2 text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-full normal-case">
-                      auto-filled from supplier history
+                    <span className="ml-2 text-[10px] font-semibold text-sky-600 bg-sky-50 px-1.5 py-0.5 rounded-full normal-case">
+                      click supplier items to add
                     </span>
                   )}
               </label>
@@ -1709,7 +2077,7 @@ function CreatePOModal({
                   Quick Order
                 </button>
                 <button
-                  onClick={() => setItems((p) => [...p, { ...EMPTY_PO_ITEM }])}
+                  onClick={() => setItems((p) => [{ ...EMPTY_PO_ITEM }, ...p])}
                   className="text-xs font-semibold text-gray-600 hover:text-gray-900 flex items-center gap-1 transition-colors"
                 >
                   <svg
@@ -1775,7 +2143,7 @@ function CreatePOModal({
                   >
                     <div className="sm:col-span-2 min-w-0">
                       <label className="block text-[11px] text-gray-400 mb-1">
-                        Item
+                        Item {idx + 1}
                       </label>
                       <div className="relative">
                         <input
@@ -2212,7 +2580,7 @@ function FIFOBatchPreview({
     const result: Array<{ batch: Batch; take: number }> = [];
     for (const batch of sorted) {
       if (remaining <= 0) break;
-      const take = Math.min(batch.remaining_qty, remaining);
+      const take = Math.min(toNumber(batch.remaining_qty), remaining);
       result.push({ batch, take });
       remaining -= take;
     }
@@ -2223,10 +2591,10 @@ function FIFOBatchPreview({
     .filter(
       (b) =>
         ["active", "returned"].includes(b.status) &&
-        b.remaining_qty > 0 &&
+        toNumber(b.remaining_qty) > 0 &&
         !isExpired(b.expiry_date),
     )
-    .reduce((s, b) => s + b.remaining_qty, 0);
+    .reduce((s, b) => s + toNumber(b.remaining_qty), 0);
   const insufficient = qtyNeeded > 0 && qtyNeeded > totalAvailable;
   if (batches.length === 0) return null;
 
@@ -2247,7 +2615,7 @@ function FIFOBatchPreview({
       </div>
       <div className="divide-y divide-slate-50">
         {batches
-          .filter((b) => b.remaining_qty > 0)
+          .filter((b) => toNumber(b.remaining_qty) > 0)
           .sort(
             (a, b) =>
               new Date(a.received_date).getTime() -
@@ -2309,7 +2677,7 @@ function FIFOBatchPreview({
                 </div>
                 <div className="text-right flex-shrink-0">
                   <p className="text-sm font-bold text-slate-700">
-                    {batch.remaining_qty}{" "}
+                    {toNumber(batch.remaining_qty)}{" "}
                     <span className="text-xs font-normal text-slate-400">
                       {unit}
                     </span>
@@ -2712,11 +3080,11 @@ function FIFOBatchGrouped({
 
 function KitchenBatchesSection({
   kitchenBatches,
-  onReconcile,
+  nonReturnableProductIds,
   onReturn,
 }: {
   kitchenBatches: KitchenBatch[];
-  onReconcile: (batch: KitchenBatch) => void;
+  nonReturnableProductIds: Set<number>;
   onReturn: (batch: KitchenBatch) => void;
 }) {
   const [selectedBatches, setSelectedBatches] = useState<Set<number>>(
@@ -2733,18 +3101,12 @@ function KitchenBatchesSection({
     setSelectedBatches(newSelected);
   };
 
-  const handleBulkReconcile = () => {
-    selectedBatches.forEach((batchId) => {
-      const batch = kitchenBatches.find((b) => b.kitchen_batch_id === batchId);
-      if (batch) onReconcile(batch);
-    });
-    setSelectedBatches(new Set());
-  };
-
   const handleBulkReturn = () => {
     selectedBatches.forEach((batchId) => {
       const batch = kitchenBatches.find((b) => b.kitchen_batch_id === batchId);
-      if (batch) onReturn(batch);
+      if (batch && !nonReturnableProductIds.has(batch.product_id)) {
+        onReturn(batch);
+      }
     });
     setSelectedBatches(new Set());
   };
@@ -2760,12 +3122,6 @@ function KitchenBatchesSection({
         </div>
         {selectedBatches.size > 0 && (
           <div className="flex gap-2">
-            <button
-              onClick={handleBulkReconcile}
-              className="px-3 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg hover:bg-emerald-700 transition-colors"
-            >
-              Reconcile {selectedBatches.size}
-            </button>
             <button
               onClick={handleBulkReturn}
               className="px-3 py-1.5 bg-orange-600 text-white text-xs font-semibold rounded-lg hover:bg-orange-700 transition-colors"
@@ -2786,6 +3142,7 @@ function KitchenBatchesSection({
             const expired = isExpired(batch.expiry_date);
             const expiring = isExpiringSoon(batch.expiry_date);
             const isSelected = selectedBatches.has(batch.kitchen_batch_id);
+            const cannotReturn = nonReturnableProductIds.has(batch.product_id);
 
             return (
               <div
@@ -2816,6 +3173,11 @@ function KitchenBatchesSection({
                       <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">
                         Kitchen Batch #{batch.kitchen_batch_id}
                       </span>
+                      {cannotReturn && (
+                        <span className="text-[10px] font-semibold bg-rose-50 text-rose-600 border border-rose-100 px-2 py-0.5 rounded-full">
+                          No return
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs text-slate-500">
                       From Storage Batch #{batch.storage_batch_id} · Withdrawn{" "}
@@ -2846,14 +3208,14 @@ function KitchenBatchesSection({
 
                   <div className="flex gap-1">
                     <button
-                      onClick={() => onReconcile(batch)}
-                      className="px-2 py-1 bg-emerald-100 text-emerald-700 text-xs font-semibold rounded hover:bg-emerald-200 transition-colors"
-                    >
-                      Reconcile
-                    </button>
-                    <button
                       onClick={() => onReturn(batch)}
-                      className="px-2 py-1 bg-orange-100 text-orange-700 text-xs font-semibold rounded hover:bg-orange-200 transition-colors"
+                      disabled={cannotReturn}
+                      title={
+                        cannotReturn
+                          ? "Sauces and similar items cannot be returned."
+                          : "Return unused stock"
+                      }
+                      className="px-2 py-1 bg-orange-100 text-orange-700 text-xs font-semibold rounded hover:bg-orange-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       Return
                     </button>
@@ -2893,6 +3255,8 @@ export default function StockManager() {
   const [supplierHistory, setSupplierHistory] = useState<SupplierHistory[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historySearch, setHistorySearch] = useState("");
+  const [historyDateFrom, setHistoryDateFrom] = useState("");
+  const [historyDateTo, setHistoryDateTo] = useState("");
   const [showSupplierForm, setShowSupplierForm] = useState(false);
   const [supplierForm, setSupplierForm] =
     useState<Omit<Supplier, "supplier_id">>(BLANK_SUPPLIER);
@@ -2906,11 +3270,17 @@ export default function StockManager() {
   const [selectedOrder, setSelectedOrder] = useState<PurchaseOrder | null>(
     null,
   );
+  const [receiptOrder, setReceiptOrder] = useState<PurchaseOrder | null>(null);
   const [receivingOrder, setReceivingOrder] = useState<PurchaseOrder | null>(
     null,
   );
   const [poFilterStatus, setPoFilterStatus] = useState<POStatus | "All">("All");
   const [poLoading, setPoLoading] = useState(false);
+  const [poHistoryDateFrom, setPoHistoryDateFrom] = useState("");
+  const [poHistoryDateTo, setPoHistoryDateTo] = useState("");
+  const [poHistoryPage, setPoHistoryPage] = useState(1);
+  const poHistoryFromInputRef = useRef<HTMLInputElement | null>(null);
+  const poHistoryToInputRef = useRef<HTMLInputElement | null>(null);
   const [prefillPOProduct, setPrefillPOProduct] = useState<
     | { name: string; category: string; unit: string; supplier: string }
     | null
@@ -2930,6 +3300,8 @@ export default function StockManager() {
   const [selectedYear, setSelectedYear] = useState(() =>
     new Date().getFullYear(),
   );
+  const [showDashboardBackToTop, setShowDashboardBackToTop] = useState(false);
+  const dashboardTopRef = useRef<HTMLDivElement | null>(null);
 
   const { addNotification } = useNotifications();
   const showToast = useCallback(
@@ -2980,6 +3352,15 @@ export default function StockManager() {
       setReportLoading(false);
     }
   }, [reportPeriod, selectedWeekStart, selectedMonth, selectedYear, showToast]);
+
+  const scrollDashboardTo = useCallback((targetId: string) => {
+    if (typeof document === "undefined") return;
+    const element = document.getElementById(targetId);
+    if (!element) return;
+    requestAnimationFrame(() => {
+      element.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }, []);
 
   const fetchAll = useCallback(async () => {
     setIsLoading(true);
@@ -3097,6 +3478,21 @@ export default function StockManager() {
   useEffect(() => {
     if (tab === "suppliers") fetchSupplierHistory();
   }, [tab, fetchSupplierHistory]);
+  useEffect(() => {
+    setPoHistoryPage(1);
+  }, [poHistoryDateFrom, poHistoryDateTo]);
+  useEffect(() => {
+    if (tab !== "dashboard" && tab !== "withdrawal") {
+      setShowDashboardBackToTop(false);
+      return;
+    }
+    const handleScroll = () => {
+      setShowDashboardBackToTop(window.scrollY > 260);
+    };
+    handleScroll();
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, [tab]);
 
   // ── Derived data ──────────────────────────────────────────────────────────
 
@@ -3105,6 +3501,17 @@ export default function StockManager() {
   );
   const criticalStock = products.filter(
     (p) => !isMenuFoodProduct(p) && getStockStatus(p) === "critical",
+  );
+  const outOfStockItems = useMemo(
+    () =>
+      products.filter(
+        (p) => !isMenuFoodProduct(p) && toNumber(p.mainStock) === 0,
+      ),
+    [products],
+  );
+  const alertCriticalStock = useMemo(
+    () => criticalStock.filter((p) => toNumber(p.mainStock) > 0),
+    [criticalStock],
   );
   const attentionItems = useMemo(
     () =>
@@ -3145,6 +3552,70 @@ export default function StockManager() {
                 new Date(b.withdrawn_at).getTime(),
             ),
     [kitchenBatches, wdProductId],
+  );
+  const todayInitialExists = useMemo(
+    () => selectedKitchenBatches.some((b) => b.status === "active"),
+    [selectedKitchenBatches],
+  );
+  const kitchenRemaining = useMemo(
+    () =>
+      selectedKitchenBatches.reduce(
+        (sum, b) =>
+          sum + Math.max(0, b.withdrawn_qty - b.used_qty - b.returned_qty),
+        0,
+      ),
+    [selectedKitchenBatches],
+  );
+  const latestKitchenBatch = useMemo(
+    () =>
+      selectedKitchenBatches.length > 0
+        ? [...selectedKitchenBatches].sort(
+            (a, b) => b.kitchen_batch_id - a.kitchen_batch_id,
+          )[0]
+        : null,
+    [selectedKitchenBatches],
+  );
+  const visibleKitchenBatches = useMemo(
+    () =>
+      kitchenBatches.filter(
+        (b) =>
+          Math.max(
+            0,
+            toNumber(b.withdrawn_qty) -
+              toNumber(b.used_qty) -
+              toNumber(b.returned_qty),
+          ) > 0,
+      ),
+    [kitchenBatches],
+  );
+  const mainStockProductIds = useMemo(
+    () =>
+      new Set(
+        products
+          .filter((product) => !isMenuFoodProduct(product))
+          .map((product) => product.product_id),
+      ),
+    [products],
+  );
+  const nonReturnableProductIds = useMemo(
+    () =>
+      new Set(
+        products
+          .filter((product) => !isReconcilable(product))
+          .map((product) => product.product_id),
+      ),
+    [products],
+  );
+  const visibleWithdrawalLogs = useMemo(
+    () =>
+      withdrawals.filter(
+        (entry) =>
+          mainStockProductIds.has(entry.product_id) &&
+          ["initial", "supplementary", "return"].includes(
+            String(entry.type).toLowerCase(),
+          ),
+      ),
+    [withdrawals, mainStockProductIds],
   );
   const dashboardFilteredProducts = useMemo(() => {
     const q = dashboardSearch.trim().toLowerCase();
@@ -3190,9 +3661,13 @@ export default function StockManager() {
       )
       .slice(0, 6);
   }, [products, supplierForm.products_supplied, supplierProductInput]);
+  const mainStockProducts = useMemo(
+    () => products.filter((p) => !isMenuFoodProduct(p)),
+    [products],
+  );
   const selectedWithdrawalProduct = useMemo(
-    () => products.find((p) => p.product_id === wdProductId) ?? null,
-    [products, wdProductId],
+    () => mainStockProducts.find((p) => p.product_id === wdProductId) ?? null,
+    [mainStockProducts, wdProductId],
   );
   const selectedWithdrawalStatus = selectedWithdrawalProduct
     ? getStockStatus(selectedWithdrawalProduct)
@@ -3321,27 +3796,55 @@ export default function StockManager() {
       }
     >;
   }, [products, totalReturned, totalWasted, totalWithdrawn]);
-  const wholeChickenProducts = products.filter(isWholeChicken);
-  const choppedChickenProducts = products.filter(isChoppedChicken);
+  const wholeChickenProducts = mainStockProducts.filter(isWholeChicken);
+  const choppedChickenProducts = mainStockProducts.filter(isChoppedChicken);
+  const otherMainStockProducts = mainStockProducts.filter((p) => !isChicken(p));
   const filteredHistory = useMemo(() => {
     const q = historySearch.trim().toLowerCase();
-    return !q
-      ? supplierHistory
-      : supplierHistory.filter(
-          (h) =>
-            h.supplier_name.toLowerCase().includes(q) ||
-            h.action.toLowerCase().includes(q) ||
-            (h.details ?? "").toLowerCase().includes(q) ||
-            (h.performed_by ?? "").toLowerCase().includes(q),
-        );
-  }, [supplierHistory, historySearch]);
+    return supplierHistory.filter((h) => {
+      const matchesSearch =
+        !q ||
+        h.supplier_name.toLowerCase().includes(q) ||
+        h.action.toLowerCase().includes(q) ||
+        (h.details ?? "").toLowerCase().includes(q) ||
+        (h.performed_by ?? "").toLowerCase().includes(q);
+      const matchesDate = isDateInRange(
+        h.created_at,
+        historyDateFrom,
+        historyDateTo,
+      );
+      return matchesSearch && matchesDate;
+    });
+  }, [supplierHistory, historySearch, historyDateFrom, historyDateTo]);
   const filteredPOs = useMemo(
     () =>
       poFilterStatus === "All"
-        ? poOrders
+        ? poOrders.filter((o) => o.status !== "Received")
         : poOrders.filter((o) => o.status === poFilterStatus),
     [poOrders, poFilterStatus],
   );
+  const completedPOs = useMemo(
+    () => poOrders.filter((o) => o.status === "Received"),
+    [poOrders],
+  );
+  const filteredCompletedPOs = useMemo(
+    () =>
+      completedPOs.filter((o) =>
+        isDateInRange(o.receivedDate, poHistoryDateFrom, poHistoryDateTo),
+      ),
+    [completedPOs, poHistoryDateFrom, poHistoryDateTo],
+  );
+  const poHistoryTotalPages = Math.max(
+    1,
+    Math.ceil(filteredCompletedPOs.length / PO_HISTORY_PAGE_SIZE),
+  );
+  const paginatedCompletedPOs = useMemo(() => {
+    const start = (poHistoryPage - 1) * PO_HISTORY_PAGE_SIZE;
+    return filteredCompletedPOs.slice(start, start + PO_HISTORY_PAGE_SIZE);
+  }, [filteredCompletedPOs, poHistoryPage]);
+  useEffect(() => {
+    setPoHistoryPage((current) => Math.min(current, poHistoryTotalPages));
+  }, [poHistoryTotalPages]);
   const productMap = useMemo(
     () =>
       new Map(
@@ -3414,13 +3917,22 @@ export default function StockManager() {
   );
 
   const handleConfirmReceivePO = useCallback(
-    async (expiryDates: Record<number, string>) => {
+    async ({
+      receiptNo,
+      receivedBy,
+      expiryDates,
+    }: {
+      receiptNo: string;
+      receivedBy: string;
+      expiryDates: Record<number, string>;
+    }) => {
       if (!receivingOrder) return;
       setPoLoading(true);
       try {
         const updated = await api.po.markReceived(
           receivingOrder.id,
-          "Staff on Duty",
+          receiptNo,
+          receivedBy,
           expiryDates,
         );
         setPoOrders((prev) =>
@@ -3531,7 +4043,7 @@ export default function StockManager() {
     if (!value || isNaN(numValue) || numValue <= maxAllowed) setAdjQty(value);
   };
 
-  // ─── FIXED doWithdraw (handles return, initial, supplementary) ─────────────
+  // ─── Withdrawal lifecycle ───────────────────────────────────────────────────
   async function doWithdraw(
     product_id: number,
     qty: number,
@@ -3539,34 +4051,24 @@ export default function StockManager() {
   ) {
     setSubmitting(true);
     try {
-      if (type === "return") {
-        // Return: find today's kitchen batch for this product and reduce it
+      // Initial or Supplementary: always deduct from storage first (FIFO)
+      if (type === "initial") {
         const todayBatches = await kitchenApi.getTodayKitchenBatches();
         const existing = todayBatches
           .filter((b) => b.product_id === product_id && b.status === "active")
           .sort((a, b) => b.kitchen_batch_id - a.kitchen_batch_id)[0];
 
-        if (!existing) {
-          throw new Error(
-            "No active kitchen batch found for this product today.",
-          );
+        if (existing) {
+          throw new Error("Initial withdrawal already done today.");
         }
-        await kitchenApi.returnUnused(existing.kitchen_batch_id, { qty });
-        showToast(
-          `Return recorded for Kitchen Batch #${existing.kitchen_batch_id}`,
-          "success",
-        );
-        return;
-      }
 
-      // Initial or Supplementary: always deduct from storage first (FIFO)
-      const storageResult = await storageApi.withdrawFromStorage({
-        product_id,
-        qty_needed: qty,
-      });
-      const sourceBatchId = storageResult.batches_used[0]?.batch_id;
+        const storageResult = await storageApi.withdrawFromStorage({
+          product_id,
+          qty_needed: qty,
+          type: "initial",
+        });
+        const sourceBatchId = storageResult.batches_used[0]?.batch_id;
 
-      if (type === "initial") {
         // Initial: always create a fresh kitchen batch for today
         const kitchenBatch = await kitchenApi.createKitchenBatch({
           product_id,
@@ -3580,36 +4082,33 @@ export default function StockManager() {
           "success",
         );
       } else if (type === "supplementary") {
-        // Supplementary: find today's existing kitchen batch and add to it
         const todayBatches = await kitchenApi.getTodayKitchenBatches();
         const existing = todayBatches
           .filter((b) => b.product_id === product_id && b.status === "active")
           .sort((a, b) => b.kitchen_batch_id - a.kitchen_batch_id)[0];
 
-        if (existing) {
-          // Add to the existing kitchen batch
-          await kitchenApi.addSupplementary(existing.kitchen_batch_id, {
-            qty,
-            storage_batch_id: sourceBatchId,
-          });
-          showToast(
-            `Added ${qty} to Kitchen Batch #${existing.kitchen_batch_id}`,
-            "success",
-          );
-        } else {
-          // No initial batch yet today — treat as initial
-          const kitchenBatch = await kitchenApi.createKitchenBatch({
-            product_id,
-            quantity: qty,
-            type: "initial",
-            recorded_by: "System",
-            storage_batch_id: sourceBatchId,
-          });
-          showToast(
-            `No initial batch found — created Kitchen Batch #${kitchenBatch.kitchen_batch_id}`,
-            "success",
+        if (!existing) {
+          throw new Error(
+            "No initial withdrawal found for today. Please do an initial withdrawal first before adding a supplementary.",
           );
         }
+
+        const storageResult = await storageApi.withdrawFromStorage({
+          product_id,
+          qty_needed: qty,
+          type: "supplementary",
+        });
+        const sourceBatchId = storageResult.batches_used[0]?.batch_id;
+
+        // Supplementary: find today's existing kitchen batch and add to it
+        await kitchenApi.addSupplementary(existing.kitchen_batch_id, {
+          qty,
+          storage_batch_id: sourceBatchId,
+        });
+        showToast(
+          `Added ${qty} to Kitchen Batch #${existing.kitchen_batch_id}`,
+          "success",
+        );
       }
     } catch (err) {
       showToast(
@@ -3628,7 +4127,7 @@ export default function StockManager() {
     if (!qty || qty <= 0 || wdProductId === null) return;
     const product = products.find((p) => p.product_id === wdProductId);
     if (!product) return;
-    if (wdType !== "return" && qty > product.mainStock) {
+    if (qty > product.mainStock) {
       showToast(
         `Insufficient stock. Available: ${product.mainStock} ${product.unit}`,
         "error",
@@ -3653,22 +4152,12 @@ export default function StockManager() {
     const product = selectedSpoilageProduct;
     setSubmitting(true);
     try {
-      const result = await api.postSpoilage({
+      await api.postSpoilage({
         product_id: product.product_id,
         quantity: qty,
         recorded_by: null,
       });
-      setProducts((prev) =>
-        prev.map((p) =>
-          p.product_id === adjProductId
-            ? {
-                ...p,
-                dailyWithdrawn: result.dailyWithdrawn,
-                wasted: result.wasted,
-              }
-            : p,
-        ),
-      );
+      await fetchAll();
       setAdjQty("");
       showToast("Spoilage recorded.", "success");
     } catch (err) {
@@ -3885,25 +4374,25 @@ export default function StockManager() {
     }
   }
 
-  async function handleReconcileKitchenBatch(batch: KitchenBatch) {
-    try {
-      await kitchenApi.reconcile(batch.kitchen_batch_id);
-      showToast("Kitchen batch reconciled.", "success");
-      await fetchAll();
-    } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : "Failed to reconcile batch.",
-        "error",
-      );
-    }
-  }
 
   async function handleReturnKitchenBatch(batch: KitchenBatch) {
+    if (nonReturnableProductIds.has(batch.product_id)) {
+      showToast("Sauces and similar items cannot be returned.", "error");
+      return;
+    }
     try {
       await kitchenApi.returnUnused(batch.kitchen_batch_id);
       showToast("Unused portion returned to storage.", "success");
       await fetchAll();
     } catch (err) {
+      if (
+        err instanceof Error &&
+        /no unused quantity left to return|return quantity exceeds unused amount/i.test(
+          err.message,
+        )
+      ) {
+        await fetchAll();
+      }
       showToast(
         err instanceof Error ? err.message : "Failed to return batch.",
         "error",
@@ -3982,7 +4471,9 @@ export default function StockManager() {
                     ? yesterdayReturns.length
                     : t.id === "purchases"
                       ? poOrders.filter((o) => o.status === "Draft").length
-                      : 0;
+                      : t.id === "purchase-history"
+                        ? completedPOs.length
+                        : 0;
               const active = tab === t.id;
               return (
                 <button
@@ -3994,7 +4485,7 @@ export default function StockManager() {
                   {t.label}
                   {badge > 0 && (
                     <span
-                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none ${active ? "bg-white/20 text-white" : t.id === "withdrawal" ? "bg-amber-100 text-amber-700" : t.id === "purchases" ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-600"}`}
+                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none ${active ? "bg-white/20 text-white" : t.id === "withdrawal" ? "bg-amber-100 text-amber-700" : t.id === "purchases" ? "bg-yellow-100 text-yellow-700" : t.id === "purchase-history" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"}`}
                     >
                       {badge}
                     </span>
@@ -4003,9 +4494,89 @@ export default function StockManager() {
               );
             })}
           </div>
+          {tab === "dashboard" && !isLoading && (
+            <div className="border-t border-slate-100 px-6 pb-4 pt-2">
+              <div className="flex items-center justify-center gap-2 flex-wrap">
+                {[
+                  {
+                    label: "Main Stock Levels",
+                    target: "dashboard-main-stock",
+                  },
+                  {
+                    label: "Last Inventory Updates",
+                    target: "dashboard-last-updates",
+                  },
+                  {
+                    label: "Record Spoilage",
+                    target: "dashboard-record-spoilage",
+                  },
+                  {
+                    label: "Stock Movement Report",
+                    target: "dashboard-stock-movement",
+                  },
+                ].map((item) => (
+                  <a
+                    key={item.label}
+                    href={`#${item.target}`}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      scrollDashboardTo(item.target);
+                    }}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium border transition-all duration-200 bg-white text-slate-500 border-slate-200 hover:border-slate-300 hover:text-slate-700"
+                  >
+                    {item.label}
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+          {tab === "withdrawal" && !isLoading && (
+            <div className="border-t border-slate-100 px-6 pb-4 pt-2">
+              <div className="flex items-center justify-center gap-2 flex-wrap">
+                {[
+                  {
+                    label: "New Withdrawal Record",
+                    target: "withdrawal-new-record",
+                  },
+                  {
+                    label: "Kitchen Batch Queue",
+                    target: "withdrawal-kitchen-queue",
+                  },
+                  {
+                    label: "FIFO Withdrawal Preview",
+                    target: "withdrawal-fifo-preview",
+                  },
+                  {
+                    label: "Delivered batches",
+                    target: "withdrawal-delivered-batches",
+                  },
+                  {
+                    label: "Currently Withdrawn",
+                    target: "withdrawal-currently-withdrawn",
+                  },
+                  {
+                    label: "Kitchen Batches",
+                    target: "withdrawal-kitchen-batches",
+                  },
+                ].map((item) => (
+                  <a
+                    key={item.label}
+                    href={`#${item.target}`}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      scrollDashboardTo(item.target);
+                    }}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium border transition-all duration-200 bg-white text-slate-500 border-slate-200 hover:border-slate-300 hover:text-slate-700"
+                  >
+                    {item.label}
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
         </header>
 
-        <main className="px-8 py-8">
+        <main className="bg-white border border-slate-100 overflow-hidden shadow-sm">
           {error && (
             <div className="mb-6">
               <ErrorBanner message={error} onRetry={fetchAll} />
@@ -4019,16 +4590,18 @@ export default function StockManager() {
               {tab === "dashboard" && (
                 <motion.div
                   key="dashboard"
+                  id="dashboard-top"
                   variants={pageVariants}
                   initial="hidden"
                   animate="show"
                   exit="exit"
+                  ref={dashboardTopRef}
                 >
                   <motion.div
                     variants={staggerVariants}
                     initial="hidden"
                     animate="show"
-                    className="space-y-6"
+                    className="space-y-6 pt-6"
                   >
                     <motion.div
                       variants={staggerVariants}
@@ -4128,11 +4701,16 @@ export default function StockManager() {
                       </motion.div>
                     )}
 
-                    <motion.div variants={itemVariants}>
-                      <SectionCard
-                        title="Main Stock Levels"
-                        subtitle="Raw materials added from Stock Manager"
-                      >
+                    <div
+                      id="dashboard-main-stock"
+                      className="scroll-mt-44"
+                      style={{ scrollMarginTop: "180px" }}
+                    >
+                      <motion.div variants={itemVariants}>
+                        <SectionCard
+                          title="Main Stock Levels"
+                          subtitle="Raw materials added from Stock Manager"
+                        >
                         <div className="px-4 pt-4 flex flex-col md:flex-row md:items-center gap-3 md:justify-between">
                           <input
                             type="text"
@@ -4175,6 +4753,19 @@ export default function StockManager() {
                           <tbody>
                             {dashboardFilteredProducts.map((p, i) => {
                               const status = getStockStatus(p);
+                              const isOutOfStock = toNumber(p.mainStock) === 0;
+                              const statusDotClass = isOutOfStock
+                                ? "bg-slate-500"
+                                : STATUS_DOT[status];
+                              const statusBarClass = isOutOfStock
+                                ? "bg-slate-500"
+                                : STATUS_BAR[status];
+                              const statusBadgeClass = isOutOfStock
+                                ? "bg-slate-100 text-slate-700"
+                                : STATUS_BADGE[status];
+                              const statusLabel = isOutOfStock
+                                ? "Out of Stock"
+                                : status;
                               const pct = Math.min(
                                 100,
                                 (p.mainStock /
@@ -4194,7 +4785,7 @@ export default function StockManager() {
                                   <td className="py-3.5 px-4">
                                     <div className="flex items-center gap-2">
                                       <span
-                                        className={`w-2 h-2 rounded-full flex-shrink-0 ${STATUS_DOT[status]}`}
+                                        className={`w-2 h-2 rounded-full flex-shrink-0 ${statusDotClass}`}
                                       />
                                       <span className="font-medium text-slate-800">
                                         {p.product_name}
@@ -4229,7 +4820,7 @@ export default function StockManager() {
                                   <td className="py-3.5 px-4 w-32">
                                     <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
                                       <motion.div
-                                        className={`h-full rounded-full ${STATUS_BAR[status]}`}
+                                        className={`h-full rounded-full ${statusBarClass}`}
                                         initial={{ width: 0 }}
                                         animate={{ width: `${pct}%` }}
                                         transition={{
@@ -4242,9 +4833,9 @@ export default function StockManager() {
                                   </td>
                                   <td className="py-3.5 px-4 text-center">
                                     <span
-                                      className={`px-2.5 py-1 rounded-full text-[11px] font-medium capitalize ${STATUS_BADGE[status]}`}
+                                      className={`px-2.5 py-1 rounded-full text-[11px] font-medium capitalize ${statusBadgeClass}`}
                                     >
-                                      {status}
+                                      {statusLabel}
                                     </span>
                                   </td>
                                   <td className="py-3.5 px-4 text-center">
@@ -4273,157 +4864,182 @@ export default function StockManager() {
                             )}
                           </tbody>
                         </table>
-                      </SectionCard>
-                    </motion.div>
+                        </SectionCard>
+                      </motion.div>
+                    </div>
 
                     <motion.div
                       variants={itemVariants}
                       className="grid grid-cols-2 gap-4"
                     >
-                      <SectionCard
-                        title="Last Inventory Updates"
-                        subtitle="Most recently updated items"
+                      <div
+                        id="dashboard-last-updates"
+                        className="scroll-mt-44"
+                        style={{ scrollMarginTop: "180px" }}
                       >
-                        <div className="divide-y divide-slate-50">
-                          {[...products]
-                            .sort(
-                              (a, b) =>
-                                new Date(b.last_update).getTime() -
-                                new Date(a.last_update).getTime(),
-                            )
-                            .slice(0, 6)
-                            .map((p, i) => (
-                              <motion.div
-                                key={p.inventory_id}
-                                initial={{ opacity: 0 }}
-                                animate={{ opacity: 1 }}
-                                transition={{ delay: i * 0.07 }}
-                                className="flex items-center justify-between px-5 py-3.5 hover:bg-slate-50/70 transition-colors"
-                              >
-                                <div>
-                                  <p className="text-sm font-medium text-slate-700">
-                                    {p.product_name}
-                                  </p>
-                                  <p className="text-xs text-slate-400 mt-0.5">
-                                    {p.supplier_name}
-                                  </p>
-                                </div>
-                                <span className="text-xs text-slate-500 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-lg">
-                                  {new Date(p.last_update).toLocaleDateString(
-                                    undefined,
-                                    { month: "short", day: "numeric" },
-                                  )}
-                                </span>
-                              </motion.div>
-                            ))}
-                        </div>
-                      </SectionCard>
-                      <SectionCard
-                        title="Record Spoilage"
-                        subtitle="Limited to today's withdrawn amount"
-                      >
-                        <div className="p-5 space-y-4">
-                          <FormField label="Select Item">
-                            <StyledSelect
-                              value={adjProductId ?? ""}
-                              onChange={(v) => setAdjProductId(Number(v))}
-                            >
-                              {products.map((p) => (
-                                <option key={p.product_id} value={p.product_id}>
-                                  {p.product_name} ({fmtInt(p.dailyWithdrawn)}{" "}
-                                  {p.unit} withdrawn today)
-                                </option>
+                        <SectionCard
+                          title="Last Inventory Updates"
+                          subtitle="Most recently updated items"
+                        >
+                          <div className="divide-y divide-slate-50">
+                            {[...products]
+                              .sort(
+                                (a, b) =>
+                                  new Date(b.last_update).getTime() -
+                                  new Date(a.last_update).getTime(),
+                              )
+                              .slice(0, 6)
+                              .map((p, i) => (
+                                <motion.div
+                                  key={p.inventory_id}
+                                  initial={{ opacity: 0 }}
+                                  animate={{ opacity: 1 }}
+                                  transition={{ delay: i * 0.07 }}
+                                  className="flex items-center justify-between px-5 py-3.5 hover:bg-slate-50/70 transition-colors"
+                                >
+                                  <div>
+                                    <p className="text-sm font-medium text-slate-700">
+                                      {p.product_name}
+                                    </p>
+                                    <p className="text-xs text-slate-400 mt-0.5">
+                                      {p.supplier_name}
+                                    </p>
+                                  </div>
+                                  <span className="text-xs text-slate-500 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-lg">
+                                    {new Date(p.last_update).toLocaleDateString(
+                                      undefined,
+                                      { month: "short", day: "numeric" },
+                                    )}
+                                  </span>
+                                </motion.div>
                               ))}
-                            </StyledSelect>
-                          </FormField>
+                          </div>
+                        </SectionCard>
+                      </div>
+                      <div
+                        id="dashboard-record-spoilage"
+                        className="scroll-mt-44"
+                        style={{ scrollMarginTop: "180px" }}
+                      >
+                        <SectionCard
+                          title="Record Spoilage"
+                          subtitle="Limited to today's withdrawn amount"
+                        >
+                          <div className="p-5 space-y-4">
+                            <FormField label="Select Item">
+                              <StyledSelect
+                                value={adjProductId ?? ""}
+                                onChange={(v) => setAdjProductId(Number(v))}
+                              >
+                                {products.map((p) => (
+                                  <option
+                                    key={p.product_id}
+                                    value={p.product_id}
+                                  >
+                                    {p.product_name} ({fmtInt(p.dailyWithdrawn)}{" "}
+                                    {p.unit} withdrawn today)
+                                  </option>
+                                ))}
+                              </StyledSelect>
+                            </FormField>
 
-                          {selectedSpoilageProduct && (
-                            <div className="space-y-2 p-3 bg-rose-50 border border-rose-200 rounded-xl">
-                              <div className="flex items-center justify-between">
-                                <p className="text-sm font-semibold text-rose-700">
-                                  Available for spoilage:{" "}
-                                  <span className="font-bold">
+                            {selectedSpoilageProduct && (
+                              <div className="space-y-2 p-3 bg-rose-50 border border-rose-200 rounded-xl">
+                                <div className="flex items-center justify-between">
+                                  <p className="text-sm font-semibold text-rose-700">
+                                    Available for spoilage:{" "}
+                                    <span className="font-bold">
+                                      {fmtInt(
+                                        selectedSpoilageProduct.dailyWithdrawn,
+                                      )}{" "}
+                                      {selectedSpoilageProduct.unit}
+                                    </span>
+                                  </p>
+                                  <span
+                                    className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                                      selectedSpoilageProduct.dailyWithdrawn ===
+                                      0
+                                        ? "bg-rose-100 text-rose-500"
+                                        : "bg-amber-100 text-amber-600"
+                                    }`}
+                                  >
+                                    {selectedSpoilageProduct.dailyWithdrawn ===
+                                    0
+                                      ? "NO WITHDRAWAL"
+                                      : "OK"}
+                                  </span>
+                                </div>
+
+                                {selectedSpoilageProduct.dailyWithdrawn ===
+                                  0 && (
+                                  <p className="text-xs text-rose-500">
+                                    ⚠️ No stock was withdrawn today. Cannot
+                                    record spoilage.
+                                  </p>
+                                )}
+                              </div>
+                            )}
+
+                            <FormField label="Spoilage Amount">
+                              <div className="relative">
+                                <StyledInput
+                                  type="number"
+                                  value={adjQty}
+                                  onChange={handleSpoilageInputChange}
+                                  placeholder="0"
+                                />
+                                {selectedSpoilageProduct && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setAdjQty(
+                                        fmtInt(
+                                          selectedSpoilageProduct.dailyWithdrawn,
+                                        ),
+                                      )
+                                    }
+                                    disabled={
+                                      selectedSpoilageProduct.dailyWithdrawn ===
+                                      0
+                                    }
+                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-indigo-600 hover:text-indigo-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    Max (
                                     {fmtInt(
                                       selectedSpoilageProduct.dailyWithdrawn,
-                                    )}{" "}
-                                    {selectedSpoilageProduct.unit}
-                                  </span>
-                                </p>
-                                <span
-                                  className={`px-2 py-0.5 rounded-full text-xs font-bold ${
-                                    selectedSpoilageProduct.dailyWithdrawn === 0
-                                      ? "bg-rose-100 text-rose-500"
-                                      : "bg-amber-100 text-amber-600"
-                                  }`}
-                                >
-                                  {selectedSpoilageProduct.dailyWithdrawn === 0
-                                    ? "NO WITHDRAWAL"
-                                    : "OK"}
-                                </span>
-                              </div>
-
-                              {selectedSpoilageProduct.dailyWithdrawn === 0 && (
-                                <p className="text-xs text-rose-500">
-                                  ⚠️ No stock was withdrawn today. Cannot record
-                                  spoilage.
-                                </p>
-                              )}
-                            </div>
-                          )}
-
-                          <FormField label="Spoilage Amount">
-                            <div className="relative">
-                              <StyledInput
-                                type="number"
-                                value={adjQty}
-                                onChange={handleSpoilageInputChange}
-                                placeholder="0"
-                              />
-                              {selectedSpoilageProduct && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setAdjQty(
-                                      fmtInt(
-                                        selectedSpoilageProduct.dailyWithdrawn,
-                                      ),
+                                    )}
                                     )
-                                  }
-                                  disabled={
-                                    selectedSpoilageProduct.dailyWithdrawn === 0
-                                  }
-                                  className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-indigo-600 hover:text-indigo-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                  Max (
-                                  {fmtInt(
-                                    selectedSpoilageProduct.dailyWithdrawn,
-                                  )}
-                                  )
-                                </button>
+                                  </button>
+                                )}
+                              </div>
+                              {validationMessage && (
+                                <p className="mt-2 text-xs text-slate-500">
+                                  {validationMessage}
+                                </p>
                               )}
-                            </div>
-                            {validationMessage && (
-                              <p className="mt-2 text-xs text-slate-500">
-                                {validationMessage}
-                              </p>
-                            )}
-                          </FormField>
+                            </FormField>
 
-                          <Btn
-                            onClick={submitSpoilage}
-                            variant="danger"
-                            loading={submitting}
-                            disabled={!canRecordSpoilage}
-                          >
-                            {submitting ? "Recording..." : "Record Spoilage"}
-                          </Btn>
-                        </div>
-                      </SectionCard>
+                            <Btn
+                              onClick={submitSpoilage}
+                              variant="danger"
+                              loading={submitting}
+                              disabled={!canRecordSpoilage}
+                            >
+                              {submitting ? "Recording..." : "Record Spoilage"}
+                            </Btn>
+                          </div>
+                        </SectionCard>
+                      </div>
                     </motion.div>
 
                     {/* ── Stock Movement Report ── */}
-                    <motion.div variants={itemVariants}>
-                      <div className="flex items-center justify-between mb-4">
+                    <div
+                      id="dashboard-stock-movement"
+                      className="scroll-mt-44"
+                      style={{ scrollMarginTop: "180px" }}
+                    >
+                      <motion.div variants={itemVariants}>
+                        <div className="flex items-center justify-between mb-4">
                         <div>
                           <p className="text-sm font-semibold text-slate-800">
                             Stock Movement Report
@@ -4537,8 +5153,9 @@ export default function StockManager() {
                             </button>
                           )}
                         </div>
-                      </div>
-                    </motion.div>
+                        </div>
+                      </motion.div>
+                    </div>
 
                     <motion.div variants={itemVariants}>
                       {!reportData && !reportLoading && (
@@ -4729,6 +5346,7 @@ export default function StockManager() {
                         </div>
                       )}
                     </motion.div>
+
                   </motion.div>
                 </motion.div>
               )}
@@ -4737,6 +5355,7 @@ export default function StockManager() {
               {tab === "withdrawal" && (
                 <motion.div
                   key="withdrawal"
+                  id="withdrawal-top"
                   variants={pageVariants}
                   initial="hidden"
                   animate="show"
@@ -4754,8 +5373,10 @@ export default function StockManager() {
                       </motion.div>
                     )}
                     <motion.div
+                      id="withdrawal-new-record"
                       variants={itemVariants}
                       className="grid grid-cols-2 gap-6"
+                      style={{ scrollMarginTop: "180px" }}
                     >
                       <SectionCard
                         title="New Withdrawal Record"
@@ -4767,34 +5388,55 @@ export default function StockManager() {
                       >
                         <div className="p-5 space-y-4">
                           <FormField label="Record Type">
-                            <div className="grid grid-cols-3 gap-2">
-                              {(
-                                [
-                                  "initial",
-                                  "supplementary",
-                                  "return",
-                                ] as WithdrawalType[]
-                              ).map((t) => (
+                            <div className="grid grid-cols-2 gap-2">
+                              {[
+                                {
+                                  key: "initial" as const,
+                                  disabled: todayInitialExists,
+                                  tooltip:
+                                    "Initial withdrawal already done today.",
+                                },
+                                {
+                                  key: "supplementary" as const,
+                                  disabled: !todayInitialExists,
+                                  tooltip: "Do an initial withdrawal first.",
+                                },
+                              ].map((option) => (
                                 <button
-                                  key={t}
-                                  onClick={() => setWdType(t)}
-                                  className={`py-2.5 text-xs font-semibold rounded-xl border capitalize transition-all duration-200 ${wdType === t ? "bg-slate-900 text-white border-slate-900 shadow-md" : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"}`}
+                                  key={option.key}
+                                  type="button"
+                                  onClick={() =>
+                                    !option.disabled && setWdType(option.key)
+                                  }
+                                  disabled={option.disabled}
+                                  title={
+                                    option.disabled ? option.tooltip : undefined
+                                  }
+                                  className={`py-2.5 text-xs font-semibold rounded-xl border capitalize transition-all duration-200 ${wdType === option.key ? "bg-slate-900 text-white border-slate-900 shadow-md" : "bg-white text-slate-500 border-slate-200"} ${option.disabled ? "opacity-50 cursor-not-allowed" : "hover:border-slate-300"}`}
                                 >
-                                  {t}
+                                  {option.key}
                                 </button>
                               ))}
                             </div>
                           </FormField>
                           <div
-                            className={`text-xs px-3 py-2 rounded-xl border ${wdType === "initial" ? "bg-indigo-50 text-indigo-600 border-indigo-100" : wdType === "supplementary" ? "bg-sky-50 text-sky-600 border-sky-100" : "bg-emerald-50 text-emerald-600 border-emerald-100"}`}
+                            className={`text-xs px-3 py-2 rounded-xl border ${wdType === "initial" ? "bg-indigo-50 text-indigo-600 border-indigo-100" : "bg-sky-50 text-sky-600 border-sky-100"}`}
                           >
                             {wdType === "initial" &&
                               "Opening withdrawal for today — recorded as the initial pull."}
                             {wdType === "supplementary" &&
                               "Additional pull on top of the opening withdrawal."}
-                            {wdType === "return" &&
-                              "Returning unused/leftover stock back to main storage."}
                           </div>
+                          {wdType === "supplementary" &&
+                            kitchenRemaining > 0 &&
+                            selectedWithdrawalProduct && (
+                              <div className="text-xs px-3 py-2 rounded-xl border bg-amber-50 text-amber-700 border-amber-200">
+                                Warning: Kitchen still has {kitchenRemaining}{" "}
+                                {selectedWithdrawalProduct.unit} remaining for
+                                this product. Are you sure you need a
+                                supplementary withdrawal?
+                              </div>
+                            )}
                           <FormField label="Select Item">
                             <StyledSelect
                               value={wdProductId ?? ""}
@@ -4824,20 +5466,16 @@ export default function StockManager() {
                                   ))}
                                 </optgroup>
                               )}
-                              {products.filter((p) => !isChicken(p)).length >
-                                0 && (
+                              {otherMainStockProducts.length > 0 && (
                                 <optgroup label="── Other Items ──">
-                                  {products
-                                    .filter((p) => !isChicken(p))
-                                    .map((p) => (
+                                  {otherMainStockProducts.map((p) => (
                                       <option
                                         key={p.product_id}
                                         value={p.product_id}
                                       >
-                                        {p.product_name} ({p.mainStock} {p.unit}
-                                        )
+                                        {p.product_name} ({p.mainStock} {p.unit})
                                       </option>
-                                    ))}
+                                  ))}
                                 </optgroup>
                               )}
                             </StyledSelect>
@@ -4879,24 +5517,22 @@ export default function StockManager() {
                           >
                             {submitting
                               ? "Saving..."
-                              : wdType === "return"
-                                ? "Record Return"
-                                : wdType === "initial"
-                                  ? "Submit Opening Withdrawal"
-                                  : "Submit Withdrawal"}
+                              : wdType === "initial"
+                                ? "Submit Opening Withdrawal"
+                                : "Submit Withdrawal"}
                           </Btn>
                         </div>
                       </SectionCard>
                       <SectionCard
                         title="Today's Withdrawal Log"
-                        subtitle={`${withdrawals.length} entries`}
+                        subtitle={`${visibleWithdrawalLogs.length} entries`}
                       >
-                        {withdrawals.length === 0 ? (
+                        {visibleWithdrawalLogs.length === 0 ? (
                           <EmptyState message="No withdrawals recorded today." />
                         ) : (
                           <div className="divide-y divide-slate-50 max-h-96 overflow-y-auto">
                             <AnimatePresence>
-                              {withdrawals.map((w) => (
+                              {visibleWithdrawalLogs.map((w) => (
                                 <motion.div
                                   key={w.status_id}
                                   initial={{ opacity: 0, height: 0 }}
@@ -4946,9 +5582,13 @@ export default function StockManager() {
                       </SectionCard>
                     </motion.div>
                     {selectedKitchenBatches.length > 0 && (
-                      <motion.div variants={itemVariants}>
+                      <motion.div
+                        id="withdrawal-kitchen-queue"
+                        variants={itemVariants}
+                        style={{ scrollMarginTop: "180px" }}
+                      >
                         <SectionCard
-                          title={`Kitchen Batch Queue - ${selectedWithdrawalProduct?.product_name ?? ""}`}
+                          title="Kitchen Batch Queue"
                           subtitle="Shows batches currently withdrawn to kitchen."
                         >
                           <div className="p-4">
@@ -4960,7 +5600,94 @@ export default function StockManager() {
                         </SectionCard>
                       </motion.div>
                     )}
-                    <motion.div variants={itemVariants}>
+                    {selectedWithdrawalProduct && (
+                      <motion.div
+                        id="withdrawal-fifo-preview"
+                        variants={itemVariants}
+                        style={{ scrollMarginTop: "180px" }}
+                      >
+                        <SectionCard
+                          title="FIFO Withdrawal Preview"
+                          subtitle="For the selected item only"
+                        >
+                          <div className="p-4 space-y-4">
+                            <div
+                              className={`rounded-xl border px-4 py-3 text-sm ${
+                                latestKitchenBatch
+                                  ? kitchenRemaining === 0
+                                    ? "bg-red-50 border-red-200 text-red-700"
+                                    : "bg-emerald-50 border-emerald-200 text-emerald-700"
+                                  : "bg-slate-50 border-slate-200 text-slate-600"
+                              }`}
+                            >
+                              {latestKitchenBatch ? (
+                                kitchenRemaining === 0 ? (
+                                  <p className="font-medium">
+                                    Kitchen Batch #
+                                    {latestKitchenBatch.kitchen_batch_id} -{" "}
+                                    {latestKitchenBatch.withdrawn_qty}{" "}
+                                    {selectedWithdrawalProduct.unit} withdrawn
+                                    {" · "}
+                                    {latestKitchenBatch.used_qty}{" "}
+                                    {selectedWithdrawalProduct.unit} used
+                                    {" · "}
+                                    {latestKitchenBatch.returned_qty}{" "}
+                                    {selectedWithdrawalProduct.unit} returned
+                                    {" → "}
+                                    {Math.max(
+                                      0,
+                                      latestKitchenBatch.withdrawn_qty -
+                                        latestKitchenBatch.used_qty -
+                                        latestKitchenBatch.returned_qty,
+                                    )}{" "}
+                                    {selectedWithdrawalProduct.unit} remaining
+                                    in kitchen. Kitchen stock depleted -
+                                    supplementary needed.
+                                  </p>
+                                ) : (
+                                  <p className="font-medium">
+                                    Kitchen Batch #
+                                    {latestKitchenBatch.kitchen_batch_id} -{" "}
+                                    {latestKitchenBatch.withdrawn_qty}{" "}
+                                    {selectedWithdrawalProduct.unit} withdrawn
+                                    {" · "}
+                                    {latestKitchenBatch.used_qty}{" "}
+                                    {selectedWithdrawalProduct.unit} used
+                                    {" · "}
+                                    {latestKitchenBatch.returned_qty}{" "}
+                                    {selectedWithdrawalProduct.unit} returned
+                                    {" → "}
+                                    {Math.max(
+                                      0,
+                                      latestKitchenBatch.withdrawn_qty -
+                                        latestKitchenBatch.used_qty -
+                                        latestKitchenBatch.returned_qty,
+                                    )}{" "}
+                                    {selectedWithdrawalProduct.unit} remaining
+                                    in kitchen
+                                  </p>
+                                )
+                              ) : (
+                                <p className="font-medium">
+                                  No kitchen batch yet today - do an initial
+                                  withdrawal.
+                                </p>
+                              )}
+                            </div>
+                            <FIFOBatchPreview
+                              batches={selectedProductBatches}
+                              qtyNeeded={Number(wdQty) || 0}
+                              unit={selectedWithdrawalProduct.unit}
+                            />
+                          </div>
+                        </SectionCard>
+                      </motion.div>
+                    )}
+                    <motion.div
+                      id="withdrawal-delivered-batches"
+                      variants={itemVariants}
+                      style={{ scrollMarginTop: "180px" }}
+                    >
                       <SectionCard
                         title="Delivered batches"
                         subtitle="Grouped by received date"
@@ -4973,7 +5700,11 @@ export default function StockManager() {
                         </div>
                       </SectionCard>
                     </motion.div>
-                    <motion.div variants={itemVariants}>
+                    <motion.div
+                      id="withdrawal-currently-withdrawn"
+                      variants={itemVariants}
+                      style={{ scrollMarginTop: "180px" }}
+                    >
                       <SectionCard
                         title="Currently Withdrawn"
                         subtitle="Stock pulled for today's preparation — net of returns"
@@ -5025,19 +5756,20 @@ export default function StockManager() {
                         )}
                       </SectionCard>
                     </motion.div>
-                    <motion.div variants={itemVariants}>
-                      <SectionCard
-                        title="Kitchen Batches"
-                        subtitle="Items currently in kitchen use"
-                      >
+                    <motion.div
+                      id="withdrawal-kitchen-batches"
+                      variants={itemVariants}
+                      style={{ scrollMarginTop: "180px" }}
+                    >
+                      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm">
                         <div className="p-4">
                           <KitchenBatchesSection
-                            kitchenBatches={kitchenBatches}
-                            onReconcile={handleReconcileKitchenBatch}
+                            kitchenBatches={visibleKitchenBatches}
+                            nonReturnableProductIds={nonReturnableProductIds}
                             onReturn={handleReturnKitchenBatch}
                           />
                         </div>
-                      </SectionCard>
+                      </div>
                     </motion.div>
                   </motion.div>
                 </motion.div>
@@ -5060,14 +5792,22 @@ export default function StockManager() {
                   >
                     <motion.div
                       variants={itemVariants}
-                      className="grid grid-cols-2 gap-4"
+                      className="grid grid-cols-3 gap-4"
                     >
+                      <div className="bg-white rounded-2xl p-5 border border-t-4 border-slate-400 shadow-sm">
+                        <p className="text-xs text-slate-400 font-medium">
+                          Out of Stock
+                        </p>
+                        <p className="text-3xl font-bold text-slate-700 mt-1">
+                          {outOfStockItems.length}
+                        </p>
+                      </div>
                       <div className="bg-white rounded-2xl p-5 border border-t-4 border-red-300 shadow-sm">
                         <p className="text-xs text-slate-400 font-medium">
                           Critical Items
                         </p>
                         <p className="text-3xl font-bold text-red-500 mt-1">
-                          {criticalStock.length}
+                          {alertCriticalStock.length}
                         </p>
                       </div>
                       <div className="bg-white rounded-2xl p-5 border border-t-4 border-amber-300 shadow-sm">
@@ -5079,14 +5819,22 @@ export default function StockManager() {
                         </p>
                       </div>
                     </motion.div>
-                    {lowStock.length === 0 && criticalStock.length === 0 ? (
+                    {lowStock.length === 0 &&
+                    alertCriticalStock.length === 0 &&
+                    outOfStockItems.length === 0 ? (
                       <motion.div variants={itemVariants}>
                         <EmptyState message="All stock levels are within safe range." />
                       </motion.div>
                     ) : (
                       [
                         {
-                          items: criticalStock,
+                          items: outOfStockItems,
+                          label: "Out of Stock",
+                          color: "slate",
+                          severity: "out" as const,
+                        },
+                        {
+                          items: alertCriticalStock,
                           label: "Critical",
                           color: "red",
                           severity: "critical" as const,
@@ -5097,7 +5845,7 @@ export default function StockManager() {
                           color: "amber",
                           severity: "low" as const,
                         },
-                      ].map(({ items, label, color }) =>
+                      ].map(({ items, label, color, severity }) =>
                         items.length > 0 ? (
                           <div key={label}>
                             <motion.div
@@ -5120,14 +5868,14 @@ export default function StockManager() {
                                   key={p.inventory_id}
                                   variants={itemVariants}
                                   transition={{ delay: i * 0.06 }}
-                                  className={`bg-white rounded-2xl border border-t-4 p-5 flex items-center justify-between shadow-sm mb-3 ${status === "critical" ? "border-red-200 border-t-red-400" : "border-amber-200 border-t-amber-400"}`}
+                                  className={`bg-white rounded-2xl border border-t-4 p-5 flex items-center justify-between shadow-sm mb-3 ${severity === "out" ? "border-slate-200 border-t-slate-400" : status === "critical" ? "border-red-200 border-t-red-400" : "border-amber-200 border-t-amber-400"}`}
                                 >
                                   <div className="flex items-center gap-4">
                                     <div
-                                      className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${status === "critical" ? "bg-red-50" : "bg-amber-50"}`}
+                                      className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${severity === "out" ? "bg-slate-100" : status === "critical" ? "bg-red-50" : "bg-amber-50"}`}
                                     >
                                       <span
-                                        className={`text-sm font-bold ${status === "critical" ? "text-red-500" : "text-amber-500"}`}
+                                        className={`text-sm font-bold ${severity === "out" ? "text-slate-600" : status === "critical" ? "text-red-500" : "text-amber-500"}`}
                                       >
                                         !
                                       </span>
@@ -5147,18 +5895,20 @@ export default function StockManager() {
                                         {p.supplier_name}
                                       </p>
                                       <p
-                                        className={`text-xs font-medium mt-1 ${status === "critical" ? "text-red-500" : "text-amber-500"}`}
+                                        className={`text-xs font-medium mt-1 ${severity === "out" ? "text-slate-600" : status === "critical" ? "text-red-500" : "text-amber-500"}`}
                                       >
-                                        {deficit > 0
-                                          ? `Need ${deficit} ${p.unit} to reach reorder point`
-                                          : "Below critical threshold"}
+                                        {severity === "out"
+                                          ? `No stock left. Need ${Math.max(0, deficit)} ${p.unit} to reach reorder point`
+                                          : deficit > 0
+                                            ? `Need ${deficit} ${p.unit} to reach reorder point`
+                                            : "Below critical threshold"}
                                       </p>
                                     </div>
                                   </div>
                                   <div className="flex items-center gap-4">
                                     <div className="text-right">
                                       <p
-                                        className={`text-2xl font-bold ${status === "critical" ? "text-red-500" : "text-amber-500"}`}
+                                        className={`text-2xl font-bold ${severity === "out" ? "text-slate-700" : status === "critical" ? "text-red-500" : "text-amber-500"}`}
                                       >
                                         {p.mainStock}{" "}
                                         <span className="text-sm font-normal text-slate-400">
@@ -5209,11 +5959,13 @@ export default function StockManager() {
                                         />
                                       </div>
                                       <span
-                                        className={`inline-block mt-2 text-xs font-semibold px-3 py-1 rounded-full ${STATUS_BADGE[status]}`}
+                                        className={`inline-block mt-2 text-xs font-semibold px-3 py-1 rounded-full ${severity === "out" ? "bg-slate-100 text-slate-700" : STATUS_BADGE[status]}`}
                                       >
-                                        {status === "critical"
-                                          ? "Restock Now"
-                                          : "Reorder Soon"}
+                                        {severity === "out"
+                                          ? "Out of Stock"
+                                          : status === "critical"
+                                            ? "Restock Now"
+                                            : "Reorder Soon"}
                                       </span>
                                     </div>
                                     <button
@@ -5221,7 +5973,7 @@ export default function StockManager() {
                                         setTab("purchases");
                                         handleOrderNow(p);
                                       }}
-                                      className={`flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-white text-xs font-bold transition-all shadow-sm ${status === "critical" ? "bg-red-500 hover:bg-red-600 shadow-red-500/25" : "bg-amber-500 hover:bg-amber-600 shadow-amber-500/25"}`}
+                                      className={`flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-white text-xs font-bold transition-all shadow-sm ${severity === "out" ? "bg-slate-700 hover:bg-slate-800 shadow-slate-500/25" : status === "critical" ? "bg-red-500 hover:bg-red-600 shadow-red-500/25" : "bg-amber-500 hover:bg-amber-600 shadow-amber-500/25"}`}
                                     >
                                       <CartIcon />
                                       Order Now
@@ -5551,6 +6303,20 @@ export default function StockManager() {
                               placeholder="Search history..."
                               className="w-52 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
                             />
+                            <input
+                              type="date"
+                              value={historyDateFrom}
+                              onChange={(e) =>
+                                setHistoryDateFrom(e.target.value)
+                              }
+                              className="rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
+                            />
+                            <input
+                              type="date"
+                              value={historyDateTo}
+                              onChange={(e) => setHistoryDateTo(e.target.value)}
+                              className="rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
+                            />
                             <button
                               onClick={fetchSupplierHistory}
                               disabled={historyLoading}
@@ -5580,8 +6346,8 @@ export default function StockManager() {
                         ) : filteredHistory.length === 0 ? (
                           <EmptyState
                             message={
-                              historySearch
-                                ? "No history matches your search."
+                              historySearch || historyDateFrom || historyDateTo
+                                ? "No history matches your filters."
                                 : "No supplier activity recorded yet."
                             }
                           />
@@ -5690,7 +6456,10 @@ export default function StockManager() {
                               <p className="text-[11px] text-slate-400">
                                 {filteredHistory.length} record
                                 {filteredHistory.length !== 1 ? "s" : ""}
-                                {historySearch && " matching your search"}
+                                {(historySearch ||
+                                  historyDateFrom ||
+                                  historyDateTo) &&
+                                  " matching your filters"}
                               </p>
                               <div className="flex items-center gap-3 text-[11px] text-slate-400">
                                 {[
@@ -5796,13 +6565,10 @@ export default function StockManager() {
                     >
                       <div className="flex gap-2 flex-wrap">
                         {(
-                          [
-                            "All",
-                            "Draft",
-                            "Ordered",
-                            "Received",
-                            "Cancelled",
-                          ] as (POStatus | "All")[]
+                          ["All", "Draft", "Ordered", "Cancelled"] as (
+                            | POStatus
+                            | "All"
+                          )[]
                         ).map((s) => (
                           <button
                             key={s}
@@ -6065,9 +6831,400 @@ export default function StockManager() {
                   </motion.div>
                 </motion.div>
               )}
+              {tab === "purchase-history" && (
+                <motion.div
+                  key="purchase-history"
+                  variants={pageVariants}
+                  initial="hidden"
+                  animate="show"
+                  exit="exit"
+                >
+                  <motion.div
+                    variants={staggerVariants}
+                    initial="hidden"
+                    animate="show"
+                    className="space-y-5"
+                  >
+                    <motion.div
+                      variants={itemVariants}
+                      className="grid grid-cols-1 md:grid-cols-3 gap-4"
+                    >
+                      {[
+                        {
+                          label: "Completed Orders",
+                          value: filteredCompletedPOs.length,
+                          accent: "border-t-emerald-400",
+                          text: "text-emerald-600",
+                        },
+                        {
+                          label: "Received Today",
+                          value: filteredCompletedPOs.filter(
+                            (o) =>
+                              o.receivedDate ===
+                              new Date().toISOString().split("T")[0],
+                          ).length,
+                          accent: "border-t-sky-400",
+                          text: "text-sky-600",
+                        },
+                        {
+                          label: "With Receipt Logged",
+                          value: filteredCompletedPOs.filter(
+                            (o) => !!o.receiptNo,
+                          ).length,
+                          accent: "border-t-slate-800",
+                          text: "text-slate-700",
+                        },
+                      ].map((k) => (
+                        <div
+                          key={k.label}
+                          className={`bg-white rounded-2xl p-5 shadow-sm border border-slate-100 border-t-4 ${k.accent}`}
+                        >
+                          <p className="text-xs text-slate-400 font-medium">
+                            {k.label}
+                          </p>
+                          <p
+                            className={`text-3xl font-bold mt-1 leading-none ${k.text}`}
+                          >
+                            {k.value}
+                          </p>
+                        </div>
+                      ))}
+                    </motion.div>
+                    <motion.div variants={itemVariants}>
+                      <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
+                        <div className="px-5 py-4 border-b border-slate-50 flex items-center justify-between gap-4">
+                          <div>
+                            <p className="font-semibold text-slate-800 text-sm">
+                              Purchase Order History
+                            </p>
+                            <p className="text-xs text-slate-400 mt-0.5">
+                              Completed purchase orders only
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className="text-sm text-slate-400">from</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const input = poHistoryFromInputRef.current as
+                                  | (HTMLInputElement & {
+                                      showPicker?: () => void;
+                                    })
+                                  | null;
+                                input?.showPicker?.();
+                                input?.focus();
+                              }}
+                              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-sm font-medium transition-all ${poHistoryDateFrom ? "border-slate-900 text-slate-900 bg-slate-900/5" : "border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-700 bg-white"}`}
+                            >
+                              {fmtFilterDate(poHistoryDateFrom)}
+                            </button>
+                            <span className="text-sm text-slate-400">to</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const input = poHistoryToInputRef.current as
+                                  | (HTMLInputElement & {
+                                      showPicker?: () => void;
+                                    })
+                                  | null;
+                                input?.showPicker?.();
+                                input?.focus();
+                              }}
+                              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-sm font-medium transition-all ${poHistoryDateTo ? "border-slate-900 text-slate-900 bg-slate-900/5" : "border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-700 bg-white"}`}
+                            >
+                              {fmtFilterDate(poHistoryDateTo)}
+                            </button>
+                            {(poHistoryDateFrom || poHistoryDateTo) && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPoHistoryDateFrom("");
+                                  setPoHistoryDateTo("");
+                                }}
+                                className="inline-flex items-center justify-center h-8 w-8 rounded-lg text-slate-400 hover:text-slate-600 transition-colors"
+                                title="Clear date range"
+                              >
+                                <svg
+                                  className="w-4 h-4"
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                  stroke="currentColor"
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2}
+                                    d="M6 18L18 6M6 6l12 12"
+                                  />
+                                </svg>
+                              </button>
+                            )}
+                            <input
+                              ref={poHistoryFromInputRef}
+                              type="date"
+                              value={poHistoryDateFrom}
+                              onChange={(e) => {
+                                const next = e.target.value;
+                                setPoHistoryDateFrom(next);
+                                if (
+                                  poHistoryDateTo &&
+                                  next &&
+                                  next > poHistoryDateTo
+                                ) {
+                                  setPoHistoryDateTo(next);
+                                }
+                              }}
+                              className="sr-only"
+                              tabIndex={-1}
+                              aria-hidden="true"
+                            />
+                            <input
+                              ref={poHistoryToInputRef}
+                              type="date"
+                              value={poHistoryDateTo}
+                              onChange={(e) => {
+                                const next = e.target.value;
+                                setPoHistoryDateTo(next);
+                                if (
+                                  poHistoryDateFrom &&
+                                  next &&
+                                  next < poHistoryDateFrom
+                                ) {
+                                  setPoHistoryDateFrom(next);
+                                }
+                              }}
+                              className="sr-only"
+                              tabIndex={-1}
+                              aria-hidden="true"
+                            />
+                          </div>
+                        </div>
+                        <div className="hidden lg:grid grid-cols-[1.5fr_2fr_1.5fr_1.5fr_1.5fr_1.5fr_auto] px-5 py-3 border-b border-slate-100 text-xs font-semibold text-slate-400 uppercase tracking-wide">
+                          <span>PO No.</span>
+                          <span>Supplier</span>
+                          <span>Receipt</span>
+                          <span>Received By</span>
+                          <span>Received On</span>
+                          <span>Total</span>
+                          <span className="text-right">Status</span>
+                        </div>
+                        <div className="divide-y divide-slate-50">
+                          {poLoading ? (
+                            <div className="py-12 text-center text-sm text-slate-400 animate-pulse">
+                              Loading purchase order history…
+                            </div>
+                          ) : filteredCompletedPOs.length === 0 ? (
+                            <EmptyState
+                              message={
+                                poHistoryDateFrom || poHistoryDateTo
+                                  ? "No completed purchase orders match this date range."
+                                  : "No completed purchase orders found."
+                              }
+                            />
+                          ) : (
+                            paginatedCompletedPOs.map((order, i) => (
+                              <div key={order.id}>
+                                <div className="hidden lg:grid grid-cols-[1.5fr_2fr_1.5fr_1.5fr_1.5fr_1.5fr_auto] px-5 py-4 transition-colors items-center hover:bg-slate-50/70">
+                                  <button
+                                    onClick={() => setSelectedOrder(order)}
+                                    className="contents text-left"
+                                  >
+                                    <span className="text-sm font-semibold text-slate-800">
+                                      {order.id}
+                                    </span>
+                                    <div>
+                                      <p className="text-sm font-medium text-slate-800">
+                                        {order.supplier}
+                                      </p>
+                                      <p className="text-xs text-slate-400">
+                                        {order.items.length} item
+                                        {order.items.length !== 1 ? "s" : ""}
+                                      </p>
+                                    </div>
+                                  </button>
+                                  <div>
+                                    {order.status === "Received" ? (
+                                      <button
+                                        onClick={() => setReceiptOrder(order)}
+                                        className="px-2.5 py-1 rounded-lg border border-emerald-200 text-emerald-700 text-xs font-semibold hover:bg-emerald-50 transition-colors"
+                                      >
+                                        View Receipt
+                                      </button>
+                                    ) : (
+                                      <span className="text-sm text-slate-500">
+                                        {order.receiptNo || "-"}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <button
+                                    onClick={() => setSelectedOrder(order)}
+                                    className="contents text-left"
+                                  >
+                                    <span className="text-sm text-slate-500">
+                                      {order.receivedBy || "-"}
+                                    </span>
+                                    <span className="text-sm text-slate-500">
+                                      {order.receivedDate
+                                        ? fmtReceivedDate(order.receivedDate)
+                                        : "-"}
+                                    </span>
+                                    <span className="text-sm font-semibold text-slate-800">
+                                      ₱
+                                      {(
+                                        calcPOTotal(order.items) * 1.12
+                                      ).toLocaleString(undefined, {
+                                        maximumFractionDigits: 0,
+                                      })}
+                                    </span>
+                                    <span className="flex justify-end">
+                                      <POBadge status={order.status} />
+                                    </span>
+                                  </button>
+                                </div>
+                                <motion.div
+                                  layout
+                                  initial={{ opacity: 0 }}
+                                  animate={{ opacity: 1 }}
+                                  transition={{ delay: i * 0.04 }}
+                                  onClick={() => setSelectedOrder(order)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                      e.preventDefault();
+                                      setSelectedOrder(order);
+                                    }
+                                  }}
+                                  role="button"
+                                  tabIndex={0}
+                                  className="lg:hidden w-full text-left px-4 py-3 transition-colors hover:bg-slate-50/70"
+                                >
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <p className="text-sm font-semibold text-slate-800 truncate">
+                                        {order.id}
+                                      </p>
+                                      <p className="text-xs text-slate-500 truncate">
+                                        {order.supplier}
+                                      </p>
+                                    </div>
+                                    <POBadge status={order.status} />
+                                  </div>
+                                  <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-slate-500">
+                                    <span>
+                                      Receipt: {order.receiptNo || "-"}
+                                    </span>
+                                    <span>
+                                      Received by: {order.receivedBy || "-"}
+                                    </span>
+                                    <span>
+                                      Date:{" "}
+                                      {order.receivedDate
+                                        ? fmtReceivedDate(order.receivedDate)
+                                        : "-"}
+                                    </span>
+                                    <span className="font-semibold text-slate-700">
+                                      ₱
+                                      {(
+                                        calcPOTotal(order.items) * 1.12
+                                      ).toLocaleString(undefined, {
+                                        maximumFractionDigits: 0,
+                                      })}
+                                    </span>
+                                  </div>
+                                </motion.div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                        {!poLoading && filteredCompletedPOs.length > 0 && (
+                          <div className="px-5 py-3 border-t border-slate-50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                            <p className="text-[11px] text-slate-400">
+                              Showing{" "}
+                              {(poHistoryPage - 1) * PO_HISTORY_PAGE_SIZE + 1}-
+                              {Math.min(
+                                poHistoryPage * PO_HISTORY_PAGE_SIZE,
+                                filteredCompletedPOs.length,
+                              )}{" "}
+                              of {filteredCompletedPOs.length} completed order
+                              {filteredCompletedPOs.length !== 1 ? "s" : ""}
+                            </p>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setPoHistoryPage((page) =>
+                                    Math.max(1, page - 1),
+                                  )
+                                }
+                                disabled={poHistoryPage === 1}
+                                className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-600 hover:border-slate-300 hover:text-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                              >
+                                Previous
+                              </button>
+                              <div className="flex items-center gap-1">
+                                {Array.from(
+                                  { length: poHistoryTotalPages },
+                                  (_, index) => index + 1,
+                                ).map((page) => (
+                                  <button
+                                    key={page}
+                                    type="button"
+                                    onClick={() => setPoHistoryPage(page)}
+                                    className={`h-8 min-w-8 px-2 rounded-lg text-xs font-semibold transition-colors ${
+                                      poHistoryPage === page
+                                        ? "bg-slate-900 text-white"
+                                        : "border border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-700"
+                                    }`}
+                                  >
+                                    {page}
+                                  </button>
+                                ))}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setPoHistoryPage((page) =>
+                                    Math.min(poHistoryTotalPages, page + 1),
+                                  )
+                                }
+                                disabled={poHistoryPage === poHistoryTotalPages}
+                                className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-600 hover:border-slate-300 hover:text-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                              >
+                                Next
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </motion.div>
+                  </motion.div>
+                </motion.div>
+              )}
             </AnimatePresence>
           )}
         </main>
+
+        <AnimatePresence>
+          {(tab === "dashboard" || tab === "withdrawal") &&
+            showDashboardBackToTop &&
+            !isLoading && (
+            <motion.button
+              initial={{ opacity: 0, y: 16, scale: 0.92 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 16, scale: 0.92 }}
+              transition={{ duration: 0.2 }}
+              onClick={() =>
+                scrollDashboardTo(
+                  tab === "withdrawal" ? "withdrawal-top" : "dashboard-top",
+                )
+              }
+              className="fixed bottom-6 right-6 z-30 flex h-12 w-12 items-center justify-center rounded-full bg-slate-900 text-white shadow-lg transition-colors hover:bg-slate-800"
+              aria-label="Back to top"
+              title="Back to top"
+            >
+              <span className="text-xl leading-none">↑</span>
+            </motion.button>
+          )}
+        </AnimatePresence>
 
         {/* ── Overlays ── */}
         <AnimatePresence>
@@ -6087,6 +7244,14 @@ export default function StockManager() {
                 onDelete={handlePODelete}
               />
             </>
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
+          {receiptOrder && (
+            <POReceiptModal
+              order={receiptOrder}
+              onClose={() => setReceiptOrder(null)}
+            />
           )}
         </AnimatePresence>
         <AnimatePresence>

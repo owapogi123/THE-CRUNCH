@@ -59,6 +59,14 @@ function getErrorMessage(err: unknown, fallback: string): string {
   return fallback;
 }
 
+function isAuthError(err: unknown): boolean {
+  if (typeof err !== "object" || err === null || !("message" in err)) return false;
+  const maybeMessage = (err as { message?: unknown }).message;
+  return typeof maybeMessage === "string"
+    ? /invalid or expired token|no token provided/i.test(maybeMessage)
+    : false;
+}
+
 function formatTime(date: Date): string {
   return date.toLocaleTimeString("en-PH", {
     hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true,
@@ -113,7 +121,7 @@ function groupAttendance(records: AttendanceRecord[]): EmployeeAttendance[] {
 export default function StaffAccounts() {
   const { addNotification } = useNotifications();
   const confirm = useConfirm();
-  const { user, attendance } = useAuth();
+  const { user, attendance, logout } = useAuth();
 
   const [employees, setEmployees] = useState<StaffMember[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -139,11 +147,20 @@ export default function StaffAccounts() {
     staffApi
       .getAll(user.token)
       .then(setEmployees)
-      .catch(() =>
-        addNotification({ id: crypto.randomUUID(), type: "error", label: "Failed to load staff accounts." })
-      )
+      .catch((err: unknown) => {
+        if (isAuthError(err)) {
+          logout();
+          addNotification({
+            id: crypto.randomUUID(),
+            type: "error",
+            label: "Session expired. Please log in again.",
+          });
+          return;
+        }
+        addNotification({ id: crypto.randomUUID(), type: "error", label: "Failed to load staff accounts." });
+      })
       .finally(() => setIsLoading(false));
-  }, [user?.token, addNotification]);
+  }, [user?.token, addNotification, logout]);
 
   const stats = [
     { label: "Total", value: employees.length },
@@ -176,6 +193,15 @@ export default function StaffAccounts() {
       setShowModal(false);
       addNotification({ id: crypto.randomUUID(), type: "success", label: "Staff account created successfully." });
     } catch (err: unknown) {
+      if (isAuthError(err)) {
+        logout();
+        addNotification({
+          id: crypto.randomUUID(),
+          type: "error",
+          label: "Session expired. Please log in again.",
+        });
+        return;
+      }
       addNotification({ id: crypto.randomUUID(), type: "error", label: getErrorMessage(err, "Failed to create account.") });
     } finally {
       setIsLoading(false);
@@ -208,6 +234,15 @@ export default function StaffAccounts() {
       setEmployees((prev) => prev.filter((e) => e.id !== id));
       addNotification({ id: crypto.randomUUID(), type: "success", label: "Staff account deleted." });
     } catch (err: unknown) {
+      if (isAuthError(err)) {
+        logout();
+        addNotification({
+          id: crypto.randomUUID(),
+          type: "error",
+          label: "Session expired. Please log in again.",
+        });
+        return;
+      }
       addNotification({ id: crypto.randomUUID(), type: "error", label: getErrorMessage(err, "Failed to delete account.") });
     }
   };
