@@ -22,6 +22,12 @@ async function ensureInventoryAlertColumns() {
   }
 }
 
+async function ensureProductsImageColumn() {
+  if (!(await hasColumn("products", "image"))) {
+    await db.query("ALTER TABLE products ADD COLUMN image LONGTEXT NULL");
+  }
+}
+
 function toMySqlDateTime(value) {
   if (!value) return null;
   const d = new Date(value);
@@ -101,6 +107,7 @@ router.get("/", async (req, res) => {
   try {
     await ensureBatchTable();
     await ensureInventoryAlertColumns();
+    await ensureProductsImageColumn();
 
     // Ensure inventory rows exist for all menu products.
     await db.query(
@@ -144,11 +151,13 @@ router.get("/", async (req, res) => {
          COALESCE(m.Product_Name, i.Item_Purchased, 'Unnamed Product')          AS name,
          COALESCE(i.Stock, 0)                                                   AS stock,
          COALESCE(CAST(m.Price AS CHAR), '0')                                   AS price,
+         COALESCE(p.description, '')                                            AS description,
          COALESCE(m.Promo, '')                                                  AS promo,
          CASE WHEN COALESCE(m.Promo, '') = 'RAW_MATERIAL' THEN 1 ELSE 0 END    AS isRawMaterial,
-         '/img/placeholder.jpg'                                                 AS image
+         COALESCE(p.image, '/img/placeholder.jpg')                              AS image
        FROM Inventory i
        LEFT JOIN Menu m ON m.Product_ID = i.Product_ID
+       LEFT JOIN products p ON p.id = i.Product_ID
        LEFT JOIN (
          SELECT product_id, MAX(unit) AS unit
          FROM Batches

@@ -69,6 +69,7 @@ async function ensureTables() {
       delivery_date DATE         NOT NULL,
       status        ENUM('Draft','Ordered','Received','Cancelled') NOT NULL DEFAULT 'Draft',
       notes         TEXT         DEFAULT NULL,
+      receipt_no    VARCHAR(255) DEFAULT NULL,
       received_by   VARCHAR(255) DEFAULT NULL,
       received_date DATE         DEFAULT NULL,
       created_at    TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
@@ -99,6 +100,16 @@ async function ensureTables() {
       );
     }
   }
+
+  {
+    const [cols] = await db.query(`SHOW COLUMNS FROM purchase_orders`);
+    const fieldSet = new Set(cols.map((c) => c.Field));
+    if (!fieldSet.has("receipt_no")) {
+      await db.query(
+        `ALTER TABLE purchase_orders ADD COLUMN receipt_no VARCHAR(255) DEFAULT NULL`,
+      );
+    }
+  }
 }
 
 // ─── shape helpers ────────────────────────────────────────────────────────────
@@ -112,6 +123,7 @@ function shapePO(row, items = []) {
     deliveryDate: toDateString(row.delivery_date),
     status: row.status,
     notes: row.notes || "",
+    receiptNo: row.receipt_no || undefined,
     receivedBy: row.received_by || undefined,
     receivedDate: toDateString(row.received_date) || undefined,
     items: items.map((i) => ({
@@ -378,6 +390,7 @@ router.patch("/:id/receive", async (req, res) => {
   const poId = req.params.id;
   const {
     receivedBy = "Staff on Duty",
+    receiptNo = null,
     receivedDate,
     itemExpiryDates = {},
   } = req.body;
@@ -417,9 +430,9 @@ router.patch("/:id/receive", async (req, res) => {
 
     await conn.query(
       `UPDATE purchase_orders
-       SET status = 'Received', received_by = ?, received_date = ?
+       SET status = 'Received', receipt_no = ?, received_by = ?, received_date = ?
        WHERE po_id = ?`,
-      [receivedBy, recDate, poId],
+      [receiptNo ? String(receiptNo).trim() : null, receivedBy, recDate, poId],
     );
 
     const [items] = await conn.query(
@@ -545,7 +558,7 @@ router.patch("/:id/receive", async (req, res) => {
     await logSupplierHistory({
       supplier_name: existing.supplier, // ← directly from PO, always correct
       action: "Batch Received",
-      details: `PO: ${poId} | Received by: ${receivedBy} | Items: ${receivedItemNames.join(", ") || "none"}`,
+      details: `PO: ${poId} | Receipt: ${receiptNo ? String(receiptNo).trim() : "N/A"} | Received by: ${receivedBy} | Items: ${receivedItemNames.join(", ") || "none"}`,
       performed_by: receivedBy,
     });
 

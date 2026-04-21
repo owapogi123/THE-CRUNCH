@@ -7,6 +7,71 @@ function normaliseRecordedBy(recorded_by) {
   return Number.isFinite(n) ? n : String(recorded_by);
 }
 
+async function ensureKitchenBatchesTable(conn = db) {
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS kitchen_batches (
+      kitchen_batch_id INT PRIMARY KEY AUTO_INCREMENT,
+      storage_batch_id INT NULL,
+      product_id INT NOT NULL,
+      withdrawn_qty DECIMAL(10,2) NOT NULL,
+      used_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
+      returned_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
+      unit VARCHAR(20) DEFAULT 'kg',
+      expiry_date DATE NULL,
+      withdrawn_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      status ENUM('active','reconciled') DEFAULT 'active',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )
+  `);
+}
+
+async function applySpoilageToKitchenBatches(conn, product_id, qty) {
+  await ensureKitchenBatchesTable(conn);
+
+  const [rows] = await conn.query(
+    `SELECT
+       kitchen_batch_id,
+       COALESCE(withdrawn_qty, 0) AS withdrawn_qty,
+       COALESCE(used_qty, 0) AS used_qty,
+       COALESCE(returned_qty, 0) AS returned_qty
+     FROM kitchen_batches
+     WHERE product_id = ?
+       AND DATE(withdrawn_at) = CURDATE()
+     ORDER BY withdrawn_at ASC, kitchen_batch_id ASC
+     FOR UPDATE`,
+    [product_id],
+  );
+
+  let remaining = qty;
+
+  for (const row of rows) {
+    if (remaining <= 0) break;
+
+    const withdrawnQty = Number(row.withdrawn_qty) || 0;
+    const usedQty = Number(row.used_qty) || 0;
+    const returnedQty = Number(row.returned_qty) || 0;
+    const available = Math.max(0, withdrawnQty - usedQty - returnedQty);
+
+    if (available <= 0) continue;
+
+    const take = Math.min(available, remaining);
+    const nextUsedQty = +(usedQty + take).toFixed(2);
+    const nextStatus =
+      nextUsedQty + returnedQty >= withdrawnQty ? "reconciled" : "active";
+
+    await conn.query(
+      `UPDATE kitchen_batches
+       SET used_qty = ?,
+           status = ?
+       WHERE kitchen_batch_id = ?`,
+      [nextUsedQty, nextStatus, row.kitchen_batch_id],
+    );
+
+    remaining = +(remaining - take).toFixed(2);
+  }
+}
+
 async function ensureInventoryRow(conn, product_id) {
   await conn.query(
     `INSERT INTO Inventory (Product_ID, Quantity, Stock, Item_Purchased)
@@ -186,6 +251,8 @@ router.post("/spoilage", async (req, res) => {
     );
 
     // Spoilage — deducts mainStock only, dailyWithdrawn unchanged
+    await applySpoilageToKitchenBatches(conn, product_id, qty);
+
     await conn.query(
       `UPDATE Inventory
        SET Daily_Withdrawn = GREATEST(COALESCE(Daily_Withdrawn, 0) - ?, 0),
