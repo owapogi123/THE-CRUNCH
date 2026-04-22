@@ -1,7 +1,10 @@
 const router = require("express").Router();
 const db = require("../config/db");
-const inventoryRoutes = require("./inventoryRoutes");
-const deductStockForOrder = inventoryRoutes.deductStockForOrder;
+const { deductStockForOrder } = require("../services/inventoryService");
+const fetchFn = (...args) =>
+  (typeof fetch === "function"
+    ? fetch(...args)
+    : import("node-fetch").then(({ default: nodeFetch }) => nodeFetch(...args)));
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 
@@ -28,6 +31,73 @@ function isFinishedStatus(value) {
   return v === "completed" || v === "cancelled";
 }
 
+function hasPaidCheckout(attributes) {
+  const payments = Array.isArray(attributes?.payments) ? attributes.payments : [];
+  return payments.some((payment) => {
+    const status = String(payment?.attributes?.status || payment?.status || "").toLowerCase();
+    return status === "paid";
+  });
+}
+
+function getPayMongoSecretKey() {
+  return process.env.PAYMONGO_SECRET_KEY || process.env.PAYMONGO_SK || "";
+}
+
+function getPayMongoBaseUrl() {
+  return (process.env.PAYMONGO_API_BASE_URL || "https://api.paymongo.com/v1").replace(/\/+$/, "");
+}
+
+function getAppBaseUrl(req) {
+  const configured = process.env.APP_BASE_URL || process.env.FRONTEND_URL || "";
+  if (configured) return configured.replace(/\/+$/, "");
+  const host = req.get("host");
+  const proto = req.get("x-forwarded-proto") || req.protocol || "http";
+  return `${proto}://${host}`;
+}
+
+async function payMongoRequest(path, options = {}) {
+  const secretKey = getPayMongoSecretKey();
+  if (!secretKey) {
+    const error = new Error("PAYMONGO_SECRET_KEY is not configured");
+    error.statusCode = 500;
+    throw error;
+  }
+
+  const headers = {
+    Accept: "application/json",
+    Authorization: `Basic ${Buffer.from(`${secretKey}:`).toString("base64")}`,
+    ...options.headers,
+  };
+
+  const response = await fetchFn(`${getPayMongoBaseUrl()}${path}`, {
+    ...options,
+    headers,
+  });
+  const text = await response.text();
+  let payload = {};
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch (_) {
+      payload = { raw: text };
+    }
+  }
+
+  if (!response.ok) {
+    const message =
+      payload?.errors?.[0]?.detail ||
+      payload?.errors?.[0]?.code ||
+      payload?.message ||
+      `PayMongo request failed with HTTP ${response.status}`;
+    const error = new Error(message);
+    error.statusCode = response.status;
+    error.payload = payload;
+    throw error;
+  }
+
+  return payload;
+}
+
 // Ensure startedAt column exists once at startup
 let startedAtColumnReady = false;
 async function ensureStartedAtColumn() {
@@ -38,6 +108,26 @@ async function ensureStartedAtColumn() {
     // Column already exists — this is expected after first run
   }
   startedAtColumnReady = true;
+}
+
+let onlineOrderColumnsReady = false;
+async function ensureOnlineOrderColumns() {
+  if (onlineOrderColumnsReady) return;
+  const statements = [
+    "ALTER TABLE orders ADD COLUMN customer_user_id INT NULL",
+    "ALTER TABLE orders ADD COLUMN payment_reference VARCHAR(255) NULL",
+    "ALTER TABLE orders ADD COLUMN payment_status VARCHAR(50) NULL",
+  ];
+
+  for (const statement of statements) {
+    try {
+      await db.query(statement);
+    } catch (_) {
+      // Column already exists on subsequent runs.
+    }
+  }
+
+  onlineOrderColumnsReady = true;
 }
 
 // ─── ROUTES (specific paths MUST come before /:id wildcards) ──────────────────
@@ -196,20 +286,201 @@ router.get("/new-online", async (req, res) => {
   }
 });
 
+// GET /orders/customer/:customerUserId — customer tracking + history
+router.get("/customer/:customerUserId", async (req, res) => {
+  try {
+    await ensureOnlineOrderColumns();
+
+    const customerUserId = Number(req.params.customerUserId);
+    if (!Number.isFinite(customerUserId) || customerUserId <= 0) {
+      return res.status(400).json({ message: "Invalid customer user id" });
+    }
+
+    const [rows] = await db.query(
+      `SELECT
+         o.Order_ID AS id,
+         o.Total_Amount AS total,
+         o.Status AS status,
+         o.Order_Date AS createdAt,
+         o.Order_Type AS orderType,
+         o.payment_reference AS paymentReference,
+         o.payment_status AS paymentStatus,
+         p.Payment_Type AS paymentMethod,
+         oi.Quantity AS quantity,
+         COALESCE(m.Product_Name, pr.name) AS productName
+       FROM orders o
+       LEFT JOIN order_item oi ON oi.Order_ID = o.Order_ID
+       LEFT JOIN menu m ON m.Product_ID = oi.Product_ID
+       LEFT JOIN products pr ON pr.id = oi.Product_ID
+       LEFT JOIN (
+         SELECT p1.Order_ID, p1.Payment_Type
+         FROM payments p1
+         INNER JOIN (
+           SELECT Order_ID, MAX(Payment_ID) AS maxPaymentId
+           FROM payments
+           GROUP BY Order_ID
+         ) latest ON latest.maxPaymentId = p1.Payment_ID
+       ) p ON p.Order_ID = o.Order_ID
+       WHERE o.customer_user_id = ?
+       ORDER BY o.Order_ID DESC`,
+      [customerUserId]
+    );
+
+    const grouped = {};
+    for (const row of rows) {
+      if (!grouped[row.id]) {
+        grouped[row.id] = {
+          id: row.id,
+          orderNumber: `#${row.id}`,
+          total: Number(row.total) || 0,
+          createdAt: row.createdAt,
+          orderType: normalizeOrderType(row.orderType),
+          rawStatus: row.status,
+          trackingStatus: row.status || "Pending",
+          paymentReference: row.paymentReference || null,
+          paymentStatus: row.paymentStatus || null,
+          paymentMethod: row.paymentMethod || "gcash",
+          items: [],
+        };
+      }
+
+      if (row.productName) {
+        grouped[row.id].items.push({
+          name: row.productName,
+          quantity: Number(row.quantity) || 0,
+        });
+      }
+    }
+
+    const allOrders = Object.values(grouped);
+    const activeOrders = allOrders.filter((order) => {
+      const status = String(order.rawStatus || "").toLowerCase();
+      return status !== "completed" && status !== "cancelled";
+    });
+    const historyOrders = allOrders.filter((order) => {
+      const status = String(order.rawStatus || "").toLowerCase();
+      return status === "completed" || status === "cancelled";
+    });
+
+    res.json({ activeOrders, historyOrders });
+  } catch (err) {
+    console.error("GET /orders/customer/:customerUserId error:", err.message);
+    res.status(500).json({ message: "DB error", error: err.message });
+  }
+});
+
+// POST /orders/paymongo/checkout — create GCash checkout session
+router.post("/paymongo/checkout", async (req, res) => {
+  try {
+    const { items, total, customerUserId, customerName, customerEmail } = req.body || {};
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ message: "Order items are required" });
+    }
+
+    const totalAmount = Math.round(Number(total || 0) * 100);
+    if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+      return res.status(400).json({ message: "A valid total amount is required" });
+    }
+
+    const appBaseUrl = getAppBaseUrl(req);
+    const session = await payMongoRequest("/checkout_sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        data: {
+          attributes: {
+            billing: customerEmail || customerName ? {
+              name: customerName || "The Crunch Customer",
+              email: customerEmail || undefined,
+            } : undefined,
+            cancel_url: `${appBaseUrl}/usersmenu?payment=cancelled`,
+            description: "The Crunch pickup order",
+            line_items: items.map((item) => ({
+              amount: Math.round(Number(item.price || 0) * 100),
+              currency: "PHP",
+              description: item.name,
+              name: item.name,
+              quantity: Number(item.qty) || 0,
+            })),
+            payment_method_types: ["gcash"],
+            send_email_receipt: false,
+            show_line_items: true,
+            success_url: `${appBaseUrl}/usersmenu?payment=success`,
+            metadata: {
+              customerUserId: customerUserId ? String(customerUserId) : "",
+              total: String(total || 0),
+            },
+          },
+        },
+      }),
+    });
+
+    const attributes = session?.data?.attributes || {};
+    res.json({
+      checkoutSessionId: session?.data?.id,
+      checkoutUrl: attributes.checkout_url,
+      status: attributes.status,
+    });
+  } catch (err) {
+    console.error("POST /orders/paymongo/checkout error:", err.message);
+    res.status(err.statusCode || 500).json({
+      message: err.message || "Failed to create PayMongo checkout session",
+      error: err.payload || null,
+    });
+  }
+});
+
+// GET /orders/paymongo/checkout/:checkoutSessionId — verify payment status
+router.get("/paymongo/checkout/:checkoutSessionId", async (req, res) => {
+  try {
+    const { checkoutSessionId } = req.params;
+    const session = await payMongoRequest(`/checkout_sessions/${checkoutSessionId}`, {
+      method: "GET",
+    });
+    const attributes = session?.data?.attributes || {};
+    const paid = hasPaidCheckout(attributes);
+
+    res.json({
+      checkoutSessionId,
+      paid,
+      status: paid ? "paid" : attributes.status || "active",
+      paymentReference:
+        attributes.reference_number ||
+        attributes.payments?.[0]?.id ||
+        checkoutSessionId,
+      checkoutUrl: attributes.checkout_url || null,
+    });
+  } catch (err) {
+    console.error("GET /orders/paymongo/checkout/:checkoutSessionId error:", err.message);
+    res.status(err.statusCode || 500).json({
+      message: err.message || "Failed to verify PayMongo checkout session",
+      error: err.payload || null,
+    });
+  }
+});
+
 // POST /orders — place a new order (cashier or online customer)
 router.post("/", async (req, res) => {
   let conn;
   try {
+    await ensureOnlineOrderColumns();
+
     const {
       items,
       total,
       customerId,
+      customerUserId,
       cashierId,
       cashier_id,
       orderType,
       order_type,
       paymentMethod,
       payment_method,
+      paymentReference,
+      payment_reference,
+      paymentStatus,
+      payment_status,
     } = req.body;
 
     // Online orders from usersmenu.tsx send NO cashierId — that's intentional.
@@ -221,6 +492,22 @@ router.post("/", async (req, res) => {
 
     const finalOrderType = normalizeOrderType(order_type || orderType);
     const finalPaymentMethod = String(payment_method || paymentMethod || "cash");
+    const finalPaymentReference = String(payment_reference || paymentReference || "").trim() || null;
+    const finalPaymentStatus = String(payment_status || paymentStatus || (finalPaymentReference ? "Paid" : "Pending"));
+    const resolvedCustomerUserId = Number(customerUserId) > 0 ? Number(customerUserId) : null;
+    const normalizedPaymentStatus = finalPaymentStatus.toLowerCase();
+
+    if (resolvedCustomerUserId && resolvedCashierId == null && finalOrderType === "take-out") {
+      if (finalPaymentMethod.toLowerCase() !== "gcash") {
+        return res.status(400).json({ message: "Online pickup orders must use GCash payment" });
+      }
+      if (!finalPaymentReference) {
+        return res.status(400).json({ message: "Online pickup orders require a payment reference" });
+      }
+      if (normalizedPaymentStatus !== "paid" && normalizedPaymentStatus !== "completed") {
+        return res.status(400).json({ message: "Online pickup orders must be paid before placement" });
+      }
+    }
 
     conn = await db.getConnection();
     await conn.beginTransaction();
@@ -228,9 +515,9 @@ router.post("/", async (req, res) => {
     // Insert the order header
     const [orderResult] = await conn.query(
       `INSERT INTO orders
-         (Total_Amount, Customer_ID, Cashier_ID, Order_Type, Status)
-       VALUES (?, ?, ?, ?, 'Pending')`,
-      [total, customerId || null, resolvedCashierId, finalOrderType]
+         (Total_Amount, Customer_ID, Cashier_ID, Order_Type, Status, customer_user_id, payment_reference, payment_status)
+       VALUES (?, ?, ?, ?, 'Pending', ?, ?, ?)`,
+      [total, customerId || null, resolvedCashierId, finalOrderType, resolvedCustomerUserId, finalPaymentReference, finalPaymentStatus]
     );
     const orderId = orderResult.insertId;
 
@@ -297,8 +584,20 @@ router.post("/", async (req, res) => {
       [orderId, finalPaymentMethod, resolvedCashierId]
     );
 
+    if (normalizedPaymentStatus === "paid" || normalizedPaymentStatus === "completed") {
+      await conn.query(
+        "UPDATE Payments SET Payment_Status = 'Completed' WHERE Order_ID = ?",
+        [orderId]
+      );
+    }
+
     await conn.commit();
-    res.json({ message: "Order placed", orderId, orderNumber: `#${orderId}` });
+    res.json({
+      message: "Order placed",
+      orderId,
+      orderNumber: `#${orderId}`,
+      trackingStatus: "Pending",
+    });
   } catch (err) {
     if (conn) await conn.rollback();
     console.error("POST /orders error:", JSON.stringify({
