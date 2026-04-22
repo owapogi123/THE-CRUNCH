@@ -295,4 +295,52 @@ router.patch("/:id", async (req, res) => {
   }
 });
 
+router.get("/new-online", async (req, res) => {
+  try {
+    const since = req.query.since
+      ? new Date(req.query.since)
+      : new Date(Date.now() - 5 * 60 * 1000);
+
+    const [rows] = await db.query(
+      `SELECT o.Order_ID as id, o.Total_Amount as total,
+              o.Order_Date as createdAt, o.Order_Type as orderType,
+              oi.Quantity as quantity,
+              COALESCE(m.Product_Name, pr.name) as productName
+       FROM orders o
+       LEFT JOIN order_item oi ON oi.Order_ID = o.Order_ID
+       LEFT JOIN menu m ON m.Product_ID = oi.Product_ID
+       LEFT JOIN products pr ON pr.id = oi.Product_ID
+       WHERE o.Cashier_ID IS NULL
+         AND o.Order_Date >= ?
+       ORDER BY o.Order_ID DESC`,
+      [since]
+    );
+
+    const grouped = {};
+    for (const r of rows) {
+      if (!grouped[r.id]) {
+        grouped[r.id] = {
+          id: r.id,
+          total: Number(r.total),
+          createdAt: r.createdAt,
+          orderType: r.orderType,
+          items: [],
+        };
+      }
+      if (r.productName) {
+        grouped[r.id].items.push({
+          name: r.productName,
+          quantity: Number(r.quantity) || 0,
+        });
+      }
+    }
+
+    res.json(Object.values(grouped));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "DB error", error: err.message });
+  }
+});
 module.exports = router;
+
+
