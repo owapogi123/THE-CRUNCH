@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion, useInView, useScroll, useTransform } from 'framer-motion';
+import { motion, AnimatePresence, useInView, useScroll, useTransform } from 'framer-motion';
 
 const PP = "'Poppins', sans-serif";
 
@@ -14,6 +14,8 @@ function getAuth(): boolean {
   return true;
 }
 
+// ── Reveal helper ─────────────────────────────────────────────────────────────
+
 function Reveal({
   children, delay = 0, dir = 'up', style = {},
 }: {
@@ -24,8 +26,8 @@ function Reveal({
   const ref = useRef<HTMLDivElement>(null);
   const inView = useInView(ref, { once: true, margin: '-60px' });
   const init =
-    dir === 'up' ? { opacity: 0, y: 40 } :
-    dir === 'left' ? { opacity: 0, x: -40 } :
+    dir === 'up'    ? { opacity: 0, y: 40 } :
+    dir === 'left'  ? { opacity: 0, x: -40 } :
     dir === 'right' ? { opacity: 0, x: 40 } :
     { opacity: 0 };
   return (
@@ -37,6 +39,8 @@ function Reveal({
     </motion.div>
   );
 }
+
+// ── Marquee ───────────────────────────────────────────────────────────────────
 
 function Marquee({ items }: { items: string[] }) {
   const rep = [...items, ...items, ...items];
@@ -62,16 +66,20 @@ function Marquee({ items }: { items: string[] }) {
   );
 }
 
+// ── Data ──────────────────────────────────────────────────────────────────────
+
 const marqueeItems = ['Fresh Daily', '7 Bold Flavors', '250+ Branches', 'Since 2021', 'Quezon City', 'Boneless Fried Chicken', 'Made with Love', 'Fast Service'];
 
 const perks = [
-  { num: '01', title: 'Fresh Daily', desc: 'Ingredients sourced and prepped every morning — no shortcuts, ever.' },
-  { num: '02', title: 'Fast Service', desc: 'Hot and crispy, from our fryer to your hands in minutes.' },
-  { num: '03', title: 'Made with Love', desc: 'Every order is crafted like it is going to family.' },
-  { num: '04', title: 'Bold Flavors', desc: '7 signature sauces crafted to satisfy any mood or craving.' },
-  { num: '05', title: 'Community First', desc: 'Built for the neighborhood, grown by the neighborhood.' },
-  { num: '06', title: '250+ Branches', desc: 'From Luzon to Mindanao — The Crunch is everywhere you are.' },
+  { num: '01', title: 'Fresh Daily',      desc: 'Ingredients sourced and prepped every morning — no shortcuts, ever.' },
+  { num: '02', title: 'Fast Service',     desc: 'Hot and crispy, from our fryer to your hands in minutes.' },
+  { num: '03', title: 'Made with Love',   desc: 'Every order is crafted like it is going to family.' },
+  { num: '04', title: 'Bold Flavors',     desc: '7 signature sauces crafted to satisfy any mood or craving.' },
+  { num: '05', title: 'Community First',  desc: 'Built for the neighborhood, grown by the neighborhood.' },
+  { num: '06', title: '250+ Branches',    desc: 'From Luzon to Mindanao — The Crunch is everywhere you are.' },
 ];
+
+// ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function AboutTheCrunch() {
   const navigate = useNavigate();
@@ -133,18 +141,24 @@ export default function AboutTheCrunch() {
         </button>
 
         <nav style={{ display: 'flex', gap: 4 }}>
-          {[{ l: 'Home', p: '/' }, { l: 'Menu', p: '/usersmenu' }, { l: 'About', p: '/aboutthecrunch' }].map(({ l, p }) => (
-            <motion.button key={l} whileTap={{ scale: 0.96 }} onClick={() => navigate(p)}
-              style={{
-                background: 'none', border: 'none', cursor: 'pointer',
-                fontFamily: PP, fontSize: 13, fontWeight: 500,
-                color: p === '/aboutthecrunch' ? '#f5c842' : 'rgba(237,233,226,0.5)',
-                padding: '6px 14px', borderRadius: 8, transition: 'all 0.2s',
-              }}
-              onMouseEnter={e => { e.currentTarget.style.color = '#ede9e2'; e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; }}
-              onMouseLeave={e => { e.currentTarget.style.color = p === '/aboutthecrunch' ? '#f5c842' : 'rgba(237,233,226,0.5)'; e.currentTarget.style.background = 'transparent'; }}
-            >{l}</motion.button>
-          ))}
+          {[{ l: 'Home', p: '/' }, { l: 'Menu', p: '/usersmenu' }, { l: 'About', p: '/aboutthecrunch' }].map(({ l, p }) => {
+            const isMenu = l === 'Menu';
+            return (
+              <motion.button
+                key={l}
+                whileTap={{ scale: 0.96 }}
+                onClick={() => isMenu ? navigate('/usersmenu?showOrderModal=true') : navigate(p)}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  fontFamily: PP, fontSize: 13, fontWeight: 500,
+                  color: p === '/aboutthecrunch' ? '#f5c842' : 'rgba(237,233,226,0.5)',
+                  padding: '6px 14px', borderRadius: 8, transition: 'all 0.2s',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.color = '#ede9e2'; e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; }}
+                onMouseLeave={e => { e.currentTarget.style.color = p === '/aboutthecrunch' ? '#f5c842' : 'rgba(237,233,226,0.5)'; e.currentTarget.style.background = 'transparent'; }}
+              >{l}</motion.button>
+            );
+          })}
         </nav>
 
         <div style={{ display: 'flex', gap: 8 }}>
@@ -197,7 +211,8 @@ export default function AboutTheCrunch() {
 
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.82, duration: 0.6 }}
               style={{ display: 'flex', gap: 12 }}>
-              <motion.button whileHover={{ scale: 1.03, y: -2 }} whileTap={{ scale: 0.97 }} onClick={() => navigate('/usersmenu')}
+              <motion.button whileHover={{ scale: 1.03, y: -2 }} whileTap={{ scale: 0.97 }}
+                onClick={() => navigate('/usersmenu?showOrderModal=true')}
                 style={{ background: '#f5c842', border: 'none', borderRadius: 10, padding: '13px 32px', fontSize: 13, fontWeight: 700, color: '#1a0a00', cursor: 'pointer', fontFamily: PP }}>
                 Order Now
               </motion.button>
@@ -323,7 +338,8 @@ export default function AboutTheCrunch() {
             <Reveal dir="right" delay={0.2}>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 20 }}>
                 <div style={{ width: '100%', height: 1, background: 'rgba(245,200,66,0.15)' }} />
-                <motion.button whileHover={{ scale: 1.03, y: -2 }} whileTap={{ scale: 0.97 }} onClick={() => navigate('/usersmenu')}
+                <motion.button whileHover={{ scale: 1.03, y: -2 }} whileTap={{ scale: 0.97 }}
+                  onClick={() => navigate('/usersmenu?showOrderModal=true')}
                   style={{ background: '#f5c842', border: 'none', borderRadius: 10, padding: '14px 40px', fontSize: 13.5, fontWeight: 700, color: '#1a0a00', cursor: 'pointer', fontFamily: PP }}>
                   See the Menu
                 </motion.button>
@@ -390,7 +406,8 @@ export default function AboutTheCrunch() {
               Visit us today and experience the crispiest chicken in town. Dine in, takeout, or order for your whole crew.
             </p>
             <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
-              <motion.button whileHover={{ scale: 1.04, y: -2 }} whileTap={{ scale: 0.97 }} onClick={() => navigate('/usersmenu')}
+              <motion.button whileHover={{ scale: 1.04, y: -2 }} whileTap={{ scale: 0.97 }}
+                onClick={() => navigate('/usersmenu?showOrderModal=true')}
                 style={{ background: '#f5c842', color: '#1a0a00', border: 'none', borderRadius: 10, padding: '15px 44px', fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: PP }}>
                 Order Now
               </motion.button>
@@ -423,7 +440,8 @@ export default function AboutTheCrunch() {
             <div>
               <p style={{ fontFamily: PP, fontSize: 9, fontWeight: 700, color: 'rgba(237,233,226,0.15)', letterSpacing: '0.2em', textTransform: 'uppercase', marginBottom: 16 }}>Navigate</p>
               {[{ l: 'Home', p: '/' }, { l: 'Menu', p: '/usersmenu' }, { l: 'About', p: '/aboutthecrunch' }].map(({ l, p }) => (
-                <motion.button key={l} whileHover={{ x: 3 }} onClick={() => navigate(p)}
+                <motion.button key={l} whileHover={{ x: 3 }}
+                  onClick={() => l === 'Menu' ? navigate('/usersmenu?showOrderModal=true') : navigate(p)}
                   style={{ display: 'block', background: 'none', border: 'none', cursor: 'pointer', fontFamily: PP, fontSize: 13.5, fontWeight: 400, color: 'rgba(237,233,226,0.32)', padding: '5px 0', textAlign: 'left', transition: 'color 0.2s' }}
                   onMouseEnter={e => { e.currentTarget.style.color = '#f5c842'; }}
                   onMouseLeave={e => { e.currentTarget.style.color = 'rgba(237,233,226,0.32)'; }}
@@ -434,7 +452,7 @@ export default function AboutTheCrunch() {
               <p style={{ fontFamily: PP, fontSize: 9, fontWeight: 700, color: 'rgba(237,233,226,0.15)', letterSpacing: '0.2em', textTransform: 'uppercase', marginBottom: 16 }}>Follow</p>
               {[
                 { l: 'Instagram', h: 'https://www.instagram.com/thecrunchfairview' },
-                { l: 'Facebook', h: 'https://www.facebook.com/thecrunchfairview' },
+                { l: 'Facebook',  h: 'https://www.facebook.com/thecrunchfairview' },
               ].map(s => (
                 <motion.a key={s.l} href={s.h} target="_blank" rel="noopener noreferrer"
                   whileHover={{ x: 3 }}
@@ -453,6 +471,7 @@ export default function AboutTheCrunch() {
           </div>
         </div>
       </footer>
+
     </div>
   );
-}
+} 

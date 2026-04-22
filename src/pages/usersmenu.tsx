@@ -433,6 +433,11 @@ const TAG_COLORS: Record<string, { bg: string; text: string }> = {
   "Must Try": { bg: "rgba(139,92,246,0.12)", text: "#a78bfa" },
 };
 
+const DELIVERY_LINKS = {
+  foodpanda: "https://foodpanda.go.link/9O718",
+  grab: "https://r.grab.com/g/6-20260421_220129_6e23187a089147b69736d4cacea38146_MEXMPS-2-C4A3RBCER7NFUE",
+};
+
 function formatDate(d: Date): string {
   return d.toLocaleDateString("en-PH", {
     month: "short",
@@ -448,19 +453,10 @@ function formatTime(d: Date): string {
   });
 }
 
-/* ── Inline SVG icons — no emoji, no external deps ── */
+/* ── Inline SVG icons ── */
 function IconHistory() {
   return (
-    <svg
-      width="17"
-      height="17"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="12 8 12 12 14 14" />
       <path d="M3.05 11a9 9 0 1 0 .5-4.5" />
       <polyline points="1 4 3 6 5 4" />
@@ -469,16 +465,7 @@ function IconHistory() {
 }
 function IconReceipt() {
   return (
-    <svg
-      width="15"
-      height="15"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1z" />
       <line x1="8" y1="9" x2="16" y2="9" />
       <line x1="8" y1="13" x2="16" y2="13" />
@@ -488,37 +475,595 @@ function IconReceipt() {
 }
 function IconChevronDown() {
   return (
-    <svg
-      width="13"
-      height="13"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="6 9 12 15 18 9" />
     </svg>
   );
 }
 function IconEmptyClipboard() {
   return (
-    <svg
-      width="42"
-      height="42"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
+    <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
       <rect x="9" y="3" width="6" height="4" rx="2" />
       <line x1="9" y1="12" x2="15" y2="12" />
       <line x1="9" y1="16" x2="13" y2="16" />
     </svg>
+  );
+}
+function IconBag() {
+  return (
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
+      <line x1="3" y1="6" x2="21" y2="6" />
+      <path d="M16 10a4 4 0 0 1-8 0" />
+    </svg>
+  );
+}
+function IconScooter() {
+  return (
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="5.5" cy="17.5" r="2.5" />
+      <circle cx="17.5" cy="17.5" r="2.5" />
+      <path d="M8 17.5h7" />
+      <path d="M15 5h2l2 5H9l1-5h3" />
+      <path d="M12 5v5" />
+    </svg>
+  );
+}
+function IconExternalLink() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+      <polyline points="15 3 21 3 21 9" />
+      <line x1="10" y1="14" x2="21" y2="3" />
+    </svg>
+  );
+}
+
+function OrderTypeModal({ onClose }: { onClose: () => void }) {
+  const [view, setView] = useState<"choose" | "delivery">("choose");
+
+  const handlePickUp = () => {
+    onClose();
+  };
+
+  const handleDeliveryLink = (url: string) => {
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  return (
+    <>
+      {/* Backdrop */}
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.25 }}
+        onClick={onClose}
+        style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(0,0,0,0.72)",
+          zIndex: 500,
+          backdropFilter: "blur(10px)",
+          WebkitBackdropFilter: "blur(10px)",
+        }}
+      />
+
+      {/* Modal container */}
+      <motion.div
+        initial={{ opacity: 0, scale: 0.9, y: 24 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.92, y: 16 }}
+        transition={{ ...SPG, delay: 0.04 }}
+        style={{
+          position: "fixed",
+          top: "25%",
+          left: "25%",
+          transform: "translate(-50%, -50%)",
+          zIndex: 600,
+          width: "min(720px, 92vw)",
+        }}
+      >
+        {/* Close button */}
+        <motion.button
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.9 }}
+          transition={SP}
+          onClick={onClose}
+          style={{
+            position: "absolute",
+            top: -14,
+            right: -14,
+            width: 36,
+            height: 36,
+            borderRadius: "50%",
+            background: "#1e1b17",
+            border: "1px solid rgba(240,237,232,0.14)",
+            color: "rgba(240,237,232,0.55)",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 18,
+            fontWeight: 700,
+            zIndex: 10,
+            fontFamily: "inherit",
+          }}
+        >
+          ×
+        </motion.button>
+
+        <AnimatePresence mode="wait">
+          {/* ── CHOOSE VIEW ── */}
+          {view === "choose" && (
+            <motion.div
+              key="choose"
+              initial={{ opacity: 0, x: -18 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -18 }}
+              transition={SPG}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 14,
+              }}
+            >
+              {/* ── PICK-UP CARD ── */}
+              <motion.button
+                whileHover={{ borderColor: "rgba(245,200,66,0.45)", y: -4 }}
+                whileTap={{ scale: 0.97 }}
+                transition={SPG}
+                onClick={handlePickUp}
+                style={{
+                  background: "#151210",
+                  border: "1px solid rgba(245,200,66,0.18)",
+                  borderRadius: 24,
+                  padding: "36px 32px 32px",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  textAlign: "left" as const,
+                  display: "flex",
+                  flexDirection: "column" as const,
+                  gap: 0,
+                  position: "relative",
+                  overflow: "hidden",
+                  transition: "border-color 0.25s",
+                }}
+              >
+                {/* Subtle top shimmer */}
+                <div style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 20,
+                  right: 20,
+                  height: 1,
+                  background: "linear-gradient(90deg, transparent, rgba(245,200,66,0.22), transparent)",
+                }} />
+
+                {/* Icon */}
+                <div style={{
+                  width: 56,
+                  height: 56,
+                  borderRadius: 16,
+                  background: "rgba(245,200,66,0.1)",
+                  border: "1px solid rgba(245,200,66,0.2)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "#f5c842",
+                  marginBottom: 22,
+                }}>
+                  <IconBag />
+                </div>
+
+                <p style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: "#f5c842",
+                  letterSpacing: "0.2em",
+                  textTransform: "uppercase" as const,
+                  margin: "0 0 8px",
+                }}>
+                  Pick-up Order
+                </p>
+
+                <h3 style={{
+                  fontSize: 22,
+                  fontWeight: 900,
+                  color: "#f0ede8",
+                  margin: "0 0 14px",
+                  letterSpacing: "-0.02em",
+                  lineHeight: 1.15,
+                  fontFamily: "'Inter', sans-serif",
+                }}>
+                  Order here,<br />pick up fresh.
+                </h3>
+
+                {/* Divider */}
+                <div style={{
+                  height: 1,
+                  background: "rgba(240,237,232,0.07)",
+                  margin: "0 0 16px",
+                }} />
+
+               
+               <p style={{
+                  fontSize: 13,
+                  fontWeight: 400,
+                  color: "rgba(240,237,232,0.42)",
+                  lineHeight: 1.7,
+                  margin: "0 0 auto",
+                }}>
+                  Order online and pick up your items at the store when it's ready.
+                </p>
+                {/* CTA */}
+                <div style={{
+                  marginTop: 28,
+                  padding: "12px 0",
+                  borderRadius: 12,
+                  background: "#f5c842",
+                  textAlign: "center" as const,
+                  fontSize: 14,
+                  fontWeight: 800,
+                  color: "#111",
+                  letterSpacing: "0.02em",
+                }}>
+                  Browse the Menu
+                </div>
+              </motion.button>
+
+              {/* ── DELIVERY CARD ── */}
+              <motion.button
+                whileHover={{ borderColor: "rgba(245,200,66,0.45)", y: -4, boxShadow: "0 0 0 2px rgba(245,200,66,0.3)" }}
+                whileTap={{ scale: 0.97 }}
+                transition={SPG}
+                onClick={() => setView("delivery")}
+                style={{
+                  background: "#151210",
+                  border: "1px solid rgba(245,200,66,0.2)",
+                  borderRadius: 24,
+                  padding: "36px 32px 32px",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  textAlign: "left" as const,
+                  display: "flex",
+                  flexDirection: "column" as const,
+                  gap: 0,
+                  position: "relative",
+                  overflow: "hidden",
+                  transition: "border-color 0.25s",
+                }}
+              >
+                <div style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 20,
+                  right: 20,
+                  height: 1,
+                  background: "linear-gradient(90deg, transparent, rgba(240,237,232,0.1), transparent)",
+                }} />
+
+                {/* Icon */}
+                <div style={{
+                  width: 56,
+                  height: 56,
+                  borderRadius: 16,
+                  background: "rgba(240,237,232,0.06)",
+                  border: "1px solid rgba(240,237,232,0.1)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "rgba(240,237,232,0.6)",
+                  marginBottom: 22,
+                }}>
+                  <IconScooter />
+                </div>
+
+                <p style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: "rgba(240,237,232,0.35)",
+                  letterSpacing: "0.2em",
+                  textTransform: "uppercase" as const,
+                  margin: "0 0 8px",
+                }}>
+                  Delivery Order
+                </p>
+
+                <h3 style={{
+                  fontSize: 22,
+                  fontWeight: 900,
+                  color: "#f0ede8",
+                  margin: "0 0 14px",
+                  letterSpacing: "-0.02em",
+                  lineHeight: 1.15,
+                  fontFamily: "'Inter', sans-serif",
+                }}>
+                  Delivery<br />
+                </h3>
+
+                {/* Divider */}
+                <div style={{
+                  height: 1,
+                  background: "rgba(240,237,232,0.07)",
+                  margin: "0 0 16px",
+                }} />
+
+                <p style={{
+                  fontSize: 13,
+                  fontWeight: 400,
+                  color: "rgba(240,237,232,0.42)",
+                  lineHeight: 1.7,
+                  margin: "0 0 auto",
+                }}>
+                 Order for delivery through Foodpanda or Grab. You'll be redirected to their app to finalize your order.
+                </p>
+
+                {/* Partner logos text badges */}
+                <div style={{ display: "flex", gap: 8, marginTop: 24, marginBottom: 28 }}>
+                  {[
+                    { name: "FoodPanda", color: "#e91e8c", bg: "rgba(233,30,140,0.1)", border: "rgba(233,30,140,0.2)" },
+                    { name: "Grab", color: "#00b14f", bg: "rgba(0,177,79,0.1)", border: "rgba(0,177,79,0.2)" },
+                  ].map((p) => (
+                    <span key={p.name} style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      padding: "5px 12px",
+                      borderRadius: 20,
+                      background: p.bg,
+                      color: p.color,
+                      border: `1px solid ${p.border}`,
+                      letterSpacing: "0.04em",
+                    }}>
+                      {p.name}
+                    </span>
+                  ))}
+                </div>
+
+                {/* CTA */}
+                <div style={{
+                  padding: "12px 0",
+                  borderRadius: 12,
+                  background: "rgba(240,237,232,0.07)",
+                  border: "1px solid rgba(240,237,232,0.12)",
+                  textAlign: "center" as const,
+                  fontSize: 14,
+                  fontWeight: 700,
+                  color: "rgba(240,237,232,0.7)",
+                  letterSpacing: "0.02em",
+                }}>
+                 Order via Delivery App
+                </div>
+              </motion.button>
+            </motion.div>
+          )}
+
+          {/* ── DELIVERY LINKS VIEW ── */}
+          {view === "delivery" && (
+            <motion.div
+              key="delivery"
+              initial={{ opacity: 0, x: 18 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 18 }}
+              transition={SPG}
+              style={{
+                background: "#151210",
+                border: "1px solid rgba(240,237,232,0.09)",
+                borderRadius: 24,
+                padding: "36px 36px 32px",
+                position: "relative",
+                overflow: "hidden",
+              }}
+            >
+              <div style={{
+                position: "absolute",
+                top: 0,
+                left: 20,
+                right: 20,
+                height: 1,
+                background: "linear-gradient(90deg, transparent, rgba(240,237,232,0.1), transparent)",
+              }} />
+
+              {/* Back button */}
+              <motion.button
+                whileHover={{ x: -2 }}
+                whileTap={{ scale: 0.95 }}
+                transition={SP}
+                onClick={() => setView("choose")}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: "rgba(240,237,232,0.35)",
+                  padding: 0,
+                  marginBottom: 24,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  letterSpacing: "0.04em",
+                }}
+              >
+              Back
+              </motion.button>
+
+              <p style={{
+                fontSize: 11,
+                fontWeight: 700,
+                color: "rgba(240,237,232,0.35)",
+                letterSpacing: "0.2em",
+                textTransform: "uppercase" as const,
+                margin: "0 0 8px",
+              }}>
+                Delivery Order
+              </p>
+              <h3 style={{
+                fontSize: 24,
+                fontWeight: 900,
+                color: "#f0ede8",
+                margin: "0 0 6px",
+                letterSpacing: "-0.02em",
+                fontFamily: "'Inter', sans-serif",
+              }}>
+                Select a delivery app to continue your order
+              </h3>
+              <p style={{
+                fontSize: 13,
+                color: "rgba(240,237,232,0.38)",
+                margin: "0 0 28px",
+                fontWeight: 300,
+              }}>
+                Clicking the link will open the app or website in a new tab.
+              </p>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                
+                <motion.a
+                  href={DELIVERY_LINKS.foodpanda}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  whileHover={{ borderColor: "rgba(233,30,140,0.45)", y: -3 }}
+                  whileTap={{ scale: 0.97 }}
+                  transition={SPG}
+                  style={{
+                    display: "flex",
+                    flexDirection: "column" as const,
+                    alignItems: "flex-start",
+                    gap: 0,
+                    background: "rgba(233,30,140,0.05)",
+                    border: "1px solid rgba(233,30,140,0.2)",
+                    borderRadius: 18,
+                    padding: "26px 24px 22px",
+                    textDecoration: "none",
+                    position: "relative",
+                    overflow: "hidden",
+                    transition: "border-color 0.25s",
+                    cursor: "pointer",
+                  }}
+                >
+                  <div style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 12,
+                    right: 12,
+                    height: 1,
+                    background: "linear-gradient(90deg, transparent, rgba(233,30,140,0.3), transparent)",
+                  }} />
+
+                  <p style={{
+                    fontSize: 17,
+                    fontWeight: 800,
+                    color: "#f0ede8",
+                    margin: "0 0 5px",
+                    letterSpacing: "-0.01em",
+                    fontFamily: "'Inter', sans-serif",
+                  }}>
+                    FoodPanda
+                  </p>
+                  <p style={{
+                    fontSize: 12,
+                    color: "rgba(240,237,232,0.38)",
+                    margin: "0 0 18px",
+                    fontWeight: 300,
+                    lineHeight: 1.5,
+                  }}>
+                    Order via the FoodPanda app or website
+                  </p>
+
+                  <div style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    color: "#e91e8c",
+                    padding: "8px 14px",
+                    borderRadius: 20,
+                    background: "rgba(233,30,140,0.1)",
+                    border: "1px solid rgba(233,30,140,0.2)",
+                  }}>
+                    Open FoodPanda
+                    <IconExternalLink />
+                  </div>
+                </motion.a>
+
+                <motion.a
+                  href={DELIVERY_LINKS.grab}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  whileHover={{ borderColor: "rgba(0,177,79,0.45)", y: -3 }}
+                  whileTap={{ scale: 0.97 }}
+                  transition={SPG}
+                  style={{
+                    display: "flex",
+                    flexDirection: "column" as const,
+                    alignItems: "flex-start",
+                    gap: 0,
+                    background: "rgba(0,177,79,0.04)",
+                    border: "1px solid rgba(0,177,79,0.18)",
+                    borderRadius: 18,
+                    padding: "26px 24px 22px",
+                    textDecoration: "none",
+                    position: "relative",
+                    overflow: "hidden",
+                    transition: "border-color 0.25s",
+                    cursor: "pointer",
+                  }}
+                >
+                  <div style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 12,
+                    right: 12,
+                    height: 1,
+                    background: "linear-gradient(90deg, transparent, rgba(0,177,79,0.28), transparent)",
+                  }} />
+
+                  <p style={{
+                    fontSize: 17,
+                    fontWeight: 800,
+                    color: "#f0ede8",
+                    margin: "0 0 5px",
+                    letterSpacing: "-0.01em",
+                    fontFamily: "'Inter', sans-serif",
+                  }}>
+                    Grab
+                  </p>
+                  <p style={{
+                    fontSize: 12,
+                    color: "rgba(240,237,232,0.38)",
+                    margin: "0 0 18px",
+                    fontWeight: 300,
+                    lineHeight: 1.5,
+                  }}>
+                    Order via the Grab app or website
+                  </p>
+
+                  <div style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    color: "#00b14f",
+                    padding: "8px 14px",
+                    borderRadius: 20,
+                    background: "rgba(0,177,79,0.09)",
+                    border: "1px solid rgba(0,177,79,0.18)",
+                  }}>
+                    Open Grab
+                    <IconExternalLink />
+                  </div>
+                </motion.a>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
+    </>
   );
 }
 
@@ -571,7 +1116,6 @@ function HistoryDrawer({
           borderLeft: "1px solid rgba(240,237,232,0.07)",
         }}
       >
-        {/* Header */}
         <div
           style={{
             padding: "28px 32px 20px",
@@ -642,7 +1186,6 @@ function HistoryDrawer({
           </motion.button>
         </div>
 
-        {/* Scrollable body */}
         <div style={{ flex: 1, overflowY: "auto", padding: "16px 28px 32px" }}>
           <AnimatePresence initial={false}>
             {orders.length === 0 ? (
@@ -693,7 +1236,6 @@ function HistoryDrawer({
                     transition={{ ...SPG, delay: oi * 0.04 }}
                     style={{ marginBottom: 10 }}
                   >
-                    {/* Accordion header */}
                     <motion.button
                       onClick={() => setExpanded(isOpen ? null : order.id)}
                       whileHover={{
@@ -718,7 +1260,6 @@ function HistoryDrawer({
                         textAlign: "left" as const,
                       }}
                     >
-                      {/* Order number bubble */}
                       <div
                         style={{
                           width: 34,
@@ -746,7 +1287,6 @@ function HistoryDrawer({
                         </span>
                       </div>
 
-                      {/* Date + item preview icons */}
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div
                           style={{
@@ -768,7 +1308,6 @@ function HistoryDrawer({
                             {formatTime(order.date)}
                           </span>
                         </div>
-                        {/* Stacked product image icons */}
                         <div
                           style={{
                             display: "flex",
@@ -841,7 +1380,6 @@ function HistoryDrawer({
                         </div>
                       </div>
 
-                      {/* Total + chevron */}
                       <div
                         style={{
                           display: "flex",
@@ -874,7 +1412,6 @@ function HistoryDrawer({
                       </div>
                     </motion.button>
 
-                    {/* Expanded item list */}
                     <AnimatePresence initial={false}>
                       {isOpen && (
                         <motion.div
@@ -906,7 +1443,6 @@ function HistoryDrawer({
                                       : "none",
                                 }}
                               >
-                                {/* Product image as the identifier icon */}
                                 <div
                                   style={{
                                     width: 38,
@@ -928,7 +1464,6 @@ function HistoryDrawer({
                                   />
                                 </div>
 
-                                {/* Name + flavors */}
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                   <p
                                     style={{
@@ -956,7 +1491,6 @@ function HistoryDrawer({
                                   )}
                                 </div>
 
-                                {/* Qty × price */}
                                 <div
                                   style={{
                                     display: "flex",
@@ -997,7 +1531,6 @@ function HistoryDrawer({
                               </div>
                             ))}
 
-                            {/* Order total row */}
                             <div
                               style={{
                                 display: "flex",
@@ -2080,7 +2613,7 @@ export default function Delicacy() {
   const [justAdded, setJustAdded] = useState<number | null>(null);
   const [highlightedId, setHighlightedId] = useState<number | null>(null);
   const [scrolled, setScrolled] = useState(false);
-  /* In-session order history — populated only when Place Order is confirmed */
+  const [orderTypeOpen, setOrderTypeOpen] = useState(false);
   const [orderHistory, setOrderHistory] = useState<HistoryOrder[]>([]);
   const cardRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
@@ -2102,6 +2635,8 @@ export default function Delicacy() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    if (params.get("showOrderModal") === "true") {
+    setOrderTypeOpen(true);}
     const itemSlug = params.get("item");
     if (!itemSlug) return;
 
@@ -2173,7 +2708,6 @@ export default function Delicacy() {
     );
   const clearCart = () => setCart([]);
 
-  /* Checkout — snapshot the current cart into history, then clear it */
   const handleCheckout = () => {
     const snapshot: HistoryOrder = {
       id: `order-${Date.now()}`,
@@ -2196,6 +2730,11 @@ export default function Delicacy() {
     localStorage.removeItem("userRole");
     localStorage.removeItem("userId");
     navigate("/aboutthecrunch");
+  };
+
+  /* Clicking "Menu" nav link shows the Order Type modal instead of navigating */
+  const handleMenuNavClick = () => {
+    setOrderTypeOpen(true);
   };
 
   return (
@@ -2311,14 +2850,20 @@ export default function Delicacy() {
 
         {/* Right side */}
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          {/* Nav links */}
+          {/* Nav links — "Menu" triggers the Order Type modal */}
           {NAV_LINKS.map((item) => (
             <motion.button
               key={item.label}
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.97 }}
               transition={SP}
-              onClick={() => navigate(item.path)}
+              onClick={() => {
+                if (item.label === "Menu") {
+                  handleMenuNavClick();
+                } else {
+                  navigate(item.path);
+                }
+              }}
               style={{
                 background: "none",
                 border: "none",
@@ -2381,7 +2926,6 @@ export default function Delicacy() {
             }}
           >
             <IconHistory />
-            {/* Count badge */}
             <AnimatePresence>
               {orderHistory.length > 0 && (
                 <motion.span
@@ -2981,6 +3525,13 @@ export default function Delicacy() {
           </div>
         </motion.div>
       </div>
+
+      {/* ── ORDER TYPE MODAL ── */}
+      <AnimatePresence>
+        {orderTypeOpen && (
+          <OrderTypeModal onClose={() => setOrderTypeOpen(false)} />
+        )}
+      </AnimatePresence>
 
       {/* ── DRAWERS & MODALS ── */}
       <AnimatePresence>
