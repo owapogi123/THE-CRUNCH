@@ -543,21 +543,18 @@ export default function CashierView() {
   const [orderNumber, setOrderNumber] = useState("");
   const [placing, setPlacing] = useState(false);
   const [onlineOrderNotifs, setOnlineOrderNotifs] = useState<OnlineNotif[]>([]);
-  const [dismissedIds, setDismissedIds] = useState<Set<number>>(new Set());
+  const [notifOpen, setNotifOpen] = useState(false);
 
-  // lastPollRef stores the ISO timestamp of the last successful poll.
-  // We start it 5 minutes in the past so we catch any orders placed just before
-  // the cashier opened the page.
   const lastPollRef = useRef<string>(
-    new Date(Date.now() - 5 * 60 * 1000).toISOString()
+    new Date(Date.now() - 30 * 1000).toISOString()
   );
 
   const TABS = [
-    { key: "ALL",       label: "All items",             match: [] as string[] },
-    { key: "WHOLE_HALF", label: "Whole & Half Chicken", match: ["WHOLE & HALF CHICKEN", "WHOLE AND HALF CHICKEN", "CHICKEN"] },
-    { key: "RICE_MEALS", label: "Rice Meals",           match: ["RICE MEALS", "RICE MEAL", "MENU FOOD"] },
-    { key: "SIDES",      label: "Sides",                match: ["SIDES", "SIDE DISH", "SIDE DISHES", "SUPPLIES"] },
-    { key: "FRUIT_SODA", label: "Fruit Soda",           match: ["FRUIT SODA", "FRUIT SODAS", "DRINKS", "BEVERAGES"] },
+    { key: "ALL",        label: "All items",             match: [] as string[] },
+    { key: "WHOLE_HALF", label: "Whole & Half Chicken",  match: ["WHOLE & HALF CHICKEN", "WHOLE AND HALF CHICKEN", "CHICKEN"] },
+    { key: "RICE_MEALS", label: "Rice Meals",            match: ["RICE MEALS", "RICE MEAL", "MENU FOOD"] },
+    { key: "SIDES",      label: "Sides",                 match: ["SIDES", "SIDE DISH", "SIDE DISHES", "SUPPLIES"] },
+    { key: "FRUIT_SODA", label: "Fruit Soda",            match: ["FRUIT SODA", "FRUIT SODAS", "DRINKS", "BEVERAGES"] },
   ];
 
   // Load products
@@ -583,39 +580,49 @@ export default function CashierView() {
       try {
         const url = `/api/orders/new-online?since=${encodeURIComponent(lastPollRef.current)}`;
         const res = await fetch(url);
-
         if (!res.ok) {
           console.warn(`[poll] /api/orders/new-online returned ${res.status}`);
           return;
         }
-
         const data: OnlineNotif[] = await res.json();
-
-        // Advance the cursor BEFORE mutating state to avoid double-counting
         lastPollRef.current = new Date().toISOString();
-
         if (data.length > 0) {
           setOnlineOrderNotifs((prev) => {
             const existingIds = new Set(prev.map((o) => o.id));
             const fresh = data.filter((o) => !existingIds.has(o.id));
-            return fresh.length > 0 ? [...fresh, ...prev] : prev;
+            if (fresh.length > 0) {
+              setNotifOpen(true); // auto-open panel when new orders arrive
+              return [...fresh, ...prev];
+            }
+            return prev;
           });
         }
       } catch (err) {
-        // Network error — log quietly, do not crash
         console.warn("[poll] online-order fetch failed:", err);
       }
     };
 
-    poll(); // fire immediately on mount
+    poll();
     const interval = setInterval(poll, 15_000);
     return () => clearInterval(interval);
   }, []);
 
-  const dismissNotif = (id: number) =>
-    setDismissedIds((prev) => new Set([...prev, id]));
+  // Auto-dismiss notifications once their order appears in the cook queue
+  useEffect(() => {
+    const check = async () => {
+      try {
+        const queue = await api.get<{ id: string | number }[]>("/orders/queue");
+        const queueIds = new Set((queue ?? []).map((o) => Number(o.id)));
+        setOnlineOrderNotifs((prev) => prev.filter((o) => !queueIds.has(o.id)));
+      } catch {}
+    };
+    check();
+    const interval = setInterval(check, 5_000);
+    return () => clearInterval(interval);
+  }, []);
 
-  const visibleNotifs = onlineOrderNotifs.filter((o) => !dismissedIds.has(o.id));
+  const dismissNotif = (id: number) =>
+    setOnlineOrderNotifs((prev) => prev.filter((o) => o.id !== id));
 
   const filtered = products.filter((p) => {
     const cu = p.category.toUpperCase();
@@ -688,7 +695,6 @@ export default function CashierView() {
       setSavedCash({ tendered, change });
       setOrderNumber(num);
       setShowSuccess(true);
-      // Optimistically deduct stock from local state
       setProducts((prev) =>
         prev.map((p) => {
           const o = cart.find((c) => c.id === p.id);
@@ -729,64 +735,172 @@ export default function CashierView() {
     <>
       <Sidebar />
 
-      {/* ── Online Order Notification Banner ── */}
-      <AnimatePresence>
-        {visibleNotifs.length > 0 && (
-          <motion.div
-            initial={{ y: -80, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: -80, opacity: 0 }}
-            transition={{ type: "spring", stiffness: 380, damping: 30 }}
-            style={{
-              position: "fixed", top: 0, left: 80, right: 0, zIndex: 200,
-              background: "#111", borderBottom: "2px solid #16a34a",
-              padding: "0 24px", display: "flex", alignItems: "center",
-              gap: 12, height: 52, fontFamily: F,
-            }}
-          >
-            {/* Pulsing dot */}
-            <motion.div
-              animate={{ scale: [1, 1.4, 1], opacity: [1, 0.5, 1] }}
-              transition={{ repeat: Infinity, duration: 1.4 }}
-              style={{ width: 10, height: 10, borderRadius: "50%", background: "#22c55e", flexShrink: 0 }}
-            />
-
-            <span style={{ fontSize: 12, fontWeight: 600, color: "#22c55e" }}>
-              {visibleNotifs.length === 1 ? "1 new online order" : `${visibleNotifs.length} new online orders`}
-            </span>
-
-            <span style={{ fontSize: 11, color: "#666", flex: 1, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
-              {visibleNotifs[0].items.map((i) => `${i.name} ×${i.quantity}`).join(", ")}
-              {" "}— ₱{Number(visibleNotifs[0].total).toFixed(2)}
-            </span>
-
-            <span style={{ fontSize: 10, color: "#555", flexShrink: 0 }}>
-              {new Date(visibleNotifs[0].createdAt).toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", hour12: true })}
-            </span>
-
-            <motion.button
-              whileTap={{ scale: 0.9 }}
-              onClick={() => dismissNotif(visibleNotifs[0].id)}
-              style={{ background: "rgba(34,197,94,0.12)", border: "1px solid rgba(34,197,94,0.3)", color: "#22c55e", borderRadius: 8, padding: "4px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: F, flexShrink: 0 }}
-            >
-              Mark handled
-            </motion.button>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {/* ── Main Layout ── */}
       <div style={{
         display: "flex", height: "100vh", overflow: "hidden", fontFamily: F,
         background: "#fff", paddingLeft: 80,
-        paddingTop: visibleNotifs.length > 0 ? 52 : 0,
-        transition: "padding-top 0.3s",
       }}>
 
         {/* ── LEFT: Menu ── */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <div style={{ padding: "20px 24px 0", flexShrink: 0 }}>
-            <h1 style={{ fontSize: 16, fontWeight: 600, color: "#111", marginBottom: 14, fontFamily: F }}>Menu</h1>
+
+            {/* ── Header row: Menu title + Online Orders tab ── */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+              <h1 style={{ fontSize: 16, fontWeight: 600, color: "#111", fontFamily: F }}>Menu</h1>
+
+              {/* Online Orders pill button */}
+              <motion.button
+                onClick={() => setNotifOpen((p) => !p)}
+                whileTap={{ scale: 0.95 }}
+                style={{
+                  display: "flex", alignItems: "center", gap: 6,
+                  padding: "5px 10px 5px 8px", borderRadius: 20,
+                  border: `1px solid ${onlineOrderNotifs.length > 0 ? "#16a34a" : "#efefef"}`,
+                  background: onlineOrderNotifs.length > 0
+                    ? (notifOpen ? "#e8f9ef" : "#f0fdf4")
+                    : "#fafafa",
+                  cursor: "pointer", fontFamily: F,
+                  boxShadow: onlineOrderNotifs.length > 0 ? "0 0 0 3px rgba(22,163,74,0.08)" : "none",
+                  transition: "all 0.2s",
+                }}
+              >
+                {/* Pulsing dot — only when there are orders */}
+                {onlineOrderNotifs.length > 0 && (
+                  <motion.div
+                    animate={{ scale: [1, 1.5, 1], opacity: [1, 0.4, 1] }}
+                    transition={{ repeat: Infinity, duration: 1.4 }}
+                    style={{ width: 7, height: 7, borderRadius: "50%", background: "#16a34a", flexShrink: 0 }}
+                  />
+                )}
+                <span style={{
+                  fontSize: 11, fontWeight: 600,
+                  color: onlineOrderNotifs.length > 0 ? "#16a34a" : "#bbb",
+                }}>
+                  Online Orders
+                </span>
+                {onlineOrderNotifs.length > 0 && (
+                  <motion.span
+                    key={onlineOrderNotifs.length}
+                    initial={{ scale: 0.6, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={SP}
+                    style={{
+                      fontSize: 10, fontWeight: 700,
+                      background: "#16a34a", color: "#fff",
+                      borderRadius: 99, padding: "1px 6px",
+                      minWidth: 16, textAlign: "center",
+                    }}
+                  >
+                    {onlineOrderNotifs.length}
+                  </motion.span>
+                )}
+                {/* Chevron indicator */}
+                <motion.div
+                  animate={{ rotate: notifOpen ? 180 : 0 }}
+                  transition={{ duration: 0.2 }}
+                  style={{ display: "flex", alignItems: "center" }}
+                >
+                  <ChevronDown style={{ width: 11, height: 11, color: onlineOrderNotifs.length > 0 ? "#16a34a" : "#ccc" }} />
+                </motion.div>
+              </motion.button>
+            </div>
+
+            {/* ── Online Orders Dropdown Panel ── */}
+            <AnimatePresence>
+              {notifOpen && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.22, ease: "easeInOut" }}
+                  style={{ overflow: "hidden", marginBottom: 14 }}
+                >
+                  <div style={{
+                    border: "1px solid #d1fae5",
+                    borderRadius: 12,
+                    background: "#f9fef9",
+                    overflow: "hidden",
+                  }}>
+                    {onlineOrderNotifs.length === 0 ? (
+                      <div style={{ padding: "16px", textAlign: "center" }}>
+                        <p style={{ fontSize: 11, color: "#bbb", fontFamily: F, margin: 0 }}>
+                          No pending online orders
+                        </p>
+                      </div>
+                    ) : (
+                      <AnimatePresence>
+                        {onlineOrderNotifs.map((notif, idx) => (
+                          <motion.div
+                            key={notif.id}
+                            layout
+                            initial={{ opacity: 0, x: -8 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: 8, height: 0, padding: 0 }}
+                            transition={{ delay: idx * 0.04, ...SP }}
+                            style={{
+                              display: "flex", alignItems: "flex-start", gap: 10,
+                              padding: "10px 12px",
+                              borderBottom: idx < onlineOrderNotifs.length - 1
+                                ? "1px solid #d1fae5" : "none",
+                            }}
+                          >
+                            {/* Pulsing dot */}
+                            <motion.div
+                              animate={{ scale: [1, 1.3, 1], opacity: [1, 0.4, 1] }}
+                              transition={{ repeat: Infinity, duration: 1.6, delay: idx * 0.3 }}
+                              style={{ width: 7, height: 7, borderRadius: "50%", background: "#16a34a", marginTop: 4, flexShrink: 0 }}
+                            />
+
+                            {/* Order info */}
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3, flexWrap: "wrap" }}>
+                                <span style={{ fontSize: 12, fontWeight: 600, color: "#111", fontFamily: F }}>
+                                  ₱{Number(notif.total).toFixed(2)}
+                                </span>
+                                <span style={{
+                                  fontSize: 9, fontWeight: 500, padding: "1px 7px", borderRadius: 99,
+                                  background: "#d1fae5", color: "#065f46", textTransform: "capitalize",
+                                }}>
+                                  {notif.orderType}
+                                </span>
+                                <span style={{ fontSize: 9, color: "#bbb", marginLeft: "auto", flexShrink: 0 }}>
+                                  {new Date(notif.createdAt).toLocaleTimeString("en-PH", {
+                                    hour: "2-digit", minute: "2-digit", hour12: true,
+                                  })}
+                                </span>
+                              </div>
+                              <p style={{
+                                fontSize: 10, color: "#6b7280", fontFamily: F, margin: 0,
+                                whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                              }}>
+                                {notif.items.map((i) => `${i.name} ×${i.quantity}`).join(", ")}
+                              </p>
+                            </div>
+
+                            {/* Dismiss (✓) button */}
+                            <motion.button
+                              whileTap={{ scale: 0.85 }}
+                              onClick={() => dismissNotif(notif.id)}
+                              title="Mark as handled"
+                              style={{
+                                width: 22, height: 22, borderRadius: 7,
+                                border: "1px solid #a7f3d0",
+                                background: "#fff", cursor: "pointer",
+                                display: "flex", alignItems: "center", justifyContent: "center",
+                                flexShrink: 0,
+                              }}
+                            >
+                              <Check style={{ width: 11, height: 11, color: "#16a34a" }} strokeWidth={3} />
+                            </motion.button>
+                          </motion.div>
+                        ))}
+                      </AnimatePresence>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             {/* Search */}
             <div style={{ position: "relative", marginBottom: 14 }}>

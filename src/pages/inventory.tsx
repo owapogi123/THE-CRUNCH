@@ -1242,17 +1242,7 @@ function StockTransfer() {
         }
       />
 
-      <div className="flex items-center gap-2 mb-[14px] flex-wrap">
-        {["All", "Pending", "Completed", "Cancelled"].map((f) => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            className={`px-[13px] py-[5px] rounded-full text-[12px] font-semibold font-[Poppins,sans-serif] border cursor-pointer transition-all ${filter === f ? "bg-gray-700 border-gray-700 text-white" : "bg-white border-gray-200 text-gray-500 hover:border-gray-400 hover:text-gray-700 hover:bg-gray-50"}`}
-          >
-            {f}
-          </button>
-        ))}
-      </div>
+        
 
       <DataTable
         cols={[
