@@ -208,12 +208,17 @@ router.post("/", async (req, res) => {
     date,
     deliveryDate,
     status = "Draft",
+    receiptNo = "",
     notes = "",
     items = [],
   } = req.body;
 
   if (!supplier || !supplier.trim()) {
     return res.status(400).json({ error: "supplier is required" });
+  }
+
+  if (!String(receiptNo).trim()) {
+    return res.status(400).json({ error: "receiptNo is required" });
   }
 
   const orderDate = toDateString(date) || toDateString(new Date());
@@ -246,8 +251,8 @@ router.post("/", async (req, res) => {
 
     await conn.query(
       `INSERT INTO purchase_orders
-         (po_id, supplier, contact, order_date, delivery_date, status, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         (po_id, supplier, contact, order_date, delivery_date, status, notes, receipt_no)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         poId,
         supplier.trim(),
@@ -256,6 +261,7 @@ router.post("/", async (req, res) => {
         delivDate,
         safeStatus,
         notes.trim() || null,
+        String(receiptNo).trim(),
       ],
     );
 
@@ -284,7 +290,7 @@ router.post("/", async (req, res) => {
     await logSupplierHistory({
       supplier_name: supplier.trim(),
       action: "Purchase Order Created",
-      details: `PO: ${poId} | ${items.length} item(s) | Delivery: ${delivDate}${notes.trim() ? ` | Notes: ${notes.trim()}` : ""}`,
+      details: `PO: ${poId} | Receipt: ${String(receiptNo).trim()} | ${items.length} item(s) | Delivery: ${delivDate}${notes.trim() ? ` | Notes: ${notes.trim()}` : ""}`,
       performed_by: null,
     });
 
@@ -447,9 +453,10 @@ router.patch("/:id/receive", async (req, res) => {
       if (qty <= 0) continue;
 
       let productId = null;
+      let productRow = null;
 
       const [[matchedProduct]] = await conn.query(
-        `SELECT p.id AS product_id
+        `SELECT p.id AS product_id, p.name AS product_name, p.price, p.quantity
          FROM products p
          WHERE LOWER(TRIM(p.name)) = LOWER(TRIM(?))
          LIMIT 1`,
@@ -458,6 +465,7 @@ router.patch("/:id/receive", async (req, res) => {
 
       if (matchedProduct) {
         productId = matchedProduct.product_id;
+        productRow = matchedProduct;
       } else {
         const [[matchedMenu]] = await conn.query(
           `SELECT m.Product_ID AS product_id,
@@ -472,6 +480,7 @@ router.patch("/:id/receive", async (req, res) => {
 
         if (matchedMenu) {
           productId = matchedMenu.product_id;
+          productRow = matchedMenu;
 
           await conn.query(
             `INSERT INTO products (id, name, price, quantity, description)
@@ -495,6 +504,24 @@ router.patch("/:id/receive", async (req, res) => {
           `[PO Receive] ${poId}: No product match for "${item.name}" - skipping`,
         );
         continue;
+      }
+
+      const [[menuRow]] = await conn.query(
+        `SELECT Product_ID FROM Menu WHERE Product_ID = ? LIMIT 1`,
+        [productId],
+      );
+
+      if (!menuRow) {
+        await conn.query(
+          `INSERT INTO Menu (Product_ID, Product_Name, Price, Stock)
+           VALUES (?, ?, ?, ?)`,
+          [
+            productId,
+            productRow?.product_name || item.name,
+            toNumber(productRow?.price),
+            toNumber(productRow?.quantity),
+          ],
+        );
       }
 
       const unit = item.unit || "kg";
@@ -529,10 +556,9 @@ router.patch("/:id/receive", async (req, res) => {
       await conn.query(
         `UPDATE Inventory
          SET Stock = COALESCE(Stock, 0) + ?,
-             Item_Purchased = COALESCE(Item_Purchased, 0) + ?,
              Last_Update = NOW()
          WHERE Product_ID = ?`,
-        [qty, qty, productId],
+        [qty, productId],
       );
 
       await conn.query(
