@@ -738,7 +738,7 @@ interface KpiCardProps {
 
 function KpiCard({ label, value, trend, up }: KpiCardProps) {
   return (
-    <Card className="bg-white rounded-2xl p-5 shadow-md hover:shadow-lg transition-all duration-300 hover:scale-105 border-0">
+    <Card className="flex-1 bg-white rounded-2xl p-5 shadow-md hover:shadow-lg transition-all duration-300 hover:scale-105 border-0">
       <div className="text-xs text-gray-500 mb-1 uppercase tracking-wide">{label}</div>
       <div className="text-3xl font-bold text-gray-800 mb-1">{value}</div>
       <div className={`flex items-center gap-1 text-xs font-medium ${
@@ -1020,13 +1020,12 @@ export default function AdminDashboard() {
           )}
 
           {/* ── KPI Cards ── */}
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4 mb-8">
+            <div className="flex gap-4 mb-8">
             <KpiCard label="Total Orders" value={isLoadingOrders ? "..." : totalOrders.toLocaleString()} trend="Live" up={null} />
             <KpiCard label="Total Sales" value={isLoadingOrders ? "..." : `₱${totalSales.toLocaleString()}`} trend="Live" up={null} />
             <KpiCard label="Avg Order Value" value={isLoadingOrders ? "..." : `₱${avgOrderValue.toFixed(2)}`} trend="Per transaction" up={null} />
             <KpiCard label="Active Orders" value={isLoadingOrders ? "..." : activeOrders.toLocaleString()} trend="In progress" up={null} />
-            <KpiCard label="Completion Rate" value={isLoadingOrders ? "..." : `${completionRate}%`} trend="Of all orders" up={isLoadingOrders ? null : parseFloat(completionRate) >= 90} />
-            <KpiCard label="Cancellation Rate" value={isLoadingOrders ? "..." : `${cancellationRate}%`} trend="Of all orders" up={isLoadingOrders ? null : parseFloat(cancellationRate) <= 5} />
+
           </div>
 
           {/* ── Charts Row ── */}
@@ -1034,16 +1033,24 @@ export default function AdminDashboard() {
             <div className="lg:col-span-8">
               <Card className="bg-white rounded-2xl p-6 shadow-md border-0">
                 <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h2 className="text-lg font-semibold text-gray-800">Order & Sales Review</h2>
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      {hasCustomRange
-                        ? `${formatDisplayDate(dateRange.start!)} – ${formatDisplayDate(dateRange.end!)}`
-                        : activeRange
-                        ? `${formatDisplayDate(activeRange.start)}${activeRange.start.toDateString() !== activeRange.end.toDateString() ? " – " + formatDisplayDate(activeRange.end) : ""}`
-                        : "—"}
-                    </p>
-                  </div>
+                 <div>
+  <h2 className="text-lg font-semibold text-gray-800">Order & Sales Review</h2>
+  <p className="text-xs text-gray-400 mt-0.5">
+    {hasCustomRange
+      ? `${formatDisplayDate(dateRange.start!)} – ${formatDisplayDate(dateRange.end!)}`
+      : activeRange
+      ? `${formatDisplayDate(activeRange.start)}${activeRange.start.toDateString() !== activeRange.end.toDateString() ? " – " + formatDisplayDate(activeRange.end) : ""}`
+      : "—"}
+  </p>
+              {!isLoadingOrders && (
+              <p className="text-sm font-semibold text-[#7C2D2D] mt-2">
+                ₱{totalSales.toLocaleString()}{" "}
+              <span className="text-xs font-normal text-gray-400">
+                as of {formatDisplayDate(new Date())}
+              </span>
+                </p>
+              )}
+            </div>
                   <div className="flex gap-0 bg-[#F0EBE6] rounded-xl p-1">
                     {(["sales", "orders"] as const).map((v) => (
                       <button
