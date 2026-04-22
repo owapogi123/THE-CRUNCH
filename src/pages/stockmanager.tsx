@@ -1240,6 +1240,16 @@ function PODetailDrawer({
             </span>
           </div>
         </div>
+        {order.receiptNo && (
+          <div>
+            <p className="text-xs text-gray-400 font-medium uppercase tracking-wide mb-1">
+              Receipt Number
+            </p>
+            <p className="text-sm text-gray-700 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2">
+              {order.receiptNo}
+            </p>
+          </div>
+        )}
         {order.notes && (
           <div>
             <p className="text-xs text-gray-400 font-medium uppercase tracking-wide mb-1">
@@ -1758,7 +1768,7 @@ function CreatePOModal({
 }: {
   onClose: () => void;
   onCreate: (
-    po: Omit<PurchaseOrder, "id">,
+    po: Omit<PurchaseOrder, "id"> & { receiptNo: string },
     meta: { supplierId: number; itemNames: string[] },
   ) => Promise<void>;
   quickOrderProducts: Product[];
@@ -1783,6 +1793,7 @@ function CreatePOModal({
       return found?.supplier_id ?? "";
     },
   );
+  const [receiptNo, setReceiptNo] = useState("");
   const [notes, setNotes] = useState("");
   const [showQuickOrder, setShowQuickOrder] = useState(false);
   const [activeItemSuggestionIndex, setActiveItemSuggestionIndex] = useState<
@@ -1920,7 +1931,11 @@ function CreatePOModal({
   );
 
   const handleSubmit = async () => {
-    if (!supplierName.trim() || items.some((i) => !i.name.trim())) {
+    if (
+      !supplierName.trim() ||
+      !receiptNo.trim() ||
+      items.some((i) => !i.name.trim())
+    ) {
       onShowToast("Please fill in all required fields.", "error");
       return;
     }
@@ -1949,6 +1964,7 @@ function CreatePOModal({
           date: today,
           deliveryDate: today,
           status: "Draft",
+          receiptNo: receiptNo.trim(),
           notes,
           items: items.map((item, idx) => ({
             ...item,
@@ -2043,6 +2059,17 @@ function CreatePOModal({
               )}
             </div>
           )}
+          <div>
+            <label className="text-xs text-gray-400 font-medium block mb-1">
+              Receipt Number <span className="text-red-400">*</span>
+            </label>
+            <input
+              value={receiptNo}
+              onChange={(e) => setReceiptNo(e.target.value)}
+              placeholder="e.g. OR-2026-0001"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200 placeholder-gray-300"
+            />
+          </div>
           <div>
             <div className="flex items-center justify-between mb-2 gap-2">
               <label className="text-xs text-gray-400 font-medium uppercase tracking-wide">
@@ -3963,7 +3990,7 @@ export default function StockManager() {
 
   const handlePOCreate = useCallback(
     async (
-      po: Omit<PurchaseOrder, "id">,
+      po: Omit<PurchaseOrder, "id"> & { receiptNo: string },
       meta: { supplierId: number; itemNames: string[] },
     ) => {
       setPoLoading(true);
@@ -6696,9 +6723,10 @@ export default function StockManager() {
                             {filteredPOs.length !== 1 ? "s" : ""} shown
                           </p>
                         </div>
-                        <div className="hidden lg:grid grid-cols-[2fr_3fr_2fr_2fr_2fr_1.5fr_auto] px-5 py-3 border-b border-slate-100 text-xs font-semibold text-slate-400 uppercase tracking-wide">
+                        <div className="hidden lg:grid grid-cols-[1.5fr_2.5fr_2fr_2fr_2fr_2fr_1.5fr_auto] px-5 py-3 border-b border-slate-100 text-xs font-semibold text-slate-400 uppercase tracking-wide">
                           <span>PO No.</span>
                           <span>Supplier</span>
+                          <span>Receipt</span>
                           <span>Order Date</span>
                           <span>Delivery</span>
                           <span>Total</span>
@@ -6715,7 +6743,7 @@ export default function StockManager() {
                           ) : (
                             filteredPOs.map((order, i) => (
                               <div key={order.id}>
-                                <div className="hidden lg:grid grid-cols-[2fr_3fr_2fr_2fr_2fr_1.5fr_auto] px-5 py-4 transition-colors items-center hover:bg-slate-50/70">
+                                <div className="hidden lg:grid grid-cols-[1.5fr_2.5fr_2fr_2fr_2fr_2fr_1.5fr_auto] px-5 py-4 transition-colors items-center hover:bg-slate-50/70">
                                   <button
                                     onClick={() => setSelectedOrder(order)}
                                     className="contents text-left"
@@ -6732,6 +6760,9 @@ export default function StockManager() {
                                         {order.items.length !== 1 ? "s" : ""}
                                       </p>
                                     </div>
+                                    <span className="text-sm text-slate-500">
+                                      {order.receiptNo || "-"}
+                                    </span>
                                     <span className="text-sm text-slate-500">
                                       {order.date}
                                     </span>
@@ -6810,6 +6841,7 @@ export default function StockManager() {
                                     </div>
                                   </div>
                                   <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-slate-500">
+                                    <span>Receipt: {order.receiptNo || "-"}</span>
                                     <span>Order: {order.date}</span>
                                     <span>Delivery: {order.deliveryDate}</span>
                                     <span className="font-semibold text-slate-700">
