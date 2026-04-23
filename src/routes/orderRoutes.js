@@ -23,12 +23,17 @@ function isPreparingStatus(value) {
 
 function isReadyStatus(value) {
   const v = String(value || "").toLowerCase().trim();
-  return v === "ready";
+  return v === "ready" || v === "ready for pickup";
 }
 
 function isFinishedStatus(value) {
   const v = String(value || "").toLowerCase().trim();
-  return v === "completed" || v === "cancelled";
+  return v === "completed" || v === "cancelled" || v === "picked up";
+}
+
+function isAwaitingCashierReviewStatus(value) {
+  const v = String(value || "").toLowerCase().trim();
+  return v === "awaiting cashier review";
 }
 
 function hasPaidCheckout(attributes) {
@@ -181,6 +186,7 @@ router.get("/queue", async (req, res) => {
          o.Order_ID   AS id,
          o.Status     AS status,
          o.Order_Type AS orderType,
+         o.customer_user_id AS customerUserId,
          o.Order_Date AS createdAt,
          o.startedAt  AS startedAt,
          oi.Quantity  AS quantity,
@@ -188,7 +194,7 @@ router.get("/queue", async (req, res) => {
        FROM orders o
        LEFT JOIN order_item oi ON oi.Order_ID = o.Order_ID
        LEFT JOIN menu m        ON m.Product_ID = oi.Product_ID
-       WHERE LOWER(COALESCE(o.Status, '')) NOT IN ('completed', 'cancelled')
+       WHERE LOWER(COALESCE(o.Status, '')) NOT IN ('completed', 'cancelled', 'awaiting cashier review')
        ORDER BY o.Order_ID ASC`
     );
 
@@ -200,6 +206,9 @@ router.get("/queue", async (req, res) => {
           orderNumber: `#${r.id}`,
           tableNumber: 0,
           status: normalizeOrderType(r.orderType),
+          isOnlinePickup:
+            Number(r.customerUserId) > 0 &&
+            normalizeOrderType(r.orderType) === "take-out",
           items: [],
           isPreparing: isPreparingStatus(r.status),
           isReady: isReadyStatus(r.status),
@@ -226,25 +235,15 @@ router.get("/queue", async (req, res) => {
   }
 });
 
-// GET /orders/new-online — poll for new online orders (no cashier) since a timestamp
+// GET /orders/new-online — cashier review list for online pickup orders
 // ⚠️  MUST be defined before router.patch("/:id") so Express doesn't treat
 //     "new-online" as an :id parameter.
 router.get("/new-online", async (req, res) => {
   try {
-    // Default: look back 5 minutes if no `since` param provided
-    let since;
-    if (req.query.since) {
-      since = new Date(req.query.since);
-      if (isNaN(since.getTime())) {
-        return res.status(400).json({ message: "Invalid `since` date" });
-      }
-    } else {
-      since = new Date(Date.now() - 5 * 60 * 1000);
-    }
-
     const [rows] = await db.query(
       `SELECT
          o.Order_ID        AS id,
+         o.Status          AS status,
          o.Total_Amount    AS total,
          o.Order_Date      AS createdAt,
          o.Order_Type      AS orderType,
@@ -254,10 +253,9 @@ router.get("/new-online", async (req, res) => {
        LEFT JOIN order_item oi ON oi.Order_ID  = o.Order_ID
        LEFT JOIN menu      m  ON m.Product_ID  = oi.Product_ID
        LEFT JOIN products  pr ON pr.id          = oi.Product_ID
-       WHERE o.Cashier_ID IS NULL
-         AND o.Order_Date >= ?
+       WHERE o.customer_user_id IS NOT NULL
+         AND LOWER(COALESCE(o.Status, '')) = 'awaiting cashier review'
        ORDER BY o.Order_ID DESC`,
-      [since]
     );
 
     const grouped = {};
@@ -265,9 +263,11 @@ router.get("/new-online", async (req, res) => {
       if (!grouped[r.id]) {
         grouped[r.id] = {
           id: r.id,
+          orderNumber: `#${r.id}`,
           total: Number(r.total) || 0,
           createdAt: r.createdAt,
-          orderType: r.orderType,
+          orderType: normalizeOrderType(r.orderType),
+          trackingStatus: r.status || "Awaiting Cashier Review",
           items: [],
         };
       }
@@ -282,6 +282,56 @@ router.get("/new-online", async (req, res) => {
     res.json(Object.values(grouped));
   } catch (err) {
     console.error("GET /orders/new-online error:", err.message);
+    res.status(500).json({ message: "DB error", error: err.message });
+  }
+});
+
+// GET /orders/ready-pickup — cashier pickup confirmation list for online pickup orders
+router.get("/ready-pickup", async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT
+         o.Order_ID        AS id,
+         o.Status          AS status,
+         o.Total_Amount    AS total,
+         o.Order_Date      AS createdAt,
+         o.Order_Type      AS orderType,
+         oi.Quantity       AS quantity,
+         COALESCE(m.Product_Name, pr.name) AS productName
+       FROM orders o
+       LEFT JOIN order_item oi ON oi.Order_ID  = o.Order_ID
+       LEFT JOIN menu      m  ON m.Product_ID  = oi.Product_ID
+       LEFT JOIN products  pr ON pr.id          = oi.Product_ID
+       WHERE o.customer_user_id IS NOT NULL
+         AND LOWER(COALESCE(o.Order_Type, '')) IN ('take-out', 'takeout')
+         AND LOWER(COALESCE(o.Status, '')) = 'ready for pickup'
+       ORDER BY o.Order_ID DESC`
+    );
+
+    const grouped = {};
+    for (const r of rows) {
+      if (!grouped[r.id]) {
+        grouped[r.id] = {
+          id: r.id,
+          orderNumber: `#${r.id}`,
+          total: Number(r.total) || 0,
+          createdAt: r.createdAt,
+          orderType: normalizeOrderType(r.orderType),
+          trackingStatus: r.status || "Ready for Pickup",
+          items: [],
+        };
+      }
+      if (r.productName) {
+        grouped[r.id].items.push({
+          name: r.productName,
+          quantity: Number(r.quantity) || 0,
+        });
+      }
+    }
+
+    res.json(Object.values(grouped));
+  } catch (err) {
+    console.error("GET /orders/ready-pickup error:", err.message);
     res.status(500).json({ message: "DB error", error: err.message });
   }
 });
@@ -355,11 +405,11 @@ router.get("/customer/:customerUserId", async (req, res) => {
     const allOrders = Object.values(grouped);
     const activeOrders = allOrders.filter((order) => {
       const status = String(order.rawStatus || "").toLowerCase();
-      return status !== "completed" && status !== "cancelled";
+      return status !== "completed" && status !== "cancelled" && status !== "picked up";
     });
     const historyOrders = allOrders.filter((order) => {
       const status = String(order.rawStatus || "").toLowerCase();
-      return status === "completed" || status === "cancelled";
+      return status === "completed" || status === "cancelled" || status === "picked up";
     });
 
     res.json({ activeOrders, historyOrders });
@@ -496,6 +546,10 @@ router.post("/", async (req, res) => {
     const finalPaymentStatus = String(payment_status || paymentStatus || (finalPaymentReference ? "Paid" : "Pending"));
     const resolvedCustomerUserId = Number(customerUserId) > 0 ? Number(customerUserId) : null;
     const normalizedPaymentStatus = finalPaymentStatus.toLowerCase();
+    const initialStatus =
+      resolvedCustomerUserId && resolvedCashierId == null && finalOrderType === "take-out"
+        ? "Awaiting Cashier Review"
+        : "Pending";
 
     if (resolvedCustomerUserId && resolvedCashierId == null && finalOrderType === "take-out") {
       if (finalPaymentMethod.toLowerCase() !== "gcash") {
@@ -516,8 +570,8 @@ router.post("/", async (req, res) => {
     const [orderResult] = await conn.query(
       `INSERT INTO orders
          (Total_Amount, Customer_ID, Cashier_ID, Order_Type, Status, customer_user_id, payment_reference, payment_status)
-       VALUES (?, ?, ?, ?, 'Pending', ?, ?, ?)`,
-      [total, customerId || null, resolvedCashierId, finalOrderType, resolvedCustomerUserId, finalPaymentReference, finalPaymentStatus]
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [total, customerId || null, resolvedCashierId, finalOrderType, initialStatus, resolvedCustomerUserId, finalPaymentReference, finalPaymentStatus]
     );
     const orderId = orderResult.insertId;
 
@@ -596,7 +650,7 @@ router.post("/", async (req, res) => {
       message: "Order placed",
       orderId,
       orderNumber: `#${orderId}`,
-      trackingStatus: "Pending",
+      trackingStatus: initialStatus,
     });
   } catch (err) {
     if (conn) await conn.rollback();
@@ -616,7 +670,8 @@ router.post("/", async (req, res) => {
 router.patch("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { status, startedAt } = req.body;
+    const { status, startedAt, cashierId, cashier_id } = req.body;
+    const resolvedCashierId = cashierId ?? cashier_id ?? null;
 
     if (!status) {
       return res.status(400).json({ message: "status is required" });
@@ -624,17 +679,24 @@ router.patch("/:id", async (req, res) => {
 
     await ensureStartedAtColumn();
 
+    const fields = ["Status = ?"];
+    const values = [status];
+
     if (startedAt) {
-      await db.query(
-        "UPDATE orders SET Status = ?, startedAt = ? WHERE Order_ID = ?",
-        [status, new Date(startedAt), id]
-      );
-    } else {
-      await db.query(
-        "UPDATE orders SET Status = ? WHERE Order_ID = ?",
-        [status, id]
-      );
+      fields.push("startedAt = ?");
+      values.push(new Date(startedAt));
     }
+
+    if (resolvedCashierId != null) {
+      fields.push("Cashier_ID = ?");
+      values.push(resolvedCashierId);
+    }
+
+    values.push(id);
+    await db.query(
+      `UPDATE orders SET ${fields.join(", ")} WHERE Order_ID = ?`,
+      values
+    );
 
     if (String(status).toLowerCase() === "completed") {
       await db.query(

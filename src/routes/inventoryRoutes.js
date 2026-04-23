@@ -29,6 +29,56 @@ async function ensureProductsImageColumn() {
   }
 }
 
+async function ensureMenuManagementColumns() {
+  await ensureProductsImageColumn();
+
+  if (!(await hasColumn("products", "menu_code"))) {
+    await db.query("ALTER TABLE products ADD COLUMN menu_code VARCHAR(20) NULL");
+  }
+
+  if (!(await hasColumn("products", "availability_status"))) {
+    await db.query(
+      "ALTER TABLE products ADD COLUMN availability_status VARCHAR(20) DEFAULT 'Available'",
+    );
+  }
+
+  if (!(await hasColumn("products", "is_promotional"))) {
+    await db.query(
+      "ALTER TABLE products ADD COLUMN is_promotional TINYINT(1) DEFAULT 0",
+    );
+  }
+
+  if (!(await hasColumn("products", "promo_price"))) {
+    await db.query(
+      "ALTER TABLE products ADD COLUMN promo_price DECIMAL(10,2) NULL",
+    );
+  }
+
+  if (!(await hasColumn("products", "promo_label"))) {
+    await db.query(
+      "ALTER TABLE products ADD COLUMN promo_label VARCHAR(100) NULL",
+    );
+  }
+
+  await db.query(
+    `UPDATE products
+     SET menu_code = CONCAT('M-', LPAD(id, 3, '0'))
+     WHERE menu_code IS NULL OR TRIM(menu_code) = ''`,
+  );
+
+  await db.query(
+    `UPDATE products
+     SET availability_status = 'Available'
+     WHERE availability_status IS NULL OR TRIM(availability_status) = ''`,
+  );
+
+  await db.query(
+    `UPDATE products
+     SET is_promotional = 0
+     WHERE is_promotional IS NULL`,
+  );
+}
+
 function toMySqlDateTime(value) {
   if (!value) return null;
   const d = new Date(value);
@@ -68,7 +118,7 @@ router.get("/", async (req, res) => {
   try {
     await ensureBatchTable();
     await ensureInventoryAlertColumns();
-    await ensureProductsImageColumn();
+    await ensureMenuManagementColumns();
 
     // Ensure inventory rows exist for all menu products.
     await db.query(
@@ -115,7 +165,12 @@ router.get("/", async (req, res) => {
          COALESCE(p.description, '')                                            AS description,
          COALESCE(m.Promo, '')                                                  AS promo,
          CASE WHEN COALESCE(m.Promo, '') = 'RAW_MATERIAL' THEN 1 ELSE 0 END    AS isRawMaterial,
-         COALESCE(p.image, '/img/placeholder.jpg')                              AS image
+         COALESCE(p.image, '/img/placeholder.jpg')                              AS image,
+         COALESCE(p.menu_code, CONCAT('M-', LPAD(i.Product_ID, 3, '0')))        AS menu_code,
+         COALESCE(p.availability_status, 'Available')                           AS availability_status,
+         COALESCE(p.is_promotional, 0)                                          AS is_promotional,
+         p.promo_price                                                          AS promo_price,
+         COALESCE(p.promo_label, '')                                            AS promo_label
        FROM Inventory i
        LEFT JOIN Menu m ON m.Product_ID = i.Product_ID
        LEFT JOIN products p ON p.id = i.Product_ID

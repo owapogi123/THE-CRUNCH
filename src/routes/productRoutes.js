@@ -14,10 +14,95 @@ async function ensureProductsImageColumn() {
     }
 }
 
+async function ensureMenuManagementColumns() {
+    await ensureProductsImageColumn();
+
+    if (!(await hasColumn("products", "menu_code"))) {
+        await db.query("ALTER TABLE products ADD COLUMN menu_code VARCHAR(20) NULL");
+    }
+
+    if (!(await hasColumn("products", "availability_status"))) {
+        await db.query(
+            "ALTER TABLE products ADD COLUMN availability_status VARCHAR(20) DEFAULT 'Available'",
+        );
+    }
+
+    if (!(await hasColumn("products", "is_promotional"))) {
+        await db.query(
+            "ALTER TABLE products ADD COLUMN is_promotional TINYINT(1) DEFAULT 0",
+        );
+    }
+
+    if (!(await hasColumn("products", "promo_price"))) {
+        await db.query(
+            "ALTER TABLE products ADD COLUMN promo_price DECIMAL(10,2) NULL",
+        );
+    }
+
+    if (!(await hasColumn("products", "promo_label"))) {
+        await db.query(
+            "ALTER TABLE products ADD COLUMN promo_label VARCHAR(100) NULL",
+        );
+    }
+
+    await db.query(
+        `UPDATE products
+         SET menu_code = CONCAT('M-', LPAD(id, 3, '0'))
+         WHERE menu_code IS NULL OR TRIM(menu_code) = ''`,
+    );
+
+    await db.query(
+        `UPDATE products
+         SET availability_status = 'Available'
+         WHERE availability_status IS NULL OR TRIM(availability_status) = ''`,
+    );
+
+    await db.query(
+        `UPDATE products
+         SET is_promotional = 0
+         WHERE is_promotional IS NULL`,
+    );
+}
+
+function normalizeAvailabilityStatus(value) {
+    const normalized = String(value || "Available").trim().toLowerCase();
+    return normalized === "hidden" || normalized === "unavailable"
+        ? "Hidden"
+        : "Available";
+}
+
+function normalizePromoValues(isPromotional, promoPrice, promoLabel) {
+    const enabled =
+        isPromotional === true ||
+        isPromotional === 1 ||
+        String(isPromotional || "").toLowerCase() === "true" ||
+        String(isPromotional || "") === "1";
+
+    const normalizedPromoPrice =
+        promoPrice === undefined || promoPrice === null || promoPrice === ""
+            ? null
+            : Number(promoPrice);
+
+    if (
+        normalizedPromoPrice !== null &&
+        (!Number.isFinite(normalizedPromoPrice) || normalizedPromoPrice < 0)
+    ) {
+        throw new Error("Invalid promo price value");
+    }
+
+    return {
+        isPromotional: enabled ? 1 : 0,
+        promoPrice: enabled ? normalizedPromoPrice : null,
+        promoLabel: enabled
+            ? String(promoLabel || "").trim() || null
+            : null,
+    };
+}
+
 // GET all products (old backend used `products` table)
 router.get("/", async (req, res) => {
     try {
-        await ensureProductsImageColumn();
+        await ensureMenuManagementColumns();
         const includeRaw = String(req.query.includeRaw || "").toLowerCase();
         const includeRawMaterials = includeRaw === "1" || includeRaw === "true";
 
@@ -26,7 +111,11 @@ router.get("/", async (req, res) => {
             : "WHERE COALESCE(m.Promo, '') <> 'RAW_MATERIAL'";
 
         const [rows] = await db.query(
-            `SELECT p.*, CAST(COALESCE(m.Stock, i.Stock, p.quantity, 0) AS SIGNED) AS remainingStock
+            `SELECT
+                p.*,
+                m.Category_Name AS category,
+                m.Promo AS inventoryPromo,
+                CAST(COALESCE(m.Stock, i.Stock, p.quantity, 0) AS SIGNED) AS remainingStock
              FROM products p
              LEFT JOIN Menu m ON m.Product_ID = p.id
              LEFT JOIN Inventory i ON i.Product_ID = p.id
@@ -42,14 +131,52 @@ router.get("/", async (req, res) => {
 // ADD product
 router.post("/", async (req, res) => {
     try {
-        await ensureProductsImageColumn();
-        const { name, price, quantity, description, category, raw_material, image } = req.body;
+        await ensureMenuManagementColumns();
+        const {
+            name,
+            price,
+            quantity,
+            description,
+            category,
+            raw_material,
+            image,
+            availability_status,
+            is_promotional,
+            promo_price,
+            promo_label,
+        } = req.body;
+
+        const normalizedAvailabilityStatus = normalizeAvailabilityStatus(
+            availability_status,
+        );
+        const normalizedPromo = normalizePromoValues(
+            is_promotional,
+            promo_price,
+            promo_label,
+        );
+
         const [result] = await db.query(
-            "INSERT INTO products (name, price, quantity, description, image) VALUES (?,?,?,?,?)",
-            [name, price || 0, quantity || 0, description || null, image || null]
+            `INSERT INTO products
+                (name, price, quantity, description, image, availability_status, is_promotional, promo_price, promo_label)
+             VALUES (?,?,?,?,?,?,?,?,?)`,
+            [
+                name,
+                price || 0,
+                quantity || 0,
+                description || null,
+                image || null,
+                normalizedAvailabilityStatus,
+                normalizedPromo.isPromotional,
+                normalizedPromo.promoPrice,
+                normalizedPromo.promoLabel,
+            ]
         );
 
         const newId = result.insertId;
+        await db.query(
+            "UPDATE products SET menu_code = CONCAT('M-', LPAD(id, 3, '0')) WHERE id = ?",
+            [newId],
+        );
         const normalizedCategory = String(category || "").toLowerCase().trim();
         const promoTag = raw_material
             ? "RAW_MATERIAL"
@@ -68,6 +195,9 @@ router.post("/", async (req, res) => {
 
         res.status(201).json({ message: "Product added", id: newId });
     } catch (err) {
+        if (err && err.message === "Invalid promo price value") {
+            return res.status(400).json({ message: err.message });
+        }
         console.error(err);
         res.status(500).json({ message: 'DB error', error: err.message });
     }
@@ -76,7 +206,7 @@ router.post("/", async (req, res) => {
 // UPDATE product
 router.put("/:id", async (req, res) => {
     try {
-        await ensureProductsImageColumn();
+        await ensureMenuManagementColumns();
 
         const productId = Number(req.params.id);
         if (!Number.isFinite(productId) || productId <= 0) {
@@ -90,6 +220,10 @@ router.put("/:id", async (req, res) => {
             description,
             category,
             image,
+            availability_status,
+            is_promotional,
+            promo_price,
+            promo_label,
         } = req.body;
 
         const productFields = [];
@@ -148,6 +282,29 @@ router.put("/:id", async (req, res) => {
             productValues.push(image ? String(image) : null);
         }
 
+        if (availability_status !== undefined) {
+            productFields.push("availability_status = ?");
+            productValues.push(normalizeAvailabilityStatus(availability_status));
+        }
+
+        if (
+            is_promotional !== undefined ||
+            promo_price !== undefined ||
+            promo_label !== undefined
+        ) {
+            const normalizedPromo = normalizePromoValues(
+                is_promotional,
+                promo_price,
+                promo_label,
+            );
+            productFields.push("is_promotional = ?");
+            productValues.push(normalizedPromo.isPromotional);
+            productFields.push("promo_price = ?");
+            productValues.push(normalizedPromo.promoPrice);
+            productFields.push("promo_label = ?");
+            productValues.push(normalizedPromo.promoLabel);
+        }
+
         if (category !== undefined) {
             menuFields.push("Category_Name = ?");
             menuValues.push(category ? String(category).trim() : null);
@@ -197,6 +354,9 @@ router.put("/:id", async (req, res) => {
 
         res.json(rows[0]);
     } catch (err) {
+        if (err && err.message === "Invalid promo price value") {
+            return res.status(400).json({ message: err.message });
+        }
         console.error("PUT /products/:id error:", err);
         res.status(500).json({ message: 'DB error', error: err.message });
     }
