@@ -4,6 +4,43 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const db = require("../config/db");
 
+const CUSTOMER_ROLES = new Set(["customer", "user"]);
+const onlineStaffSessions = new Map();
+
+function isStaffRole(role) {
+  return !!role && !CUSTOMER_ROLES.has(String(role).toLowerCase());
+}
+
+const verifyAdmin = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ message: "No token provided" });
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+
+    if (decoded.role !== "administrator") {
+      return res.status(403).json({ message: "Administrator access required" });
+    }
+
+    req.user = decoded;
+    next();
+  } catch {
+    return res.status(401).json({ message: "Invalid or expired token" });
+  }
+};
+
+function removeExpiredStaffSessions() {
+  const now = Date.now();
+  for (const [userId, session] of onlineStaffSessions.entries()) {
+    if (session.expiresAt <= now) onlineStaffSessions.delete(userId);
+  }
+}
+
 const JWT_SECRET = process.env.JWT_SECRET || "secretkey"; // ⚠️ use .env in production
 
 // ─────────────────────────────────────────────
@@ -121,6 +158,23 @@ router.post("/login", async (req, res) => {
     );
 
     // ✅ Return role to frontend
+    if (isStaffRole(user.role)) {
+      const decodedToken = jwt.decode(token);
+      const expiresAt =
+        decodedToken && typeof decodedToken.exp === "number"
+          ? decodedToken.exp * 1000
+          : Date.now() + 60 * 60 * 1000;
+
+      onlineStaffSessions.set(String(user.id), {
+        userId: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        timeIn: new Date().toISOString(),
+        expiresAt,
+      });
+    }
+
     res.json({
       message: "Login successful",
       token: token,
@@ -133,6 +187,35 @@ router.post("/login", async (req, res) => {
     console.error(error);
     res.status(500).json({ message: "Server error", error: error.message });
   }
+});
+
+router.post("/logout", (req, res) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ message: "No token provided" });
+  }
+
+  try {
+    const decoded = jwt.verify(authHeader.split(" ")[1], JWT_SECRET);
+    if (isStaffRole(decoded.role)) {
+      onlineStaffSessions.delete(String(decoded.userId));
+    }
+
+    res.json({ message: "Logout successful" });
+  } catch {
+    return res.status(401).json({ message: "Invalid or expired token" });
+  }
+});
+
+router.get("/attendance/online-staff", verifyAdmin, (req, res) => {
+  removeExpiredStaffSessions();
+
+  const records = Array.from(onlineStaffSessions.values())
+    .filter((session) => isStaffRole(session.role))
+    .sort((a, b) => a.username.localeCompare(b.username));
+
+  res.json(records);
 });
 
 module.exports = router;
