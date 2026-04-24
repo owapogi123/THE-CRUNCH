@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const path = require("path");
 
 const app = express();
 
@@ -18,6 +19,7 @@ app.use(
 );
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+app.use("/uploads", express.static(path.join(__dirname, "..", "uploads")));
 
 // Routes
 const authRoutes = require("./routes/authRoutes");
@@ -50,6 +52,8 @@ app.use("/api/reports", reportsRoutes);
 
 const kitchenUsageRoutes = require("./routes/kitchenUsageRoutes");
 app.use("/api/kitchen-usage", kitchenUsageRoutes);
+const uploadProofRoutes = require("./routes/uploadProofRoutes");
+app.use("/api/upload-proof", uploadProofRoutes);
 
 // order endpoints (used by POS & dashboard)
 const orderRoutes = require("./routes/orderRoutes");
