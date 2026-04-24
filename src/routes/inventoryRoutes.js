@@ -29,6 +29,26 @@ async function ensureProductsImageColumn() {
   }
 }
 
+async function ensureBatchShelfLifeColumns() {
+  if (!(await hasColumn("batches", "shelf_life_days"))) {
+    await db.query(
+      "ALTER TABLE batches ADD COLUMN shelf_life_days INT DEFAULT NULL",
+    );
+  }
+
+  if (!(await hasColumn("batches", "shelf_life_hours"))) {
+    await db.query(
+      "ALTER TABLE batches ADD COLUMN shelf_life_hours INT DEFAULT NULL",
+    );
+  }
+
+  if (!(await hasColumn("batches", "usable_until"))) {
+    await db.query(
+      "ALTER TABLE batches ADD COLUMN usable_until DATETIME DEFAULT NULL",
+    );
+  }
+}
+
 async function ensureMenuManagementColumns() {
   await ensureProductsImageColumn();
 
@@ -119,6 +139,7 @@ router.get("/", async (req, res) => {
     await ensureBatchTable();
     await ensureInventoryAlertColumns();
     await ensureMenuManagementColumns();
+    await ensureBatchShelfLifeColumns();
 
     // Ensure inventory rows exist for all menu products.
     await db.query(
@@ -158,6 +179,9 @@ router.get("/", async (req, res) => {
          COALESCE(i.Wasted, 0)                                                  AS wasted,
          COALESCE(ot.soldToday, 0)                                              AS soldToday,
          bexp.nearestExpiry                                                      AS expiryDate,
+         brm.nearestUsableUntil                                                  AS usableUntil,
+         brm.shelfLifeDays                                                       AS shelfLifeDays,
+         brm.shelfLifeHours                                                      AS shelfLifeHours,
          i.Product_ID                                                            AS id,
          COALESCE(m.Product_Name, i.Item_Purchased, 'Unnamed Product')          AS name,
          COALESCE(i.Stock, 0)                                                   AS stock,
@@ -185,6 +209,15 @@ router.get("/", async (req, res) => {
          WHERE status = 'active' AND expiry_date IS NOT NULL
          GROUP BY product_id
        ) bexp ON bexp.product_id = i.Product_ID
+       LEFT JOIN (
+         SELECT product_id,
+                MIN(usable_until) AS nearestUsableUntil,
+                MAX(COALESCE(shelf_life_days, 0)) AS shelfLifeDays,
+                MAX(COALESCE(shelf_life_hours, 0)) AS shelfLifeHours
+         FROM Batches
+         WHERE status = 'active' AND usable_until IS NOT NULL
+         GROUP BY product_id
+       ) brm ON brm.product_id = i.Product_ID
        LEFT JOIN (
          SELECT Product_ID, MIN(SupplierName) AS supplier_name
          FROM Suppliers

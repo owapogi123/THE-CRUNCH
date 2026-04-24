@@ -3,11 +3,15 @@ const db = require("../config/db");
 const fs = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
-const { deductStockForOrder } = require("../services/inventoryService");
+const jwt = require("jsonwebtoken");
+const {
+  deductSalesStockForCompletedOrder,
+} = require("../services/inventoryService");
 const fetchFn = (...args) =>
   (typeof fetch === "function"
     ? fetch(...args)
     : import("node-fetch").then(({ default: nodeFetch }) => nodeFetch(...args)));
+const JWT_SECRET = process.env.JWT_SECRET || "secretkey";
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 
@@ -67,7 +71,11 @@ function isStrictKitchenTransitionAllowed(currentStatus, nextStatus) {
   if (currentStatus === nextStatus) return true;
 
   if (nextStatus === "Cancelled") {
-    return currentStatus === "Queued" || currentStatus === "Preparing";
+    return (
+      currentStatus === "Awaiting Cashier Review" ||
+      currentStatus === "Queued" ||
+      currentStatus === "Preparing"
+    );
   }
 
   if (nextStatus === "Refunded") {
@@ -75,7 +83,7 @@ function isStrictKitchenTransitionAllowed(currentStatus, nextStatus) {
   }
 
   const allowedTransitions = {
-    "Awaiting Cashier Review": ["Queued"],
+    "Awaiting Cashier Review": ["Queued", "Cancelled"],
     Queued: ["Preparing"],
     Preparing: ["Ready for Pickup"],
     "Ready for Pickup": ["Completed", "Picked Up"],
@@ -110,6 +118,22 @@ function isAwaitingCashierReviewStatus(value) {
   return normalizeKitchenStatus(value) === "Awaiting Cashier Review";
 }
 
+function requireAuthenticatedUser(req, res, next) {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ message: "No token provided" });
+  }
+
+  try {
+    const token = authHeader.split(" ")[1];
+    req.user = jwt.verify(token, JWT_SECRET);
+    return next();
+  } catch {
+    return res.status(401).json({ message: "Invalid or expired token" });
+  }
+}
+
 function hasPaidCheckout(attributes) {
   const payments = Array.isArray(attributes?.payments) ? attributes.payments : [];
   return payments.some((payment) => {
@@ -130,6 +154,26 @@ function normalizePaymentStatus(value) {
 function isPaidPaymentStatus(value) {
   const normalized = normalizePaymentStatus(value);
   return normalized === "Paid";
+}
+
+function getCustomerTrackingStatus(rawStatus, paymentStatus) {
+  const normalizedStatus = normalizeKitchenStatus(rawStatus);
+  const normalizedPaymentStatus = normalizePaymentStatus(paymentStatus);
+
+  if (
+    normalizedStatus === "Completed" ||
+    normalizedStatus === "Picked Up"
+  ) {
+    return "Completed";
+  }
+
+  if (normalizedStatus === "Awaiting Cashier Review") {
+    return normalizedPaymentStatus === "Pending Payment"
+      ? "Pending Payment"
+      : "Awaiting Cashier Review";
+  }
+
+  return normalizedStatus || "Queued";
 }
 
 function getPaymentProofContentType(extension) {
@@ -311,6 +355,28 @@ async function ensureOnlineOrderColumns() {
   onlineOrderColumnsReady = true;
 }
 
+let orderStockDeductionColumnReady = false;
+async function ensureOrderStockDeductionColumn() {
+  if (orderStockDeductionColumnReady) return;
+  try {
+    await db.query(
+      "ALTER TABLE orders ADD COLUMN stock_deducted TINYINT(1) NOT NULL DEFAULT 0",
+    );
+  } catch (_) {
+    // Column already exists on subsequent runs.
+  }
+
+  try {
+    await db.query(
+      "UPDATE orders SET stock_deducted = 0 WHERE stock_deducted IS NULL",
+    );
+  } catch (_) {
+    // Safe backfill if the column already existed with nullable values.
+  }
+
+  orderStockDeductionColumnReady = true;
+}
+
 let deliveryTrackingColumnsReady = false;
 async function ensureDeliveryTrackingColumns() {
   if (deliveryTrackingColumnsReady) return;
@@ -367,9 +433,11 @@ router.get("/", async (req, res) => {
          o.Status          AS status,
          o.Order_Date      AS date,
          o.Order_Type      AS orderType,
+         o.payment_reference AS paymentReference,
          o.handoverTimestamp AS handoverTimestamp,
          o.riderName       AS riderName,
          p.Payment_Type    AS paymentMethod,
+         p.Payment_ID      AS paymentId,
          oi.Product_ID     AS productId,
          oi.Quantity       AS quantity,
          oi.Subtotal       AS subtotal,
@@ -382,7 +450,7 @@ router.get("/", async (req, res) => {
        LEFT JOIN products  pr ON pr.id          = oi.Product_ID
        LEFT JOIN users     u  ON u.id           = o.Cashier_ID
        LEFT JOIN (
-         SELECT p1.Order_ID, p1.Payment_Type
+         SELECT p1.Order_ID, p1.Payment_ID, p1.Payment_Type
          FROM payments p1
          INNER JOIN (
            SELECT Order_ID, MAX(Payment_ID) AS maxPaymentId
@@ -684,13 +752,24 @@ router.get("/delivery-handover", async (req, res) => {
 });
 
 // GET /orders/customer/:customerUserId — customer tracking + history
-router.get("/customer/:customerUserId", async (req, res) => {
+router.get("/customer/:customerUserId", requireAuthenticatedUser, async (req, res) => {
   try {
     await ensureOnlineOrderColumns();
 
     const customerUserId = Number(req.params.customerUserId);
     if (!Number.isFinite(customerUserId) || customerUserId <= 0) {
       return res.status(400).json({ message: "Invalid customer user id" });
+    }
+
+    const requesterUserId = Number(req.user?.userId);
+    const requesterRole = String(req.user?.role || "").toLowerCase();
+    const canAccess =
+      requesterUserId === customerUserId || requesterRole === "administrator";
+
+    if (!canAccess) {
+      return res.status(403).json({
+        message: "You can only access your own order history",
+      });
     }
 
     const [rows] = await db.query(
@@ -710,7 +789,7 @@ router.get("/customer/:customerUserId", async (req, res) => {
        LEFT JOIN menu m ON m.Product_ID = oi.Product_ID
        LEFT JOIN products pr ON pr.id = oi.Product_ID
        LEFT JOIN (
-         SELECT p1.Order_ID, p1.Payment_Type
+         SELECT p1.Order_ID, p1.Payment_ID, p1.Payment_Type
          FROM payments p1
          INNER JOIN (
            SELECT Order_ID, MAX(Payment_ID) AS maxPaymentId
@@ -726,6 +805,10 @@ router.get("/customer/:customerUserId", async (req, res) => {
     const grouped = {};
     for (const row of rows) {
       if (!grouped[row.id]) {
+        const trackingStatus = getCustomerTrackingStatus(
+          row.status,
+          row.paymentStatus,
+        );
         grouped[row.id] = {
           id: row.id,
           orderNumber: `#${row.id}`,
@@ -733,9 +816,9 @@ router.get("/customer/:customerUserId", async (req, res) => {
           createdAt: row.createdAt,
           orderType: normalizeOrderType(row.orderType),
           rawStatus: row.status,
-          trackingStatus: row.status || "Pending",
+          trackingStatus,
           paymentReference: row.paymentReference || null,
-          paymentStatus: row.paymentStatus || null,
+          paymentStatus: normalizePaymentStatus(row.paymentStatus || null),
           paymentMethod: row.paymentMethod || "gcash",
           items: [],
         };
@@ -751,12 +834,22 @@ router.get("/customer/:customerUserId", async (req, res) => {
 
     const allOrders = Object.values(grouped);
     const activeOrders = allOrders.filter((order) => {
-      const status = String(order.rawStatus || "").toLowerCase();
-      return status !== "completed" && status !== "cancelled" && status !== "picked up";
+      const status = normalizeKitchenStatus(order.rawStatus);
+      return (
+        status !== "Completed" &&
+        status !== "Cancelled" &&
+        status !== "Picked Up" &&
+        status !== "Refunded"
+      );
     });
     const historyOrders = allOrders.filter((order) => {
-      const status = String(order.rawStatus || "").toLowerCase();
-      return status === "completed" || status === "cancelled" || status === "picked up";
+      const status = normalizeKitchenStatus(order.rawStatus);
+      return (
+        status === "Completed" ||
+        status === "Cancelled" ||
+        status === "Picked Up" ||
+        status === "Refunded"
+      );
     });
 
     res.json({ activeOrders, historyOrders });
@@ -910,6 +1003,7 @@ router.post("/", async (req, res) => {
   let conn;
   try {
     await ensureOnlineOrderColumns();
+    await ensureOrderStockDeductionColumn();
 
     const {
       items,
@@ -1026,7 +1120,6 @@ router.post("/", async (req, res) => {
     }
 
     conn = await db.getConnection();
-    await conn.beginTransaction();
 
     // Insert the order header
     const [orderResult] = await conn.query(
@@ -1091,20 +1184,6 @@ router.post("/", async (req, res) => {
         [orderId, item.product_id, requiredQty, item.subtotal]
       );
 
-      // Deduct Menu.Stock (floors at 0)
-      await conn.query(
-        "UPDATE Menu SET Stock = GREATEST(Stock - ?, 0) WHERE Product_ID = ?",
-        [requiredQty, item.product_id]
-      );
-
-      // Keep products.quantity in sync
-      await conn.query(
-        "UPDATE products SET quantity = GREATEST(quantity - ?, 0) WHERE id = ?",
-        [requiredQty, item.product_id]
-      );
-
-      // Deduct inventory stock and log status
-      await deductStockForOrder(item.product_id, requiredQty, null, conn);
     }
 
     // Insert payment record
@@ -1143,6 +1222,8 @@ router.post("/", async (req, res) => {
 // PATCH /orders/:id — update order status
 // ⚠️  Wildcard param routes go LAST so they don't shadow named paths above.
 router.patch("/:id", async (req, res) => {
+  let conn;
+  let txStarted = false;
   try {
     const { id } = req.params;
     const {
@@ -1162,17 +1243,28 @@ router.patch("/:id", async (req, res) => {
     await ensureStartedAtColumn();
     await ensureDeliveryTrackingColumns();
     await ensureKitchenTimingColumns();
+    await ensureOrderStockDeductionColumn();
 
-    const [existingRows] = await db.query(
+    conn = await db.getConnection();
+
+    const [existingRows] = await conn.query(
       `SELECT
          Status AS status,
          queuedAt AS queuedAt,
          prepStartedAt AS prepStartedAt,
          dueAt AS dueAt,
          estimatedPrepMinutes AS estimatedPrepMinutes,
-         payment_status AS paymentStatus
-       FROM orders
-       WHERE Order_ID = ?
+         payment_status AS paymentStatus,
+         (
+           SELECT p.Payment_Status
+           FROM Payments p
+           WHERE p.Order_ID = o.Order_ID
+           ORDER BY p.Payment_ID DESC
+           LIMIT 1
+         ) AS paymentRecordStatus,
+         COALESCE(stock_deducted, 0) AS stockDeducted
+       FROM orders o
+       WHERE o.Order_ID = ?
        LIMIT 1`,
       [id]
     );
@@ -1192,7 +1284,9 @@ router.patch("/:id", async (req, res) => {
       String(submittedPaymentStatus).trim() !== "";
     const nextPaymentStatus = hasPaymentStatusUpdate
       ? normalizePaymentStatus(submittedPaymentStatus)
-      : normalizePaymentStatus(existingRows[0].paymentStatus);
+      : normalizePaymentStatus(
+          existingRows[0].paymentStatus || existingRows[0].paymentRecordStatus
+        );
 
     if (!hasStatusUpdate && !hasTimerUpdate && !hasPaymentStatusUpdate && !startedAt && resolvedCashierId == null && !handoverTimestamp && riderName === undefined) {
       return res.status(400).json({ message: "No valid fields to update" });
@@ -1234,6 +1328,13 @@ router.patch("/:id", async (req, res) => {
     if (hasPaymentStatusUpdate) {
       fields.push("payment_status = ?");
       values.push(nextPaymentStatus);
+    } else if (
+      nextStatus === "Completed" &&
+      !isPaidPaymentStatus(existingRows[0].paymentStatus) &&
+      isPaidPaymentStatus(existingRows[0].paymentRecordStatus)
+    ) {
+      fields.push("payment_status = ?");
+      values.push("Paid");
     }
 
     if (
@@ -1317,22 +1418,42 @@ router.patch("/:id", async (req, res) => {
       return res.status(400).json({ message: "No valid fields to update" });
     }
 
+    await conn.beginTransaction();
+    txStarted = true;
+
     values.push(id);
-    await db.query(
+    await conn.query(
       `UPDATE orders SET ${fields.join(", ")} WHERE Order_ID = ?`,
       values
     );
+
+    const shouldDeductStockNow =
+      hasStatusUpdate &&
+      currentStatus !== "Completed" &&
+      nextStatus === "Completed" &&
+      Number(existingRows[0].stockDeducted) === 0;
+
+    if (shouldDeductStockNow) {
+      if (!isPaidPaymentStatus(nextPaymentStatus)) {
+        throw new Error("Cannot deduct stock for an unpaid completed order");
+      }
+
+      await deductSalesStockForCompletedOrder(id, resolvedCashierId, conn);
+    }
 
     if (hasPaymentStatusUpdate || nextStatus === "Completed") {
       const paymentRecordStatus =
         isPaidPaymentStatus(nextPaymentStatus) || nextStatus === "Completed"
           ? "Completed"
           : "Pending";
-      await db.query(
+      await conn.query(
         "UPDATE Payments SET Payment_Status = ? WHERE Order_ID = ?",
         [paymentRecordStatus, id]
       );
     }
+
+    await conn.commit();
+    txStarted = false;
 
     res.json({
       message: "Order updated",
@@ -1345,12 +1466,15 @@ router.patch("/:id", async (req, res) => {
           : undefined,
     });
   } catch (err) {
+    if (conn && txStarted) await conn.rollback();
     console.error("PATCH /orders/:id error:", JSON.stringify({
       message: err.message,
       code: err.code,
       sqlMessage: err.sqlMessage,
     }, null, 2));
     res.status(500).json({ message: "DB error", error: err.message });
+  } finally {
+    if (conn) conn.release();
   }
 });
 

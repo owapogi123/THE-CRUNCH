@@ -22,6 +22,88 @@ function toDateString(value) {
   return d.toISOString().split("T")[0];
 }
 
+function toSqlDateTime(value) {
+  if (!value) return null;
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return null;
+  const pad = (part) => String(part).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function toPositiveIntegerOrNull(value) {
+  const n = Number.parseInt(String(value ?? ""), 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function isRawMaterialLabel(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  return (
+    normalized === "raw material" ||
+    normalized === "raw materials" ||
+    normalized === "raw_material" ||
+    normalized === "raw_materials"
+  );
+}
+
+function computeUsableUntil(baseValue, shelfLifeDays, shelfLifeHours) {
+  const base = new Date(baseValue);
+  if (isNaN(base.getTime())) return null;
+  const days = toPositiveIntegerOrNull(shelfLifeDays) || 0;
+  const hours = toPositiveIntegerOrNull(shelfLifeHours) || 0;
+  if (days <= 0 && hours <= 0) return null;
+
+  const usableUntil = new Date(base.getTime());
+  usableUntil.setDate(usableUntil.getDate() + days);
+  usableUntil.setHours(usableUntil.getHours() + hours);
+  return toSqlDateTime(usableUntil);
+}
+
+async function ensureBatchShelfLifeColumns(connOrDb = db) {
+  await connOrDb.query(`
+    CREATE TABLE IF NOT EXISTS batches (
+      batch_id INT PRIMARY KEY AUTO_INCREMENT,
+      product_id INT NOT NULL,
+      delivery_batch_id VARCHAR(50),
+      quantity DECIMAL(10,2) NOT NULL,
+      remaining_qty DECIMAL(10,2) NOT NULL,
+      unit VARCHAR(20) DEFAULT 'kg',
+      received_date DATE NOT NULL,
+      expiry_date DATE NULL,
+      shelf_life_days INT DEFAULT NULL,
+      shelf_life_hours INT DEFAULT NULL,
+      usable_until DATETIME DEFAULT NULL,
+      status ENUM('active','withdrawn','returned','expired') DEFAULT 'active',
+      returned_qty DECIMAL(10,2) DEFAULT 0,
+      notes VARCHAR(255) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )
+  `);
+
+  const [cols] = await connOrDb.query(`SHOW COLUMNS FROM batches`);
+  const fieldSet = new Set(cols.map((c) => c.Field));
+
+  if (!fieldSet.has("shelf_life_days")) {
+    await connOrDb.query(
+      `ALTER TABLE batches ADD COLUMN shelf_life_days INT DEFAULT NULL`,
+    );
+  }
+
+  if (!fieldSet.has("shelf_life_hours")) {
+    await connOrDb.query(
+      `ALTER TABLE batches ADD COLUMN shelf_life_hours INT DEFAULT NULL`,
+    );
+  }
+
+  if (!fieldSet.has("usable_until")) {
+    await connOrDb.query(
+      `ALTER TABLE batches ADD COLUMN usable_until DATETIME DEFAULT NULL`,
+    );
+  }
+}
+
 // ─── supplier history logger ──────────────────────────────────────────────────
 
 async function logSupplierHistory(
@@ -217,10 +299,6 @@ router.post("/", async (req, res) => {
     return res.status(400).json({ error: "supplier is required" });
   }
 
-  if (!String(receiptNo).trim()) {
-    return res.status(400).json({ error: "receiptNo is required" });
-  }
-
   const orderDate = toDateString(date) || toDateString(new Date());
   const delivDate = toDateString(deliveryDate);
 
@@ -261,7 +339,7 @@ router.post("/", async (req, res) => {
         delivDate,
         safeStatus,
         notes.trim() || null,
-        String(receiptNo).trim(),
+        String(receiptNo).trim() || null,
       ],
     );
 
@@ -290,7 +368,7 @@ router.post("/", async (req, res) => {
     await logSupplierHistory({
       supplier_name: supplier.trim(),
       action: "Purchase Order Created",
-      details: `PO: ${poId} | Receipt: ${String(receiptNo).trim()} | ${items.length} item(s) | Delivery: ${delivDate}${notes.trim() ? ` | Notes: ${notes.trim()}` : ""}`,
+      details: `PO: ${poId} | ${items.length} item(s) | Delivery: ${delivDate}${notes.trim() ? ` | Notes: ${notes.trim()}` : ""}`,
       performed_by: null,
     });
 
@@ -399,13 +477,17 @@ router.patch("/:id/receive", async (req, res) => {
     receiptNo = null,
     receivedDate,
     itemExpiryDates = {},
+    itemShelfLife = {},
   } = req.body;
 
-  const recDate = toDateString(receivedDate) || toDateString(new Date());
+  const receivedAt = receivedDate ? new Date(receivedDate) : new Date();
+  const safeReceivedAt = isNaN(receivedAt.getTime()) ? new Date() : receivedAt;
+  const recDate = toDateString(safeReceivedAt) || toDateString(new Date());
 
   let conn;
   try {
     await ensureTables();
+    await ensureBatchShelfLifeColumns();
 
     conn = await db.getConnection();
     await conn.beginTransaction();
@@ -456,8 +538,14 @@ router.patch("/:id/receive", async (req, res) => {
       let productRow = null;
 
       const [[matchedProduct]] = await conn.query(
-        `SELECT p.id AS product_id, p.name AS product_name, p.price, p.quantity
+        `SELECT p.id AS product_id,
+                p.name AS product_name,
+                p.price,
+                p.quantity,
+                COALESCE(m.Promo, '') AS promo,
+                COALESCE(m.Category_Name, '') AS category_name
          FROM products p
+         LEFT JOIN Menu m ON m.Product_ID = p.id
          WHERE LOWER(TRIM(p.name)) = LOWER(TRIM(?))
          LIMIT 1`,
         [item.name],
@@ -471,7 +559,9 @@ router.patch("/:id/receive", async (req, res) => {
           `SELECT m.Product_ID AS product_id,
                   m.Product_Name AS product_name,
                   COALESCE(m.Price, 0) AS price,
-                  COALESCE(m.Stock, 0) AS stock
+                  COALESCE(m.Stock, 0) AS stock,
+                  COALESCE(m.Promo, '') AS promo,
+                  COALESCE(m.Category_Name, '') AS category_name
            FROM Menu m
            WHERE LOWER(TRIM(m.Product_Name)) = LOWER(TRIM(?))
            LIMIT 1`,
@@ -525,7 +615,36 @@ router.patch("/:id/receive", async (req, res) => {
       }
 
       const unit = item.unit || "kg";
-      const itemExpiryDate = toDateString(itemExpiryDates?.[item.item_id]);
+      const shelfLifeInput = itemShelfLife?.[item.item_id] || {};
+      const shelfLifeDays = toPositiveIntegerOrNull(
+        shelfLifeInput.shelfLifeDays,
+      );
+      const shelfLifeHours = toPositiveIntegerOrNull(
+        shelfLifeInput.shelfLifeHours,
+      );
+      const isRawMaterial =
+        isRawMaterialLabel(item.category) ||
+        isRawMaterialLabel(productRow?.category_name);
+      const itemExpiryDate = isRawMaterial
+        ? null
+        : toDateString(itemExpiryDates?.[item.item_id]);
+      const usableUntil = isRawMaterial
+        ? computeUsableUntil(safeReceivedAt, shelfLifeDays, shelfLifeHours)
+        : null;
+
+      if (isRawMaterial && !usableUntil) {
+        await conn.rollback();
+        return res.status(400).json({
+          error: `Shelf life is required for raw material "${item.name}"`,
+        });
+      }
+
+      if (!isRawMaterial && !itemExpiryDate) {
+        await conn.rollback();
+        return res.status(400).json({
+          error: `Expiry date is required for "${item.name}"`,
+        });
+      }
 
       await conn.query(
         `INSERT INTO Inventory (Product_ID, Quantity, Stock, Item_Purchased)
@@ -540,8 +659,8 @@ router.patch("/:id/receive", async (req, res) => {
 
       const [batchResult] = await conn.query(
         `INSERT INTO batches
-           (product_id, quantity, remaining_qty, unit, received_date, expiry_date, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+           (product_id, quantity, remaining_qty, unit, received_date, expiry_date, shelf_life_days, shelf_life_hours, usable_until, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           productId,
           qty,
@@ -549,6 +668,9 @@ router.patch("/:id/receive", async (req, res) => {
           unit,
           recDate,
           itemExpiryDate || null,
+          shelfLifeDays,
+          shelfLifeHours,
+          usableUntil,
           `PO: ${poId}`,
         ],
       );
@@ -574,7 +696,7 @@ router.patch("/:id/receive", async (req, res) => {
       receivedItemNames.push(`${item.name} x${qty} ${unit}`);
 
       console.log(
-        `[PO Receive] ${poId}: Created batch #${batchResult.insertId} for product ${productId} (${item.name}) - ${qty} ${unit}, expiry: ${itemExpiryDate || "none"}`,
+        `[PO Receive] ${poId}: Created batch #${batchResult.insertId} for product ${productId} (${item.name}) - ${qty} ${unit}, expiry: ${itemExpiryDate || "none"}, usable until: ${usableUntil || "none"}`,
       );
     }
 
