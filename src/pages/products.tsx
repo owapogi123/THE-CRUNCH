@@ -333,34 +333,6 @@ import React, { useState, useEffect, useRef } from 'react'
     )
   }
 
-  function PageTransitionOverlay({ visible, itemName }: { visible: boolean; itemName: string }) {
-    return (
-      <AnimatePresence>
-        {visible && (
-          <>
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}
-              style={{ position: 'fixed', inset: 0, zIndex: 9998, background: '#0e0c0a', pointerEvents: 'all' }} />
-            <motion.div initial={{ x: '-100%' }} animate={{ x: '130%' }} exit={{ opacity: 0 }}
-              transition={{ duration: 0.6, ease: [0.76, 0, 0.24, 1], delay: 0.05 }}
-              style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'linear-gradient(105deg,transparent 25%,rgba(245,200,66,0.25) 50%,transparent 75%)', pointerEvents: 'none' }} />
-            <motion.div initial={{ opacity: 0, scale: 0.86, y: 16 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.92, y: -10 }}
-              transition={{ duration: 0.38, ease: [0.22, 1, 0.36, 1], delay: 0.1 }}
-              style={{ position: 'fixed', top: '30%', left: '40%', transform: 'translate(-50%,-50%)', zIndex: 10000, textAlign: 'center', pointerEvents: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20 }}>
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10, background: 'rgba(245,200,66,0.1)', border: '1px solid rgba(245,200,66,0.3)', borderRadius: 40, padding: '8px 20px' }}>
-                <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-                  style={{ width: 13, height: 13, borderRadius: '50%', border: '2px solid rgba(245,200,66,0.35)', borderTopColor: '#f5c842', flexShrink: 0 }} />
-                <span style={{ fontSize: 11, fontWeight: 700, color: '#f5c842', letterSpacing: '0.18em', textTransform: 'uppercase', fontFamily: "'Poppins', sans-serif" }}>Taking you there</span>
-              </div>
-              <div style={{ fontFamily: "'Poppins', sans-serif", fontSize: 'clamp(20px,3vw,34px)', fontWeight: 800, color: '#f0ede8', letterSpacing: '-0.02em', lineHeight: 1.15, maxWidth: 480, padding: '0 32px' }}>{itemName}</div>
-              <motion.div initial={{ width: 0 }} animate={{ width: 64 }} transition={{ duration: 0.4, delay: 0.22, ease: [0.22, 1, 0.36, 1] }}
-                style={{ height: 1, background: 'rgba(245,200,66,0.4)', borderRadius: 1 }} />
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
-    )
-  }
-
   function Reveal({ children, custom = 0, style = {} }: { children: React.ReactNode; custom?: number; style?: React.CSSProperties }) {
     const ref      = useRef(null)
     const isInView = useInView(ref, { once: true, margin: '-72px' })
@@ -436,8 +408,6 @@ import React, { useState, useEffect, useRef } from 'react'
     const [hoveredId, setHoveredId]             = useState<number | null>(null)
     const [isOpen, setIsOpen]                   = useState(false)
     const [expandedFlavor, setExpandedFlavor]   = useState<string | null>(null)
-    const [transitioning, setTransitioning]     = useState(false)
-    const [transitionLabel, setTransitionLabel] = useState('')
     const [orderTypeOpen, setOrderTypeOpen]     = useState(false)
 
     const heroRef     = useRef<HTMLDivElement>(null)
@@ -490,12 +460,6 @@ import React, { useState, useEffect, useRef } from 'react'
     )
     const topPick = filtered.find(p => p.badge === 'Bestseller') ?? filtered[0]
 
-    const orderItem = (displayName: string, menuName: string) => {
-      setTransitionLabel(displayName)
-      setTransitioning(true)
-      setTimeout(() => navigate(`/usersmenu?item=${encodeURIComponent(menuName.toLowerCase())}`), 540)
-    }
-
     const handlePickUp = () => {
       setOrderTypeOpen(false)
       navigate('/usersmenu')
@@ -504,7 +468,6 @@ import React, { useState, useEffect, useRef } from 'react'
     return (
       <div style={{ fontFamily: "'Poppins', sans-serif", background: '#0e0c0a', minHeight: '100vh', color: '#f0ede8', position: 'relative' }}>
         <link href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,400&display=swap" rel="stylesheet" />
-        <PageTransitionOverlay visible={transitioning} itemName={transitionLabel} />
 
         {/* Ambient glows */}
         <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 0, overflow: 'hidden' }}>
@@ -693,7 +656,7 @@ import React, { useState, useEffect, useRef } from 'react'
                     <span style={{ color: 'rgba(240,237,232,0.38)', fontSize: 13 }}>{topPick.category}</span>
                     <span style={{ fontSize: 22, fontWeight: 800, color: '#f5c842', marginLeft: 8 }}>₱{topPick.price}</span>
                     <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
-                      onClick={() => orderItem(topPick.name, topPick.menuName)}
+                      onClick={() => setOrderTypeOpen(true)}
                       style={{ marginLeft: 'auto', background: '#f5c842', border: 'none', borderRadius: 14, padding: '12px 32px', fontSize: 14, fontWeight: 700, color: '#111', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
                       Order Now
                     </motion.button>
@@ -774,7 +737,7 @@ import React, { useState, useEffect, useRef } from 'react'
                           <span style={{ fontSize: 12, fontWeight: 600, color: '#f5c842' }}>{p.rating}</span>
                           {!isDrink && <span style={{ fontSize: 14, fontWeight: 800, color: '#f5c842', marginLeft: 4 }}>₱{p.price}</span>}
                         </div>
-                        <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => orderItem(p.name, p.menuName)}
+                        <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => setOrderTypeOpen(true)}
                           style={{ background: isDrink ? 'rgba(99,179,237,0.15)' : '#f5c842', color: isDrink ? '#93c5fd' : '#111', border: isDrink ? '1px solid rgba(99,179,237,0.3)' : 'none', borderRadius: 12, padding: '10px 24px', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: "'Poppins', sans-serif", letterSpacing: '0.01em', whiteSpace: 'nowrap' }}>
                           Order
                         </motion.button>
@@ -953,8 +916,6 @@ import React, { useState, useEffect, useRef } from 'react'
                 </div>
               </div>
             </div>
-
-            
 
             {/* ── Bottom copyright ── */}
             <div style={{ paddingTop: 24, borderTop: '1px solid rgba(255,255,255,0.05)', textAlign: 'center' }}>
