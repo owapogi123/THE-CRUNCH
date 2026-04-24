@@ -6,6 +6,7 @@ import {
   useEffect,
   ReactNode,
 } from "react";
+import { authApi } from "../lib/api";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -45,6 +46,12 @@ function clearStoredAuth() {
   ["authToken", "isAuthenticated", "userName", "userRole", "userId"].forEach(
     (key) => localStorage.removeItem(key),
   );
+}
+
+const CUSTOMER_ROLES = new Set(["customer", "user"]);
+
+function isStaffRole(role: string | null | undefined): boolean {
+  return !!role && !CUSTOMER_ROLES.has(role.toLowerCase());
 }
 
 function parseJwtExp(token: string): number | null {
@@ -136,6 +143,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(data);
     setIsOnline(true);
 
+    if (!isStaffRole(data.role)) return;
+
     const current = attendanceRef.current;
     const alreadyIn = current.some(
       (r) => r.username === data.username && r.timeOut === null
@@ -156,6 +165,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // ── Logout ─────────────────────────────────────────────────────────────────
 
   const logout = () => {
+    const currentUser = user;
     const timeOut = new Date();
 
     /**
@@ -172,6 +182,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsOnline(false);
     setUser(null);
     if (typeof window !== "undefined") {
+      if (currentUser?.token) {
+        void authApi.logout(currentUser.token).catch(() => undefined);
+      }
       clearStoredAuth();
       window.dispatchEvent(new Event("authChange"));
     }

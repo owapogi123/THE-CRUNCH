@@ -150,7 +150,6 @@ interface RawMaterialForm {
   name: string;
   category: string;
   unit: string;
-  initialStock: string;
   price: string;
   description: string;
 }
@@ -174,6 +173,32 @@ interface ReportData {
   totalWithdrawn: number;
   totalReturned: number;
   totalWasted: number;
+}
+interface KitchenUsageReport {
+  report_id: number;
+  report_date: string;
+  status: "draft" | "submitted" | "finalized";
+  prepared_by: number | null;
+  prepared_by_name?: string | null;
+  finalized_by: number | null;
+  finalized_by_name?: string | null;
+  finalized_at?: string | null;
+  updated_at?: string | null;
+}
+interface KitchenUsageItem {
+  usage_item_id?: number;
+  product_id: number | null;
+  product_name: string;
+  category: string;
+  unit: string;
+  withdrawn_qty: number;
+  used_qty: number;
+  spoilage_qty: number;
+  note: string;
+}
+interface KitchenUsagePayload {
+  report: KitchenUsageReport;
+  items: KitchenUsageItem[];
 }
 
 // ─── API ──────────────────────────────────────────────────────────────────────
@@ -319,6 +344,15 @@ const api = {
     getMonthly: (year: number, month: number) =>
       apiFetch<ReportData>(`/reports/monthly?year=${year}&month=${month}`),
   },
+  getKitchenUsageToday: () =>
+    apiFetch<KitchenUsagePayload>(
+      "/kitchen-usage/today?preferLatestPopulated=1",
+    ),
+  finalizeKitchenUsage: (reportId: number, body: { finalized_by: number | null }) =>
+    apiFetch<KitchenUsagePayload>(`/kitchen-usage/${reportId}/finalize`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
   po: {
     getAll: () => apiFetch<PurchaseOrder[]>("/purchase-orders"),
     create: (body: Omit<PurchaseOrder, "id">) =>
@@ -466,7 +500,6 @@ const BLANK_RAW_MATERIAL: RawMaterialForm = {
   name: "",
   category: "Sauce",
   unit: "liter",
-  initialStock: "",
   price: "",
   description: "",
 };
@@ -1007,6 +1040,208 @@ function CloseBtn({ onClick }: { onClick: () => void }) {
         />
       </svg>
     </button>
+  );
+}
+
+function SupplierProductsModal({
+  supplier,
+  allProducts,
+  loading,
+  onClose,
+  onSaveProducts,
+  onRemoveProduct,
+}: {
+  supplier: Supplier;
+  allProducts: Product[];
+  loading: boolean;
+  onClose: () => void;
+  onSaveProducts: (supplier_id: number, products: string[]) => Promise<void>;
+  onRemoveProduct: (supplier_id: number, product_name: string) => Promise<void>;
+}) {
+  const [productInput, setProductInput] = useState("");
+  const [pendingProducts, setPendingProducts] = useState<string[]>([]);
+
+  const existingProducts = useMemo(
+    () => parseSupplierProducts(supplier.products_supplied),
+    [supplier.products_supplied],
+  );
+  const combinedProducts = useMemo(
+    () => [...new Set([...existingProducts, ...pendingProducts])],
+    [existingProducts, pendingProducts],
+  );
+  const suggestions = useMemo(() => {
+    const query = productInput.trim().toLowerCase();
+    const selected = new Set(combinedProducts.map((item) => item.toLowerCase()));
+
+    return allProducts
+      .filter((product) => !isMenuFoodProduct(product))
+      .filter((product) => !selected.has(product.product_name.toLowerCase()))
+      .filter((product) =>
+        query ? product.product_name.toLowerCase().includes(query) : false,
+      )
+      .slice(0, 6);
+  }, [allProducts, combinedProducts, productInput]);
+
+  const addProduct = (productName: string) => {
+    const trimmedProduct = productName.trim();
+    if (!trimmedProduct) return;
+
+    const exists = combinedProducts.some(
+      (item) => item.toLowerCase() === trimmedProduct.toLowerCase(),
+    );
+    if (exists) {
+      setProductInput("");
+      return;
+    }
+
+    setPendingProducts((prev) => [...prev, trimmedProduct]);
+    setProductInput("");
+  };
+
+  const removePendingProduct = (productName: string) => {
+    setPendingProducts((prev) =>
+      prev.filter((item) => item.toLowerCase() !== productName.toLowerCase()),
+    );
+  };
+
+  const handleSave = async () => {
+    if (pendingProducts.length === 0) {
+      onClose();
+      return;
+    }
+    await onSaveProducts(supplier.supplier_id, pendingProducts);
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+    >
+      <motion.div
+        initial={{ scale: 0.96, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.96, opacity: 0 }}
+        transition={{ type: "spring", stiffness: 300, damping: 28 }}
+        className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden"
+      >
+        <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
+          <div>
+            <p className="font-semibold text-slate-800">Edit Supplier</p>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Manage supplied products for {supplier.supplier_name}.
+            </p>
+          </div>
+          <CloseBtn onClick={onClose} />
+        </div>
+        <div className="p-6 space-y-5">
+          <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
+            <p className="text-sm font-semibold text-slate-800">
+              {supplier.supplier_name}
+            </p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {supplier.contact_number}
+              {supplier.email ? ` - ${supplier.email}` : ""}
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 mb-1.5">
+              Products Supplied
+            </label>
+            <div className="flex flex-wrap gap-2 p-3 border border-slate-200 rounded-xl bg-slate-50 min-h-[56px]">
+              {combinedProducts.length > 0 ? (
+                combinedProducts.map((product) => {
+                  const isPending = pendingProducts.some(
+                    (item) => item.toLowerCase() === product.toLowerCase(),
+                  );
+
+                  return (
+                    <span
+                      key={product}
+                      className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full bg-white border border-slate-200 text-slate-700"
+                    >
+                      {product}
+                      <button
+                        type="button"
+                        disabled={loading}
+                        onClick={() =>
+                          isPending
+                            ? removePendingProduct(product)
+                            : onRemoveProduct(supplier.supplier_id, product)
+                        }
+                        className="text-slate-300 hover:text-red-400 transition-colors ml-0.5 disabled:opacity-40"
+                        title={
+                          isPending
+                            ? "Remove unsaved product"
+                            : "Remove existing supplied product"
+                        }
+                      >
+                        x
+                      </button>
+                    </span>
+                  );
+                })
+              ) : (
+                <span className="text-xs text-slate-300 italic">
+                  No products yet
+                </span>
+              )}
+              <div className="relative min-w-[220px] flex-1">
+                <input
+                  type="text"
+                  value={productInput}
+                  onChange={(e) => setProductInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addProduct(productInput);
+                    }
+                  }}
+                  placeholder="Search or type item name"
+                  className="w-full text-xs text-slate-700 bg-transparent border-none outline-none placeholder:text-slate-400"
+                />
+                {suggestions.length > 0 && (
+                  <div className="absolute left-0 right-0 top-full mt-2 rounded-xl border border-slate-200 bg-white shadow-lg z-10 overflow-hidden">
+                    {suggestions.map((product) => (
+                      <button
+                        key={product.product_id}
+                        type="button"
+                        onClick={() => addProduct(product.product_name)}
+                        className="w-full px-3 py-2 text-left text-xs text-slate-600 hover:bg-slate-50 transition-colors"
+                      >
+                        {product.product_name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-1">
+              Existing products stay attached unless you remove them. New ones
+              are merged into the supplier when you save.
+            </p>
+          </div>
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-end gap-3">
+          <button
+            onClick={onClose}
+            disabled={loading}
+            className="px-4 py-2 text-sm font-medium text-slate-500 hover:text-slate-700 transition-colors disabled:opacity-60"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={loading}
+            className="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-700 transition-colors disabled:opacity-60"
+          >
+            {loading ? "Saving..." : "Save Products"}
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -3261,6 +3496,13 @@ function KitchenBatchesSection({
 
 export default function StockManager() {
   const [tab, setTab] = useState<Tab>("dashboard");
+  const [dashboardSubTab, setDashboardSubTab] = useState<
+    | "main-stock"
+    | "last-updates"
+    | "record-spoilage"
+    | "stock-movement"
+    | "cook-report"
+  >("main-stock");
   const [products, setProducts] = useState<Product[]>([]);
   const [withdrawals, setWithdrawals] = useState<StockStatusRecord[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -3287,12 +3529,17 @@ export default function StockManager() {
   const [showSupplierForm, setShowSupplierForm] = useState(false);
   const [supplierForm, setSupplierForm] =
     useState<Omit<Supplier, "supplier_id">>(BLANK_SUPPLIER);
+  const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
   const [supplierProductInput, setSupplierProductInput] = useState("");
   const [showRawMaterialForm, setShowRawMaterialForm] = useState(false);
   const [rawMaterialForm, setRawMaterialForm] =
     useState<RawMaterialForm>(BLANK_RAW_MATERIAL);
   const [showReconcile, setShowReconcile] = useState(false);
   const [reconcileItems, setReconcileItems] = useState<ReconcileRow[]>([]);
+  const [cookReport, setCookReport] = useState<KitchenUsagePayload | null>(null);
+  const [cookReportOpen, setCookReportOpen] = useState(false);
+  const [cookReportFinalizing, setCookReportFinalizing] = useState(false);
+  const [cookReportLoading, setCookReportLoading] = useState(false);
   const [poOrders, setPoOrders] = useState<PurchaseOrder[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<PurchaseOrder | null>(
     null,
@@ -3350,6 +3597,39 @@ export default function StockManager() {
     setPrefillPOProduct(undefined);
   }, []);
 
+  const normalizeKitchenUsagePayload = useCallback(
+    (payload: KitchenUsagePayload): KitchenUsagePayload => ({
+      report: {
+        ...payload.report,
+        report_id: toNumber(payload.report.report_id),
+        prepared_by:
+          payload.report.prepared_by == null
+            ? null
+            : toNumber(payload.report.prepared_by),
+        finalized_by:
+          payload.report.finalized_by == null
+            ? null
+            : toNumber(payload.report.finalized_by),
+      },
+      items: Array.isArray(payload.items)
+        ? payload.items.map((item) => ({
+            ...item,
+            usage_item_id:
+              (item as { usage_item_id?: unknown }).usage_item_id == null
+                ? undefined
+                : toNumber((item as { usage_item_id?: unknown }).usage_item_id),
+            product_id:
+              item.product_id == null ? null : toNumber(item.product_id),
+            withdrawn_qty: toNumber(item.withdrawn_qty),
+            used_qty: toNumber(item.used_qty),
+            spoilage_qty: toNumber(item.spoilage_qty),
+            note: typeof item.note === "string" ? item.note : "",
+          }))
+        : [],
+    }),
+    [],
+  );
+
   const fetchSupplierHistory = useCallback(async () => {
     setHistoryLoading(true);
     try {
@@ -3380,6 +3660,29 @@ export default function StockManager() {
     }
   }, [reportPeriod, selectedWeekStart, selectedMonth, selectedYear, showToast]);
 
+  const fetchCookReport = useCallback(async (silent = false) => {
+    if (!silent) setCookReportLoading(true);
+    try {
+      const payload = await api.getKitchenUsageToday();
+      const normalized = normalizeKitchenUsagePayload(payload);
+      setCookReport(normalized);
+      if (normalized.items.length > 0) {
+        setCookReportOpen(true);
+      }
+    } catch (err) {
+      if (!silent) {
+        showToast(
+          err instanceof Error
+            ? err.message
+            : "Failed to load cook report.",
+          "error",
+        );
+      }
+    } finally {
+      if (!silent) setCookReportLoading(false);
+    }
+  }, [normalizeKitchenUsagePayload, showToast]);
+
   const scrollDashboardTo = useCallback((targetId: string) => {
     if (typeof document === "undefined") return;
     const element = document.getElementById(targetId);
@@ -3398,12 +3701,13 @@ export default function StockManager() {
         api.getWithdrawals(),
         api.getSuppliers(),
       ]);
-      const [batchesRes, returnsRes, kitchenRes, poRes] =
+      const [batchesRes, returnsRes, kitchenRes, poRes, cookReportRes] =
         await Promise.allSettled([
           api.getActiveBatches(),
           api.getYesterdayReturns(),
           kitchenApi.getAll(),
           api.po.getAll(),
+          api.getKitchenUsageToday(),
         ]);
 
       const candidateProducts: Product[] = inv
@@ -3483,16 +3787,64 @@ export default function StockManager() {
         kitchenRes.status === "fulfilled" ? kitchenRes.value : [],
       );
       setPoOrders(poRes.status === "fulfilled" ? poRes.value : []);
+      setCookReport(
+        cookReportRes.status === "fulfilled"
+          ? normalizeKitchenUsagePayload(cookReportRes.value)
+          : null,
+      );
+      if (
+        cookReportRes.status === "fulfilled" &&
+        cookReportRes.value.items.length > 0
+      ) {
+        setCookReportOpen(true);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load data.");
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [normalizeKitchenUsagePayload]);
+
+  const handleFinalizeCookReport = useCallback(async () => {
+    if (!cookReport?.report?.report_id) return;
+
+    setCookReportFinalizing(true);
+    try {
+      const rawUserId =
+        typeof window !== "undefined" ? localStorage.getItem("userId") : null;
+      const finalizedBy =
+        rawUserId && Number.isFinite(Number(rawUserId))
+          ? Number(rawUserId)
+          : null;
+      const payload = await api.finalizeKitchenUsage(cookReport.report.report_id, {
+        finalized_by: finalizedBy,
+      });
+      setCookReport(normalizeKitchenUsagePayload(payload));
+      showToast("Cook report finalized.", "success");
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : "Failed to finalize cook report.",
+        "error",
+      );
+    } finally {
+      setCookReportFinalizing(false);
+    }
+  }, [cookReport, normalizeKitchenUsagePayload, showToast]);
 
   useEffect(() => {
     fetchAll();
   }, [fetchAll]);
+  useEffect(() => {
+    if (tab !== "dashboard") return;
+    const interval = window.setInterval(() => {
+      void fetchCookReport(true);
+    }, 10000);
+    return () => window.clearInterval(interval);
+  }, [tab, fetchCookReport]);
+  useEffect(() => {
+    if (tab !== "dashboard") return;
+    setDashboardSubTab("main-stock");
+  }, [tab]);
   useEffect(() => {
     if (products.length > 0) {
       if (wdProductId === null) setWdProductId(products[0].product_id);
@@ -3691,6 +4043,31 @@ export default function StockManager() {
   const mainStockProducts = useMemo(
     () => products.filter((p) => !isMenuFoodProduct(p)),
     [products],
+  );
+  const cookReportItems = useMemo(() => cookReport?.items ?? [], [cookReport]);
+  const cookReportVarianceCount = useMemo(
+    () =>
+      cookReportItems.filter(
+        (item) =>
+          Math.abs(
+            toNumber(item.withdrawn_qty) -
+              toNumber(item.used_qty) -
+              toNumber(item.spoilage_qty),
+          ) > 0.009,
+      ).length,
+    [cookReportItems],
+  );
+  const cookReportTotals = useMemo(
+    () =>
+      cookReportItems.reduce(
+        (sum, item) => ({
+          withdrawn: sum.withdrawn + toNumber(item.withdrawn_qty),
+          used: sum.used + toNumber(item.used_qty),
+          spoilage: sum.spoilage + toNumber(item.spoilage_qty),
+        }),
+        { withdrawn: 0, used: 0, spoilage: 0 },
+      ),
+    [cookReportItems],
   );
   const selectedWithdrawalProduct = useMemo(
     () => mainStockProducts.find((p) => p.product_id === wdProductId) ?? null,
@@ -4323,53 +4700,97 @@ export default function StockManager() {
     }
   }
 
+  async function saveSupplierProducts(
+    supplier_id: number,
+    incomingProducts: string[],
+  ) {
+    if (incomingProducts.length === 0) {
+      setEditingSupplier(null);
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const updated = await api.mergeSupplierProducts(
+        supplier_id,
+        incomingProducts,
+      );
+      setSuppliers((prev) =>
+        prev.map((supplier) =>
+          supplier.supplier_id === supplier_id ? updated : supplier,
+        ),
+      );
+      setEditingSupplier(updated);
+      showToast("Supplier products updated.", "success");
+      fetchSupplierHistory();
+      setEditingSupplier(null);
+    } catch (err) {
+      showToast(
+        err instanceof Error
+          ? err.message
+          : "Failed to update supplier products.",
+        "error",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleRemoveSupplierProduct(
+    supplier_id: number,
+    product_name: string,
+  ) {
+    setSubmitting(true);
+    try {
+      const updated = await api.removeSupplierProduct(supplier_id, product_name);
+      setSuppliers((prev) =>
+        prev.map((supplier) =>
+          supplier.supplier_id === supplier_id ? updated : supplier,
+        ),
+      );
+      setEditingSupplier((current) =>
+        current?.supplier_id === supplier_id ? updated : current,
+      );
+      showToast(`Removed ${product_name} from supplier products.`, "success");
+      fetchSupplierHistory();
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : "Failed to remove product.",
+        "error",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   async function addRawMaterial() {
     const name = rawMaterialForm.name.trim();
-    const qty = Number(rawMaterialForm.initialStock);
     const price = Number(rawMaterialForm.price || 0);
     if (!name) {
       showToast("Please enter a raw material name.", "error");
       return;
     }
-    if (!Number.isFinite(qty) || qty <= 0) {
-      showToast("Initial stock must be greater than 0.", "error");
+    const existing = products.find(
+      (p) => p.product_name.trim().toLowerCase() === name.toLowerCase(),
+    );
+    if (existing) {
+      showToast("This material already exists in inventory.", "error");
       return;
     }
     setSubmitting(true);
     try {
-      const existing = products.find(
-        (p) => p.product_name.trim().toLowerCase() === name.toLowerCase(),
-      );
-      if (existing) {
-        await api.postBatch({
-          productId: existing.product_id,
-          productName: existing.product_name,
-          quantity: qty,
-          unit: rawMaterialForm.unit,
-        });
-      } else {
-        const created = await api.createProduct({
-          name,
-          price: Number.isFinite(price) ? price : 0,
-          quantity: 0,
-          category: rawMaterialForm.category.trim(),
-          description: rawMaterialForm.description.trim() || undefined,
-          raw_material: true,
-        });
-        await api.postBatch({
-          productId: created.id,
-          productName: name,
-          quantity: qty,
-          unit: rawMaterialForm.unit,
-        });
-      }
+      await api.createProduct({
+        name,
+        price: Number.isFinite(price) ? price : 0,
+        quantity: 0,
+        category: rawMaterialForm.category.trim(),
+        description: rawMaterialForm.description.trim() || undefined,
+        raw_material: true,
+      });
       await fetchAll();
       setRawMaterialForm(BLANK_RAW_MATERIAL);
       setShowRawMaterialForm(false);
-      showToast(
-        existing ? "Stock added to existing item." : "Raw material added.",
-        "success",
-      );
+      showToast("Raw material added.", "success");
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : "Failed to add raw material.",
@@ -4522,37 +4943,49 @@ export default function StockManager() {
             })}
           </div>
           {tab === "dashboard" && !isLoading && (
-            <div className="border-t border-slate-100 px-6 pb-4 pt-2">
-              <div className="flex items-center justify-center gap-2 flex-wrap">
+            <div className="border-t border-slate-100 px-4 pt-2">
+              <div className="mx-auto flex w-full max-w-5xl items-end justify-center gap-6 border-b border-slate-200">
                 {[
                   {
+                    id: "main-stock" as const,
                     label: "Main Stock Levels",
-                    target: "dashboard-main-stock",
                   },
                   {
+                    id: "last-updates" as const,
                     label: "Last Inventory Updates",
-                    target: "dashboard-last-updates",
                   },
                   {
+                    id: "record-spoilage" as const,
                     label: "Record Spoilage",
-                    target: "dashboard-record-spoilage",
                   },
                   {
+                    id: "stock-movement" as const,
                     label: "Stock Movement Report",
-                    target: "dashboard-stock-movement",
+                  },
+                  {
+                    id: "cook-report" as const,
+                    label: "Cook Report",
                   },
                 ].map((item) => (
-                  <a
-                    key={item.label}
-                    href={`#${item.target}`}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      scrollDashboardTo(item.target);
-                    }}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium border transition-all duration-200 bg-white text-slate-500 border-slate-200 hover:border-slate-300 hover:text-slate-700"
+                  <button
+                    key={item.id}
+                    onClick={() => setDashboardSubTab(item.id)}
+                    className={`relative border-none bg-transparent px-6 py-3 text-sm font-semibold transition-colors duration-200 ${
+                      dashboardSubTab === item.id
+                        ? "text-blue-600"
+                        : "text-slate-400 hover:text-slate-600"
+                    }`}
+                    style={{ fontFamily: "'Poppins', sans-serif" }}
                   >
                     {item.label}
-                  </a>
+                    <span
+                      className={`absolute inset-x-0 bottom-0 h-0.5 rounded-full transition-opacity duration-200 ${
+                        dashboardSubTab === item.id
+                          ? "bg-blue-500 opacity-100"
+                          : "bg-transparent opacity-0"
+                      }`}
+                    />
+                  </button>
                 ))}
               </div>
             </div>
@@ -4728,6 +5161,7 @@ export default function StockManager() {
                       </motion.div>
                     )}
 
+                    {dashboardSubTab === "main-stock" && (
                     <div
                       id="dashboard-main-stock"
                       className="scroll-mt-44"
@@ -4894,11 +5328,13 @@ export default function StockManager() {
                         </SectionCard>
                       </motion.div>
                     </div>
+                    )}
 
                     <motion.div
                       variants={itemVariants}
                       className="grid grid-cols-2 gap-4"
                     >
+                      {dashboardSubTab === "last-updates" && (
                       <div
                         id="dashboard-last-updates"
                         className="scroll-mt-44"
@@ -4943,6 +5379,8 @@ export default function StockManager() {
                           </div>
                         </SectionCard>
                       </div>
+                      )}
+                      {dashboardSubTab === "record-spoilage" && (
                       <div
                         id="dashboard-record-spoilage"
                         className="scroll-mt-44"
@@ -5057,9 +5495,230 @@ export default function StockManager() {
                           </div>
                         </SectionCard>
                       </div>
+                      )}
+                      {dashboardSubTab === "cook-report" && (
+                      <div>
+                        <SectionCard
+                          title="Cook Report"
+                          subtitle={
+                            cookReport?.report
+                              ? `Daily kitchen usage for ${fmtDate(cookReport.report.report_date)}`
+                              : "Manual cook report for daily usage and spoilage"
+                          }
+                        >
+                          <div className="p-5 space-y-4">
+                            {!cookReport ? (
+                              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-400 text-center">
+                                No cook report is available yet for today.
+                              </div>
+                            ) : (
+                              <>
+                                <div className="grid gap-3 md:grid-cols-4">
+                                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                    <p className="text-[11px] uppercase tracking-wide font-semibold text-slate-400">
+                                      Status
+                                    </p>
+                                    <p className="mt-1 text-sm font-semibold text-slate-800 capitalize">
+                                      {cookReport.report.status}
+                                    </p>
+                                  </div>
+                                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                    <p className="text-[11px] uppercase tracking-wide font-semibold text-slate-400">
+                                      Prepared By
+                                    </p>
+                                    <p className="mt-1 text-sm font-semibold text-slate-800">
+                                      {cookReport.report.prepared_by_name ??
+                                        (cookReport.report.prepared_by
+                                          ? `User #${cookReport.report.prepared_by}`
+                                          : "Not submitted")}
+                                    </p>
+                                  </div>
+                                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                    <p className="text-[11px] uppercase tracking-wide font-semibold text-slate-400">
+                                      Items Reported
+                                    </p>
+                                    <p className="mt-1 text-sm font-semibold text-slate-800">
+                                      {cookReportItems.length}
+                                    </p>
+                                  </div>
+                                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                    <p className="text-[11px] uppercase tracking-wide font-semibold text-slate-400">
+                                      Variance Lines
+                                    </p>
+                                    <p className="mt-1 text-sm font-semibold text-slate-800">
+                                      {cookReportVarianceCount}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                                  <span>
+                                    Withdrawn:{" "}
+                                    <span className="font-semibold text-slate-700">
+                                      {fmtInt(cookReportTotals.withdrawn)}
+                                    </span>
+                                  </span>
+                                  <span>•</span>
+                                  <span>
+                                    Used:{" "}
+                                    <span className="font-semibold text-slate-700">
+                                      {fmtInt(cookReportTotals.used)}
+                                    </span>
+                                  </span>
+                                  <span>•</span>
+                                  <span>
+                                    Spoilage:{" "}
+                                    <span className="font-semibold text-slate-700">
+                                      {fmtInt(cookReportTotals.spoilage)}
+                                    </span>
+                                  </span>
+                                  <span>•</span>
+                                  <span>
+                                    Last updated:{" "}
+                                    <span className="font-semibold text-slate-700">
+                                      {cookReport.report.updated_at
+                                        ? new Date(
+                                            cookReport.report.updated_at,
+                                          ).toLocaleString()
+                                        : "Not yet updated"}
+                                    </span>
+                                  </span>
+                                </div>
+
+                                <div className="flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      void fetchCookReport();
+                                    }}
+                                    disabled={cookReportLoading}
+                                    className="px-4 py-2 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                                  >
+                                    {cookReportLoading ? "Refreshing..." : "Refresh"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setCookReportOpen((open) => !open)
+                                    }
+                                    className="px-4 py-2 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                                  >
+                                    {cookReportOpen ? "Hide Details" : "Review"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={handleFinalizeCookReport}
+                                    disabled={
+                                      cookReportFinalizing ||
+                                      cookReport.report.status === "finalized" ||
+                                      cookReportItems.length === 0
+                                    }
+                                    className="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                                  >
+                                    {cookReportFinalizing
+                                      ? "Finalizing..."
+                                      : cookReport.report.status === "finalized"
+                                        ? "Finalized"
+                                        : "Finalize"}
+                                  </button>
+                                </div>
+
+                                <AnimatePresence initial={false}>
+                                  {cookReportOpen && (
+                                    <motion.div
+                                      initial={{ opacity: 0, height: 0 }}
+                                      animate={{ opacity: 1, height: "auto" }}
+                                      exit={{ opacity: 0, height: 0 }}
+                                      transition={{ duration: 0.18 }}
+                                      className="overflow-hidden"
+                                    >
+                                      <div className="rounded-2xl border border-slate-200 overflow-hidden">
+                                        <div className="grid grid-cols-[1.4fr_repeat(4,minmax(0,0.8fr))] gap-3 bg-slate-50 px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                                          <span>Raw Material</span>
+                                          <span>Withdrawn</span>
+                                          <span>Used</span>
+                                          <span>Spoilage</span>
+                                          <span>Variance</span>
+                                        </div>
+                                        <div className="divide-y divide-slate-100">
+                                          {cookReportItems.map((item) => {
+                                            const variance =
+                                              toNumber(item.withdrawn_qty) -
+                                              toNumber(item.used_qty) -
+                                              toNumber(item.spoilage_qty);
+
+                                            return (
+                                              <div
+                                                key={item.product_id}
+                                                className="px-4 py-3"
+                                              >
+                                                <div className="grid grid-cols-[1.4fr_repeat(4,minmax(0,0.8fr))] gap-3 items-start text-sm text-slate-700">
+                                                  <div>
+                                                    <p className="font-semibold text-slate-800">
+                                                      {item.product_name}
+                                                    </p>
+                                                    <p className="text-xs text-slate-400 mt-1">
+                                                      {item.category} · {item.unit}
+                                                    </p>
+                                                    {item.note && (
+                                                      <p className="text-xs text-slate-500 mt-2">
+                                                        Note: {item.note}
+                                                      </p>
+                                                    )}
+                                                  </div>
+                                                  <p>
+                                                    {fmtInt(item.withdrawn_qty)}{" "}
+                                                    {item.unit}
+                                                  </p>
+                                                  <p>
+                                                    {fmtInt(item.used_qty)}{" "}
+                                                    {item.unit}
+                                                  </p>
+                                                  <p>
+                                                    {fmtInt(item.spoilage_qty)}{" "}
+                                                    {item.unit}
+                                                  </p>
+                                                  <p
+                                                    className={
+                                                      Math.abs(variance) > 0.009
+                                                        ? "font-semibold text-amber-600"
+                                                        : "font-semibold text-emerald-600"
+                                                    }
+                                                  >
+                                                    {fmtInt(variance)} {item.unit}
+                                                  </p>
+                                                </div>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    </motion.div>
+                                  )}
+                                </AnimatePresence>
+
+                                {cookReport.report.status === "finalized" && (
+                                  <p className="text-xs font-medium text-emerald-600">
+                                    Finalized by{" "}
+                                    {cookReport.report.finalized_by_name ??
+                                      (cookReport.report.finalized_by
+                                        ? `User #${cookReport.report.finalized_by}`
+                                        : "manager")}
+                                    {cookReport.report.finalized_at
+                                      ? ` on ${new Date(cookReport.report.finalized_at).toLocaleString()}`
+                                      : ""}
+                                  </p>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </SectionCard>
+                      </div>
+                      )}
                     </motion.div>
 
                     {/* ── Stock Movement Report ── */}
+                    {dashboardSubTab === "stock-movement" && (
                     <div
                       id="dashboard-stock-movement"
                       className="scroll-mt-44"
@@ -5183,7 +5842,9 @@ export default function StockManager() {
                         </div>
                       </motion.div>
                     </div>
+                    )}
 
+                    {dashboardSubTab === "stock-movement" && (
                     <motion.div variants={itemVariants}>
                       {!reportData && !reportLoading && (
                         <div className="bg-white border border-slate-100 rounded-2xl p-10 text-center shadow-sm">
@@ -5373,6 +6034,7 @@ export default function StockManager() {
                         </div>
                       )}
                     </motion.div>
+                    )}
 
                   </motion.div>
                 </motion.div>
@@ -6199,7 +6861,7 @@ export default function StockManager() {
                                 "Company",
                                 "Contact Number",
                                 "Products Supplied",
-                                "",
+                                "Actions",
                               ].map((h) => (
                                 <th
                                   key={h}
@@ -6250,36 +6912,15 @@ export default function StockManager() {
                                         >
                                           {p}
                                           <button
-                                            onClick={async () => {
-                                              if (!s.supplier_id) return;
-                                              try {
-                                                const updated =
-                                                  await api.removeSupplierProduct(
-                                                    s.supplier_id,
-                                                    p,
-                                                  );
-                                                setSuppliers((prev) =>
-                                                  prev.map((sup) =>
-                                                    sup.supplier_id ===
-                                                    s.supplier_id
-                                                      ? updated
-                                                      : sup,
-                                                  ),
-                                                );
-                                                showToast(
-                                                  `Removed ${p} from ${s.supplier_name}.`,
-                                                  "success",
-                                                );
-                                              } catch (err) {
-                                                showToast(
-                                                  "Failed to remove product.",
-                                                  "error",
-                                                );
-                                              }
-                                            }}
+                                            onClick={() =>
+                                              handleRemoveSupplierProduct(
+                                                s.supplier_id,
+                                                p,
+                                              )
+                                            }
                                             className="text-slate-300 hover:text-red-400 transition-colors ml-0.5"
                                           >
-                                            ×
+                                            x
                                           </button>
                                         </span>
                                       ))}
@@ -6291,14 +6932,22 @@ export default function StockManager() {
                                   )}
                                 </td>
                                 <td className="py-3.5 px-4 text-right">
-                                  <button
-                                    onClick={() =>
-                                      removeSupplier(s.supplier_id)
-                                    }
-                                    className="text-xs text-slate-300 hover:text-red-400 transition-colors font-medium"
-                                  >
-                                    Remove
-                                  </button>
+                                  <div className="flex items-center justify-end gap-3">
+                                    <button
+                                      onClick={() => setEditingSupplier(s)}
+                                      className="text-xs text-slate-500 hover:text-slate-700 transition-colors font-medium"
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      onClick={() =>
+                                        removeSupplier(s.supplier_id)
+                                      }
+                                      className="text-xs text-slate-300 hover:text-red-400 transition-colors font-medium"
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
                                 </td>
                               </tr>
                             ))}
@@ -7310,6 +7959,18 @@ export default function StockManager() {
             />
           )}
         </AnimatePresence>
+        <AnimatePresence>
+          {editingSupplier && (
+            <SupplierProductsModal
+              supplier={editingSupplier}
+              allProducts={products}
+              loading={submitting}
+              onClose={() => setEditingSupplier(null)}
+              onSaveProducts={saveSupplierProducts}
+              onRemoveProduct={handleRemoveSupplierProduct}
+            />
+          )}
+        </AnimatePresence>
 
         {/* Add Material Modal */}
         <AnimatePresence>
@@ -7376,16 +8037,6 @@ export default function StockManager() {
                         </option>
                       ))}
                     </StyledSelect>
-                  </FormField>
-                  <FormField label="Initial Stock">
-                    <StyledInput
-                      type="number"
-                      value={rawMaterialForm.initialStock}
-                      onChange={(v) =>
-                        setRawMaterialForm((p) => ({ ...p, initialStock: v }))
-                      }
-                      placeholder="e.g. 20"
-                    />
                   </FormField>
                   <FormField label="Price (optional)">
                     <StyledInput

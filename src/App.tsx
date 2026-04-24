@@ -137,7 +137,7 @@ export default function App() {
       {/* ── Administrator + Cashier + Cook ───────────────────── */}
       <Route
         path="/orders"
-        element={protect(<Order />, ["administrator", "cashier", "cook"])}
+        element={protect(<Order />, ["administrator", "cashier","cook"])}
       />
 
       {/* ── Cook ─────────────────────────────────────────────── */}

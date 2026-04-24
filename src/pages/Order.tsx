@@ -5,6 +5,7 @@ import { Clock, Bell, ClipboardList, XCircle, CheckCircle2, ChefHat, Utensils, P
 import { motion, AnimatePresence } from "framer-motion";
 import { api } from "../lib/api";
 import { Sidebar } from "@/components/Sidebar";
+import { useNotifications } from "@/lib/NotificationContext";
 
 // ─── FONT ─────────────────────────────────────────────────────────────────────
 if (typeof document !== "undefined" && !document.getElementById("dm-sans-font")) {
@@ -24,9 +25,41 @@ interface OrderCard {
   isOnlinePickup?: boolean;
   items: OrderItem[]; isPreparing: boolean; isReady: boolean;
   isFinished: boolean; startedAt?: number;
+  createdAt?: number;
+  queuedAt?: number;
+  prepStartedAt?: number;
+  readyAt?: number;
+  currentStatus?: string;
+  estimatedPrepMinutes?: number;
+  dueAt?: number;
+  overdue?: boolean;
+  timerUpdatedBy?: number | null;
+  timerUpdatedAt?: number;
 }
-
-const COOK_TIME = 10 * 60;
+interface KitchenUsageItem {
+  usage_item_id?: number;
+  product_id: number | null;
+  product_name: string;
+  category: string;
+  unit: string;
+  withdrawn_qty: number;
+  used_qty: number;
+  spoilage_qty: number;
+  note: string;
+}
+interface KitchenUsageReport {
+  report_id: number;
+  report_date: string;
+  status: "draft" | "submitted" | "finalized";
+  prepared_by: number | null;
+  finalized_by: number | null;
+  finalized_at: string | null;
+  updated_at: string | null;
+}
+interface KitchenUsagePayload {
+  report: KitchenUsageReport;
+  items: KitchenUsageItem[];
+}
 
 function playAlertSound() {
   try {
@@ -45,35 +78,46 @@ function playAlertSound() {
 }
 
 // ─── TIMER ────────────────────────────────────────────────────────────────────
-function OrderTimer({ startedAt, orderNumber }: { startedAt: number; orderNumber: string }) {
+function OrderTimer({
+  dueAt,
+  baseAt,
+  estimatedPrepMinutes,
+  orderNumber,
+}: {
+  dueAt: number;
+  baseAt: number;
+  estimatedPrepMinutes: number;
+  orderNumber: string;
+}) {
   const [elapsed, setElapsed] = useState(0);
   const notifiedRef = useRef(false);
   const soundRef = useRef(false);
 
   useEffect(() => {
     const iv = setInterval(() => {
-      const s = Math.floor((Date.now() - startedAt) / 1000);
+      const s = Math.max(Math.floor((Date.now() - baseAt) / 1000), 0);
       setElapsed(s);
-      if (s >= COOK_TIME) {
+      if (Date.now() >= dueAt) {
         if (!notifiedRef.current) {
           notifiedRef.current = true;
           if (Notification.permission === "granted")
-            new Notification("Order Ready!", { body: `Order ${orderNumber} is done!`, icon: "/favicon.ico" });
+            new Notification("Order overdue", { body: `${orderNumber} needs attention in the cook queue.`, icon: "/favicon.ico" });
         }
         if (!soundRef.current) { soundRef.current = true; playAlertSound(); }
       }
     }, 1000);
     return () => clearInterval(iv);
-  }, [startedAt, orderNumber]);
+  }, [baseAt, dueAt, orderNumber]);
 
-  const remaining = COOK_TIME - elapsed;
+  const totalSeconds = Math.max(estimatedPrepMinutes * 60, 60);
+  const remaining = Math.floor((dueAt - Date.now()) / 1000);
   const overdue = remaining <= 0;
   const display = overdue ? Math.abs(remaining) : remaining;
   const mins = Math.floor(display / 60);
   const secs = display % 60;
   const timeStr = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-  const progress = Math.min(elapsed / COOK_TIME, 1);
-  const warn = !overdue && elapsed > COOK_TIME * 0.75;
+  const progress = Math.min(elapsed / totalSeconds, 1);
+  const warn = !overdue && elapsed > totalSeconds * 0.75;
 
   return (
     <div style={{ marginBottom: 12 }}>
@@ -102,6 +146,12 @@ export default function Order() {
   const [orders, setOrders] = useState<OrderCard[]>([]);
   const [servedCount, setServedCount] = useState(0);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [usageOpen, setUsageOpen] = useState(false);
+  const [usageLoading, setUsageLoading] = useState(false);
+  const [usageSaving, setUsageSaving] = useState(false);
+  const [usageReport, setUsageReport] = useState<KitchenUsageReport | null>(null);
+  const [usageItems, setUsageItems] = useState<KitchenUsageItem[]>([]);
+  const { addNotification } = useNotifications();
 
   const fetchAll = async () => {
     try {
@@ -117,17 +167,122 @@ export default function Order() {
     } catch (e) { console.error(e); }
   };
 
+  const fetchUsage = async () => {
+    try {
+      setUsageLoading(true);
+      const data = await api.get<KitchenUsagePayload>("/kitchen-usage/today");
+      setUsageReport(data.report);
+      setUsageItems(data.items ?? []);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setUsageLoading(false);
+    }
+  };
+
   useEffect(() => { fetchAll(); const i = setInterval(fetchAll, 3000); return () => clearInterval(i); }, []);
   useEffect(() => { const t = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(t); }, []);
+  useEffect(() => { void fetchUsage(); }, []);
 
   const patch = async (id: string, body: object) => { try { await api.patch(`/orders/${id}`, body); fetchAll(); } catch {} };
-  const handleStart  = (id: string) => patch(id, { status: "preparing", startedAt: new Date().toISOString() });
-  const handleReady  = (id: string, isOnlinePickup?: boolean) => patch(id, { status: isOnlinePickup ? "Ready for Pickup" : "ready" });
+  const handleStart  = (id: string) => patch(id, { status: "preparing" });
+  const handleReady  = (id: string) => patch(id, { status: "Ready for Pickup" });
   const handleFinish = (id: string) => patch(id, { status: "Completed" });
   const handleCancel = async (id: string) => {
     setCancellingId(id);
     try { await api.patch(`/orders/${id}`, { status: "Cancelled" }); fetchAll(); }
     catch {} finally { setCancellingId(null); }
+  };
+  const userId = (() => {
+    const raw = typeof window !== "undefined" ? localStorage.getItem("userId") : null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  })();
+  const handleTimerAdjust = async (order: OrderCard, deltaMinutes: number) => {
+    const current = Math.max(order.estimatedPrepMinutes ?? 10, 1);
+    const next = Math.max(current + deltaMinutes, 1);
+    try {
+      await api.patch(`/orders/${order.id}`, {
+        estimatedPrepMinutes: next,
+        timerUpdatedBy: userId,
+      });
+      fetchAll();
+    } catch (error) {
+      console.error("Failed to update cook timer:", error);
+    }
+  };
+  const updateUsageItem = (
+    index: number,
+    field: "product_name" | "category" | "unit" | "withdrawn_qty" | "used_qty" | "spoilage_qty" | "note",
+    value: string,
+  ) => {
+    setUsageItems((prev) => prev.map((item, itemIndex) => {
+      if (itemIndex !== index) return item;
+      if (field === "product_name" || field === "category" || field === "unit" || field === "note") {
+        return { ...item, [field]: value };
+      }
+      return { ...item, [field]: Math.max(0, Number(value) || 0) };
+    }));
+  };
+  const addUsageItem = () => {
+    setUsageItems((prev) => [
+      ...prev,
+      {
+        product_id: null,
+        product_name: "",
+        category: "RAW MATERIAL",
+        unit: "unit",
+        withdrawn_qty: 0,
+        used_qty: 0,
+        spoilage_qty: 0,
+        note: "",
+      },
+    ]);
+  };
+  const removeUsageItem = (index: number) => {
+    setUsageItems((prev) => prev.filter((_, itemIndex) => itemIndex !== index));
+  };
+  const saveUsage = async (status: "draft" | "submitted") => {
+    try {
+      setUsageSaving(true);
+      const data = await api.put<KitchenUsagePayload>("/kitchen-usage/today", {
+        report_date: usageReport?.report_date,
+        status,
+        prepared_by: userId,
+        items: usageItems.map((item) => ({
+          product_id: item.product_id,
+          product_name: item.product_name,
+          category: item.category,
+          unit: item.unit,
+          withdrawn_qty: item.withdrawn_qty,
+          used_qty: item.used_qty,
+          spoilage_qty: item.spoilage_qty,
+          note: item.note,
+        })),
+      });
+      setUsageReport(data.report);
+      setUsageItems(data.items ?? []);
+      addNotification({
+        id: crypto.randomUUID(),
+        label:
+          status === "draft"
+            ? "Daily usage report saved as draft."
+            : "Daily usage report submitted for review.",
+        type: "success",
+      });
+    } catch (e) {
+      console.error(e);
+      addNotification({
+        id: crypto.randomUUID(),
+        label:
+          e instanceof Error
+            ? `Failed to save daily usage report: ${e.message}`
+            : "Failed to save daily usage report.",
+        type: "error",
+      });
+    } finally {
+      setUsageSaving(false);
+    }
   };
 
   const fmt = (d: Date) => {
@@ -202,6 +357,104 @@ export default function Order() {
         )}
 
         {/* ── Queue ── */}
+        <div style={{ padding: "16px 32px 0", display: "none" }}>
+          <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+            style={{ background: "#fff", borderRadius: 16, border: "1px solid #e5e7eb", overflow: "hidden" }}>
+            <button
+              onClick={() => setUsageOpen((v) => !v)}
+              style={{ width: "100%", background: "#fff", border: "none", padding: "15px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", fontFamily: F }}
+            >
+              <div style={{ textAlign: "left" }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#111", letterSpacing: "0.08em", textTransform: "uppercase" }}>Daily Usage Report</div>
+                <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 4 }}>
+                  {usageReport ? `Status: ${usageReport.status}` : "Preparing today's kitchen usage sheet"}
+                </div>
+              </div>
+              <motion.div animate={{ rotate: usageOpen ? 180 : 0 }} transition={{ duration: 0.2 }}>
+                <AlertCircle size={14} color="#9ca3af" />
+              </motion.div>
+            </button>
+
+            <AnimatePresence initial={false}>
+              {usageOpen && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.2 }}
+                  style={{ overflow: "hidden", borderTop: "1px solid #f3f4f6" }}
+                >
+                  <div style={{ padding: 16 }}>
+                    {usageLoading ? (
+                      <p style={{ fontSize: 12, color: "#9ca3af", margin: 0 }}>Loading report...</p>
+                    ) : (
+                      <>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                          <p style={{ fontSize: 12, color: "#6b7280", margin: 0 }}>
+                            Fill out the cook report manually for today&apos;s usage.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={addUsageItem}
+                            disabled={usageReport?.status === "finalized"}
+                            style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid #111", background: "#111", color: "#fff", fontSize: 12, fontWeight: 600, cursor: usageReport?.status === "finalized" ? "not-allowed" : "pointer", fontFamily: F }}
+                          >
+                            Add Row
+                          </button>
+                        </div>
+
+                        {usageItems.length === 0 ? (
+                          <div style={{ border: "1px dashed #d1d5db", borderRadius: 14, padding: 20, textAlign: "center", color: "#9ca3af", fontSize: 12 }}>
+                            No rows yet. Add a raw material entry to start the cook report.
+                          </div>
+                        ) : (
+                        <div style={{ display: "grid", gap: 10 }}>
+                          {usageItems.map((item, index) => (
+                            <div key={item.usage_item_id ?? `new-${index}`} style={{ border: "1px solid #f3f4f6", borderRadius: 14, padding: 12, background: "#fcfcfc" }}>
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
+                                <div style={{ fontSize: 12, fontWeight: 600, color: "#111" }}>Row {index + 1}</div>
+                                <button
+                                  type="button"
+                                  onClick={() => removeUsageItem(index)}
+                                  disabled={usageReport?.status === "finalized"}
+                                  style={{ padding: "6px 10px", borderRadius: 10, border: "1px solid #e5e7eb", background: "#fff", color: "#6b7280", fontSize: 11, fontWeight: 600, cursor: usageReport?.status === "finalized" ? "not-allowed" : "pointer", fontFamily: F }}
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                              <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 0.8fr", gap: 8, marginBottom: 8 }}>
+                                <input value={item.product_name} onChange={(e) => updateUsageItem(index, "product_name", e.target.value)} placeholder="Raw material" disabled={usageReport?.status === "finalized"} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
+                                <input value={item.category} onChange={(e) => updateUsageItem(index, "category", e.target.value)} placeholder="Category" disabled={usageReport?.status === "finalized"} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
+                                <input value={item.unit} onChange={(e) => updateUsageItem(index, "unit", e.target.value)} placeholder="Unit" disabled={usageReport?.status === "finalized"} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
+                              </div>
+                              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
+                                <input type="number" min="0" step="0.01" value={item.withdrawn_qty} onChange={(e) => updateUsageItem(index, "withdrawn_qty", e.target.value)} placeholder="Withdrawn" disabled={usageReport?.status === "finalized"} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
+                                <input type="number" min="0" step="0.01" value={item.used_qty} onChange={(e) => updateUsageItem(index, "used_qty", e.target.value)} placeholder="Used" disabled={usageReport?.status === "finalized"} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
+                                <input type="number" min="0" step="0.01" value={item.spoilage_qty} onChange={(e) => updateUsageItem(index, "spoilage_qty", e.target.value)} placeholder="Spoilage" disabled={usageReport?.status === "finalized"} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
+                              </div>
+                              <input value={item.note} onChange={(e) => updateUsageItem(index, "note", e.target.value)} placeholder="Optional note" disabled={usageReport?.status === "finalized"} style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
+                            </div>
+                          ))}
+                        </div>
+                        )}
+
+                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
+                          <button onClick={() => { void saveUsage("draft"); }} disabled={usageSaving || usageReport?.status === "finalized"} style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid #e5e7eb", background: "#fff", color: "#374151", fontSize: 12, fontWeight: 600, cursor: usageSaving || usageReport?.status === "finalized" ? "not-allowed" : "pointer", fontFamily: F }}>
+                            {usageSaving ? "Saving..." : "Save Draft"}
+                          </button>
+                          <button onClick={() => { void saveUsage("submitted"); }} disabled={usageSaving || usageReport?.status === "finalized"} style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid #111", background: "#111", color: "#fff", fontSize: 12, fontWeight: 600, cursor: usageSaving || usageReport?.status === "finalized" ? "not-allowed" : "pointer", fontFamily: F }}>
+                            {usageReport?.status === "submitted" ? "Update Submission" : "Submit for Review"}
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </motion.div>
+        </div>
+
         <div style={{ padding: "24px 32px 40px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 14 }}>
             <ClipboardList size={13} color="#9ca3af" />
@@ -227,6 +480,9 @@ export default function Order() {
                   const isPrep = order.isPreparing && !order.isReady;
                   const isReady = order.isReady;
                   const isCancelling = cancellingId === order.id;
+                  const timerEditable = isNew || isPrep;
+                  const timerBase = order.prepStartedAt;
+                  const estimatedPrepMinutes = Math.max(order.estimatedPrepMinutes ?? 10, 1);
 
                   return (
                     <motion.div
@@ -237,12 +493,12 @@ export default function Order() {
                       whileHover={{ y: -2, transition: { duration: 0.12 } }}
                       style={{
                         background: "#fff", borderRadius: 16,
-                        border: "1px solid #e5e7eb",
+                        border: `1px solid ${order.overdue ? "#fecaca" : "#e5e7eb"}`,
                         overflow: "hidden", display: "flex", flexDirection: "column",
                       }}
                     >
                       {/* Thin state line at top */}
-                      <div style={{ height: 2, background: isReady ? "#111" : isPrep ? "#d1d5db" : "#f3f4f6" }} />
+                      <div style={{ height: 2, background: order.overdue ? "#ef4444" : isReady ? "#111" : isPrep ? "#d1d5db" : "#f3f4f6" }} />
 
                       <div style={{ padding: "14px 14px 14px", flex: 1, display: "flex", flexDirection: "column" }}>
 
@@ -256,8 +512,54 @@ export default function Order() {
                         </div>
 
                         {/* Timer */}
-                        {isPrep && order.startedAt && (
-                          <OrderTimer startedAt={order.startedAt} orderNumber={order.orderNumber} />
+                        {isPrep && timerBase && order.dueAt && (
+                          <OrderTimer
+                            baseAt={timerBase}
+                            dueAt={order.dueAt}
+                            estimatedPrepMinutes={estimatedPrepMinutes}
+                            orderNumber={order.orderNumber}
+                          />
+                        )}
+
+                        {isPrep && order.overdue && (
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+                            padding: "5px 10px", borderRadius: 7, marginBottom: 10,
+                            background: "#fef2f2", color: "#dc2626", fontSize: 11, fontWeight: 600 }}>
+                            <AlertCircle size={11} /> Overdue
+                          </div>
+                        )}
+
+                        {timerEditable && (
+                          <div style={{ marginBottom: 12 }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+                              <span style={{ fontSize: 10, fontWeight: 600, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                                Prep Timer
+                              </span>
+                              <span style={{ fontSize: 11, fontWeight: 600, color: "#111" }}>
+                                {estimatedPrepMinutes} min
+                              </span>
+                            </div>
+                            <div style={{ display: "flex", gap: 6 }}>
+                              <button
+                                onClick={() => handleTimerAdjust(order, -1)}
+                                style={{
+                                  flex: 1, padding: "6px 0", borderRadius: 9, border: "1px solid #e5e7eb",
+                                  background: "#fff", color: "#374151", fontSize: 11, fontWeight: 600,
+                                  cursor: "pointer", fontFamily: F,
+                                }}>
+                                -1 min
+                              </button>
+                              <button
+                                onClick={() => handleTimerAdjust(order, 1)}
+                                style={{
+                                  flex: 1, padding: "6px 0", borderRadius: 9, border: "1px solid #e5e7eb",
+                                  background: "#fff", color: "#374151", fontSize: 11, fontWeight: 600,
+                                  cursor: "pointer", fontFamily: F,
+                                }}>
+                                +1 min
+                              </button>
+                            </div>
+                          </div>
                         )}
 
                         {/* Ready badge */}
@@ -299,7 +601,7 @@ export default function Order() {
 
                             {/* Ready / Served */}
                             {!isReady ? (
-                              <button onClick={() => isPrep && handleReady(order.id, order.isOnlinePickup)} disabled={!isPrep}
+                              <button onClick={() => isPrep && handleReady(order.id)} disabled={!isPrep}
                                 style={{
                                   flex: 1, padding: "7px 0", borderRadius: 9, fontSize: 11, fontWeight: 500,
                                   cursor: isPrep ? "pointer" : "not-allowed", fontFamily: F,
@@ -359,6 +661,113 @@ export default function Order() {
               </AnimatePresence>
             </div>
           )}
+
+          <div style={{ paddingTop: 24 }}>
+            <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+              style={{ background: "#fff", borderRadius: 16, border: "1px solid #e5e7eb", overflow: "hidden" }}>
+              <button
+                onClick={() => setUsageOpen((v) => !v)}
+                style={{ width: "100%", background: "#fff", border: "none", padding: "15px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", fontFamily: F }}
+              >
+                <div style={{ textAlign: "left" }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#111", letterSpacing: "0.08em", textTransform: "uppercase" }}>Daily Usage Report</div>
+                  <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 4 }}>
+                    {usageReport ? `Status: ${usageReport.status}` : "Preparing today's kitchen usage sheet"}
+                  </div>
+                </div>
+                <motion.div animate={{ rotate: usageOpen ? 180 : 0 }} transition={{ duration: 0.2 }}>
+                  <AlertCircle size={14} color="#9ca3af" />
+                </motion.div>
+              </button>
+
+              <AnimatePresence initial={false}>
+                {usageOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.2 }}
+                    style={{ overflow: "hidden", borderTop: "1px solid #f3f4f6" }}
+                  >
+                    <div style={{ padding: 16 }}>
+                      {usageLoading ? (
+                        <p style={{ fontSize: 12, color: "#9ca3af", margin: 0 }}>Loading report...</p>
+                      ) : (
+                        <>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                            <p style={{ fontSize: 12, color: "#6b7280", margin: 0 }}>
+                              Fill out the cook report manually for today&apos;s usage.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={addUsageItem}
+                              disabled={usageReport?.status === "finalized"}
+                              style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid #111", background: "#111", color: "#fff", fontSize: 12, fontWeight: 600, cursor: usageReport?.status === "finalized" ? "not-allowed" : "pointer", fontFamily: F }}
+                            >
+                              Add Row
+                            </button>
+                          </div>
+
+                          {usageItems.length === 0 ? (
+                            <div style={{ border: "1px dashed #d1d5db", borderRadius: 14, padding: 20, textAlign: "center", color: "#9ca3af", fontSize: 12 }}>
+                              No rows yet. Add a raw material entry to start the cook report.
+                            </div>
+                          ) : (
+                          <div style={{ display: "grid", gap: 10 }}>
+                            {usageItems.map((item, index) => (
+                              <div key={item.usage_item_id ?? `new-${index}`} style={{ border: "1px solid #f3f4f6", borderRadius: 14, padding: 12, background: "#fcfcfc" }}>
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
+                                  <div style={{ fontSize: 12, fontWeight: 600, color: "#111" }}>Row {index + 1}</div>
+                                  <button
+                                    type="button"
+                                    onClick={() => removeUsageItem(index)}
+                                    disabled={usageReport?.status === "finalized"}
+                                    style={{ padding: "6px 10px", borderRadius: 10, border: "1px solid #e5e7eb", background: "#fff", color: "#6b7280", fontSize: 11, fontWeight: 600, cursor: usageReport?.status === "finalized" ? "not-allowed" : "pointer", fontFamily: F }}
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                                <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 0.8fr", gap: 8, marginBottom: 8 }}>
+                                  <input value={item.product_name} onChange={(e) => updateUsageItem(index, "product_name", e.target.value)} placeholder="Raw material" disabled={usageReport?.status === "finalized"} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
+                                  <input value={item.category} onChange={(e) => updateUsageItem(index, "category", e.target.value)} placeholder="Category" disabled={usageReport?.status === "finalized"} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
+                                  <input value={item.unit} onChange={(e) => updateUsageItem(index, "unit", e.target.value)} placeholder="Unit" disabled={usageReport?.status === "finalized"} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
+                                </div>
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
+                                  <div>
+                                    <div style={{ fontSize: 10, fontWeight: 600, color: "#6b7280", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>Withdrawn</div>
+                                    <input type="number" min="0" step="0.01" value={item.withdrawn_qty === 0 ? "" : item.withdrawn_qty} onChange={(e) => updateUsageItem(index, "withdrawn_qty", e.target.value)} placeholder="0" disabled={usageReport?.status === "finalized"} style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
+                                  </div>
+                                  <div>
+                                    <div style={{ fontSize: 10, fontWeight: 600, color: "#6b7280", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>Used</div>
+                                    <input type="number" min="0" step="0.01" value={item.used_qty === 0 ? "" : item.used_qty} onChange={(e) => updateUsageItem(index, "used_qty", e.target.value)} placeholder="0" disabled={usageReport?.status === "finalized"} style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
+                                  </div>
+                                  <div>
+                                    <div style={{ fontSize: 10, fontWeight: 600, color: "#6b7280", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>Spoilage</div>
+                                    <input type="number" min="0" step="0.01" value={item.spoilage_qty === 0 ? "" : item.spoilage_qty} onChange={(e) => updateUsageItem(index, "spoilage_qty", e.target.value)} placeholder="0" disabled={usageReport?.status === "finalized"} style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
+                                  </div>
+                                </div>
+                                <input value={item.note} onChange={(e) => updateUsageItem(index, "note", e.target.value)} placeholder="Optional note" disabled={usageReport?.status === "finalized"} style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
+                              </div>
+                            ))}
+                          </div>
+                          )}
+
+                          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
+                            <button onClick={() => { void saveUsage("draft"); }} disabled={usageSaving || usageReport?.status === "finalized"} style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid #e5e7eb", background: "#fff", color: "#374151", fontSize: 12, fontWeight: 600, cursor: usageSaving || usageReport?.status === "finalized" ? "not-allowed" : "pointer", fontFamily: F }}>
+                              {usageSaving ? "Saving..." : "Save Draft"}
+                            </button>
+                            <button onClick={() => { void saveUsage("submitted"); }} disabled={usageSaving || usageReport?.status === "finalized"} style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid #111", background: "#111", color: "#fff", fontSize: 12, fontWeight: 600, cursor: usageSaving || usageReport?.status === "finalized" ? "not-allowed" : "pointer", fontFamily: F }}>
+                              {usageReport?.status === "submitted" ? "Update Submission" : "Submit for Review"}
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.div>
+          </div>
         </div>
       </div>
     </div>

@@ -26,7 +26,7 @@ function useNow() {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type PageTab = "menu" | "overview" | "movement";
+type PageTab = "menu" | "movement";
 type POStatus = "Pending" | "Received" | "Cancelled";
 type TRStatus = "Pending" | "Completed" | "Cancelled";
 type LogType = "Stock In" | "Transfer" | "Adjustment";
@@ -108,6 +108,10 @@ interface ApiInventoryRow {
   is_promotional?: number | boolean;
   promo_price?: number | string | null;
   promo_label?: string;
+  dailyWithdrawn?: number;
+  returned?: number;
+  wasted?: number;
+  soldToday?: number;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -1838,7 +1842,7 @@ const UNIT_OPTIONS = [
   "bottle",
   "box",
 ] as const;
-const AVAILABILITY_OPTIONS = ["Available", "Hidden"] as const;
+const AVAILABILITY_OPTIONS = ["Available", "Unavailable"] as const;
 
 async function tryPut(endpoints: string[], payload: object): Promise<void> {
   let lastErr: unknown;
@@ -1846,7 +1850,7 @@ async function tryPut(endpoints: string[], payload: object): Promise<void> {
     try {
       await apiCall(ep, {
         method: "PUT",
-        body: JSON.stringify(payload),
+        body: payload,
       });
       return;
     } catch (err) {
@@ -2445,16 +2449,7 @@ function MenuAdminTab() {
   }
 
   function normalizeManagementRows(data: ApiInventoryRow[]) {
-    const rows = data.filter((item) => {
-      const promo = String(item?.promo ?? "").toUpperCase().trim();
-      const category = String(item?.category ?? "").toLowerCase().trim();
-      return (
-        promo === "SUPPLIES" ||
-        promo === "MENU FOOD" ||
-        category.includes("suppl") ||
-        category.includes("menu food")
-      );
-    });
+    const rows = data.filter((item) => !Boolean(item?.isRawMaterial));
 
     const groupedByName = new Map<string, ApiInventoryRow[]>();
     for (const item of rows) {
@@ -2508,7 +2503,10 @@ function MenuAdminTab() {
           stock: Number((item as any).quantity ?? (item as any).stock ?? 0),
           description: String((item as any).description ?? ""),
           image: item.image || "/img/placeholder.jpg",
-          availabilityStatus: String(item.availability_status ?? "Available"),
+          availabilityStatus:
+            String(item.availability_status ?? "Available") === "Hidden"
+              ? "Unavailable"
+              : "Available",
           isPromotional: Boolean(Number(item.is_promotional ?? 0)),
           promoPrice:
             item.promo_price !== null &&
@@ -2556,7 +2554,11 @@ function MenuAdminTab() {
     setEPrice(product.price);
     setEStock(String(product.stock));
     setEDesc(product.description ?? "");
-    setEAvailabilityStatus(product.availabilityStatus || "Available");
+    setEAvailabilityStatus(
+      product.availabilityStatus === "Hidden"
+        ? "Unavailable"
+        : product.availabilityStatus || "Available",
+    );
     setEIsPromotional(Boolean(product.isPromotional));
     setEPromoPrice(product.promoPrice ?? "");
     setEPromoLabel(product.promoLabel ?? "");
@@ -2740,7 +2742,9 @@ function MenuAdminTab() {
 
   async function handleAvailabilityToggle(product: MgmtProduct) {
     const nextStatus =
-      product.availabilityStatus === "Hidden" ? "Available" : "Hidden";
+      product.availabilityStatus === "Unavailable"
+        ? "Available"
+        : "Unavailable";
     try {
       await tryPut([`/products/${product.rawProductId ?? product.id}`], {
         availability_status: nextStatus,
@@ -2781,7 +2785,7 @@ function MenuAdminTab() {
     return sum + price * product.stock;
   }, 0);
   const hiddenCount = products.filter(
-    (product) => product.availabilityStatus === "Hidden",
+    (product) => product.availabilityStatus === "Unavailable",
   ).length;
   const promoCount = products.filter((product) => product.isPromotional).length;
   const outOfStockCount = products.filter((product) => product.stock === 0).length;
@@ -2813,22 +2817,22 @@ function MenuAdminTab() {
           color="green"
         />
         <StatCard
-          label="Hidden"
+          label="Unavailable"
           value={hiddenCount}
-          meta="Unavailable"
+          meta="Hidden from customers"
           color="yellow"
         />
         <StatCard
           label="Menu Value"
           value={`P${totalValue.toLocaleString()}`}
-          meta={`${outOfStockCount} out of stock`}
+          meta={`${outOfStockCount} with zero stock record`}
           color="red"
         />
       </div>
 
       <SectionHeader
         title="Menu Item List"
-        sub="Menu codes, pricing, promotions, stock, and availability in one place"
+        sub="Menu codes, pricing, promotions, and admin-controlled availability in one place"
         cta={
           <div className="flex gap-2">
             <button
@@ -2875,8 +2879,7 @@ function MenuAdminTab() {
             "Category",
             "Price",
             "Promo",
-            "Stock",
-            "Availability Status",
+            "Status",
             "Actions",
           ]}
           emptyHint="No menu items found. Try refreshing or add a new product."
@@ -2940,40 +2943,15 @@ function MenuAdminTab() {
                 )}
               </td>
               <td className="px-[14px] py-[11px]">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => void handleStockUpdate(product.id, -1)}
-                    className="w-6 h-6 rounded-md bg-gray-100 text-gray-500 text-[14px] font-bold flex items-center justify-center hover:bg-red-50 hover:text-red-600 transition-colors border-none cursor-pointer leading-none"
-                  >
-                    -
-                  </button>
-                  <span className={`min-w-[36px] text-center text-[12.5px] ${
-                    product.stock === 0
-                      ? "text-red-600 font-bold"
-                      : product.stock <= 10
-                        ? "text-yellow-600 font-bold"
-                        : "text-gray-900 font-semibold"
-                  }`}>
-                    {product.stock}
-                  </span>
-                  <button
-                    onClick={() => void handleStockUpdate(product.id, 1)}
-                    className="w-6 h-6 rounded-md bg-gray-100 text-gray-500 text-[14px] font-bold flex items-center justify-center hover:bg-green-50 hover:text-green-600 transition-colors border-none cursor-pointer leading-none"
-                  >
-                    +
-                  </button>
-                </div>
-              </td>
-              <td className="px-[14px] py-[11px]">
                 <span
                   className={`inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
-                    product.availabilityStatus === "Hidden"
+                    product.availabilityStatus === "Unavailable"
                       ? "bg-gray-200 text-gray-700"
                       : "bg-emerald-50 text-emerald-700"
                   }`}
                 >
-                  {product.availabilityStatus === "Hidden"
-                    ? "Hidden"
+                  {product.availabilityStatus === "Unavailable"
+                    ? "Unavailable"
                     : "Available"}
                 </span>
               </td>
@@ -2989,7 +2967,9 @@ function MenuAdminTab() {
                     className={ghostBtnClass}
                     onClick={() => void handleAvailabilityToggle(product)}
                   >
-                    {product.availabilityStatus === "Hidden" ? "Show" : "Hide"}
+                    {product.availabilityStatus === "Unavailable"
+                      ? "Set Available"
+                      : "Set Unavailable"}
                   </button>
                   <button
                     className={dangerBtnClass}
@@ -3490,7 +3470,6 @@ export default function Inventory() {
           <div className="inline-flex bg-gray-100 rounded-[14px] p-1 gap-0.5">
             {[
               { key: "menu" as PageTab, label: "Menu Management" },
-              { key: "overview" as PageTab, label: "Menu Overview" },
               { key: "movement" as PageTab, label: "Stock Movement" },
             ].map((tab) => (
               <button
@@ -3529,7 +3508,7 @@ export default function Inventory() {
           )}
 
           {/* ── Menu Overview tab */}
-          {pageTab === "overview" && (
+          {false && (
             <motion.div
               key="overview"
               initial={{ opacity: 0, y: 8 }}

@@ -67,6 +67,13 @@ interface PaymentSessionState {
   paymentReference: string | null;
 }
 
+interface MenuVisibilityRow {
+  name?: string;
+  product_name?: string;
+  availability_status?: string;
+  image?: string;
+}
+
 // ─── STATIC DATA ──────────────────────────────────────────────────────────────
 const FLAVORS = [
   "Classic",
@@ -2884,6 +2891,10 @@ export default function Delicacy() {
   const navigate = useNavigate();
   const [activeCategory, setActiveCategory] = useState("Chicken");
   const [activeMeal, setActiveMeal] = useState("Lunch");
+  const [hiddenRecipeNames, setHiddenRecipeNames] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [recipeImages, setRecipeImages] = useState<Record<string, string>>({});
   const [favorites, setFavorites] = useState<number[]>([]);
   const [flavorSels, setFlavorSels] = useState<Record<number, string[]>>({});
   const [variantSels, setVariantSels] = useState<
@@ -2912,14 +2923,71 @@ export default function Delicacy() {
     localStorage.getItem("userName") || "The Crunch Customer";
   const customerEmail = localStorage.getItem("userEmail") || "";
 
+  const normalizeRecipeName = (value: string) => value.trim().toLowerCase();
+  const withBackendRecipeImage = (recipe: Recipe): Recipe => {
+    const backendImage = recipeImages[normalizeRecipeName(recipe.name)];
+    return backendImage ? { ...recipe, image: backendImage } : recipe;
+  };
+  const isRecipeVisible = (recipe: Recipe) =>
+    !hiddenRecipeNames.has(normalizeRecipeName(recipe.name));
+
   const allInCategory: Recipe[] =
     activeCategory === "All"
-      ? Object.values(RECIPES).flat()
-      : (RECIPES[activeCategory] ?? []);
+      ? Object.values(RECIPES)
+          .flat()
+          .filter(isRecipeVisible)
+          .map(withBackendRecipeImage)
+      : (RECIPES[activeCategory] ?? [])
+          .filter(isRecipeVisible)
+          .map(withBackendRecipeImage);
   const displayed = allInCategory.filter((r) =>
     r.mealTypes.includes(activeMeal),
   );
   const totalItems = cart.reduce((s, i) => s + i.quantity, 0);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const data = await api.get<MenuVisibilityRow[]>("/inventory");
+        if (cancelled || !Array.isArray(data)) return;
+
+        const hiddenNames = new Set(
+          data
+            .filter(
+              (item) =>
+                String(item?.availability_status ?? "").trim().toLowerCase() ===
+                "hidden",
+            )
+            .map((item) => item?.name ?? item?.product_name ?? "")
+            .map((name) => normalizeRecipeName(String(name)))
+            .filter(Boolean),
+        );
+        const nextImages = Object.fromEntries(
+          data
+            .map((item) => {
+              const name = item?.name ?? item?.product_name ?? "";
+              const image = item?.image ?? "";
+              return [
+                normalizeRecipeName(String(name)),
+                String(image).trim(),
+              ] as const;
+            })
+            .filter(([name, image]) => Boolean(name) && Boolean(image)),
+        );
+
+        setHiddenRecipeNames(hiddenNames);
+        setRecipeImages(nextImages);
+      } catch (error) {
+        console.error("Failed to load menu visibility:", error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const fn = () => setScrolled(window.scrollY > 40);
@@ -3038,7 +3106,10 @@ export default function Delicacy() {
     if (!itemSlug) return;
 
     const needle = decodeURIComponent(itemSlug).trim().toLowerCase();
-    const allRecipes = Object.values(RECIPES).flat();
+    const allRecipes = Object.values(RECIPES)
+      .flat()
+      .filter(isRecipeVisible)
+      .map(withBackendRecipeImage);
     let match = allRecipes.find((r) => r.name.trim().toLowerCase() === needle);
     if (!match)
       match = allRecipes.find(
@@ -3267,6 +3338,7 @@ export default function Delicacy() {
         customerUserId,
         order_type: "take-out",
         payment_method: "gcash",
+        checkout_session_id: paymentSession.checkoutSessionId,
         payment_reference:
           paymentSession.paymentReference || paymentSession.checkoutSessionId,
         payment_status: "Paid",
