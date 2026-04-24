@@ -135,11 +135,31 @@ async function ensureOnlineOrderColumns() {
   onlineOrderColumnsReady = true;
 }
 
+let deliveryTrackingColumnsReady = false;
+async function ensureDeliveryTrackingColumns() {
+  if (deliveryTrackingColumnsReady) return;
+  const statements = [
+    "ALTER TABLE orders ADD COLUMN handoverTimestamp DATETIME NULL",
+    "ALTER TABLE orders ADD COLUMN riderName VARCHAR(255) NULL",
+  ];
+
+  for (const statement of statements) {
+    try {
+      await db.query(statement);
+    } catch (_) {
+      // Column already exists on subsequent runs.
+    }
+  }
+
+  deliveryTrackingColumnsReady = true;
+}
+
 // ─── ROUTES (specific paths MUST come before /:id wildcards) ──────────────────
 
 // GET /orders — list all orders for dashboard
 router.get("/", async (req, res) => {
   try {
+    await ensureDeliveryTrackingColumns();
     const [orders] = await db.query(
       `SELECT
          o.Order_ID        AS id,
@@ -147,6 +167,8 @@ router.get("/", async (req, res) => {
          o.Status          AS status,
          o.Order_Date      AS date,
          o.Order_Type      AS orderType,
+         o.handoverTimestamp AS handoverTimestamp,
+         o.riderName       AS riderName,
          p.Payment_Type    AS paymentMethod,
          oi.Product_ID     AS productId,
          oi.Quantity       AS quantity,
@@ -289,6 +311,7 @@ router.get("/new-online", async (req, res) => {
 // GET /orders/ready-pickup — cashier pickup confirmation list for online pickup orders
 router.get("/ready-pickup", async (req, res) => {
   try {
+    await ensureDeliveryTrackingColumns();
     const [rows] = await db.query(
       `SELECT
          o.Order_ID        AS id,
@@ -296,6 +319,8 @@ router.get("/ready-pickup", async (req, res) => {
          o.Total_Amount    AS total,
          o.Order_Date      AS createdAt,
          o.Order_Type      AS orderType,
+         o.handoverTimestamp AS handoverTimestamp,
+         o.riderName       AS riderName,
          oi.Quantity       AS quantity,
          COALESCE(m.Product_Name, pr.name) AS productName
        FROM orders o
@@ -318,6 +343,8 @@ router.get("/ready-pickup", async (req, res) => {
           createdAt: r.createdAt,
           orderType: normalizeOrderType(r.orderType),
           trackingStatus: r.status || "Ready for Pickup",
+          handoverTimestamp: r.handoverTimestamp,
+          riderName: r.riderName,
           items: [],
         };
       }
@@ -332,6 +359,62 @@ router.get("/ready-pickup", async (req, res) => {
     res.json(Object.values(grouped));
   } catch (err) {
     console.error("GET /orders/ready-pickup error:", err.message);
+    res.status(500).json({ message: "DB error", error: err.message });
+  }
+});
+
+// GET /orders/delivery-handover — cashier handover list for POS delivery orders
+router.get("/delivery-handover", async (req, res) => {
+  try {
+    await ensureDeliveryTrackingColumns();
+    const [rows] = await db.query(
+      `SELECT
+         o.Order_ID          AS id,
+         o.Status            AS status,
+         o.Total_Amount      AS total,
+         o.Order_Date        AS createdAt,
+         o.Order_Type        AS orderType,
+         o.handoverTimestamp AS handoverTimestamp,
+         o.riderName         AS riderName,
+         oi.Quantity         AS quantity,
+         COALESCE(m.Product_Name, pr.name) AS productName
+       FROM orders o
+       LEFT JOIN order_item oi ON oi.Order_ID  = o.Order_ID
+       LEFT JOIN menu      m  ON m.Product_ID  = oi.Product_ID
+       LEFT JOIN products  pr ON pr.id          = oi.Product_ID
+       WHERE o.customer_user_id IS NULL
+         AND LOWER(COALESCE(o.Order_Type, '')) = 'delivery'
+         AND LOWER(COALESCE(o.Status, '')) IN ('ready', 'completed', 'ready for pickup')
+         AND COALESCE(o.handoverTimestamp, NULL) IS NULL
+       ORDER BY o.Order_ID DESC`
+    );
+
+    const grouped = {};
+    for (const r of rows) {
+      if (!grouped[r.id]) {
+        grouped[r.id] = {
+          id: r.id,
+          orderNumber: `#${r.id}`,
+          total: Number(r.total) || 0,
+          createdAt: r.createdAt,
+          orderType: normalizeOrderType(r.orderType),
+          trackingStatus: r.status || "Ready",
+          handoverTimestamp: r.handoverTimestamp,
+          riderName: r.riderName,
+          items: [],
+        };
+      }
+      if (r.productName) {
+        grouped[r.id].items.push({
+          name: r.productName,
+          quantity: Number(r.quantity) || 0,
+        });
+      }
+    }
+
+    res.json(Object.values(grouped));
+  } catch (err) {
+    console.error("GET /orders/delivery-handover error:", err.message);
     res.status(500).json({ message: "DB error", error: err.message });
   }
 });
@@ -670,7 +753,7 @@ router.post("/", async (req, res) => {
 router.patch("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { status, startedAt, cashierId, cashier_id } = req.body;
+    const { status, startedAt, cashierId, cashier_id, handoverTimestamp, riderName } = req.body;
     const resolvedCashierId = cashierId ?? cashier_id ?? null;
 
     if (!status) {
@@ -678,6 +761,7 @@ router.patch("/:id", async (req, res) => {
     }
 
     await ensureStartedAtColumn();
+    await ensureDeliveryTrackingColumns();
 
     const fields = ["Status = ?"];
     const values = [status];
@@ -690,6 +774,16 @@ router.patch("/:id", async (req, res) => {
     if (resolvedCashierId != null) {
       fields.push("Cashier_ID = ?");
       values.push(resolvedCashierId);
+    }
+
+    if (handoverTimestamp) {
+      fields.push("handoverTimestamp = ?");
+      values.push(new Date(handoverTimestamp));
+    }
+
+    if (riderName !== undefined) {
+      fields.push("riderName = ?");
+      values.push(riderName ? String(riderName).trim() : null);
     }
 
     values.push(id);

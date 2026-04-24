@@ -48,6 +48,9 @@ app.use("/api/suppliers", suppliersRoutes);
 const reportsRoutes = require("./routes/reportsRoutes");
 app.use("/api/reports", reportsRoutes);
 
+const kitchenUsageRoutes = require("./routes/kitchenUsageRoutes");
+app.use("/api/kitchen-usage", kitchenUsageRoutes);
+
 // order endpoints (used by POS & dashboard)
 const orderRoutes = require("./routes/orderRoutes");
 app.use("/api/orders", orderRoutes);
