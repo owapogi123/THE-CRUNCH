@@ -1003,24 +1003,32 @@ function AmountEntryModal({
   paymentMethod: PaymentMethod;
   onConfirm: (payload: {
     tendered: number;
-    proofImageDataUrl?: string;
+    selectedImage?: File;
     proofFileName?: string;
   }) => void;
   onCancel: () => void;
 }) {
   const [input, setInput] = useState("");
-  const [proofImageDataUrl, setProofImageDataUrl] = useState("");
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [previewURL, setPreviewURL] = useState("");
   const [proofFileName, setProofFileName] = useState("");
   const [proofError, setProofError] = useState("");
 
   useEffect(() => {
     if (show) {
       setInput("");
-      setProofImageDataUrl("");
+      setSelectedImage(null);
+      setPreviewURL("");
       setProofFileName("");
       setProofError("");
     }
   }, [show]);
+
+  useEffect(() => {
+    return () => {
+      if (previewURL) URL.revokeObjectURL(previewURL);
+    };
+  }, [previewURL]);
 
   const tendered = parseFloat(input) || 0;
   const change = tendered - amountDue;
@@ -1039,7 +1047,9 @@ function AmountEntryModal({
 
   const handleProofSelected = (file?: File | null) => {
     if (!file) {
-      setProofImageDataUrl("");
+      if (previewURL) URL.revokeObjectURL(previewURL);
+      setSelectedImage(null);
+      setPreviewURL("");
       setProofFileName("");
       setProofError("");
       return;
@@ -1047,37 +1057,27 @@ function AmountEntryModal({
 
     if (!file.type.startsWith("image/")) {
       setProofError("Please upload an image file for the payment proof.");
-      setProofImageDataUrl("");
+      if (previewURL) URL.revokeObjectURL(previewURL);
+      setSelectedImage(null);
+      setPreviewURL("");
       setProofFileName("");
       return;
     }
 
     if (file.size > 5 * 1024 * 1024) {
       setProofError("Payment proof image must be 5 MB or smaller.");
-      setProofImageDataUrl("");
+      if (previewURL) URL.revokeObjectURL(previewURL);
+      setSelectedImage(null);
+      setPreviewURL("");
       setProofFileName("");
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = typeof reader.result === "string" ? reader.result : "";
-      if (!result) {
-        setProofError("Failed to preview the payment proof image.");
-        setProofImageDataUrl("");
-        setProofFileName("");
-        return;
-      }
-      setProofImageDataUrl(result);
-      setProofFileName(file.name || `payment-proof-${Date.now()}.jpg`);
-      setProofError("");
-    };
-    reader.onerror = () => {
-      setProofError("Failed to read the payment proof image.");
-      setProofImageDataUrl("");
-      setProofFileName("");
-    };
-    reader.readAsDataURL(file);
+    if (previewURL) URL.revokeObjectURL(previewURL);
+    setSelectedImage(file);
+    setPreviewURL(URL.createObjectURL(file));
+    setProofFileName(file.name || `payment-proof-${Date.now()}.jpg`);
+    setProofError("");
   };
 
   // Legacy fallback branch remains below, but the active POS flow now uses
@@ -1452,14 +1452,14 @@ function AmountEntryModal({
                           marginTop: 2,
                         }}
                       >
-                        â‚±{fmt(amountDue)}
+                    ₱{fmt(amountDue)}
                       </p>
                     </div>
 
                     <div
                       style={{
-                        background: proofImageDataUrl ? "#eff6ff" : "#fffbeb",
-                        border: `1px solid ${proofImageDataUrl ? "#bfdbfe" : "#fde68a"}`,
+                        background: previewURL ? "#eff6ff" : "#fffbeb",
+                        border: `1px solid ${previewURL ? "#bfdbfe" : "#fde68a"}`,
                         borderRadius: 10,
                         padding: "9px 12px",
                         marginBottom: 14,
@@ -1468,13 +1468,13 @@ function AmountEntryModal({
                       <p
                         style={{
                           fontSize: 11,
-                          color: proofImageDataUrl ? "#1d4ed8" : "#92400e",
+                          color: previewURL ? "#1d4ed8" : "#92400e",
                           lineHeight: 1.55,
                           margin: 0,
                           fontWeight: 500,
                         }}
                       >
-                        {proofImageDataUrl
+                        {previewURL
                           ? "Payment status: Pending Verification. Review the proof image, then click Confirm Payment."
                           : "Upload or capture the payment proof first. Payment will stay pending until the cashier confirms it."}
                       </p>
@@ -1514,7 +1514,7 @@ function AmountEntryModal({
                           fontFamily: F,
                           fontSize: 12,
                           color: "#444",
-                          marginBottom: proofImageDataUrl ? 12 : 0,
+                          marginBottom: previewURL ? 12 : 0,
                         }}
                       />
 
@@ -1531,7 +1531,7 @@ function AmountEntryModal({
                         </p>
                       )}
 
-                      {proofImageDataUrl && (
+                      {previewURL && (
                         <div>
                           <div
                             style={{
@@ -1543,7 +1543,7 @@ function AmountEntryModal({
                             }}
                           >
                             <img
-                              src={proofImageDataUrl}
+                              src={previewURL}
                               alt="Payment proof preview"
                               style={{
                                 width: "100%",
@@ -1558,12 +1558,31 @@ function AmountEntryModal({
                             style={{
                               fontSize: 11,
                               color: "#666",
-                              margin: 0,
+                              margin: "0 0 8px",
                               wordBreak: "break-word",
                             }}
                           >
                             {proofFileName}
                           </p>
+                          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                            <button
+                              type="button"
+                              onClick={() => handleProofSelected(null)}
+                              style={{
+                                padding: "6px 10px",
+                                borderRadius: 8,
+                                border: "1px solid #e5e7eb",
+                                background: "#fff",
+                                color: "#555",
+                                fontSize: 11,
+                                fontWeight: 600,
+                                cursor: "pointer",
+                                fontFamily: F,
+                              }}
+                            >
+                              Remove Image
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -1571,18 +1590,18 @@ function AmountEntryModal({
                     <motion.button
                       whileHover={{ opacity: 0.88 }}
                       whileTap={{ scale: 0.98 }}
-                      disabled={!proofImageDataUrl}
+                      disabled={!selectedImage}
                       onClick={() =>
                         onConfirm({
                           tendered: amountDue,
-                          proofImageDataUrl,
+                          selectedImage: selectedImage ?? undefined,
                           proofFileName,
                         })
                       }
                       style={{
                         ...btn("#0070BA", "#fff", { marginBottom: 6 }),
-                        cursor: !proofImageDataUrl ? "not-allowed" : "pointer",
-                        opacity: !proofImageDataUrl ? 0.45 : 1,
+                        cursor: !selectedImage ? "not-allowed" : "pointer",
+                        opacity: !selectedImage ? 0.45 : 1,
                       }}
                     >
                       Confirm Payment
@@ -2675,11 +2694,11 @@ export default function CashierView() {
 
   const handleAmountConfirmed = async ({
     tendered,
-    proofImageDataUrl,
+    selectedImage,
     proofFileName,
   }: {
     tendered: number;
-    proofImageDataUrl?: string;
+    selectedImage?: File;
     proofFileName?: string;
   }) => {
     setShowAmountEntry(false);
@@ -2690,21 +2709,24 @@ export default function CashierView() {
     let proofImageUrl: string | undefined;
 
     if (paymentMethod === "gcash_onsite") {
-      if (!proofImageDataUrl) {
+      if (!selectedImage) {
         alert("Please upload or capture the onsite e-payment proof first.");
         setPlacing(false);
         return;
       }
 
       try {
-        const upload = await api.post<{ proofImageUrl: string }>(
-          "/orders/payment-proofs",
-          {
-            dataUrl: proofImageDataUrl,
-            originalName: proofFileName || `payment-proof-${Date.now()}.jpg`,
-          },
+        const formData = new FormData();
+        formData.append(
+          "proof",
+          selectedImage,
+          proofFileName || selectedImage.name || `payment-proof-${Date.now()}.jpg`,
         );
-        proofImageUrl = upload.proofImageUrl;
+        const upload = await api.post<{ fileUrl: string }>(
+          "/upload-proof",
+          formData,
+        );
+        proofImageUrl = upload.fileUrl;
       } catch (error) {
         console.error("Failed to upload payment proof:", error);
         alert("Failed to upload the payment proof. Please try again.");
