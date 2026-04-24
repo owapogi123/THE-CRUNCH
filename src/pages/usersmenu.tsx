@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { api, apiCall } from "../lib/api";
+import { api } from "../lib/api";
 
 const SP = { type: "spring" as const, stiffness: 340, damping: 30 };
 const SPG = { type: "spring" as const, stiffness: 200, damping: 24 };
@@ -73,6 +73,8 @@ interface MenuVisibilityRow {
   availability_status?: string;
   image?: string;
 }
+
+type PaymentMethodType = "gcash" | "cash";
 
 // ─── STATIC DATA ──────────────────────────────────────────────────────────────
 const FLAVORS = [
@@ -469,6 +471,9 @@ const DELIVERY_LINKS = {
 };
 const PAYMENT_SESSION_KEY = "the-crunch-paymongo-session";
 
+const CASH_TERMS =
+  "By selecting Cash as your payment method, you agree that your order will not be processed immediately and will only be prepared once full payment is made onsite. You are responsible for completing payment at the store. Delays in payment may result in longer waiting times or possible cancellation of your order. The store reserves the right to refuse or cancel orders that are not paid within a reasonable time. By proceeding with your order, you acknowledge and accept these terms.";
+
 // ─── INLINE SVG ICONS ─────────────────────────────────────────────────────────
 function IconHistory() {
   return (
@@ -598,6 +603,478 @@ function IconExternalLink() {
     </svg>
   );
 }
+function IconCash() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="2" y="6" width="20" height="12" rx="2" />
+      <circle cx="12" cy="12" r="2" />
+      <path d="M6 12h.01M18 12h.01" />
+    </svg>
+  );
+}
+function IconGCash() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="5" y="2" width="14" height="20" rx="2" />
+      <path d="M12 10v4M10 12h4" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+function IconShield() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    </svg>
+  );
+}
+
+// ─── CASH TERMS MODAL ─────────────────────────────────────────────────────────
+function CashTermsModal({
+  onAccept,
+  onDecline,
+}: {
+  onAccept: () => void;
+  onDecline: () => void;
+}) {
+  const [checked, setChecked] = useState(false);
+
+  return (
+    <>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.22 }}
+        onClick={onDecline}
+        style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(0,0,0,0.75)",
+          zIndex: 700,
+          backdropFilter: "blur(14px)",
+          WebkitBackdropFilter: "blur(14px)",
+        }}
+      />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.92, y: 28 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.94, y: 16 }}
+        transition={{ ...SPG, delay: 0.04 }}
+        style={{
+          position: "fixed",
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          zIndex: 800,
+          width: "min(480px, 92vw)",
+          background: "#151210",
+          borderRadius: 26,
+          border: "1px solid rgba(240,237,232,0.1)",
+          boxShadow: "0 40px 80px rgba(0,0,0,0.6)",
+          overflow: "hidden",
+        }}
+      >
+        {/* Header stripe */}
+        <div
+          style={{
+            height: 3,
+            background: "linear-gradient(90deg, #f5c842, rgba(245,200,66,0.3))",
+          }}
+        />
+
+        <div style={{ padding: "32px 32px 28px" }}>
+          {/* Icon + Title */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              marginBottom: 20,
+            }}
+          >
+            <div
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: 14,
+                background: "rgba(245,200,66,0.1)",
+                border: "1px solid rgba(245,200,66,0.22)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#f5c842",
+                flexShrink: 0,
+              }}
+            >
+              <IconShield />
+            </div>
+            <div>
+              <p
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  color: "#f5c842",
+                  letterSpacing: "0.18em",
+                  textTransform: "uppercase" as const,
+                  margin: "0 0 3px",
+                }}
+              >
+                Cash Payment
+              </p>
+              <h3
+                style={{
+                  fontSize: 18,
+                  fontWeight: 800,
+                  color: "#f0ede8",
+                  margin: 0,
+                  letterSpacing: "-0.02em",
+                }}
+              >
+                Terms & Conditions
+              </h3>
+            </div>
+          </div>
+
+          {/* Terms body */}
+          <div
+            style={{
+              background: "rgba(240,237,232,0.03)",
+              border: "1px solid rgba(240,237,232,0.08)",
+              borderRadius: 14,
+              padding: "18px 20px",
+              marginBottom: 22,
+            }}
+          >
+            <p
+              style={{
+                fontSize: 13,
+                color: "rgba(240,237,232,0.62)",
+                lineHeight: 1.78,
+                margin: 0,
+                fontWeight: 300,
+              }}
+            >
+              {CASH_TERMS}
+            </p>
+          </div>
+
+          {/* Checkbox */}
+          <motion.label
+            whileHover={{ opacity: 0.9 }}
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 12,
+              cursor: "pointer",
+              marginBottom: 24,
+            }}
+          >
+            <div
+              onClick={() => setChecked((v) => !v)}
+              style={{
+                width: 20,
+                height: 20,
+                borderRadius: 6,
+                border: `1.5px solid ${checked ? "#f5c842" : "rgba(240,237,232,0.22)"}`,
+                background: checked ? "rgba(245,200,66,0.12)" : "transparent",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+                marginTop: 1,
+                transition: "all 0.18s ease",
+                cursor: "pointer",
+              }}
+            >
+              <AnimatePresence>
+                {checked && (
+                  <motion.span
+                    initial={{ scale: 0, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    exit={{ scale: 0, opacity: 0 }}
+                    transition={SP}
+                    style={{ color: "#f5c842", fontSize: 12, fontWeight: 800, lineHeight: 1 }}
+                  >
+                    ✓
+                  </motion.span>
+                )}
+              </AnimatePresence>
+            </div>
+            <span
+              style={{
+                fontSize: 12.5,
+                color: "rgba(240,237,232,0.5)",
+                lineHeight: 1.6,
+                fontWeight: 400,
+              }}
+            >
+              I have read and agree to the Cash Payment Terms & Conditions.
+            </span>
+          </motion.label>
+
+          {/* Buttons */}
+          <div style={{ display: "flex", gap: 10 }}>
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.97 }}
+              transition={SP}
+              onClick={onDecline}
+              style={{
+                flex: 1,
+                background: "rgba(240,237,232,0.05)",
+                border: "1px solid rgba(240,237,232,0.12)",
+                color: "rgba(240,237,232,0.5)",
+                borderRadius: 12,
+                padding: "13px 0",
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              Cancel
+            </motion.button>
+            <motion.button
+              whileHover={checked ? { scale: 1.02, backgroundColor: "#e6b800" } : {}}
+              whileTap={checked ? { scale: 0.97 } : {}}
+              transition={SP}
+              onClick={() => {
+                if (checked) onAccept();
+              }}
+              disabled={!checked}
+              style={{
+                flex: 2,
+                background: checked ? "#f5c842" : "rgba(245,200,66,0.18)",
+                color: checked ? "#111" : "rgba(245,200,66,0.35)",
+                border: "none",
+                borderRadius: 12,
+                padding: "13px 0",
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: checked ? "pointer" : "not-allowed",
+                fontFamily: "inherit",
+                transition: "all 0.2s ease",
+              }}
+            >
+              I Agree & Continue
+            </motion.button>
+          </div>
+        </div>
+      </motion.div>
+    </>
+  );
+}
+
+// ─── PAYMENT METHOD SELECTOR ──────────────────────────────────────────────────
+function PaymentMethodSelector({
+  selected,
+  onChange,
+  disabled,
+}: {
+  selected: PaymentMethodType;
+  onChange: (m: PaymentMethodType) => void;
+  disabled?: boolean;
+}) {
+  const methods: {
+    id: PaymentMethodType;
+    label: string;
+    sub: string;
+    icon: React.ReactNode;
+    accentRgb: string;
+  }[] = [
+    {
+      id: "cash",
+      label: "Cash",
+      sub: "Pay onsite at the store",
+      icon: <IconCash />,
+      accentRgb: "34,197,94",
+    },
+    {
+      id: "gcash",
+      label: "GCash",
+      sub: "Pay now via GCash",
+      icon: <IconGCash />,
+      accentRgb: "0,120,255",
+    },
+  ];
+
+  return (
+    <div style={{ marginBottom: 18 }}>
+      {/* Section label */}
+      <p
+        style={{
+          fontSize: 10,
+          fontWeight: 700,
+          color: "rgba(240,237,232,0.3)",
+          textTransform: "uppercase" as const,
+          letterSpacing: "0.14em",
+          margin: "0 0 10px",
+        }}
+      >
+        Payment Method
+      </p>
+
+      <div
+        style={{
+          background: "rgba(240,237,232,0.03)",
+          border: "1px solid rgba(240,237,232,0.08)",
+          borderRadius: 16,
+          padding: 6,
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 6,
+          opacity: disabled ? 0.5 : 1,
+          pointerEvents: disabled ? "none" : "auto",
+        }}
+      >
+        {methods.map((m) => {
+          const active = selected === m.id;
+          return (
+            <motion.button
+              key={m.id}
+              onClick={() => onChange(m.id)}
+              whileHover={active ? {} : { borderColor: `rgba(${m.accentRgb},0.35)` }}
+              whileTap={{ scale: 0.97 }}
+              transition={SP}
+              style={{
+                background: active
+                  ? `rgba(${m.accentRgb},0.1)`
+                  : "transparent",
+                border: `1.5px solid ${active ? `rgba(${m.accentRgb},0.45)` : "transparent"}`,
+                borderRadius: 11,
+                padding: "12px 14px",
+                cursor: "pointer",
+                fontFamily: "inherit",
+                textAlign: "left" as const,
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                position: "relative",
+              }}
+            >
+              {/* Active dot */}
+              {active && (
+                <motion.div
+                  layoutId="payDot"
+                  transition={SPG}
+                  style={{
+                    position: "absolute",
+                    top: 8,
+                    right: 10,
+                    width: 6,
+                    height: 6,
+                    borderRadius: "50%",
+                    background: `rgb(${m.accentRgb})`,
+                  }}
+                />
+              )}
+              <span
+                style={{
+                  color: active ? `rgb(${m.accentRgb})` : "rgba(240,237,232,0.35)",
+                  display: "flex",
+                  alignItems: "center",
+                  flexShrink: 0,
+                }}
+              >
+                {m.icon}
+              </span>
+              <div>
+                <p
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 700,
+                    color: active ? "#f0ede8" : "rgba(240,237,232,0.45)",
+                    margin: "0 0 2px",
+                  }}
+                >
+                  {m.label}
+                </p>
+                <p
+                  style={{
+                    fontSize: 10.5,
+                    fontWeight: 400,
+                    color: active
+                      ? `rgba(${m.accentRgb},0.7)`
+                      : "rgba(240,237,232,0.22)",
+                    margin: 0,
+                  }}
+                >
+                  {m.sub}
+                </p>
+              </div>
+            </motion.button>
+          );
+        })}
+      </div>
+
+      {/* Cash notice */}
+      <AnimatePresence>
+        {selected === "cash" && (
+          <motion.div
+            initial={{ opacity: 0, height: 0, marginTop: 0 }}
+            animate={{ opacity: 1, height: "auto", marginTop: 8 }}
+            exit={{ opacity: 0, height: 0, marginTop: 0 }}
+            transition={{ duration: 0.22, ease: EASE }}
+            style={{ overflow: "hidden" }}
+          >
+            <div
+              style={{
+                background: "rgba(34,197,94,0.05)",
+                border: "1px solid rgba(34,197,94,0.15)",
+                borderRadius: 10,
+                padding: "10px 13px",
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 8,
+              }}
+            >
+              <span style={{ fontSize: 13, flexShrink: 0, marginTop: 1 }}>💵</span>
+              <p
+                style={{
+                  fontSize: 11.5,
+                  color: "rgba(34,197,94,0.75)",
+                  margin: 0,
+                  lineHeight: 1.6,
+                  fontWeight: 400,
+                }}
+              >
+                You will pay at the store. Your order will only be prepared once full payment is received onsite.
+              </p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
 
 // ─── ORDER TYPE MODAL ──────────────────────────────────────────────────────────
 function OrderTypeModal({ onClose }: { onClose: () => void }) {
@@ -634,7 +1111,6 @@ function OrderTypeModal({ onClose }: { onClose: () => void }) {
           width: "min(720px, 92vw)",
         }}
       >
-        {/* Close */}
         <motion.button
           whileHover={{ scale: 1.1 }}
           whileTap={{ scale: 0.9 }}
@@ -1958,6 +2434,9 @@ function OrderDrawer({
   paymentSession,
   paymentMessage,
   isSubmitting,
+  selectedPaymentMethod,
+  onPaymentMethodChange,
+  onRequestCashTerms,
 }: {
   cart: CartItem[];
   onClose: () => void;
@@ -1970,19 +2449,37 @@ function OrderDrawer({
   paymentSession: PaymentSessionState | null;
   paymentMessage: string | null;
   isSubmitting: boolean;
+  selectedPaymentMethod: PaymentMethodType;
+  onPaymentMethodChange: (m: PaymentMethodType) => void;
+  onRequestCashTerms: () => void;
 }) {
   const total = cart.reduce((s, i) => s + i.recipe.price * i.quantity, 0);
   const totalQty = cart.reduce((s, i) => s + i.quantity, 0);
-  const primaryLabel = paymentSession?.paid
-    ? "Place Order"
-    : paymentSession
-      ? "Check Payment Status"
-      : "Send Payment";
-  const primaryAction = paymentSession?.paid
-    ? onPlaceOrder
-    : paymentSession
-      ? onVerifyPayment
-      : onSendPayment;
+
+  // Determine CTA label and action based on payment method + session state
+  const isCash = selectedPaymentMethod === "cash";
+
+  let primaryLabel: string;
+  let primaryAction: () => void;
+
+  if (isCash) {
+    primaryLabel = "Place Order";
+    primaryAction = onRequestCashTerms;
+  } else {
+    // GCash flow
+    primaryLabel = paymentSession?.paid
+      ? "Place Order"
+      : paymentSession
+        ? "Check Payment Status"
+        : "Send Payment";
+    primaryAction = paymentSession?.paid
+      ? onPlaceOrder
+      : paymentSession
+        ? onVerifyPayment
+        : onSendPayment;
+  }
+
+  const hasPaymentSession = !isCash && !!paymentSession;
 
   return (
     <>
@@ -2330,6 +2827,7 @@ function OrderDrawer({
                 borderTop: "1px solid rgba(240,237,232,0.07)",
               }}
             >
+              {/* Total */}
               <div
                 style={{
                   display: "flex",
@@ -2359,7 +2857,25 @@ function OrderDrawer({
                   </motion.span>
                 </AnimatePresence>
               </div>
-              {paymentMessage && (
+
+              {/* ── PAYMENT METHOD SELECTOR ── */}
+              <PaymentMethodSelector
+                selected={selectedPaymentMethod}
+                onChange={onPaymentMethodChange}
+                disabled={hasPaymentSession}
+              />
+
+              {/* Divider */}
+              <div
+                style={{
+                  height: 1,
+                  background: "rgba(240,237,232,0.06)",
+                  margin: "0 0 16px",
+                }}
+              />
+
+              {/* Payment message (GCash only) */}
+              {paymentMessage && !isCash && (
                 <p
                   style={{
                     fontSize: 11.5,
@@ -2373,7 +2889,9 @@ function OrderDrawer({
                   {paymentMessage}
                 </p>
               )}
-              {paymentSession?.checkoutUrl && !paymentSession.paid && (
+
+              {/* Open GCash link button */}
+              {!isCash && paymentSession?.checkoutUrl && !paymentSession.paid && (
                 <motion.a
                   whileHover={{ scale: 1.01 }}
                   whileTap={{ scale: 0.98 }}
@@ -2402,6 +2920,8 @@ function OrderDrawer({
                   Open GCash Payment
                 </motion.a>
               )}
+
+              {/* Primary CTA */}
               <motion.button
                 whileHover={{ scale: 1.02, backgroundColor: "#e6b800" }}
                 whileTap={{ scale: 0.97 }}
@@ -2425,6 +2945,7 @@ function OrderDrawer({
               >
                 {isSubmitting ? "Please wait..." : primaryLabel}
               </motion.button>
+
               <p
                 style={{
                   textAlign: "center" as const,
@@ -2433,7 +2954,9 @@ function OrderDrawer({
                   marginTop: 12,
                 }}
               >
-                Pickup only · GCash via PayMongo · Place order after payment
+                {isCash
+                  ? "Pickup only · Pay onsite at the store"
+                  : "Pickup only · GCash via PayMongo · Place order after payment"}
               </p>
             </motion.div>
           )}
@@ -2917,6 +3440,12 @@ export default function Delicacy() {
   const [paymentSession, setPaymentSession] =
     useState<PaymentSessionState | null>(null);
   const [paymentMessage, setPaymentMessage] = useState<string | null>(null);
+
+  // ── NEW: payment method state + cash T&C modal ──
+  const [selectedPaymentMethod, setSelectedPaymentMethod] =
+    useState<PaymentMethodType>("gcash");
+  const [showCashTerms, setShowCashTerms] = useState(false);
+
   const cardRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const customerUserId = Number(localStorage.getItem("userId") || 0);
   const customerName =
@@ -3191,8 +3720,13 @@ export default function Delicacy() {
     setPaymentMessage(null);
   };
 
-  // Submit order to backend — cashierId is intentionally omitted so the
-  // backend marks this as an online order (Cashier_ID IS NULL).
+  // Reset payment session when switching payment methods
+  const handlePaymentMethodChange = (method: PaymentMethodType) => {
+    setSelectedPaymentMethod(method);
+    setPaymentSession(null);
+    setPaymentMessage(null);
+  };
+
   const buildOrderItems = () =>
     cart.map((i) => ({
       product_id: i.recipe.id,
@@ -3205,14 +3739,10 @@ export default function Delicacy() {
   const fetchCustomerOrders = async () => {
     if (!customerUserId) return;
     try {
-      const token = localStorage.getItem("authToken") || "";
-      const data = await apiCall<{
+      const data = await api.get<{
         activeOrders: CustomerOrder[];
         historyOrders: CustomerOrder[];
-      }>(`/orders/customer/${customerUserId}`, {
-        method: "GET",
-        token,
-      });
+      }>(`/orders/customer/${customerUserId}`);
       setActiveOrders(data.activeOrders ?? []);
       setOrderHistory(data.historyOrders ?? []);
     } catch (error) {
@@ -3227,6 +3757,67 @@ export default function Delicacy() {
     return () => window.clearInterval(timer);
   }, [customerUserId]);
 
+  // ── CASH: show T&C modal, then place order on accept ──
+  const handleRequestCashTerms = () => {
+    if (isSubmitting) return;
+    if (!customerUserId) {
+      setPaymentMessage(
+        "Please log in as a customer first so we can save your tracking and order history.",
+      );
+      return;
+    }
+    if (cart.length === 0) return;
+    setShowCashTerms(true);
+  };
+
+  const handleCashTermsAccept = async () => {
+    setShowCashTerms(false);
+    await handlePlaceCashOrder();
+  };
+
+  const handleCashTermsDecline = () => {
+    setShowCashTerms(false);
+  };
+
+  // ── CASH: place order without payment session ──
+  const handlePlaceCashOrder = async () => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      const total = cart.reduce((s, i) => s + i.recipe.price * i.quantity, 0);
+      const placedOrder = await api.post<{
+        orderId: number;
+        orderNumber: string;
+        trackingStatus: CustomerOrder["trackingStatus"];
+      }>("/orders", {
+        items: buildOrderItems(),
+        total,
+        customerUserId,
+        order_type: "take-out",
+        payment_method: "cash",
+        payment_status: "Pending",
+      });
+
+      await fetchCustomerOrders();
+      setLastPlacedOrderNumber(
+        placedOrder.orderNumber || `#${placedOrder.orderId}`,
+      );
+      setDrawerOpen(false);
+      setTimeout(() => {
+        setShowCheckout(true);
+        setCart([]);
+      }, 320);
+    } catch (error) {
+      console.error("Failed to place cash order:", error);
+      setPaymentMessage(
+        "We could not place your order right now. Please try again.",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // ── GCASH: send payment ──
   const handleSendPayment = async () => {
     if (isSubmitting) return;
     if (!customerUserId) {
@@ -3322,6 +3913,7 @@ export default function Delicacy() {
     }
   };
 
+  // ── GCASH: place order after verified payment ──
   const handlePlaceOrder = async () => {
     if (isSubmitting) return;
     if (!paymentSession?.paid) {
@@ -4125,12 +4717,13 @@ export default function Delicacy() {
         </motion.div>
       </div>
 
-      {/* Modals & Drawers */}
+      {/* ── MODALS & DRAWERS ── */}
       <AnimatePresence>
         {orderTypeOpen && (
           <OrderTypeModal onClose={() => setOrderTypeOpen(false)} />
         )}
       </AnimatePresence>
+
       <AnimatePresence>
         {drawerOpen && (
           <OrderDrawer
@@ -4145,9 +4738,23 @@ export default function Delicacy() {
             paymentSession={paymentSession}
             paymentMessage={paymentMessage}
             isSubmitting={isSubmitting}
+            selectedPaymentMethod={selectedPaymentMethod}
+            onPaymentMethodChange={handlePaymentMethodChange}
+            onRequestCashTerms={handleRequestCashTerms}
           />
         )}
       </AnimatePresence>
+
+      {/* Cash T&C modal — rendered outside the drawer so it layers above it */}
+      <AnimatePresence>
+        {showCashTerms && (
+          <CashTermsModal
+            onAccept={handleCashTermsAccept}
+            onDecline={handleCashTermsDecline}
+          />
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {historyOpen && (
           <HistoryDrawer
@@ -4156,6 +4763,7 @@ export default function Delicacy() {
           />
         )}
       </AnimatePresence>
+
       <AnimatePresence>
         {showCheckout && (
           <CheckoutModal
