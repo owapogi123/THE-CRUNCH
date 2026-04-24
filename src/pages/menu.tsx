@@ -35,6 +35,7 @@ const SP = { type: "spring" as const, stiffness: 400, damping: 28 };
 const VAT_RATE = 0.12;
 const DISCOUNT_RATE = 0.2;
 type CustomerType = "regular" | "pwd" | "senior";
+type PaymentMethod = "cash" | "gcash_onsite";
 
 interface MenuItem {
   id: number;
@@ -74,7 +75,9 @@ interface OrderPayload {
   }[];
   total: number;
   order_type: "dine-in" | "take-out" | "delivery";
-  payment_method: "cash" | "e-payment";
+  payment_method: PaymentMethod;
+  payment_status?: "Paid";
+  proof_image_url?: string;
   customer_type: CustomerType;
   discount_amount: number;
   vat_amount: number;
@@ -218,6 +221,12 @@ const buildReceiptHtml = ({
   discountAmount,
   vatAmount,
 }: ReceiptData) => {
+  const paymentMethodLabel =
+    paymentMethod === "cash"
+      ? "Cash"
+      : paymentMethod === "gcash_onsite"
+        ? "Onsite E-Payment"
+        : paymentMethod;
   const customerLabel: Record<CustomerType, string> = {
     regular: "Regular",
     pwd: "PWD",
@@ -392,7 +401,7 @@ const buildReceiptHtml = ({
       <div class="line"><span>Date</span><strong>${escapeHtml(date)}</strong></div>
       <div class="line"><span>Time</span><strong>${escapeHtml(time)}</strong></div>
       <div class="line"><span>Order Type</span><strong>${escapeHtml(orderType)}</strong></div>
-      <div class="line"><span>Payment</span><strong>${escapeHtml(paymentMethod)}</strong></div>
+      <div class="line"><span>Payment</span><strong>${escapeHtml(paymentMethodLabel)}</strong></div>
       <div class="line"><span>Customer</span><strong>${escapeHtml(customerLabel[customerType])}</strong></div>
     </section>
 
@@ -991,17 +1000,25 @@ function AmountEntryModal({
 }: {
   show: boolean;
   amountDue: number;
-  paymentMethod: "cash" | "e-payment";
-  onConfirm: (t: number) => void;
+  paymentMethod: PaymentMethod;
+  onConfirm: (payload: {
+    tendered: number;
+    proofImageDataUrl?: string;
+    proofFileName?: string;
+  }) => void;
   onCancel: () => void;
 }) {
   const [input, setInput] = useState("");
-  const [gcashDone, setGcashDone] = useState(false);
+  const [proofImageDataUrl, setProofImageDataUrl] = useState("");
+  const [proofFileName, setProofFileName] = useState("");
+  const [proofError, setProofError] = useState("");
 
   useEffect(() => {
     if (show) {
       setInput("");
-      setGcashDone(false);
+      setProofImageDataUrl("");
+      setProofFileName("");
+      setProofError("");
     }
   }, [show]);
 
@@ -1020,10 +1037,53 @@ function AmountEntryModal({
     setInput((p) => p + k);
   };
 
-  const handleGcash = () => {
-    setGcashDone(true);
-    setTimeout(() => onConfirm(amountDue), 700);
+  const handleProofSelected = (file?: File | null) => {
+    if (!file) {
+      setProofImageDataUrl("");
+      setProofFileName("");
+      setProofError("");
+      return;
+    }
+
+    if (!file.type.startsWith("image/")) {
+      setProofError("Please upload an image file for the payment proof.");
+      setProofImageDataUrl("");
+      setProofFileName("");
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setProofError("Payment proof image must be 5 MB or smaller.");
+      setProofImageDataUrl("");
+      setProofFileName("");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      if (!result) {
+        setProofError("Failed to preview the payment proof image.");
+        setProofImageDataUrl("");
+        setProofFileName("");
+        return;
+      }
+      setProofImageDataUrl(result);
+      setProofFileName(file.name || `payment-proof-${Date.now()}.jpg`);
+      setProofError("");
+    };
+    reader.onerror = () => {
+      setProofError("Failed to read the payment proof image.");
+      setProofImageDataUrl("");
+      setProofFileName("");
+    };
+    reader.readAsDataURL(file);
   };
+
+  // Legacy fallback branch remains below, but the active POS flow now uses
+  // the explicit gcash_onsite path above.
+  const gcashDone = false;
+  const handleGcash = () => {};
 
   return (
     <AnimatePresence>
@@ -1287,7 +1347,7 @@ function AmountEntryModal({
                       whileHover={{ opacity: 0.88 }}
                       whileTap={{ scale: 0.98 }}
                       disabled={!input || !enough}
-                      onClick={() => onConfirm(tendered)}
+                      onClick={() => onConfirm({ tendered })}
                       style={{
                         ...btn("#16a34a", "#fff", { marginBottom: 6 }),
                         cursor: !input || !enough ? "not-allowed" : "pointer",
@@ -1308,6 +1368,237 @@ function AmountEntryModal({
                       Cancel
                     </motion.button>
                   </>
+                ) : paymentMethod === "gcash_onsite" ? (
+                  <div>
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        background: "#fafafa",
+                        border: "1px solid #f0f0f0",
+                        borderRadius: 14,
+                        padding: "16px 16px 12px",
+                        marginBottom: 14,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          marginBottom: 12,
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: 24,
+                            height: 24,
+                            borderRadius: 7,
+                            background: "#0070BA",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          <span
+                            style={{
+                              color: "#fff",
+                              fontSize: 12,
+                              fontWeight: 700,
+                            }}
+                          >
+                            G
+                          </span>
+                        </div>
+                        <span
+                          style={{
+                            fontSize: 13,
+                            fontWeight: 600,
+                            color: "#0070BA",
+                          }}
+                        >
+                          Onsite GCash / E-Payment
+                        </span>
+                      </div>
+                      <img
+                        src="/gcashQR1.png"
+                        alt="GCash QR"
+                        style={{
+                          width: 164,
+                          height: 164,
+                          borderRadius: 10,
+                          objectFit: "contain",
+                          background: "#fff",
+                          border: "1px solid #efefef",
+                        }}
+                      />
+                      <p
+                        style={{
+                          fontSize: 10,
+                          color: "#aaa",
+                          marginTop: 10,
+                          textAlign: "center",
+                          lineHeight: 1.6,
+                        }}
+                      >
+                        Ask the customer to scan, then upload or capture the proof below.
+                      </p>
+                      <p
+                        style={{
+                          fontSize: 14,
+                          fontWeight: 600,
+                          color: "#111",
+                          marginTop: 2,
+                        }}
+                      >
+                        â‚±{fmt(amountDue)}
+                      </p>
+                    </div>
+
+                    <div
+                      style={{
+                        background: proofImageDataUrl ? "#eff6ff" : "#fffbeb",
+                        border: `1px solid ${proofImageDataUrl ? "#bfdbfe" : "#fde68a"}`,
+                        borderRadius: 10,
+                        padding: "9px 12px",
+                        marginBottom: 14,
+                      }}
+                    >
+                      <p
+                        style={{
+                          fontSize: 11,
+                          color: proofImageDataUrl ? "#1d4ed8" : "#92400e",
+                          lineHeight: 1.55,
+                          margin: 0,
+                          fontWeight: 500,
+                        }}
+                      >
+                        {proofImageDataUrl
+                          ? "Payment status: Pending Verification. Review the proof image, then click Confirm Payment."
+                          : "Upload or capture the payment proof first. Payment will stay pending until the cashier confirms it."}
+                      </p>
+                    </div>
+
+                    <div
+                      style={{
+                        marginBottom: 14,
+                        border: "1px solid #f0f0f0",
+                        borderRadius: 12,
+                        padding: 12,
+                        background: "#fff",
+                      }}
+                    >
+                      <label
+                        style={{
+                          display: "block",
+                          fontSize: 10,
+                          fontWeight: 600,
+                          color: "#888",
+                          textTransform: "uppercase",
+                          letterSpacing: "0.07em",
+                          marginBottom: 8,
+                        }}
+                      >
+                        Proof Image
+                      </label>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        onChange={(e) =>
+                          handleProofSelected(e.currentTarget.files?.[0] ?? null)
+                        }
+                        style={{
+                          width: "100%",
+                          fontFamily: F,
+                          fontSize: 12,
+                          color: "#444",
+                          marginBottom: proofImageDataUrl ? 12 : 0,
+                        }}
+                      />
+
+                      {proofError && (
+                        <p
+                          style={{
+                            fontSize: 11,
+                            color: "#dc2626",
+                            margin: "8px 0 0",
+                            fontWeight: 500,
+                          }}
+                        >
+                          {proofError}
+                        </p>
+                      )}
+
+                      {proofImageDataUrl && (
+                        <div>
+                          <div
+                            style={{
+                              borderRadius: 10,
+                              overflow: "hidden",
+                              border: "1px solid #e5e7eb",
+                              background: "#fafafa",
+                              marginBottom: 8,
+                            }}
+                          >
+                            <img
+                              src={proofImageDataUrl}
+                              alt="Payment proof preview"
+                              style={{
+                                width: "100%",
+                                maxHeight: 220,
+                                objectFit: "contain",
+                                display: "block",
+                                background: "#fff",
+                              }}
+                            />
+                          </div>
+                          <p
+                            style={{
+                              fontSize: 11,
+                              color: "#666",
+                              margin: 0,
+                              wordBreak: "break-word",
+                            }}
+                          >
+                            {proofFileName}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    <motion.button
+                      whileHover={{ opacity: 0.88 }}
+                      whileTap={{ scale: 0.98 }}
+                      disabled={!proofImageDataUrl}
+                      onClick={() =>
+                        onConfirm({
+                          tendered: amountDue,
+                          proofImageDataUrl,
+                          proofFileName,
+                        })
+                      }
+                      style={{
+                        ...btn("#0070BA", "#fff", { marginBottom: 6 }),
+                        cursor: !proofImageDataUrl ? "not-allowed" : "pointer",
+                        opacity: !proofImageDataUrl ? 0.45 : 1,
+                      }}
+                    >
+                      Confirm Payment
+                    </motion.button>
+                    <motion.button
+                      whileTap={{ scale: 0.97 }}
+                      onClick={onCancel}
+                      style={{
+                        ...btn("transparent", "#bbb"),
+                        padding: "9px",
+                        fontSize: 12,
+                      }}
+                    >
+                      Cancel
+                    </motion.button>
+                  </div>
                 ) : (
                   <AnimatePresence mode="wait">
                     {!gcashDone ? (
@@ -2091,9 +2382,7 @@ export default function CashierView() {
   const [orderType, setOrderType] = useState<
     "dine-in" | "take-out" | "delivery"
   >("dine-in");
-  const [paymentMethod, setPaymentMethod] = useState<"cash" | "e-payment">(
-    "cash",
-  );
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [customerType, setCustomerType] = useState<CustomerType>("regular");
   const [tables, setTables] = useState<TableItem[]>([]);
   const [selectedTable, setSelectedTable] = useState<number | null>(null);
@@ -2384,12 +2673,45 @@ export default function CashierView() {
     );
   };
 
-  const handleAmountConfirmed = async (tendered: number) => {
+  const handleAmountConfirmed = async ({
+    tendered,
+    proofImageDataUrl,
+    proofFileName,
+  }: {
+    tendered: number;
+    proofImageDataUrl?: string;
+    proofFileName?: string;
+  }) => {
     setShowAmountEntry(false);
     setPlacing(true);
     const { vatExemptAmount, vatAmount, discountAmount, amountDue } =
       computePricing(gross, customerType);
     const change = Math.max(0, tendered - amountDue);
+    let proofImageUrl: string | undefined;
+
+    if (paymentMethod === "gcash_onsite") {
+      if (!proofImageDataUrl) {
+        alert("Please upload or capture the onsite e-payment proof first.");
+        setPlacing(false);
+        return;
+      }
+
+      try {
+        const upload = await api.post<{ proofImageUrl: string }>(
+          "/orders/payment-proofs",
+          {
+            dataUrl: proofImageDataUrl,
+            originalName: proofFileName || `payment-proof-${Date.now()}.jpg`,
+          },
+        );
+        proofImageUrl = upload.proofImageUrl;
+      } catch (error) {
+        console.error("Failed to upload payment proof:", error);
+        alert("Failed to upload the payment proof. Please try again.");
+        setPlacing(false);
+        return;
+      }
+    }
 
     const payload: OrderPayload = {
       items: cart.map((i) => ({
@@ -2402,6 +2724,10 @@ export default function CashierView() {
       total: amountDue,
       order_type: orderType,
       payment_method: paymentMethod,
+      ...(paymentMethod === "gcash_onsite" && {
+        payment_status: "Paid" as const,
+        proof_image_url: proofImageUrl,
+      }),
       customer_type: customerType,
       discount_amount: discountAmount,
       vat_amount: vatAmount,
@@ -3767,7 +4093,10 @@ export default function CashierView() {
                     }
                     options={[
                       { value: "cash", label: "Cash" },
-                      { value: "e-payment", label: "E-Payment" },
+                      {
+                        value: "gcash_onsite",
+                        label: "Onsite GCash / E-Payment",
+                      },
                     ]}
                   />
                 </div>
@@ -3841,8 +4170,8 @@ export default function CashierView() {
         show={showAmountEntry}
         amountDue={pricing.amountDue}
         paymentMethod={paymentMethod}
-        onConfirm={(t) => {
-          void handleAmountConfirmed(t);
+        onConfirm={(payload) => {
+          void handleAmountConfirmed(payload);
         }}
         onCancel={() => setShowAmountEntry(false)}
       />

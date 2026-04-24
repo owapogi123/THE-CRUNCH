@@ -25,6 +25,16 @@ interface OrderCard {
   isOnlinePickup?: boolean;
   items: OrderItem[]; isPreparing: boolean; isReady: boolean;
   isFinished: boolean; startedAt?: number;
+  createdAt?: number;
+  queuedAt?: number;
+  prepStartedAt?: number;
+  readyAt?: number;
+  currentStatus?: string;
+  estimatedPrepMinutes?: number;
+  dueAt?: number;
+  overdue?: boolean;
+  timerUpdatedBy?: number | null;
+  timerUpdatedAt?: number;
 }
 interface KitchenUsageItem {
   usage_item_id?: number;
@@ -51,8 +61,6 @@ interface KitchenUsagePayload {
   items: KitchenUsageItem[];
 }
 
-const COOK_TIME = 10 * 60;
-
 function playAlertSound() {
   try {
     const ctx = new AudioContext();
@@ -70,35 +78,46 @@ function playAlertSound() {
 }
 
 // ─── TIMER ────────────────────────────────────────────────────────────────────
-function OrderTimer({ startedAt, orderNumber }: { startedAt: number; orderNumber: string }) {
+function OrderTimer({
+  dueAt,
+  baseAt,
+  estimatedPrepMinutes,
+  orderNumber,
+}: {
+  dueAt: number;
+  baseAt: number;
+  estimatedPrepMinutes: number;
+  orderNumber: string;
+}) {
   const [elapsed, setElapsed] = useState(0);
   const notifiedRef = useRef(false);
   const soundRef = useRef(false);
 
   useEffect(() => {
     const iv = setInterval(() => {
-      const s = Math.floor((Date.now() - startedAt) / 1000);
+      const s = Math.max(Math.floor((Date.now() - baseAt) / 1000), 0);
       setElapsed(s);
-      if (s >= COOK_TIME) {
+      if (Date.now() >= dueAt) {
         if (!notifiedRef.current) {
           notifiedRef.current = true;
           if (Notification.permission === "granted")
-            new Notification("Order Ready!", { body: `Order ${orderNumber} is done!`, icon: "/favicon.ico" });
+            new Notification("Order overdue", { body: `${orderNumber} needs attention in the cook queue.`, icon: "/favicon.ico" });
         }
         if (!soundRef.current) { soundRef.current = true; playAlertSound(); }
       }
     }, 1000);
     return () => clearInterval(iv);
-  }, [startedAt, orderNumber]);
+  }, [baseAt, dueAt, orderNumber]);
 
-  const remaining = COOK_TIME - elapsed;
+  const totalSeconds = Math.max(estimatedPrepMinutes * 60, 60);
+  const remaining = Math.floor((dueAt - Date.now()) / 1000);
   const overdue = remaining <= 0;
   const display = overdue ? Math.abs(remaining) : remaining;
   const mins = Math.floor(display / 60);
   const secs = display % 60;
   const timeStr = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-  const progress = Math.min(elapsed / COOK_TIME, 1);
-  const warn = !overdue && elapsed > COOK_TIME * 0.75;
+  const progress = Math.min(elapsed / totalSeconds, 1);
+  const warn = !overdue && elapsed > totalSeconds * 0.75;
 
   return (
     <div style={{ marginBottom: 12 }}>
@@ -166,8 +185,8 @@ export default function Order() {
   useEffect(() => { void fetchUsage(); }, []);
 
   const patch = async (id: string, body: object) => { try { await api.patch(`/orders/${id}`, body); fetchAll(); } catch {} };
-  const handleStart  = (id: string) => patch(id, { status: "preparing", startedAt: new Date().toISOString() });
-  const handleReady  = (id: string, isOnlinePickup?: boolean) => patch(id, { status: isOnlinePickup ? "Ready for Pickup" : "ready" });
+  const handleStart  = (id: string) => patch(id, { status: "preparing" });
+  const handleReady  = (id: string) => patch(id, { status: "Ready for Pickup" });
   const handleFinish = (id: string) => patch(id, { status: "Completed" });
   const handleCancel = async (id: string) => {
     setCancellingId(id);
@@ -179,6 +198,19 @@ export default function Order() {
     const n = Number(raw);
     return Number.isFinite(n) ? n : null;
   })();
+  const handleTimerAdjust = async (order: OrderCard, deltaMinutes: number) => {
+    const current = Math.max(order.estimatedPrepMinutes ?? 10, 1);
+    const next = Math.max(current + deltaMinutes, 1);
+    try {
+      await api.patch(`/orders/${order.id}`, {
+        estimatedPrepMinutes: next,
+        timerUpdatedBy: userId,
+      });
+      fetchAll();
+    } catch (error) {
+      console.error("Failed to update cook timer:", error);
+    }
+  };
   const updateUsageItem = (
     index: number,
     field: "product_name" | "category" | "unit" | "withdrawn_qty" | "used_qty" | "spoilage_qty" | "note",
@@ -448,6 +480,9 @@ export default function Order() {
                   const isPrep = order.isPreparing && !order.isReady;
                   const isReady = order.isReady;
                   const isCancelling = cancellingId === order.id;
+                  const timerEditable = isNew || isPrep;
+                  const timerBase = order.prepStartedAt;
+                  const estimatedPrepMinutes = Math.max(order.estimatedPrepMinutes ?? 10, 1);
 
                   return (
                     <motion.div
@@ -458,12 +493,12 @@ export default function Order() {
                       whileHover={{ y: -2, transition: { duration: 0.12 } }}
                       style={{
                         background: "#fff", borderRadius: 16,
-                        border: "1px solid #e5e7eb",
+                        border: `1px solid ${order.overdue ? "#fecaca" : "#e5e7eb"}`,
                         overflow: "hidden", display: "flex", flexDirection: "column",
                       }}
                     >
                       {/* Thin state line at top */}
-                      <div style={{ height: 2, background: isReady ? "#111" : isPrep ? "#d1d5db" : "#f3f4f6" }} />
+                      <div style={{ height: 2, background: order.overdue ? "#ef4444" : isReady ? "#111" : isPrep ? "#d1d5db" : "#f3f4f6" }} />
 
                       <div style={{ padding: "14px 14px 14px", flex: 1, display: "flex", flexDirection: "column" }}>
 
@@ -477,8 +512,54 @@ export default function Order() {
                         </div>
 
                         {/* Timer */}
-                        {isPrep && order.startedAt && (
-                          <OrderTimer startedAt={order.startedAt} orderNumber={order.orderNumber} />
+                        {isPrep && timerBase && order.dueAt && (
+                          <OrderTimer
+                            baseAt={timerBase}
+                            dueAt={order.dueAt}
+                            estimatedPrepMinutes={estimatedPrepMinutes}
+                            orderNumber={order.orderNumber}
+                          />
+                        )}
+
+                        {isPrep && order.overdue && (
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+                            padding: "5px 10px", borderRadius: 7, marginBottom: 10,
+                            background: "#fef2f2", color: "#dc2626", fontSize: 11, fontWeight: 600 }}>
+                            <AlertCircle size={11} /> Overdue
+                          </div>
+                        )}
+
+                        {timerEditable && (
+                          <div style={{ marginBottom: 12 }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+                              <span style={{ fontSize: 10, fontWeight: 600, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                                Prep Timer
+                              </span>
+                              <span style={{ fontSize: 11, fontWeight: 600, color: "#111" }}>
+                                {estimatedPrepMinutes} min
+                              </span>
+                            </div>
+                            <div style={{ display: "flex", gap: 6 }}>
+                              <button
+                                onClick={() => handleTimerAdjust(order, -1)}
+                                style={{
+                                  flex: 1, padding: "6px 0", borderRadius: 9, border: "1px solid #e5e7eb",
+                                  background: "#fff", color: "#374151", fontSize: 11, fontWeight: 600,
+                                  cursor: "pointer", fontFamily: F,
+                                }}>
+                                -1 min
+                              </button>
+                              <button
+                                onClick={() => handleTimerAdjust(order, 1)}
+                                style={{
+                                  flex: 1, padding: "6px 0", borderRadius: 9, border: "1px solid #e5e7eb",
+                                  background: "#fff", color: "#374151", fontSize: 11, fontWeight: 600,
+                                  cursor: "pointer", fontFamily: F,
+                                }}>
+                                +1 min
+                              </button>
+                            </div>
+                          </div>
                         )}
 
                         {/* Ready badge */}
@@ -520,7 +601,7 @@ export default function Order() {
 
                             {/* Ready / Served */}
                             {!isReady ? (
-                              <button onClick={() => isPrep && handleReady(order.id, order.isOnlinePickup)} disabled={!isPrep}
+                              <button onClick={() => isPrep && handleReady(order.id)} disabled={!isPrep}
                                 style={{
                                   flex: 1, padding: "7px 0", borderRadius: 9, fontSize: 11, fontWeight: 500,
                                   cursor: isPrep ? "pointer" : "not-allowed", fontFamily: F,

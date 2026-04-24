@@ -3338,6 +3338,7 @@ export default function Delicacy() {
         customerUserId,
         order_type: "take-out",
         payment_method: "gcash",
+        checkout_session_id: paymentSession.checkoutSessionId,
         payment_reference:
           paymentSession.paymentReference || paymentSession.checkoutSessionId,
         payment_status: "Paid",
