@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sidebar } from "@/components/Sidebar";
 import { staffApi } from "../lib/api";
-import type { StaffMember } from "../lib/api";
+import type { StaffMember, AttendanceRecord } from "../lib/api";
 import { useNotifications, useConfirm } from "../lib/NotificationContext";
 import { useAuth } from "../context/authcontext";
 
@@ -131,8 +131,7 @@ export default function StaffAccounts() {
         password: form.password,
         role: form.role,
       });
-      const updated = await staffApi.getAll(user.token);
-      setEmployees(updated);
+      await fetchStaff();
       setForm(DEFAULT_FORM);
       setError("");
       setShowModal(false);

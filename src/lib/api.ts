@@ -37,7 +37,7 @@ type ApiBody = object | FormData | URLSearchParams | string;
 
 interface FetchOptions extends Omit<RequestInit, "body"> {
   skipAuth?: boolean;
-  token?: string; // ✅ token passed directly — no localStorage
+  token?: string;
   body?: ApiBody;
   suppressErrorStatuses?: number[];
 }
@@ -60,18 +60,28 @@ interface LoginResponse {
   role: "administrator" | "cashier" | "cook" | "inventory_manager" | "customer";
 }
 
-export interface OnlineStaffAttendance {
-  userId: number;
+// ─── Attendance Record type ───────────────────────────────────────────────────
+export interface AttendanceRecord {
+  id: number;
   username: string;
-  email: string;
   role: string;
-  timeIn: string;
+  timeIn: Date;
+  timeOut: Date | null;
 }
 
-/**
- * Centralized API fetch wrapper.
- * Pass `token` in options for authenticated requests.
- */
+// Raw shape returned from your backend
+interface RawAttendanceRow {
+  id: number;
+  username?: string;
+  user?: string;
+  name?: string;
+  role?: string;
+  time_in?: string;
+  timeIn?: string;
+  time_out?: string | null;
+  timeOut?: string | null;
+}
+
 export const apiCall = async <T = unknown>(
   endpoint: string,
   options: FetchOptions = {},
@@ -98,7 +108,6 @@ export const apiCall = async <T = unknown>(
     headers["ngrok-skip-browser-warning"] = "true";
   }
 
-  // ✅ Use token passed directly from context — no localStorage
   if (!skipAuth && token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
@@ -167,8 +176,6 @@ export const apiCall = async <T = unknown>(
 };
 
 // ─── Base API methods ─────────────────────────────────────────────────────────
-// These are for public/unauthenticated endpoints only.
-// For authenticated calls, use apiCall() directly and pass the token.
 export const api = {
   get: <T = unknown>(endpoint: string) =>
     apiCall<T>(endpoint, { method: "GET" }),
@@ -186,7 +193,7 @@ export const api = {
     apiCall<T>(endpoint, { method: "PATCH", body: body as BodyInit }),
 };
 
-// ─── Auth API (no token needed — these are public endpoints) ──────────────────
+// ─── Auth API ─────────────────────────────────────────────────────────────────
 export const authApi = {
   login: (usernameOrEmail: string, password: string) =>
     apiCall<LoginResponse>("/auth/login", {
@@ -212,15 +219,9 @@ export const authApi = {
       token,
       suppressErrorStatuses: [401],
     }),
-
-  getOnlineStaffAttendance: (token: string) =>
-    apiCall<OnlineStaffAttendance[]>("/auth/attendance/online-staff", {
-      method: "GET",
-      token,
-    }),
 };
 
-// ─── Staff API (requires token) ───────────────────────────────────────────────
+// ─── Staff API ────────────────────────────────────────────────────────────────
 export const staffApi = {
   getAll: (token: string) =>
     apiCall<StaffMember[]>("/users/staff", { method: "GET", token }),
@@ -239,6 +240,36 @@ export const staffApi = {
       method: "DELETE",
       token,
     }),
+
+  // ── Fetch ALL employees' attendance from backend ──────────────────────────
+  // Adjust "/attendance/all" to match your actual backend route
+  getAllAttendance: async (token: string): Promise<AttendanceRecord[]> => {
+    const rows = await apiCall<RawAttendanceRow[]>("/attendance/all", {
+      method: "GET",
+      token,
+    });
+
+    return rows
+      .map((r) => {
+        const rawTimeIn = r.time_in ?? r.timeIn;
+        if (!rawTimeIn) return null;
+
+        const timeIn = new Date(rawTimeIn);
+        if (isNaN(timeIn.getTime())) return null;
+
+        const rawTimeOut = r.time_out ?? r.timeOut ?? null;
+        const timeOut = rawTimeOut ? new Date(rawTimeOut) : null;
+
+        return {
+          id:       r.id,
+          username: r.username ?? r.user ?? r.name ?? `User ${r.id}`,
+          role:     r.role ?? "unknown",
+          timeIn,
+          timeOut:  timeOut && !isNaN(timeOut.getTime()) ? timeOut : null,
+        } satisfies AttendanceRecord;
+      })
+      .filter((r): r is AttendanceRecord => r !== null);
+  },
 };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
