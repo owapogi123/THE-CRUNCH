@@ -108,7 +108,7 @@ function toMySqlDateTime(value) {
 
 async function ensureBatchTable() {
   await db.query(`
-    CREATE TABLE IF NOT EXISTS Batches (
+    CREATE TABLE IF NOT EXISTS batches (
       batch_id INT PRIMARY KEY AUTO_INCREMENT,
       product_id INT,
       delivery_batch_id VARCHAR(50),
@@ -126,9 +126,9 @@ async function ensureBatchTable() {
     );
   `);
 
-  if (!(await hasColumn("Batches", "delivery_batch_id"))) {
+  if (!(await hasColumn("batches", "delivery_batch_id"))) {
     await db.query(
-      "ALTER TABLE Batches ADD COLUMN delivery_batch_id VARCHAR(50)",
+      "ALTER TABLE batches ADD COLUMN delivery_batch_id VARCHAR(50)",
     );
   }
 }
@@ -200,12 +200,12 @@ router.get("/", async (req, res) => {
        LEFT JOIN products p ON p.id = i.Product_ID
        LEFT JOIN (
          SELECT product_id, MAX(unit) AS unit
-         FROM Batches
+         FROM batches
          GROUP BY product_id
        ) bu ON bu.product_id = i.Product_ID
        LEFT JOIN (
          SELECT product_id, MIN(expiry_date) AS nearestExpiry
-         FROM Batches
+         FROM batches
          WHERE status = 'active' AND expiry_date IS NOT NULL
          GROUP BY product_id
        ) bexp ON bexp.product_id = i.Product_ID
@@ -214,7 +214,7 @@ router.get("/", async (req, res) => {
                 MIN(usable_until) AS nearestUsableUntil,
                 MAX(COALESCE(shelf_life_days, 0)) AS shelfLifeDays,
                 MAX(COALESCE(shelf_life_hours, 0)) AS shelfLifeHours
-         FROM Batches
+         FROM batches
          WHERE status = 'active' AND usable_until IS NOT NULL
          GROUP BY product_id
        ) brm ON brm.product_id = i.Product_ID
@@ -397,7 +397,7 @@ router.post("/batches", async (req, res) => {
     const formattedExpiresAt = toMySqlDateTime(expiresAt);
 
     const [insertResult] = await db.query(
-      `INSERT INTO Batches
+      `INSERT INTO batches
          (product_id, quantity, remaining_qty, unit, received_date, expiry_date, status, returned_qty, notes)
        VALUES (?, ?, ?, ?, CURDATE(), ?, 'active', 0, NULL)`,
       [productId, qty, qty, unit || "piece", formattedExpiresAt],
@@ -454,7 +454,7 @@ router.post("/batches/:batchId/return", async (req, res) => {
     }
 
     const [rows] = await db.query(
-      "SELECT product_id, remaining_qty FROM Batches WHERE batch_id = ?",
+      "SELECT product_id, remaining_qty FROM batches WHERE batch_id = ?",
       [batchId],
     );
     if (rows.length === 0) {
@@ -469,7 +469,7 @@ router.post("/batches/:batchId/return", async (req, res) => {
     const newStatus = newQty === 0 ? "returned" : "partial";
 
     await db.query(
-      "UPDATE Batches SET status = ?, remaining_qty = ?, returned_qty = COALESCE(returned_qty, 0) + ? WHERE batch_id = ?",
+      "UPDATE batches SET status = ?, remaining_qty = ?, returned_qty = COALESCE(returned_qty, 0) + ? WHERE batch_id = ?",
       [newStatus, newQty, qtyToReturn, batchId],
     );
 

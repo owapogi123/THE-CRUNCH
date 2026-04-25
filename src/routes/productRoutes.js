@@ -375,7 +375,7 @@ router.delete("/:id", async (req, res) => {
 
         try {
             // Delete batches associated with this product
-            await db.query("DELETE FROM Batches WHERE product_id = ?", [productId]);
+            await db.query("DELETE FROM batches WHERE product_id = ?", [productId]);
 
             // Delete inventory entries
             await db.query("DELETE FROM Inventory WHERE Product_ID = ?", [productId]);

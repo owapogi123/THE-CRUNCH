@@ -1188,13 +1188,13 @@ router.post("/", async (req, res) => {
 
     // Insert payment record
     await conn.query(
-      "INSERT INTO Payments (Order_ID, Payment_Type, Payment_Status, ProcessBy) VALUES (?, ?, 'Pending', ?)",
+      "INSERT INTO payments (Order_ID, Payment_Type, Payment_Status, ProcessBy) VALUES (?, ?, 'Pending', ?)",
       [orderId, finalPaymentMethod, resolvedCashierId]
     );
 
     if (isPaidPaymentStatus(effectivePaymentStatus)) {
       await conn.query(
-        "UPDATE Payments SET Payment_Status = 'Completed' WHERE Order_ID = ?",
+        "UPDATE payments SET Payment_Status = 'Completed' WHERE Order_ID = ?",
         [orderId]
       );
     }
@@ -1257,7 +1257,7 @@ router.patch("/:id", async (req, res) => {
          payment_status AS paymentStatus,
          (
            SELECT p.Payment_Status
-           FROM Payments p
+           FROM payments p
            WHERE p.Order_ID = o.Order_ID
            ORDER BY p.Payment_ID DESC
            LIMIT 1
@@ -1447,7 +1447,7 @@ router.patch("/:id", async (req, res) => {
           ? "Completed"
           : "Pending";
       await conn.query(
-        "UPDATE Payments SET Payment_Status = ? WHERE Order_ID = ?",
+        "UPDATE payments SET Payment_Status = ? WHERE Order_ID = ?",
         [paymentRecordStatus, id]
       );
     }

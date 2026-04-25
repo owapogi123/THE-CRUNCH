@@ -20,6 +20,14 @@ async function ensureColumn(connection, tableName, columnName, definitionSql) {
   }
 }
 
+async function tableExists(connection, tableName) {
+  const [rows] = await connection.query(
+    "SHOW TABLES LIKE ?",
+    [tableName],
+  );
+  return rows.length > 0;
+}
+
 async function setup() {
   let connection;
   const shouldReset = process.argv.includes("--reset");
@@ -51,12 +59,16 @@ async function setup() {
       "DROP TABLE IF EXISTS Order_Tracking;",
       "DROP TABLE IF EXISTS Kitchen;",
       "DROP TABLE IF EXISTS Receipt;",
+      "DROP TABLE IF EXISTS payments;",
       "DROP TABLE IF EXISTS Payments;",
+      "DROP TABLE IF EXISTS order_item;",
       "DROP TABLE IF EXISTS Order_Item;",
+      "DROP TABLE IF EXISTS orders;",
       "DROP TABLE IF EXISTS Orders;",
       "DROP TABLE IF EXISTS Stock_Status;",
       "DROP TABLE IF EXISTS Suppliers;",
       "DROP TABLE IF EXISTS Inventory;",
+      "DROP TABLE IF EXISTS batches;",
       "DROP TABLE IF EXISTS Batches;",
       "DROP TABLE IF EXISTS Menu;",
       "DROP TABLE IF EXISTS Categories;",
@@ -101,6 +113,15 @@ CREATE TABLE IF NOT EXISTS Customers (
     Customer_ID INT AUTO_INCREMENT PRIMARY KEY
 );
 
+CREATE TABLE IF NOT EXISTS users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(100) NOT NULL UNIQUE,
+    email VARCHAR(150) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    role ENUM('administrator','cashier','cook','inventory_manager','customer') NOT NULL DEFAULT 'customer',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS Categories (
     Category_ID INT AUTO_INCREMENT PRIMARY KEY,
     Product_Name VARCHAR(150) NOT NULL
@@ -139,16 +160,24 @@ CREATE TABLE IF NOT EXISTS Inventory (
     FOREIGN KEY (Product_ID) REFERENCES Menu(Product_ID)
 );
 
-CREATE TABLE IF NOT EXISTS Batches (
-    id VARCHAR(36) PRIMARY KEY,
-    productId INT,
+CREATE TABLE IF NOT EXISTS batches (
+    batch_id INT PRIMARY KEY AUTO_INCREMENT,
+    product_id INT,
     delivery_batch_id VARCHAR(50),
-    quantity INT NOT NULL,
+    quantity DECIMAL(10,2) NOT NULL,
+    remaining_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
     unit VARCHAR(50),
-    receivedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-    expiresAt DATETIME NULL,
+    received_date DATE NOT NULL,
+    expiry_date DATE NULL,
+    shelf_life_days INT DEFAULT NULL,
+    shelf_life_hours INT DEFAULT NULL,
+    usable_until DATETIME DEFAULT NULL,
     status VARCHAR(20) DEFAULT 'active',
-    FOREIGN KEY (productId) REFERENCES Menu(Product_ID)
+    returned_qty DECIMAL(10,2) DEFAULT 0,
+    notes VARCHAR(255) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (product_id) REFERENCES Menu(Product_ID)
 );
 
 CREATE TABLE IF NOT EXISTS Suppliers (
@@ -173,7 +202,7 @@ CREATE TABLE IF NOT EXISTS Stock_Status (
     FOREIGN KEY (RecordedBy) REFERENCES Admin(Admin_ID)
 );
 
-CREATE TABLE IF NOT EXISTS Orders (
+CREATE TABLE IF NOT EXISTS orders (
     Order_ID INT AUTO_INCREMENT PRIMARY KEY,
     Customer_ID INT,
     Cashier_ID INT,
@@ -185,24 +214,24 @@ CREATE TABLE IF NOT EXISTS Orders (
     FOREIGN KEY (Cashier_ID) REFERENCES Cashier(Cashier_ID)
 );
 
-CREATE TABLE IF NOT EXISTS Order_Item (
+CREATE TABLE IF NOT EXISTS order_item (
     Order_Item_ID INT AUTO_INCREMENT PRIMARY KEY,
     Order_ID INT,
     Product_ID INT,
     Quantity INT NOT NULL,
     Subtotal DECIMAL(10,2),
-    FOREIGN KEY (Order_ID) REFERENCES Orders(Order_ID),
+    FOREIGN KEY (Order_ID) REFERENCES orders(Order_ID),
     FOREIGN KEY (Product_ID) REFERENCES Menu(Product_ID)
 );
 
-CREATE TABLE IF NOT EXISTS Payments (
+CREATE TABLE IF NOT EXISTS payments (
     Payment_ID INT AUTO_INCREMENT PRIMARY KEY,
     Order_ID INT,
     Payment_Type VARCHAR(50),
     Payment_Status VARCHAR(50),
     Payment_Date DATETIME DEFAULT CURRENT_TIMESTAMP,
     ProcessBy INT,
-    FOREIGN KEY (Order_ID) REFERENCES Orders(Order_ID),
+    FOREIGN KEY (Order_ID) REFERENCES orders(Order_ID),
     FOREIGN KEY (ProcessBy) REFERENCES Cashier(Cashier_ID)
 );
 
@@ -211,7 +240,7 @@ CREATE TABLE IF NOT EXISTS Receipt (
     Order_ID INT,
     Receipt_Number VARCHAR(100) UNIQUE,
     Date_Issued DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (Order_ID) REFERENCES Orders(Order_ID)
+    FOREIGN KEY (Order_ID) REFERENCES orders(Order_ID)
 );
 
 CREATE TABLE IF NOT EXISTS Kitchen (
@@ -220,7 +249,7 @@ CREATE TABLE IF NOT EXISTS Kitchen (
     Status VARCHAR(50),
     Time_Update DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UpdatedBy INT,
-    FOREIGN KEY (Order_ID) REFERENCES Orders(Order_ID),
+    FOREIGN KEY (Order_ID) REFERENCES orders(Order_ID),
     FOREIGN KEY (UpdatedBy) REFERENCES Cook(Cook_ID)
 );
 
@@ -229,7 +258,7 @@ CREATE TABLE IF NOT EXISTS Order_Tracking (
     Order_ID INT,
     PickupBy VARCHAR(150),
     Pickup_TIME DATETIME,
-    FOREIGN KEY (Order_ID) REFERENCES Orders(Order_ID)
+    FOREIGN KEY (Order_ID) REFERENCES orders(Order_ID)
 );
 
 CREATE TABLE IF NOT EXISTS Reports (
@@ -287,11 +316,28 @@ CREATE TABLE IF NOT EXISTS purchase_order_items (
     await connection.query(createStatements);
     console.log("Tables created.");
 
+    if (!(await tableExists(connection, "orders")) && (await tableExists(connection, "Orders"))) {
+      await connection.query("RENAME TABLE `Orders` TO `orders`");
+      console.log("Renamed Orders to orders");
+    }
+    if (!(await tableExists(connection, "order_item")) && (await tableExists(connection, "Order_Item"))) {
+      await connection.query("RENAME TABLE `Order_Item` TO `order_item`");
+      console.log("Renamed Order_Item to order_item");
+    }
+    if (!(await tableExists(connection, "payments")) && (await tableExists(connection, "Payments"))) {
+      await connection.query("RENAME TABLE `Payments` TO `payments`");
+      console.log("Renamed Payments to payments");
+    }
+    if (!(await tableExists(connection, "batches")) && (await tableExists(connection, "Batches"))) {
+      await connection.query("RENAME TABLE `Batches` TO `batches`");
+      console.log("Renamed Batches to batches");
+    }
+
     // Keep DB triggers aligned with actual Suppliers/products and Batches schemas.
     await connection.query(`DROP TRIGGER IF EXISTS trg_batch_received`);
     await connection.query(`DROP TRIGGER IF EXISTS trg_batch_status_change`);
 
-    const [batchColumns] = await connection.query(`SHOW COLUMNS FROM Batches`);
+    const [batchColumns] = await connection.query(`SHOW COLUMNS FROM batches`);
     const batchFieldSet = new Set(
       batchColumns.map((c) => String(c.Field).toLowerCase()),
     );
@@ -310,7 +356,7 @@ CREATE TABLE IF NOT EXISTS purchase_order_items (
 
     await connection.query(`
 CREATE TRIGGER trg_batch_received
-AFTER INSERT ON Batches
+AFTER INSERT ON batches
 FOR EACH ROW
 BEGIN
   INSERT INTO supplier_history (supplier_id, supplier_name, action, details, performed_by)
@@ -334,7 +380,7 @@ END
     if (hasStatusColumn) {
       await connection.query(`
 CREATE TRIGGER trg_batch_status_change
-AFTER UPDATE ON Batches
+AFTER UPDATE ON batches
 FOR EACH ROW
 BEGIN
   IF OLD.status != NEW.status THEN
@@ -381,6 +427,152 @@ END
       "Inventory",
       "Wasted",
       "`Wasted` DECIMAL(10,2) DEFAULT 0",
+    );
+
+    await ensureColumn(
+      connection,
+      "products",
+      "image",
+      "`image` LONGTEXT NULL",
+    );
+    await ensureColumn(
+      connection,
+      "products",
+      "menu_code",
+      "`menu_code` VARCHAR(20) NULL",
+    );
+    await ensureColumn(
+      connection,
+      "products",
+      "availability_status",
+      "`availability_status` VARCHAR(20) DEFAULT 'Available'",
+    );
+    await ensureColumn(
+      connection,
+      "products",
+      "is_promotional",
+      "`is_promotional` TINYINT(1) DEFAULT 0",
+    );
+    await ensureColumn(
+      connection,
+      "products",
+      "promo_price",
+      "`promo_price` DECIMAL(10,2) NULL",
+    );
+    await ensureColumn(
+      connection,
+      "products",
+      "promo_label",
+      "`promo_label` VARCHAR(100) NULL",
+    );
+
+    await ensureColumn(
+      connection,
+      "orders",
+      "startedAt",
+      "`startedAt` DATETIME NULL",
+    );
+    await ensureColumn(
+      connection,
+      "orders",
+      "customer_user_id",
+      "`customer_user_id` INT NULL",
+    );
+    await ensureColumn(
+      connection,
+      "orders",
+      "payment_reference",
+      "`payment_reference` VARCHAR(255) NULL",
+    );
+    await ensureColumn(
+      connection,
+      "orders",
+      "payment_status",
+      "`payment_status` VARCHAR(50) NULL",
+    );
+    await ensureColumn(
+      connection,
+      "orders",
+      "payment_method",
+      "`payment_method` VARCHAR(50) NULL",
+    );
+    await ensureColumn(
+      connection,
+      "orders",
+      "proof_image_url",
+      "`proof_image_url` VARCHAR(500) NULL",
+    );
+    await ensureColumn(
+      connection,
+      "orders",
+      "verified_by",
+      "`verified_by` INT NULL",
+    );
+    await ensureColumn(
+      connection,
+      "orders",
+      "verified_at",
+      "`verified_at` DATETIME NULL",
+    );
+    await ensureColumn(
+      connection,
+      "orders",
+      "stock_deducted",
+      "`stock_deducted` TINYINT(1) NOT NULL DEFAULT 0",
+    );
+    await ensureColumn(
+      connection,
+      "orders",
+      "handoverTimestamp",
+      "`handoverTimestamp` DATETIME NULL",
+    );
+    await ensureColumn(
+      connection,
+      "orders",
+      "riderName",
+      "`riderName` VARCHAR(255) NULL",
+    );
+    await ensureColumn(
+      connection,
+      "orders",
+      "queuedAt",
+      "`queuedAt` DATETIME NULL",
+    );
+    await ensureColumn(
+      connection,
+      "orders",
+      "prepStartedAt",
+      "`prepStartedAt` DATETIME NULL",
+    );
+    await ensureColumn(
+      connection,
+      "orders",
+      "readyAt",
+      "`readyAt` DATETIME NULL",
+    );
+    await ensureColumn(
+      connection,
+      "orders",
+      "dueAt",
+      "`dueAt` DATETIME NULL",
+    );
+    await ensureColumn(
+      connection,
+      "orders",
+      "estimatedPrepMinutes",
+      "`estimatedPrepMinutes` INT NULL",
+    );
+    await ensureColumn(
+      connection,
+      "orders",
+      "timerUpdatedBy",
+      "`timerUpdatedBy` INT NULL",
+    );
+    await ensureColumn(
+      connection,
+      "orders",
+      "timerUpdatedAt",
+      "`timerUpdatedAt` DATETIME NULL",
     );
 
     console.log("Database setup completed successfully.");

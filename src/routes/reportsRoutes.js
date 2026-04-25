@@ -57,7 +57,7 @@ router.get("/weekly", async (req, res) => {
       JOIN Menu m ON m.Product_ID = ss.Product_ID
       LEFT JOIN (
         SELECT product_id, MAX(unit) AS unit
-        FROM Batches
+        FROM batches
         GROUP BY product_id
       ) bu ON bu.product_id = ss.Product_ID
       WHERE DATE(ss.Status_Date) >= ? AND DATE(ss.Status_Date) < ?
@@ -69,7 +69,7 @@ router.get("/weekly", async (req, res) => {
       `SELECT
         b.product_id,
         COALESCE(SUM(b.quantity), 0) AS received
-      FROM Batches b
+      FROM batches b
       WHERE DATE(b.received_date) >= ? AND DATE(b.received_date) < ?
       GROUP BY b.product_id`,
       [startStr, endStr],
@@ -140,7 +140,7 @@ router.get("/monthly", async (req, res) => {
       JOIN Menu m ON m.Product_ID = ss.Product_ID
       LEFT JOIN (
         SELECT product_id, MAX(unit) AS unit
-        FROM Batches
+        FROM batches
         GROUP BY product_id
       ) bu ON bu.product_id = ss.Product_ID
       WHERE DATE(ss.Status_Date) >= ? AND DATE(ss.Status_Date) < ?
@@ -152,7 +152,7 @@ router.get("/monthly", async (req, res) => {
       `SELECT
         b.product_id,
         COALESCE(SUM(b.quantity), 0) AS received
-      FROM Batches b
+      FROM batches b
       WHERE DATE(b.received_date) >= ? AND DATE(b.received_date) < ?
       GROUP BY b.product_id`,
       [startStr, endStr],
