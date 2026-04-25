@@ -491,7 +491,7 @@ router.get("/queue", async (req, res) => {
          m.Product_Name AS productName
        FROM orders o
        LEFT JOIN order_item oi ON oi.Order_ID = o.Order_ID
-       LEFT JOIN menu m        ON m.Product_ID = oi.Product_ID
+       LEFT JOIN Menu m        ON m.Product_ID = oi.Product_ID
        LEFT JOIN (
          SELECT p1.Order_ID, p1.Payment_Status
          FROM payments p1
@@ -603,7 +603,7 @@ router.get("/new-online", async (req, res) => {
          COALESCE(m.Product_Name, pr.name) AS productName
        FROM orders o
        LEFT JOIN order_item oi ON oi.Order_ID  = o.Order_ID
-       LEFT JOIN menu      m  ON m.Product_ID  = oi.Product_ID
+       LEFT JOIN Menu      m  ON m.Product_ID  = oi.Product_ID
        LEFT JOIN products  pr ON pr.id          = oi.Product_ID
        WHERE o.customer_user_id IS NOT NULL
          AND LOWER(COALESCE(o.Status, '')) = 'awaiting cashier review'
@@ -655,7 +655,7 @@ router.get("/ready-pickup", async (req, res) => {
          COALESCE(m.Product_Name, pr.name) AS productName
        FROM orders o
        LEFT JOIN order_item oi ON oi.Order_ID  = o.Order_ID
-       LEFT JOIN menu      m  ON m.Product_ID  = oi.Product_ID
+       LEFT JOIN Menu      m  ON m.Product_ID  = oi.Product_ID
        LEFT JOIN products  pr ON pr.id          = oi.Product_ID
        WHERE o.customer_user_id IS NOT NULL
          AND LOWER(COALESCE(o.Order_Type, '')) IN ('take-out', 'takeout')
@@ -710,7 +710,7 @@ router.get("/delivery-handover", async (req, res) => {
          COALESCE(m.Product_Name, pr.name) AS productName
        FROM orders o
        LEFT JOIN order_item oi ON oi.Order_ID  = o.Order_ID
-       LEFT JOIN menu      m  ON m.Product_ID  = oi.Product_ID
+       LEFT JOIN Menu      m  ON m.Product_ID  = oi.Product_ID
        LEFT JOIN products  pr ON pr.id          = oi.Product_ID
        WHERE o.customer_user_id IS NULL
          AND LOWER(COALESCE(o.Order_Type, '')) = 'delivery'
@@ -784,7 +784,7 @@ router.get("/customer/:customerUserId", requireAuthenticatedUser, async (req, re
          COALESCE(m.Product_Name, pr.name) AS productName
        FROM orders o
        LEFT JOIN order_item oi ON oi.Order_ID = o.Order_ID
-       LEFT JOIN menu m ON m.Product_ID = oi.Product_ID
+       LEFT JOIN Menu m ON m.Product_ID = oi.Product_ID
        LEFT JOIN products pr ON pr.id = oi.Product_ID
        LEFT JOIN (
          SELECT p1.Order_ID, p1.Payment_ID, p1.Payment_Type

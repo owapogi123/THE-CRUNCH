@@ -28,9 +28,13 @@ async function tableExists(connection, tableName) {
   return rows.length > 0;
 }
 
-async function setup() {
+async function setup(options = {}) {
+  const {
+    shouldReset = process.argv.includes("--reset"),
+    exitOnError = false,
+    log = console,
+  } = options;
   let connection;
-  const shouldReset = process.argv.includes("--reset");
   try {
     connection = await mysql.createConnection({
       host: DB_HOST,
@@ -40,13 +44,13 @@ async function setup() {
       multipleStatements: true,
     });
 
-    console.log(
+    log.log(
       `Connected to MySQL server ${DB_HOST}:${DB_PORT} as ${DB_USER}`,
     );
 
     // Create database if it doesn't exist
     await connection.query(`CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\``);
-    console.log(`Database checked/created: ${DB_NAME}`);
+    log.log(`Database checked/created: ${DB_NAME}`);
 
     // Use the database
     await connection.query(`USE \`${DB_NAME}\``);
@@ -82,9 +86,9 @@ async function setup() {
 
     if (shouldReset) {
       await connection.query(dropStatements);
-      console.log("Existing tables dropped (reset mode).");
+      log.log("Existing tables dropped (reset mode).");
     } else {
-      console.log(
+      log.log(
         "Safe setup mode: existing tables/data kept. Use --reset to drop tables.",
       );
     }
@@ -178,6 +182,21 @@ CREATE TABLE IF NOT EXISTS batches (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (product_id) REFERENCES Menu(Product_ID)
+);
+
+CREATE TABLE IF NOT EXISTS kitchen_batches (
+    kitchen_batch_id INT PRIMARY KEY AUTO_INCREMENT,
+    storage_batch_id INT NULL,
+    product_id INT NOT NULL,
+    withdrawn_qty DECIMAL(10,2) NOT NULL,
+    used_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
+    returned_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
+    unit VARCHAR(20) DEFAULT 'kg',
+    expiry_date DATE NULL,
+    withdrawn_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    status ENUM('active','reconciled') DEFAULT 'active',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS Suppliers (
@@ -295,6 +314,7 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
     delivery_date DATE NOT NULL,
     status ENUM('Draft','Ordered','Received','Cancelled') NOT NULL DEFAULT 'Draft',
     notes TEXT DEFAULT NULL,
+    receipt_no VARCHAR(255) DEFAULT NULL,
     received_by VARCHAR(255) DEFAULT NULL,
     received_date DATE DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -309,28 +329,59 @@ CREATE TABLE IF NOT EXISTS purchase_order_items (
     unit VARCHAR(50) DEFAULT '',
     quantity DECIMAL(10,2) NOT NULL DEFAULT 0,
     unit_cost DECIMAL(10,2) NOT NULL DEFAULT 0,
+    expected_expiry_date DATE DEFAULT NULL,
     FOREIGN KEY (po_id) REFERENCES purchase_orders(po_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS kitchen_usage_reports (
+    report_id INT AUTO_INCREMENT PRIMARY KEY,
+    report_date DATE NOT NULL,
+    status ENUM('draft','submitted','finalized') NOT NULL DEFAULT 'draft',
+    prepared_by INT NULL,
+    finalized_by INT NULL,
+    finalized_at DATETIME NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_kitchen_usage_report_date (report_date)
+);
+
+CREATE TABLE IF NOT EXISTS kitchen_usage_items (
+    usage_item_id INT AUTO_INCREMENT PRIMARY KEY,
+    report_id INT NOT NULL,
+    product_id INT NULL,
+    product_name VARCHAR(255) NOT NULL,
+    category VARCHAR(120) DEFAULT '',
+    unit VARCHAR(50) DEFAULT 'unit',
+    withdrawn_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
+    used_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
+    spoilage_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
+    note TEXT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_kitchen_usage_items_report
+      FOREIGN KEY (report_id) REFERENCES kitchen_usage_reports(report_id)
+      ON DELETE CASCADE
 );
 `;
 
     await connection.query(createStatements);
-    console.log("Tables created.");
+    log.log("Tables created.");
 
     if (!(await tableExists(connection, "orders")) && (await tableExists(connection, "Orders"))) {
       await connection.query("RENAME TABLE `Orders` TO `orders`");
-      console.log("Renamed Orders to orders");
+      log.log("Renamed Orders to orders");
     }
     if (!(await tableExists(connection, "order_item")) && (await tableExists(connection, "Order_Item"))) {
       await connection.query("RENAME TABLE `Order_Item` TO `order_item`");
-      console.log("Renamed Order_Item to order_item");
+      log.log("Renamed Order_Item to order_item");
     }
     if (!(await tableExists(connection, "payments")) && (await tableExists(connection, "Payments"))) {
       await connection.query("RENAME TABLE `Payments` TO `payments`");
-      console.log("Renamed Payments to payments");
+      log.log("Renamed Payments to payments");
     }
     if (!(await tableExists(connection, "batches")) && (await tableExists(connection, "Batches"))) {
       await connection.query("RENAME TABLE `Batches` TO `batches`");
-      console.log("Renamed Batches to batches");
+      log.log("Renamed Batches to batches");
     }
 
     // Keep DB triggers aligned with actual Suppliers/products and Batches schemas.
@@ -575,13 +626,55 @@ END
       "`timerUpdatedAt` DATETIME NULL",
     );
 
-    console.log("Database setup completed successfully.");
+    await ensureColumn(
+      connection,
+      "purchase_orders",
+      "receipt_no",
+      "`receipt_no` VARCHAR(255) DEFAULT NULL",
+    );
+    await ensureColumn(
+      connection,
+      "purchase_order_items",
+      "expected_expiry_date",
+      "`expected_expiry_date` DATE DEFAULT NULL",
+    );
+
+    await ensureColumn(
+      connection,
+      "kitchen_usage_reports",
+      "prepared_by",
+      "`prepared_by` INT NULL",
+    );
+    await ensureColumn(
+      connection,
+      "kitchen_usage_reports",
+      "finalized_by",
+      "`finalized_by` INT NULL",
+    );
+    await ensureColumn(
+      connection,
+      "kitchen_usage_reports",
+      "finalized_at",
+      "`finalized_at` DATETIME NULL",
+    );
+
+    log.log("Database setup completed successfully.");
+    return true;
   } catch (err) {
-    console.error("Database setup failed:", err);
-    process.exitCode = 1;
+    log.error("Database setup failed:", err);
+    if (exitOnError) {
+      process.exitCode = 1;
+    }
+    throw err;
   } finally {
     if (connection) await connection.end();
   }
 }
 
-setup();
+module.exports = {
+  setup,
+};
+
+if (require.main === module) {
+  setup({ exitOnError: true }).catch(() => undefined);
+}

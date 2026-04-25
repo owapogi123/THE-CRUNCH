@@ -1,11 +1,16 @@
 const app = require("./app");
 const db = require("./config/db");
+const { setup } = require("./db/setup");
 
 // default port 5000 to match frontend proxy, but allow override
 const PORT = process.env.PORT || 5000;
 
 async function startServer() {
   try {
+    await setup({
+      log: console,
+    });
+
     const info = await db.verifyConnection();
     console.log(
       `DB config -> host=${info.host} port=${info.port} user=${info.user} db=${info.database}`,
