@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "../context/authcontext";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 type Role =
   | "administrator"
@@ -62,6 +63,7 @@ export function Sidebar() {
   const [isOpen, setIsOpen] = useState(false);
   const navigate = useNavigate();
   const { user, logout, isOnline } = useAuth();
+  const isMobile = useIsMobile();
 
   const userRole = user?.role as Role;
 
@@ -77,7 +79,10 @@ export function Sidebar() {
       {/* Toggle button */}
       <motion.button
         onClick={() => setIsOpen(!isOpen)}
-        className="fixed top-6 left-6 z-50 p-3 bg-white rounded-xl shadow-lg"
+        className={cn(
+          "fixed z-50 p-3 bg-white rounded-xl shadow-lg",
+          isMobile ? "top-4 left-4" : "top-6 left-6"
+        )}
         whileHover={{ scale: 1.05 }}
         whileTap={{ scale: 0.95 }}
       >
@@ -90,7 +95,7 @@ export function Sidebar() {
               exit={{ rotate: 90, opacity: 0 }}
               transition={{ duration: 0.2 }}
             >
-              <X className="w-6 h-6 text-black" />
+              <X className={cn(isMobile ? "w-5 h-5" : "w-6 h-6", "text-black")} />
             </motion.div>
           ) : (
             <motion.div
@@ -100,7 +105,7 @@ export function Sidebar() {
               exit={{ rotate: -90, opacity: 0 }}
               transition={{ duration: 0.2 }}
             >
-              <Menu className="w-6 h-6 text-black" />
+              <Menu className={cn(isMobile ? "w-5 h-5" : "w-6 h-6", "text-black")} />
             </motion.div>
           )}
         </AnimatePresence>
@@ -128,7 +133,10 @@ export function Sidebar() {
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: -288, opacity: 0 }}
             transition={{ type: "spring", damping: 25, stiffness: 200 }}
-            className="fixed top-0 left-0 h-full w-72 bg-white p-6 flex flex-col shadow-2xl z-50"
+            className={cn(
+              "fixed top-0 left-0 h-full bg-white p-6 flex flex-col shadow-2xl z-50",
+              isMobile ? "w-full max-w-[85vw]" : "w-72"
+            )}
             style={{ fontFamily: "Poppins, sans-serif" }}
           >
             {/* Business name */}
@@ -138,10 +146,15 @@ export function Sidebar() {
               animate={{ y: 0, opacity: 1 }}
               transition={{ delay: 0.1 }}
             >
-              <span className="text-2xl font-bold text-black">The Crunch</span>
+              <span className={cn(
+                "font-bold text-black",
+                isMobile ? "text-xl" : "text-2xl"
+              )}>
+                The Crunch
+              </span>
             </motion.div>
 
-            {/* Profile card — dot, name, role only */}
+            {/* Profile card */}
             {user && (
               <motion.div
                 className="flex flex-col gap-1 mb-6 px-2"
@@ -173,7 +186,7 @@ export function Sidebar() {
             </div>
 
             {/* Nav links */}
-            <nav className="flex-1 space-y-1.5">
+            <nav className="flex-1 space-y-1.5 overflow-y-auto">
               {visibleItems.map((item) => (
                 <NavLink
                   key={item.label}
@@ -188,6 +201,7 @@ export function Sidebar() {
                         "w-full justify-start rounded-xl text-sm transition-all duration-300 px-4 py-2.5",
                         "text-black hover:bg-gray-50 hover:shadow-sm hover:scale-[1.02] active:scale-95",
                         isActive && "bg-gray-100 text-black font-semibold",
+                        isMobile && "py-3 text-base"
                       )}
                     >
                       {item.label}
@@ -206,7 +220,10 @@ export function Sidebar() {
               >
                 <Button
                   variant="ghost"
-                  className="w-full justify-start rounded-xl text-sm text-black mt-6 transition-all duration-200 px-4 py-2.5 hover:bg-red-50 hover:text-red-600"
+                  className={cn(
+                    "w-full justify-start rounded-xl text-sm text-black mt-6 transition-all duration-200 px-4 py-2.5 hover:bg-red-50 hover:text-red-600",
+                    isMobile && "py-3 text-base"
+                  )}
                   onClick={() => {
                     logout();
                     setIsOpen(false);

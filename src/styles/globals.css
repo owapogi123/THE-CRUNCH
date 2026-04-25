@@ -153,3 +153,27 @@ body {
     margin: 0;
   }
 }
+
+/* ===== GLOBAL MOBILE FIX ===== */
+html, body {
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
+@media (max-width: 767px) {
+  /* Prevent any element from exceeding screen width */
+  * {
+    max-width: 100%;
+  }
+
+  /* Fix images, videos, iframes breaking layout */
+  img, video, iframe, table {
+    max-width: 100% !important;
+    height: auto;
+  }
+
+  /* Prevent fixed/absolute positioned elements from causing overflow */
+  .fixed, [class*="fixed"] {
+    max-width: 100vw;
+  }
+}

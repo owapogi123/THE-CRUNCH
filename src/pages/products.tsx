@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence, useScroll, useTransform, useInView, type Variants } from 'framer-motion'
-import { Search, Star, Flame, Crown, Clock, ChevronDown, Droplets } from 'lucide-react'
+import { Search, Flame, Crown, Clock, ChevronDown, Droplets, MapPin } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 
 const NAV_H    = 68
@@ -278,8 +278,6 @@ export default function Products() {
   )
   const topPick = filtered.find(p => p.badge === 'Bestseller') ?? filtered[0]
 
-  // All "Order" actions on this page navigate to /usersmenu where the
-  // OrderTypeModal lives. No modal is rendered here.
   const handleOrder = () => navigate('/usersmenu?showOrderModal=true')
 
   return (
@@ -465,13 +463,8 @@ export default function Products() {
                 </motion.h2>
                 <p style={{ margin: '0 0 20px', fontSize: 14.5, color: 'rgba(240,237,232,0.52)', maxWidth: 500, lineHeight: 1.75, fontWeight: 300 }}>{topPick.description}</p>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                    <Star size={12} fill="#f5c842" color="#f5c842" />
-                    <span style={{ fontSize: 13, fontWeight: 700, color: '#f5c842' }}>{topPick.rating}</span>
-                  </div>
-                  <span style={{ color: 'rgba(240,237,232,0.2)' }}>·</span>
                   <span style={{ color: 'rgba(240,237,232,0.38)', fontSize: 13 }}>{topPick.category}</span>
-                  <span style={{ fontSize: 22, fontWeight: 800, color: '#f5c842', marginLeft: 8 }}>₱{topPick.price}</span>
+                  <span style={{ fontSize: 22, fontWeight: 800, color: '#f5c842' }}>₱{topPick.price}</span>
                   <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
                     onClick={handleOrder}
                     style={{ marginLeft: 'auto', background: '#f5c842', border: 'none', borderRadius: 14, padding: '12px 32px', fontSize: 14, fontWeight: 700, color: '#111', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
@@ -528,10 +521,6 @@ export default function Products() {
                         <Flame size={14} color="#ef4444" />
                       </motion.div>
                     )}
-                    <div style={{ position: 'absolute', bottom: 12, right: 12, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(10px)', borderRadius: 999, padding: '4px 10px', display: 'flex', alignItems: 'center', gap: 4, border: '1px solid rgba(255,255,255,0.07)' }}>
-                      <Star size={10} fill="#f5c842" color="#f5c842" />
-                      <span style={{ color: '#f0ede8', fontSize: 12, fontWeight: 700 }}>{p.rating}</span>
-                    </div>
                   </div>
                   <div style={{ padding: '18px 22px 22px' }}>
                     <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 6 }}>
@@ -549,11 +538,10 @@ export default function Products() {
                       </div>
                     )}
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: isDrink ? 0 : 14 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <Star size={11} fill="#f5c842" color="#f5c842" />
-                        <span style={{ fontSize: 12, fontWeight: 600, color: '#f5c842' }}>{p.rating}</span>
-                        {!isDrink && <span style={{ fontSize: 14, fontWeight: 800, color: '#f5c842', marginLeft: 4 }}>₱{p.price}</span>}
-                      </div>
+                      {!isDrink && (
+                        <span style={{ fontSize: 16, fontWeight: 800, color: '#f5c842' }}>₱{p.price}</span>
+                      )}
+                      {isDrink && <div />}
                       <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
                         onClick={handleOrder}
                         style={{ background: isDrink ? 'rgba(99,179,237,0.15)' : '#f5c842', color: isDrink ? '#93c5fd' : '#111', border: isDrink ? '1px solid rgba(99,179,237,0.3)' : 'none', borderRadius: 12, padding: '10px 24px', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: "'Poppins', sans-serif", letterSpacing: '0.01em', whiteSpace: 'nowrap' }}>
@@ -635,7 +623,9 @@ export default function Products() {
           <h2 style={{ fontFamily: "'Poppins', sans-serif", fontSize: 'clamp(28px,4vw,48px)', fontWeight: 800, color: '#f0ede8', margin: '0 0 48px', letterSpacing: '-0.02em' }}>
             Everything <em style={{ color: '#f5c842', fontStyle: 'italic' }}>We Offer</em>
           </h2>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: 20, alignItems: 'start' }}>
+
+          {/* Top row: Whole & Half + Rice Meals side by side */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 20, marginBottom: 20 }}>
 
             <motion.div {...menuCardProps(0)}>
               <div style={{ position: 'absolute', top: 0, left: 28, right: 28, height: 1, background: 'linear-gradient(90deg,transparent,rgba(245,200,66,0.3),transparent)' }} />
@@ -662,6 +652,11 @@ export default function Products() {
               </div>
               {RICE_MEALS.map((item, idx) => <MenuRow key={item.name} item={item} index={idx} />)}
             </motion.div>
+
+          </div>
+
+          {/* Bottom row: Sides & Snacks + Drinks side by side */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 20 }}>
 
             <motion.div {...menuCardProps(0.16)}>
               <div style={{ position: 'absolute', top: 0, left: 28, right: 28, height: 1, background: 'linear-gradient(90deg,transparent,rgba(245,200,66,0.3),transparent)' }} />
@@ -709,16 +704,40 @@ export default function Products() {
       <footer style={{ borderTop: '1px solid rgba(255,255,255,0.06)', padding: '52px 40px 40px', position: 'relative', zIndex: 1 }}>
         <div style={{ maxWidth: 1280, margin: '0 auto' }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 32, marginBottom: 40 }}>
+
+            {/* Brand + Address + Maps */}
             <div>
               <button onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', marginBottom: 12 }}>
                 <span style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 800, fontSize: 17, color: '#f0ede8', letterSpacing: '-0.02em' }}>
                   The <span style={{ color: '#f5c842' }}>Crunch</span>
                 </span>
               </button>
-              <p style={{ fontSize: 13, color: 'rgba(240,237,232,0.26)', margin: 0, lineHeight: 1.65, maxWidth: 220, fontWeight: 300 }}>
+              <p style={{ fontSize: 13, color: 'rgba(240,237,232,0.26)', margin: '0 0 14px', lineHeight: 1.65, maxWidth: 220, fontWeight: 300 }}>
                 6 Falcon St., cor Dahlia Fairview,<br />Quezon City, Philippines
               </p>
+              {/* Google Maps link */}
+              <motion.a
+                href="https://www.google.com/maps/place/The+Crunch+-+Fairview+Branch/@14.7002687,121.0662915,21z/data=!4m6!3m5!1s0x3397b1522a539b23:0x6c0d86daa9f0ac99!8m2!3d14.7003162!4d121.066348!16s%2Fg%2F11khr1q33g?entry=ttu&g_ep=EgoyMDI2MDQyMi4wIKXMDSoASAFQAw%3D%3D"
+                target="_blank"
+                rel="noopener noreferrer"
+                whileHover={{ scale: 1.03 }}
+                whileTap={{ scale: 0.97 }}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 8,
+                  background: 'rgba(245,200,66,0.07)',
+                  border: '1px solid rgba(245,200,66,0.18)',
+                  borderRadius: 10, padding: '8px 14px',
+                  textDecoration: 'none', transition: 'background 0.2s, border-color 0.2s',
+                }}
+                onMouseEnter={e => { (e.currentTarget as HTMLAnchorElement).style.background = 'rgba(245,200,66,0.13)'; (e.currentTarget as HTMLAnchorElement).style.borderColor = 'rgba(245,200,66,0.35)' }}
+                onMouseLeave={e => { (e.currentTarget as HTMLAnchorElement).style.background = 'rgba(245,200,66,0.07)'; (e.currentTarget as HTMLAnchorElement).style.borderColor = 'rgba(245,200,66,0.18)' }}
+              >
+                <MapPin size={13} color="#f5c842" />
+                <span style={{ fontSize: 12, fontWeight: 600, color: '#f5c842', fontFamily: "'Poppins', sans-serif" }}>View on Google Maps</span>
+              </motion.a>
             </div>
+
+            {/* Social links */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <span style={{ fontSize: 10, fontWeight: 700, color: 'rgba(240,237,232,0.18)', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Follow Us</span>
               <div style={{ display: 'flex', gap: 24 }}>
@@ -731,6 +750,7 @@ export default function Products() {
                 ))}
               </div>
             </div>
+
           </div>
           <div style={{ paddingTop: 24, borderTop: '1px solid rgba(255,255,255,0.05)', textAlign: 'center' }}>
             <span style={{ fontSize: 12, color: 'rgba(240,237,232,0.14)', fontWeight: 300 }}>

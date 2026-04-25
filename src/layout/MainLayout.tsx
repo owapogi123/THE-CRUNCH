@@ -1,15 +1,13 @@
 import { Outlet } from "react-router-dom"
-import { Sidebar, SidebarProvider } from "@/components/ui/sidebar"
+import { Sidebar } from "@/components/Sidebar"
 
 export function MainLayout() {
   return (
-    <SidebarProvider>
-      <div className="flex min-h-screen">
-        <Sidebar />
-        <main className="flex-1">
-          <Outlet />
-        </main>
-      </div>
-    </SidebarProvider>
+    <div className="min-h-screen w-full overflow-x-hidden">
+      <Sidebar />
+      <main className="w-full">
+        <Outlet />
+      </main>
+    </div>
   )
 }
