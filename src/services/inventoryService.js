@@ -130,16 +130,6 @@ async function deductSalesStockForCompletedOrder(
       throw new Error(`Invalid order item for stock deduction on order ${numericOrderId}`);
     }
 
-    await connection.query(
-      "UPDATE Menu SET Stock = GREATEST(COALESCE(Stock, 0) - ?, 0) WHERE Product_ID = ?",
-      [requiredQty, productId],
-    );
-
-    await connection.query(
-      "UPDATE products SET quantity = GREATEST(COALESCE(quantity, 0) - ?, 0) WHERE id = ?",
-      [requiredQty, productId],
-    );
-
     await deductStockForOrder(productId, requiredQty, recordedBy, connection);
   }
 

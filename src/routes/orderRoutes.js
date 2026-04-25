@@ -55,7 +55,8 @@ function normalizeKitchenStatus(value) {
   if (v === "preparing" || v === "in progress") return "Preparing";
   if (v === "ready" || v === "ready for pickup") return "Ready for Pickup";
   if (v === "completed") return "Completed";
-  if (v === "picked up") return "Picked Up";
+  // Legacy compatibility: historical pickup completions now read as Completed.
+  if (v === "picked up") return "Completed";
   if (v === "cancelled") return "Cancelled";
   if (v === "awaiting cashier review") return "Awaiting Cashier Review";
   if (v === "refunded") return "Refunded";
@@ -79,16 +80,15 @@ function isStrictKitchenTransitionAllowed(currentStatus, nextStatus) {
   }
 
   if (nextStatus === "Refunded") {
-    return currentStatus === "Completed" || currentStatus === "Picked Up";
+    return currentStatus === "Completed";
   }
 
   const allowedTransitions = {
     "Awaiting Cashier Review": ["Queued", "Cancelled"],
     Queued: ["Preparing"],
     Preparing: ["Ready for Pickup"],
-    "Ready for Pickup": ["Completed", "Picked Up"],
+    "Ready for Pickup": ["Completed"],
     Completed: [],
-    "Picked Up": [],
     Cancelled: [],
     Refunded: [],
   };
@@ -109,7 +109,6 @@ function isFinishedStatus(value) {
   return (
     normalized === "Completed" ||
     normalized === "Cancelled" ||
-    normalized === "Picked Up" ||
     normalized === "Refunded"
   );
 }
@@ -161,8 +160,7 @@ function getCustomerTrackingStatus(rawStatus, paymentStatus) {
   const normalizedPaymentStatus = normalizePaymentStatus(paymentStatus);
 
   if (
-    normalizedStatus === "Completed" ||
-    normalizedStatus === "Picked Up"
+    normalizedStatus === "Completed"
   ) {
     return "Completed";
   }
@@ -838,7 +836,6 @@ router.get("/customer/:customerUserId", requireAuthenticatedUser, async (req, re
       return (
         status !== "Completed" &&
         status !== "Cancelled" &&
-        status !== "Picked Up" &&
         status !== "Refunded"
       );
     });
@@ -847,7 +844,6 @@ router.get("/customer/:customerUserId", requireAuthenticatedUser, async (req, re
       return (
         status === "Completed" ||
         status === "Cancelled" ||
-        status === "Picked Up" ||
         status === "Refunded"
       );
     });
