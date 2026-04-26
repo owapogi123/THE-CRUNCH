@@ -185,8 +185,18 @@ export function Sidebar() {
               Navigation
             </div>
 
-            {/* Nav links */}
-            <nav className="flex-1 space-y-1.5 overflow-y-auto">
+            {/* Nav links — scrollbar hidden across all browsers */}
+            <nav
+              className={cn(
+                "flex-1 space-y-1.5 overflow-y-auto",
+                // Webkit (Chrome, Safari, Edge)
+                "[&::-webkit-scrollbar]:hidden",
+                // Firefox
+                "[scrollbar-width:none]",
+                // IE / old Edge
+                "[-ms-overflow-style:none]",
+              )}
+            >
               {visibleItems.map((item) => (
                 <NavLink
                   key={item.label}
