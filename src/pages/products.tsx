@@ -773,7 +773,7 @@ export default function Products({ isAuthenticated = false, onLogout }: Products
     }
   }, [])
 
-  // ── Fetch products ──
+  // ── Fetch products ── 
   useEffect(() => {
     let cancelled = false
     setLoadingProducts(true)

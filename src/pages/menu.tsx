@@ -2612,7 +2612,7 @@ export default function CashierView() {
   const handleConfirmPickup = async (id: number) => {
     try {
       await updateQueueOrder(id, {
-        status: "Picked Up",
+        status: "Completed",
         cashierId: getCashierId(),
       });
       setReadyPickupOrders((prev) => prev.filter((o) => o.id !== id));

@@ -11,6 +11,20 @@ const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
 // ─── TYPES ────────────────────────────────────────────────────────────────────
 interface Nutrition { calories: number; protein: number; fats: number; carbs: number }
 
+interface InventoryMenuRow {
+  product_id?: number;
+  id?: number;
+  product_name?: string;
+  name?: string;
+  price?: number | string;
+  category?: string;
+  image?: string | null;
+  mainStock?: number | string;
+  stock?: number | string;
+  availability_status?: string;
+  isRawMaterial?: boolean | number;
+}
+
 interface Recipe {
   id:          number
   name:        string
@@ -40,6 +54,102 @@ interface PaymentSessionState {
   paid: boolean; paymentReference: string | null;
 }
 type PaymentMethodType = "gcash" | "cash";
+
+const DEFAULT_NUTRITION: Nutrition = {
+  calories: 0,
+  protein: 0,
+  fats: 0,
+  carbs: 0,
+};
+
+const normalizeName = (value: unknown) =>
+  String(value ?? "")
+    .trim()
+    .toLowerCase();
+
+const normalizeCategory = (value: unknown) =>
+  String(value ?? "Uncategorized")
+    .trim()
+    .toUpperCase();
+
+const isMenuFoodCategory = (value: unknown) =>
+  normalizeCategory(value).includes("MENU FOOD");
+
+const isUnavailableStatus = (value: unknown) =>
+  String(value ?? "")
+    .trim()
+    .toLowerCase() === "unavailable";
+
+function mapInventoryRecipes(
+  inventoryRows: InventoryMenuRow[],
+  menuItems: Recipe[],
+  fallbackMealTypes: string[],
+): Recipe[] {
+  const deduped = new Map<string, InventoryMenuRow>();
+  for (const row of inventoryRows ?? []) {
+    if (row.isRawMaterial) continue;
+    const key = normalizeName(row.product_name ?? row.name);
+    if (!key) continue;
+    const existing = deduped.get(key);
+    if (
+      !existing ||
+      Number(row.product_id ?? row.id ?? 0) >
+        Number(existing.product_id ?? existing.id ?? 0)
+    ) {
+      deduped.set(key, row);
+    }
+  }
+
+  const menuMetaByName = new Map(
+    (menuItems ?? []).map((item) => [normalizeName(item.name), item]),
+  );
+
+  const normalizedFallbackMeals = fallbackMealTypes.map((meal) =>
+    String(meal).trim().toLowerCase(),
+  );
+
+  return Array.from(deduped.values()).map((row) => {
+    const id = Number(row.product_id ?? row.id ?? 0);
+    const name = String(row.product_name ?? row.name ?? `Product #${id}`);
+    const category = normalizeCategory(row.category);
+    const menuMeta = menuMetaByName.get(normalizeName(name));
+    const stock = Number(row.mainStock ?? row.stock ?? 0);
+    const normalizedMetaMeals = (menuMeta?.mealTypes ?? []).map((meal) =>
+      String(meal).trim().toLowerCase(),
+    );
+    const hasSupportedMealType = normalizedMetaMeals.some((meal) =>
+      normalizedFallbackMeals.includes(meal),
+    );
+    const available =
+      !isUnavailableStatus(row.availability_status) &&
+      (isMenuFoodCategory(category) || stock > 0);
+
+    return {
+      id,
+      name,
+      price: Number(row.price ?? menuMeta?.price ?? 0),
+      category,
+      image: String(
+        row.image || menuMeta?.image || "/placeholder.jpg",
+      ),
+      available,
+      description:
+        menuMeta?.description ||
+        `Freshly prepared ${String(category).toLowerCase()} from The Crunch.`,
+      nutrition: menuMeta?.nutrition ?? DEFAULT_NUTRITION,
+      maxFlavors: menuMeta?.maxFlavors,
+      mealTypes:
+        menuMeta?.mealTypes &&
+        menuMeta.mealTypes.length > 0 &&
+        hasSupportedMealType
+          ? menuMeta.mealTypes
+          : fallbackMealTypes,
+      tag: menuMeta?.tag,
+      note: menuMeta?.note,
+      variant: menuMeta?.variant,
+    };
+  });
+}
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const DELIVERY_LINKS = {
@@ -318,9 +428,9 @@ function TrackingPanel({ orders }: { orders: CustomerOrder[] }) {
 }
 
 // ─── HISTORY DRAWER ───────────────────────────────────────────────────────────
-function HistoryDrawer({ orders, recipes, onClose }: { orders: CustomerOrder[]; recipes: Recipe[]; onClose: () => void }) {
+function HistoryDrawer({ orders, menuItems, onClose }: { orders: CustomerOrder[]; menuItems: Recipe[]; onClose: () => void }) {
   const [expanded, setExpanded] = useState<number | null>(orders[0]?.id ?? null);
-  const findImg = (name: string) => recipes.find(r => r.name.trim().toLowerCase() === name.trim().toLowerCase())?.image ?? "/placeholder.jpg";
+  const findImg = (name: string) => menuItems.find(r => r.name.trim().toLowerCase() === name.trim().toLowerCase())?.image ?? "/placeholder.jpg";
 
   return (
     <>
@@ -696,7 +806,7 @@ export default function Delicacy() {
   const navigate = useNavigate();
 
   // ── Data from API ──
-  const [recipes,    setRecipes]    = useState<Recipe[]>([]);
+  const [menuItems,  setMenuItems]  = useState<Recipe[]>([]);
   const [flavors,    setFlavors]    = useState<string[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [mealTypes,  setMealTypes]  = useState<string[]>([]);
@@ -735,18 +845,49 @@ export default function Delicacy() {
     let cancelled = false;
     setLoading(true);
 
-    Promise.all([
-      api.get<Recipe[]>("/menu/items"),       // full recipe list with `available` field
+    Promise.allSettled([
+      api.get<InventoryMenuRow[]>("/inventory"),
+      api.get<Recipe[]>("/menu/items"),
       api.get<string[]>("/menu/flavors"),     // flavor names array
-      api.get<string[]>("/menu/categories"),  // category names
       api.get<string[]>("/menu/meal-types"),  // meal type names
     ])
-      .then(([items, flavorList, cats, meals]) => {
+      .then(([inventoryResult, menuItemsResult, flavorListResult, mealsResult]) => {
         if (cancelled) return;
-        setRecipes(Array.isArray(items)      ? items      : []);
-        setFlavors(Array.isArray(flavorList) ? flavorList : []);
-        const allCats  = ["All", ...(Array.isArray(cats)  ? cats  : [])];
-        const allMeals = Array.isArray(meals) ? meals : ["Breakfast", "Lunch", "Dinner"];
+        const inventoryRows =
+          inventoryResult.status === "fulfilled" &&
+          Array.isArray(inventoryResult.value)
+            ? inventoryResult.value
+            : [];
+        const menuItemsMeta =
+          menuItemsResult.status === "fulfilled" &&
+          Array.isArray(menuItemsResult.value)
+            ? menuItemsResult.value
+            : [];
+        const flavorList =
+          flavorListResult.status === "fulfilled" &&
+          Array.isArray(flavorListResult.value)
+            ? flavorListResult.value
+            : [];
+        const meals =
+          mealsResult.status === "fulfilled" &&
+          Array.isArray(mealsResult.value) &&
+          mealsResult.value.length > 0
+            ? mealsResult.value
+            : ["Breakfast", "Lunch", "Dinner"];
+
+        const allMeals =
+          meals.length > 0 ? meals : ["Breakfast", "Lunch", "Dinner"];
+        const mergedRecipes = mapInventoryRecipes(
+          inventoryRows,
+          menuItemsMeta,
+          allMeals,
+        );
+        const allCats = [
+          "All",
+          ...Array.from(new Set(mergedRecipes.map((item) => item.category))),
+        ];
+        setMenuItems(mergedRecipes);
+        setFlavors(flavorList);
         setCategories(allCats);
         setMealTypes(allMeals);
         setActiveMeal(allMeals.includes("Lunch") ? "Lunch" : allMeals[0] ?? "Lunch");
@@ -824,11 +965,11 @@ export default function Delicacy() {
     if (params.get("showOrderModal") === "true") setOrderTypeOpen(true);
 
     const itemSlug = params.get("item");
-    if (!itemSlug || recipes.length === 0) return;
+    if (!itemSlug || menuItems.length === 0) return;
 
     const needle = decodeURIComponent(itemSlug).trim().toLowerCase();
-    const match  = recipes.find(r => r.name.trim().toLowerCase() === needle)
-                ?? recipes.find(r => r.name.toLowerCase().includes(needle) || needle.includes(r.name.toLowerCase()));
+    const match  = menuItems.find(r => r.name.trim().toLowerCase() === needle)
+                ?? menuItems.find(r => r.name.toLowerCase().includes(needle) || needle.includes(r.name.toLowerCase()));
     if (!match) return;
 
     setActiveCategory(match.category ?? "All");
@@ -838,7 +979,7 @@ export default function Delicacy() {
       if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - window.innerHeight / 2 + el.getBoundingClientRect().height / 2, behavior: "smooth" });
       setTimeout(() => { setHighlightedId(match.id); setTimeout(() => setHighlightedId(null), 3200); }, 600);
     }, 480);
-  }, [recipes]);
+  }, [menuItems]);
 
   // ── Fetch orders (poll every 5s) ──
   const fetchOrders = useCallback(async () => {
@@ -858,9 +999,9 @@ export default function Delicacy() {
   }, [fetchOrders, customerUserId]);
 
   // ── Derived display list ──
-  const displayed = recipes.filter(r =>
+  const displayed = menuItems.filter(r =>
     (activeCategory === "All" || r.category === activeCategory) &&
-    r.mealTypes.includes(activeMeal)
+    (r.mealTypes.length === 0 || r.mealTypes.includes(activeMeal))
   );
 
   const totalItems = cart.reduce((s, i) => s + i.quantity, 0);
@@ -1141,7 +1282,7 @@ export default function Delicacy() {
         )}
       </AnimatePresence>
       <AnimatePresence>{showCashTerms && <CashTermsModal onAccept={() => { setShowCashTerms(false); handlePlaceCashOrder(); }} onDecline={() => setShowCashTerms(false)} />}</AnimatePresence>
-      <AnimatePresence>{historyOpen   && <HistoryDrawer orders={orderHistory} recipes={recipes} onClose={() => setHistoryOpen(false)} />}</AnimatePresence>
+      <AnimatePresence>{historyOpen   && <HistoryDrawer orders={orderHistory} menuItems={menuItems} onClose={() => setHistoryOpen(false)} />}</AnimatePresence>
       <AnimatePresence>{showCheckout  && <CheckoutModal orderNumber={lastOrderNum} onClose={() => { setShowCheckout(false); setLastOrderNum(null); }} />}</AnimatePresence>
     </div>
   );

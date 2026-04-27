@@ -33,6 +33,12 @@ function resolveApiBaseUrl(): string {
 
 const API_BASE_URL = resolveApiBaseUrl();
 
+function getStoredAuthToken(): string | null {
+  if (typeof window === "undefined") return null;
+  const token = localStorage.getItem("authToken");
+  return token && token.trim() ? token : null;
+}
+
 type ApiBody = object | FormData | URLSearchParams | string;
 
 interface FetchOptions extends Omit<RequestInit, "body"> {
@@ -108,8 +114,9 @@ export const apiCall = async <T = unknown>(
     headers["ngrok-skip-browser-warning"] = "true";
   }
 
-  if (!skipAuth && token) {
-    headers["Authorization"] = `Bearer ${token}`;
+  const resolvedToken = token ?? getStoredAuthToken();
+  if (!skipAuth && resolvedToken && !headers["Authorization"]) {
+    headers["Authorization"] = `Bearer ${resolvedToken}`;
   }
 
   let bodyToSend: BodyInit | undefined = undefined;

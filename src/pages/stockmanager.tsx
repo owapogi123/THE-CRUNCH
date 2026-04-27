@@ -512,7 +512,7 @@ const BLANK_SUPPLIER: Omit<Supplier, "supplier_id"> = {
 };
 const BLANK_RAW_MATERIAL: RawMaterialForm = {
   name: "",
-  category: "Sauce",
+  category: "Sauces",
   unit: "liter",
   price: "",
   description: "",
@@ -542,6 +542,12 @@ const RAW_MATERIAL_UNITS = [
   "piece",
   "pack",
   "bottle",
+] as const;
+const RAW_MATERIAL_CATEGORIES = [
+  "Sauces",
+  "Raw Material",
+  "Ingredients",
+  "Aromatics",
 ] as const;
 const STATUS_BADGE: Record<StockStatus, string> = {
   critical: "bg-red-100 text-red-600",
@@ -679,20 +685,40 @@ function mergeSupplierProducts(existing: string, incoming: string[]): string {
   const merged = [...new Set([...existingArr, ...incoming])];
   return merged.join(", ");
 }
-function isRawMaterialLabel(value?: string | null): boolean {
+function isStrictRawMaterialCategory(value?: string | null): boolean {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  return normalized === "raw material" || normalized === "raw materials";
+}
+
+function isStockManagerCategory(value?: string | null): boolean {
   const normalized = String(value ?? "")
     .trim()
     .toLowerCase();
   return (
-    normalized === "raw material" ||
+    normalized.includes("suppl") ||
+    normalized.includes("menu food") ||
+    normalized.includes("beverage") ||
+    normalized.includes("drink") ||
+    normalized.includes("sauce") ||
     normalized === "raw materials" ||
-    normalized === "raw_material" ||
-    normalized === "raw_materials"
+    normalized === "ingredients" ||
+    normalized === "ingridients" ||
+    normalized === "aromatics" ||
+    isStrictRawMaterialCategory(normalized)
   );
 }
 
+function isCountedInTotalProducts(value?: string | null): boolean {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  return normalized !== "good";
+}
+
 function isRawMaterialPOItem(item: POItem): boolean {
-  return isRawMaterialLabel(item.category);
+  return isStrictRawMaterialCategory(item.category);
 }
 
 function formatShelfLife(days?: number | null, hours?: number | null): string {
@@ -1730,7 +1756,7 @@ function ReceivePOModal({
     });
     if (missing.length > 0) {
       onShowToast(
-        "Please complete the expiry date or shelf life for every received item before marking the order as received.",
+        "Please complete Shelf Life for raw materials and Expiry Date for non-raw materials before marking the order as received.",
         "error",
       );
       return;
@@ -1777,8 +1803,8 @@ function ReceivePOModal({
               Receive Purchase Order
             </h2>
             <p className="text-xs text-gray-400 mt-0.5">
-              Set shelf life for raw materials and expiry dates for non-raw
-              items before completing the receipt.
+              Use Shelf Life for raw materials and Expiry Date for non-raw
+              materials before completing the receipt.
             </p>
           </div>
           <CloseBtn onClick={onClose} />
@@ -1857,7 +1883,7 @@ function ReceivePOModal({
                   </div>
                   {rawMaterial ? (
                     <span className="inline-flex items-center rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-                      Shelf Life
+                      Raw Material
                     </span>
                   ) : currentExpiryDate ? (
                     <ExpiryChip dateStr={currentExpiryDate} />
@@ -1866,7 +1892,7 @@ function ReceivePOModal({
                 {rawMaterial ? (
                   <div className="grid gap-3 md:grid-cols-[auto_1fr_1fr] items-end">
                     <label className="text-xs font-semibold text-slate-500 pb-2">
-                      Shelf Life
+                      Shelf Life (for raw materials)
                     </label>
                     <input
                       type="number"
@@ -4281,7 +4307,7 @@ export default function StockManager() {
               ? toNumber(p.shelfLifeHours)
               : null,
           promo: typeof p.promo === "string" ? p.promo : "",
-          isRawMaterial: isRawMaterialLabel(
+          isRawMaterial: isStrictRawMaterialCategory(
             typeof p.category === "string" ? p.category : "",
           ),
         }))
@@ -4295,12 +4321,7 @@ export default function StockManager() {
           return (
             promo === "SUPPLIES" ||
             promo === "MENU FOOD" ||
-            cat.includes("suppl") ||
-            cat === "ingredients" ||
-            cat.includes("sauce") ||
-            cat.includes("menu food") ||
-            cat.includes("beverage") ||
-            cat.includes("drink") ||
+            isStockManagerCategory(cat) ||
             p.isRawMaterial
           );
         });
@@ -4674,8 +4695,16 @@ export default function StockManager() {
   );
   const totalWasted = products.reduce((s, p) => s + toNumber(p.wasted), 0);
   const totalReturned = products.reduce((s, p) => s + toNumber(p.returned), 0);
+  const totalProductsCounted = useMemo(
+    () =>
+      products.filter(
+        (p) =>
+          isCountedInTotalProducts(p.category) && !isMenuFoodProduct(p),
+      ),
+    [products],
+  );
   const dashboardSummaryConfig = useMemo(() => {
-    const productRows = [...products]
+    const productRows = [...totalProductsCounted]
       .sort((a, b) => a.product_name.localeCompare(b.product_name))
       .map((p) => ({
         id: `product-${p.product_id}`,
@@ -4716,7 +4745,7 @@ export default function StockManager() {
         title: "Total Products Summary",
         subtitle: "All inventory items currently tracked in stock manager.",
         totalLabel: "Total Products",
-        totalValue: products.length.toString(),
+        totalValue: totalProductsCounted.length.toString(),
         rows: productRows,
         emptyMessage: "No products found in inventory.",
       },
@@ -4755,7 +4784,7 @@ export default function StockManager() {
         emptyMessage: string;
       }
     >;
-  }, [products, totalReturned, totalWasted, totalWithdrawn]);
+  }, [products, totalProductsCounted, totalReturned, totalWasted, totalWithdrawn]);
   const wholeChickenProducts = mainStockProducts.filter(isWholeChicken);
   const choppedChickenProducts = mainStockProducts.filter(isChoppedChicken);
   const otherMainStockProducts = mainStockProducts.filter((p) => !isChicken(p));
@@ -5347,7 +5376,7 @@ export default function StockManager() {
         quantity: 0,
         category: rawMaterialForm.category.trim(),
         description: rawMaterialForm.description.trim() || undefined,
-        raw_material: true,
+        raw_material: isStrictRawMaterialCategory(rawMaterialForm.category),
       });
       await fetchAll();
       setRawMaterialForm(BLANK_RAW_MATERIAL);
@@ -5631,7 +5660,7 @@ export default function StockManager() {
                     >
                       <KPICard
                         label="Total Products"
-                        value={products.length.toString()}
+                        value={totalProductsCounted.length.toString()}
                         sub="in inventory"
                         accent="slate"
                         onClick={() => setDashboardSummary("products")}
@@ -5758,7 +5787,7 @@ export default function StockManager() {
                                 "Main Stock",
                                 "Qty Purchased",
                                 "Withdrawn",
-                                "Expiry Date",
+                                "Shelf Life / Expiry",
                                 "Returned",
                                 "Level",
                                 "Status",
@@ -7974,11 +8003,19 @@ export default function StockManager() {
                           ) : (
                             filteredPOs.map((order, i) => (
                               <div key={order.id}>
-                                <div className="hidden lg:grid grid-cols-[1.5fr_2.5fr_2fr_2fr_2fr_2fr_1.5fr_auto] px-5 py-4 transition-colors items-center hover:bg-slate-50/70">
-                                  <button
-                                    onClick={() => setSelectedOrder(order)}
-                                    className="contents text-left"
-                                  >
+                                <div
+                                  className="hidden lg:grid grid-cols-[1.5fr_2.5fr_2fr_2fr_2fr_2fr_1.5fr_auto] px-5 py-4 transition-colors items-center hover:bg-slate-50/70 cursor-pointer"
+                                  onClick={() => setSelectedOrder(order)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                      e.preventDefault();
+                                      setSelectedOrder(order);
+                                    }
+                                  }}
+                                  role="button"
+                                  tabIndex={0}
+                                >
+                                  <div className="contents">
                                     <span className="text-sm font-semibold text-slate-800">
                                       {order.id}
                                     </span>
@@ -8011,11 +8048,14 @@ export default function StockManager() {
                                     <span>
                                       <POBadge status={order.status} />
                                     </span>
-                                  </button>
+                                  </div>
                                   <div className="flex justify-end">
                                     <div className="flex items-center gap-2">
                                       <button
-                                        onClick={() => setPrintOrder(order)}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setPrintOrder(order);
+                                        }}
                                         className="px-2.5 py-1 rounded-lg border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50 transition-colors"
                                       >
                                         Print PO
@@ -8023,7 +8063,10 @@ export default function StockManager() {
                                       {order.status === "Draft" ||
                                       order.status === "Ordered" ? (
                                         <button
-                                          onClick={() => handlePODelete(order.id)}
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handlePODelete(order.id);
+                                          }}
                                           className="p-1.5 rounded-lg text-slate-300 hover:text-red-400 hover:bg-red-50 transition-colors"
                                           title="Cancel order"
                                         >
@@ -8304,11 +8347,19 @@ export default function StockManager() {
                           ) : (
                             paginatedCompletedPOs.map((order, i) => (
                               <div key={order.id}>
-                                <div className="hidden lg:grid grid-cols-[1.5fr_2fr_1.5fr_1.5fr_1.5fr_1.5fr_auto] px-5 py-4 transition-colors items-center hover:bg-slate-50/70">
-                                  <button
-                                    onClick={() => setSelectedOrder(order)}
-                                    className="contents text-left"
-                                  >
+                                <div
+                                  className="hidden lg:grid grid-cols-[1.5fr_2fr_1.5fr_1.5fr_1.5fr_1.5fr_auto] px-5 py-4 transition-colors items-center hover:bg-slate-50/70 cursor-pointer"
+                                  onClick={() => setSelectedOrder(order)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                      e.preventDefault();
+                                      setSelectedOrder(order);
+                                    }
+                                  }}
+                                  role="button"
+                                  tabIndex={0}
+                                >
+                                  <div className="contents">
                                     <span className="text-sm font-semibold text-slate-800">
                                       {order.id}
                                     </span>
@@ -8321,19 +8372,19 @@ export default function StockManager() {
                                         {order.items.length !== 1 ? "s" : ""}
                                       </p>
                                     </div>
-                                  </button>
+                                  </div>
                                   <div>
                                     <button
-                                      onClick={() => setPrintOrder(order)}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setPrintOrder(order);
+                                      }}
                                       className="px-2.5 py-1 rounded-lg border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50 transition-colors"
                                     >
                                       Print PO
                                     </button>
                                   </div>
-                                  <button
-                                    onClick={() => setSelectedOrder(order)}
-                                    className="contents text-left"
-                                  >
+                                  <div className="contents">
                                     <span className="text-sm text-slate-500">
                                       {order.receivedBy || "-"}
                                     </span>
@@ -8353,7 +8404,7 @@ export default function StockManager() {
                                     <span className="flex justify-end">
                                       <POBadge status={order.status} />
                                     </span>
-                                  </button>
+                                  </div>
                                 </div>
                                 <motion.div
                                   layout
@@ -8609,14 +8660,18 @@ export default function StockManager() {
                     </FormField>
                   </div>
                   <FormField label="Category">
-                    <StyledInput
-                      type="text"
+                    <StyledSelect
                       value={rawMaterialForm.category}
                       onChange={(v) =>
                         setRawMaterialForm((p) => ({ ...p, category: v }))
                       }
-                      placeholder="e.g. Sauce, Chopped Chicken"
-                    />
+                    >
+                      {RAW_MATERIAL_CATEGORIES.map((category) => (
+                        <option key={category} value={category}>
+                          {category}
+                        </option>
+                      ))}
+                    </StyledSelect>
                   </FormField>
                   <FormField label="Unit">
                     <StyledSelect

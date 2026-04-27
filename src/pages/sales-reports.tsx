@@ -298,6 +298,7 @@ function normalizeStatus(value?: string): Status {
       .toLowerCase()
   ) {
     case "completed":
+    case "picked up":
       return "Completed";
     case "cancelled":
       return "Cancelled";
