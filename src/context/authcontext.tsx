@@ -48,6 +48,16 @@ function clearStoredAuth() {
   );
 }
 
+// ── NEW: mirrors the keys that readStoredUser() already reads ──
+function saveStoredAuth(data: AuthUser) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem("authToken", data.token);
+  localStorage.setItem("userName", data.username);
+  localStorage.setItem("userRole", data.role);
+  localStorage.setItem("userId", data.userId);
+  localStorage.setItem("isAuthenticated", "true");
+}
+
 const CUSTOMER_ROLES = new Set(["customer", "user"]);
 
 function isStaffRole(role: string | null | undefined): boolean {
@@ -140,6 +150,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // ── Login ──────────────────────────────────────────────────────────────────
 
   const login = (data: AuthUser) => {
+    // ── FIX: persist to localStorage so auth survives page refresh ──
+    saveStoredAuth(data);
+
     setUser(data);
     setIsOnline(true);
 
