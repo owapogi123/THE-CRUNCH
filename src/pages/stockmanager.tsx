@@ -710,6 +710,20 @@ function isStockManagerCategory(value?: string | null): boolean {
   );
 }
 
+function isMainStockDashboardCategory(value?: string | null): boolean {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  return (
+    normalized.includes("sauces") ||
+    normalized === "raw material" ||
+    normalized === "raw materials" ||
+    normalized === "ingredients" ||
+    normalized === "ingridients" ||
+    normalized === "aromatics"
+  );
+}
+
 function isCountedInTotalProducts(value?: string | null): boolean {
   const normalized = String(value ?? "")
     .trim()
@@ -4575,7 +4589,10 @@ export default function StockManager() {
   );
   const dashboardFilteredProducts = useMemo(() => {
     const q = dashboardSearch.trim().toLowerCase();
-    const base = products.filter((p) => !isMenuFoodProduct(p));
+    const base = products.filter(
+      (p) =>
+        !isMenuFoodProduct(p) && isMainStockDashboardCategory(p.category),
+    );
     const filtered = !q
       ? base
       : base.filter(
