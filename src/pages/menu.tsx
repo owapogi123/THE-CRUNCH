@@ -1035,6 +1035,7 @@ function AmountEntryModal({
     <AnimatePresence>
       {show && (
         <>
+          {/* Backdrop */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -1049,6 +1050,8 @@ function AmountEntryModal({
               background: "rgba(0,0,0,0.6)",
             }}
           />
+
+          {/* Modal container */}
           <div
             style={{
               position: "fixed",
@@ -1061,6 +1064,7 @@ function AmountEntryModal({
               pointerEvents: "none",
             }}
           >
+            {/* Modal card — flex column so header is sticky and body scrolls */}
             <motion.div
               initial={{ opacity: 0, scale: 0.96, y: 10 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -1070,17 +1074,22 @@ function AmountEntryModal({
                 background: "#fff",
                 width: "100%",
                 maxWidth: 320,
+                maxHeight: "90vh",
                 borderRadius: 20,
-                overflow: "hidden",
                 border: "1px solid #ebebeb",
                 pointerEvents: "auto",
                 fontFamily: F,
+                display: "flex",
+                flexDirection: "column",
+                overflow: "hidden",
               }}
             >
+              {/* ── Sticky header: Amount Due ── */}
               <div
                 style={{
                   padding: "22px 22px 16px",
                   borderBottom: "1px solid #f5f5f5",
+                  flexShrink: 0,
                 }}
               >
                 <p
@@ -1102,7 +1111,14 @@ function AmountEntryModal({
                 </p>
               </div>
 
-              <div style={{ padding: "14px 18px 18px" }}>
+              {/* ── Scrollable body ── */}
+              <div
+                style={{
+                  padding: "14px 18px 18px",
+                  overflowY: "auto",
+                  flex: 1,
+                }}
+              >
                 {paymentMethod === "cash" ? (
                   <>
                     <p
