@@ -54,6 +54,10 @@ const kitchenUsageRoutes = require("./routes/kitchenUsageRoutes");
 app.use("/api/kitchen-usage", kitchenUsageRoutes);
 const uploadProofRoutes = require("./routes/uploadProofRoutes");
 app.use("/api/upload-proof", uploadProofRoutes);
+const feedbackRoutes = require("./routes/feedbackRoutes");
+app.use("/api/feedback", feedbackRoutes);
+const contentRoutes = require("./routes/contentRoutes");
+app.use("/api", contentRoutes);
 
 // order endpoints (used by POS & dashboard)
 const orderRoutes = require("./routes/orderRoutes");

@@ -60,6 +60,7 @@ async function setup(options = {}) {
       "DROP TABLE IF EXISTS purchase_order_items;",
       "DROP TABLE IF EXISTS purchase_orders;",
       "DROP TABLE IF EXISTS po_counter;",
+      "DROP TABLE IF EXISTS feedback;",
       "DROP TABLE IF EXISTS Order_Tracking;",
       "DROP TABLE IF EXISTS Kitchen;",
       "DROP TABLE IF EXISTS Receipt;",
@@ -362,6 +363,20 @@ CREATE TABLE IF NOT EXISTS kitchen_usage_items (
       FOREIGN KEY (report_id) REFERENCES kitchen_usage_reports(report_id)
       ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS feedback (
+    feedback_id INT AUTO_INCREMENT PRIMARY KEY,
+    product_id INT NOT NULL,
+    customer_user_id INT NULL,
+    rating INT NULL,
+    comment TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_feedback_product
+      FOREIGN KEY (product_id) REFERENCES Menu(Product_ID),
+    CONSTRAINT fk_feedback_customer
+      FOREIGN KEY (customer_user_id) REFERENCES users(id)
+      ON DELETE SET NULL
+);
 `;
 
     await connection.query(createStatements);
@@ -657,6 +672,39 @@ END
       "finalized_at",
       "`finalized_at` DATETIME NULL",
     );
+
+    if (await tableExists(connection, "feedback")) {
+      await ensureColumn(
+        connection,
+        "feedback",
+        "product_id",
+        "`product_id` INT NOT NULL",
+      );
+      await ensureColumn(
+        connection,
+        "feedback",
+        "customer_user_id",
+        "`customer_user_id` INT NULL",
+      );
+      await ensureColumn(
+        connection,
+        "feedback",
+        "rating",
+        "`rating` INT NULL",
+      );
+      await ensureColumn(
+        connection,
+        "feedback",
+        "comment",
+        "`comment` TEXT NOT NULL",
+      );
+      await ensureColumn(
+        connection,
+        "feedback",
+        "created_at",
+        "`created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+      );
+    }
 
     log.log("Database setup completed successfully.");
     return true;
