@@ -44,6 +44,7 @@ interface MenuItem {
   price: number;
   category: string;
   remainingStock: number;
+  availabilityStatus: string;
   image?: string | null;
 }
 interface CartItem extends MenuItem {
@@ -106,6 +107,13 @@ interface ReceiptData {
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 const isFood = (item: MenuItem) =>
   item.category.toUpperCase().includes("MENU FOOD");
+
+const isUnavailableStatus = (value: unknown) =>
+  ["unavailable", "out of stock", "hidden"].includes(
+    String(value ?? "")
+      .trim()
+      .toLowerCase(),
+  );
 
 const fmt = (n: number) => {
   const [int, dec] = n.toFixed(2).split(".");
@@ -181,7 +189,8 @@ const mapProducts = (data: Record<string, unknown>[]): MenuItem[] => {
     name: String(p.product_name ?? p.name ?? `Product #${p.id}`),
     price: Number(p.price ?? 0),
     category: String(p.category ?? "UNCATEGORIZED").toUpperCase(),
-    remainingStock: Number(p.dailyWithdrawn ?? 0),
+    remainingStock: Number(p.stock ?? p.quantity ?? p.dailyWithdrawn ?? 0),
+    availabilityStatus: String(p.availability_status ?? "Available"),
     image: p.image ? String(p.image) : null,
   }));
 };
@@ -460,7 +469,7 @@ function ProductCard({
   onAdd: (i: MenuItem) => void;
   inCart: boolean;
 }) {
-  const out = item.remainingStock <= 0 && !isFood(item);
+  const out = isUnavailableStatus(item.availabilityStatus);
   return (
     <motion.button
       layout
@@ -2690,12 +2699,18 @@ export default function CashierView() {
   const pricing = computePricing(gross, customerType);
 
   const addToCart = useCallback((item: MenuItem) => {
-    if (item.remainingStock <= 0 && !isFood(item)) return;
+    if (isUnavailableStatus(item.availabilityStatus)) return;
     setCart((prev) => {
       const ex = prev.find((c) => c.id === item.id);
       if (ex) {
         const next = ex.quantity + 1;
-        if (next > item.remainingStock && !isFood(item)) return prev;
+        if (
+          item.remainingStock > 0 &&
+          next > item.remainingStock &&
+          !isFood(item)
+        ) {
+          return prev;
+        }
         return prev.map((c) =>
           c.id === item.id ? { ...c, quantity: next } : c,
         );
@@ -2714,7 +2729,13 @@ export default function CashierView() {
         .map((item) => {
           if (item.id !== id) return item;
           const next = Math.max(0, item.quantity + delta);
-          if (next > (prod?.remainingStock ?? 0) && !isFood(item)) return item;
+          if (
+            (prod?.remainingStock ?? 0) > 0 &&
+            next > (prod?.remainingStock ?? 0) &&
+            !isFood(item)
+          ) {
+            return item;
+          }
           return { ...item, quantity: next };
         })
         .filter((i) => i.quantity > 0),

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { NavLink, useNavigate } from "react-router-dom";
-import { Menu, X, Star, Trash2, RefreshCw, MessageSquare } from "lucide-react";
+import { Menu, X, Star, RefreshCw, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "../context/authcontext";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -19,7 +19,23 @@ interface RestaurantSettings {
 }
 
 interface FeedbackEntry {
-  id: string; name: string; rating: number; message: string; createdAt: string;
+  id: string;
+  reviewerName: string;
+  productName: string;
+  rating: number;
+  message: string;
+  createdAt: string;
+}
+
+interface FeedbackApiEntry {
+  feedback_id?: number | string;
+  product_id?: number | string;
+  customer_user_id?: number | string | null;
+  rating?: number | null;
+  comment?: string;
+  created_at?: string;
+  product_name?: string;
+  customer_name?: string;
 }
 
 type TabKey = "general"|"operations"|"inventory"|"notifications"|"billing"|"system"|"feedback";
@@ -172,7 +188,7 @@ function RatingSummary({ entries }: { entries:FeedbackEntry[] }) {
   );
 }
 
-function FeedbackCard({ entry, onDelete, deleting }: { entry:FeedbackEntry; onDelete:(id:string)=>void; deleting:boolean }) {
+function FeedbackCard({ entry }: { entry:FeedbackEntry }) {
   const date = new Date(entry.createdAt);
   const formatted = date.toLocaleDateString("en-PH", { year:"numeric", month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" });
   const ratingLabel = ["","Poor","Fair","Good","Great","Amazing"][entry.rating]??"";
@@ -183,8 +199,11 @@ function FeedbackCard({ entry, onDelete, deleting }: { entry:FeedbackEntry; onDe
       <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12, marginBottom:10 }}>
         <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
           <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
-            <span style={{ fontFamily:FONT, fontSize:"0.82rem", fontWeight:600, color:"#1c1a18" }}>{entry.name}</span>
+            <span style={{ fontFamily:FONT, fontSize:"0.82rem", fontWeight:600, color:"#1c1a18" }}>{entry.reviewerName}</span>
             <span style={{ fontFamily:FONT, fontSize:"0.68rem", color:"#b0aaa3", fontWeight:400 }}>{formatted}</span>
+            <span style={{ fontFamily:FONT, fontSize:"0.65rem", fontWeight:600, color:"#7a7470", background:"#f7f4ef", border:"1px solid #ece6de", borderRadius:99, padding:"2px 8px" }}>
+              {entry.productName}
+            </span>
           </div>
           <div style={{ display:"flex", alignItems:"center", gap:6 }}>
             <StarDisplay rating={entry.rating} />
@@ -193,14 +212,6 @@ function FeedbackCard({ entry, onDelete, deleting }: { entry:FeedbackEntry; onDe
             </span>
           </div>
         </div>
-        <motion.button whileHover={{ scale:1.1 }} whileTap={{ scale:0.9 }} onClick={()=>onDelete(entry.id)} disabled={deleting}
-          style={{ background:"transparent", border:"1px solid #eae7e2", borderRadius:8, width:32, height:32, display:"flex", alignItems:"center", justifyContent:"center", cursor:deleting?"default":"pointer", flexShrink:0, opacity:deleting?0.4:1, transition:"border-color 0.15s, opacity 0.15s" }}
-          onMouseEnter={(e)=>{ if (!deleting) e.currentTarget.style.borderColor="#d94040"; }}
-          onMouseLeave={(e)=>{ e.currentTarget.style.borderColor="#eae7e2"; }}>
-          {deleting
-            ? <span style={{ display:"inline-block", width:12, height:12, border:"1.5px solid #d94040", borderTopColor:"transparent", borderRadius:"50%", animation:"settings-spin 0.7s linear infinite" }} />
-            : <Trash2 size={13} color="#c0796c" />}
-        </motion.button>
       </div>
       <p style={{ fontFamily:FONT, fontSize:"0.79rem", color:"#484340", lineHeight:1.7, margin:0 }}>{entry.message}</p>
     </motion.div>
@@ -252,7 +263,7 @@ export default function SettingsPage() {
   const [feedback, setFeedback]               = useState<FeedbackEntry[]>([]);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
   const [feedbackError, setFeedbackError]     = useState<string|null>(null);
-  const [deletingId, setDeletingId]           = useState<string|null>(null);
+  const [feedbackNotice, setFeedbackNotice]   = useState<string|null>(null);
   const [fbSort, setFbSort]                   = useState<"newest"|"oldest"|"highest"|"lowest">("newest");
   const [fbFilter, setFbFilter]               = useState<number>(0);
 
@@ -265,27 +276,47 @@ export default function SettingsPage() {
   useEffect(()=>{ if (!initialized){ setInitialized(true); return; } setUnsaved(true); }, [settings]);
 
   const fetchFeedback = useCallback(async()=>{
-    setFeedbackLoading(true); setFeedbackError(null);
+    setFeedbackLoading(true); setFeedbackError(null); setFeedbackNotice(null);
     try {
       const res = await fetch("/api/feedback");
-      if (!res.ok) throw new Error(`${res.status}`);
-      const data: FeedbackEntry[] = await res.json();
-      setFeedback(Array.isArray(data)?data:[]);
-    } catch { setFeedbackError("Could not load feedback. Please try again."); }
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.message || `${res.status}`);
+      }
+      const data: FeedbackApiEntry[] = await res.json();
+      const normalized = Array.isArray(data)
+        ? data.map((entry, index) => ({
+            id: String(entry.feedback_id ?? `feedback-${index}`),
+            reviewerName:
+              String(entry.customer_name ?? "").trim() || "Anonymous",
+            productName:
+              String(entry.product_name ?? "").trim() || "Unknown product",
+            rating:
+              typeof entry.rating === "number" && Number.isFinite(entry.rating)
+                ? entry.rating
+                : 0,
+            message: String(entry.comment ?? "").trim(),
+            createdAt:
+              String(entry.created_at ?? "").trim() || new Date().toISOString(),
+          }))
+        : [];
+      setFeedback(normalized);
+      setFeedbackNotice(
+        normalized.length > 0
+          ? `Loaded ${normalized.length} feedback entr${normalized.length === 1 ? "y" : "ies"}.`
+          : "Feedback loaded successfully.",
+      );
+    } catch (error) {
+      setFeedbackError(
+        error instanceof Error && error.message
+          ? error.message
+          : "Could not load feedback. Please try again.",
+      );
+    }
     finally { setFeedbackLoading(false); }
   }, []);
 
   useEffect(()=>{ if (tab==="feedback") fetchFeedback(); }, [tab, fetchFeedback]);
-
-  const handleDeleteFeedback = useCallback(async(id:string)=>{
-    setDeletingId(id);
-    try {
-      const res = await fetch(`/api/feedback/${id}`, { method:"DELETE" });
-      if (!res.ok) throw new Error(`${res.status}`);
-      setFeedback((prev)=>prev.filter((e)=>e.id!==id));
-    } catch {}
-    finally { setDeletingId(null); }
-  }, []);
 
   const setStr  = useCallback((field:keyof RestaurantSettings, v:string)=>setSettings((p)=>({...p,[field]:v})), []);
   const setBool = useCallback((field:keyof RestaurantSettings, v:boolean)=>setSettings((p)=>({...p,[field]:v})), []);
@@ -556,6 +587,11 @@ export default function SettingsPage() {
                     <button onClick={fetchFeedback} style={{ fontFamily:FONT,fontSize:"0.79rem",fontWeight:600,color:ACCENT,background:"rgba(232,80,26,0.07)",border:"1px solid rgba(232,80,26,0.18)",borderRadius:8,padding:"7px 18px",cursor:"pointer" }}>Try again</button>
                   </motion.div>
                 )}
+                {!feedbackLoading && !feedbackError && feedbackNotice && (
+                  <motion.div initial={{ opacity:0,y:8 }} animate={{ opacity:1,y:0 }} style={{ background:"#fff",border:"1px solid #eae7e2",borderRadius:12,padding:"14px 18px",marginBottom:14 }}>
+                    <p style={{ fontFamily:FONT,fontSize:"0.78rem",color:"#6f6a65",fontWeight:500,margin:0 }}>{feedbackNotice}</p>
+                  </motion.div>
+                )}
                 {!feedbackLoading && !feedbackError && feedback.length===0 && (
                   <motion.div initial={{ opacity:0,y:10 }} animate={{ opacity:1,y:0 }} style={{ background:"#fff",border:"1px solid #eae7e2",borderRadius:12,padding:"56px 24px",textAlign:"center" }}>
                     <MessageSquare size={36} color="#d8d4ce" style={{ marginBottom:12 }} />
@@ -584,7 +620,7 @@ export default function SettingsPage() {
                   <motion.div layout style={{ display:"flex",flexDirection:"column",gap:10 }}>
                     <AnimatePresence mode="popLayout">
                       {sortedFeedback.map((entry)=>(
-                        <FeedbackCard key={entry.id} entry={entry} onDelete={handleDeleteFeedback} deleting={deletingId===entry.id} />
+                        <FeedbackCard key={entry.id} entry={entry} />
                       ))}
                     </AnimatePresence>
                     {sortedFeedback.length===0 && (

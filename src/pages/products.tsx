@@ -76,9 +76,10 @@ interface Promo {
 }
 
 interface FeedbackPayload {
-  rating:  number
-  message: string
-  name:    string
+  product_id: number
+  customer_user_id: number | null
+  rating: number
+  comment: string
 }
 
 // ─────────────────────────────────────────────
@@ -1013,18 +1014,56 @@ function StarRating({ value, onChange }: { value: number; onChange: (v: number) 
 // ─────────────────────────────────────────────
 // Feedback Modal
 // ─────────────────────────────────────────────
-function FeedbackModal({ onClose }: { onClose: () => void }) {
+interface FeedbackProductOption {
+  id: number
+  name: string
+}
+
+function FeedbackModal({
+  onClose,
+  productOptions,
+}: {
+  onClose: () => void
+  productOptions: FeedbackProductOption[]
+}) {
   const [rating,   setRating]   = useState(0)
   const [message,  setMessage]  = useState('')
-  const [name,     setName]     = useState('')
+  const [selectedProductId, setSelectedProductId] = useState<number | null>(
+    productOptions[0]?.id ?? null,
+  )
   const [status,   setStatus]   = useState<'idle' | 'submitting' | 'success' | 'error'>('idle')
   const [errorMsg, setErrorMsg] = useState('')
   const [focused,  setFocused]  = useState<string | null>(null)
 
-  const canSubmit = rating > 0 && message.trim().length > 0
+  useEffect(() => {
+    if (productOptions.length === 0) {
+      setSelectedProductId(null)
+      return
+    }
+
+    setSelectedProductId((current) => {
+      if (current && productOptions.some((product) => product.id === current)) {
+        return current
+      }
+      return productOptions[0].id
+    })
+  }, [productOptions])
+
+  const customerUserIdRaw =
+    typeof window !== 'undefined' ? window.localStorage.getItem('userId') : null
+  const customerUserId = customerUserIdRaw ? Number(customerUserIdRaw) : null
+  const normalizedCustomerUserId =
+    customerUserId !== null && Number.isInteger(customerUserId) && customerUserId > 0
+      ? customerUserId
+      : null
+
+  const canSubmit =
+    selectedProductId !== null && rating > 0 && message.trim().length > 0
 
   const handleSubmit = async () => {
     if (!canSubmit) return
+    const productId = selectedProductId
+    if (productId === null) return
     setStatus('submitting')
     setErrorMsg('')
     try {
@@ -1032,15 +1071,19 @@ function FeedbackModal({ onClose }: { onClose: () => void }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          product_id: productId,
+          customer_user_id: normalizedCustomerUserId,
           rating,
-          message: message.trim(),
-          name: name.trim() || 'Anonymous',
+          comment: message.trim(),
         } satisfies FeedbackPayload),
       })
-      if (!res.ok) throw new Error(`Server error ${res.status}`)
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        throw new Error(data?.message || `Server error ${res.status}`)
+      }
       setStatus('success')
     } catch (err) {
-      setErrorMsg('Could not submit. Please try again.')
+      setErrorMsg(err instanceof Error ? err.message : 'Could not submit. Please try again.')
       setStatus('error')
     }
   }
@@ -1175,19 +1218,29 @@ function FeedbackModal({ onClose }: { onClose: () => void }) {
                 )}
               </div>
 
-              {/* Name */}
+              {/* Product */}
               <div>
                 <p style={{ fontFamily: "'Poppins', sans-serif", fontSize: 11, fontWeight: 600, color: 'rgba(240,237,232,0.35)', margin: '0 0 8px', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-                  Name <span style={{ fontWeight: 400, opacity: 0.6 }}>(optional)</span>
+                  Product
                 </p>
-                <input
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Your name"
-                  onFocus={() => setFocused('name')}
+                <select
+                  value={selectedProductId ?? ''}
+                  onChange={(e) => setSelectedProductId(Number(e.target.value) || null)}
+                  onFocus={() => setFocused('product')}
                   onBlur={() => setFocused(null)}
-                  style={inputStyle('name')}
-                />
+                  style={inputStyle('product')}
+                  disabled={productOptions.length === 0 || status === 'submitting'}
+                >
+                  {productOptions.length === 0 ? (
+                    <option value="">No products available</option>
+                  ) : (
+                    productOptions.map((product) => (
+                      <option key={product.id} value={product.id} style={{ color: '#111' }}>
+                        {product.name}
+                      </option>
+                    ))
+                  )}
+                </select>
               </div>
 
               {/* Message */}
@@ -1224,6 +1277,11 @@ function FeedbackModal({ onClose }: { onClose: () => void }) {
                   </motion.p>
                 )}
               </AnimatePresence>
+              {productOptions.length === 0 && (
+                <p style={{ fontFamily: "'Poppins', sans-serif", fontSize: 12, color: '#fbbf24', margin: 0 }}>
+                  Feedback is temporarily unavailable because no products could be loaded.
+                </p>
+              )}
 
               {/* Submit */}
               <motion.button
@@ -1266,13 +1324,39 @@ function FeedbackModal({ onClose }: { onClose: () => void }) {
 // ─────────────────────────────────────────────
 function FeedbackButton() {
   const [open, setOpen] = useState(false)
+  const [productOptions, setProductOptions] = useState<FeedbackProductOption[]>([])
+
+  useEffect(() => {
+    const loadProducts = async () => {
+      try {
+        const res = await fetch('/api/products')
+        if (!res.ok) throw new Error(`Server error ${res.status}`)
+        const data = (await res.json()) as Array<{ id?: number; name?: string }>
+        const nextOptions = Array.isArray(data)
+          ? data
+              .filter((item) => Number.isInteger(item.id) && typeof item.name === 'string' && item.name.trim().length > 0)
+              .map((item) => ({ id: Number(item.id), name: String(item.name).trim() }))
+          : []
+        setProductOptions(nextOptions)
+      } catch {
+        setProductOptions([])
+      }
+    }
+
+    void loadProducts()
+  }, [])
 
   return (
     <>
       <style>{`@keyframes crunch-spin { to { transform: rotate(360deg); } }`}</style>
 
       <AnimatePresence>
-        {open && <FeedbackModal onClose={() => setOpen(false)} />}
+        {open && (
+          <FeedbackModal
+            onClose={() => setOpen(false)}
+            productOptions={productOptions}
+          />
+        )}
       </AnimatePresence>
 
       <motion.button

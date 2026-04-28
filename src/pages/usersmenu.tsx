@@ -72,13 +72,12 @@ const normalizeCategory = (value: unknown) =>
     .trim()
     .toUpperCase();
 
-const isMenuFoodCategory = (value: unknown) =>
-  normalizeCategory(value).includes("MENU FOOD");
-
 const isUnavailableStatus = (value: unknown) =>
-  String(value ?? "")
-    .trim()
-    .toLowerCase() === "unavailable";
+  ["unavailable", "out of stock", "hidden"].includes(
+    String(value ?? "")
+      .trim()
+      .toLowerCase(),
+  );
 
 function mapInventoryRecipes(
   inventoryRows: InventoryMenuRow[],
@@ -113,16 +112,13 @@ function mapInventoryRecipes(
     const name = String(row.product_name ?? row.name ?? `Product #${id}`);
     const category = normalizeCategory(row.category);
     const menuMeta = menuMetaByName.get(normalizeName(name));
-    const stock = Number(row.mainStock ?? row.stock ?? 0);
     const normalizedMetaMeals = (menuMeta?.mealTypes ?? []).map((meal) =>
       String(meal).trim().toLowerCase(),
     );
     const hasSupportedMealType = normalizedMetaMeals.some((meal) =>
       normalizedFallbackMeals.includes(meal),
     );
-    const available =
-      !isUnavailableStatus(row.availability_status) &&
-      (isMenuFoodCategory(category) || stock > 0);
+    const available = !isUnavailableStatus(row.availability_status);
 
     return {
       id,

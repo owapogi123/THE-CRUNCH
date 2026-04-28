@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import { InventoryClient } from "@/components/ui/inventoryClient";
 import type {
   Batch,
@@ -112,6 +113,11 @@ interface ApiInventoryRow {
   returned?: number;
   wasted?: number;
   soldToday?: number;
+  manual_override?: number | boolean;
+  manual_status?: string;
+  ingredient_count?: number;
+  available_servings?: number | string | null;
+  ingredients?: MenuIngredientRow[];
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -1828,10 +1834,45 @@ interface MgmtProduct {
   description?: string;
   image?: string;
   availabilityStatus: string;
+  manualOverride: boolean;
+  manualStatus: string;
+  overrideMode: ManualOverrideMode;
+  availableServings?: number | null;
   isPromotional: boolean;
   promoPrice?: string;
   promoLabel?: string;
+  ingredients: MenuIngredientInput[];
 }
+
+interface MenuIngredientRow {
+  product_id?: number;
+  product_name?: string;
+  quantity_required?: number | string;
+  unit?: string;
+  daily_withdrawn?: number | string;
+  stock?: number | string;
+}
+
+interface MenuIngredientInput {
+  productId: string;
+  quantityRequired: string;
+  productName?: string;
+  unit?: string;
+  stock?: number;
+}
+
+interface IngredientOption {
+  id: number;
+  name: string;
+  category: string;
+  unit: string;
+  stock: number;
+}
+
+type ManualOverrideMode =
+  | "Auto"
+  | "Force Available"
+  | "Force Out of Stock";
 
 const UNIT_OPTIONS = [
   "piece",
@@ -1842,7 +1883,11 @@ const UNIT_OPTIONS = [
   "bottle",
   "box",
 ] as const;
-const AVAILABILITY_OPTIONS = ["Available", "Unavailable"] as const;
+const OVERRIDE_MODE_OPTIONS: ManualOverrideMode[] = [
+  "Auto",
+  "Force Available",
+  "Force Out of Stock",
+];
 
 async function tryPut(endpoints: string[], payload: object): Promise<void> {
   let lastErr: unknown;
@@ -1862,6 +1907,7 @@ async function tryPut(endpoints: string[], payload: object): Promise<void> {
   throw lastErr;
 }
 
+/*
 function MenuManagementTab() {
   const { addNotification } = useNotifications();
   const [products, setProducts] = useState<MgmtProduct[]>([]);
@@ -2400,10 +2446,14 @@ function MenuManagementTab() {
     </div>
   );
 }
+*/
 
 function MenuAdminTab() {
   const { addNotification } = useNotifications();
   const [products, setProducts] = useState<MgmtProduct[]>([]);
+  const [ingredientOptions, setIngredientOptions] = useState<IngredientOption[]>(
+    [],
+  );
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
@@ -2416,9 +2466,10 @@ function MenuAdminTab() {
   const [fPrice, setFPrice] = useState("");
   const [fStock, setFStock] = useState("");
   const [fDesc, setFDesc] = useState("");
-  const [fAvailabilityStatus, setFAvailabilityStatus] = useState<string>(
-    AVAILABILITY_OPTIONS[0],
+  const [fOverrideMode, setFOverrideMode] = useState<ManualOverrideMode>(
+    OVERRIDE_MODE_OPTIONS[0],
   );
+  const [fIngredients, setFIngredients] = useState<MenuIngredientInput[]>([]);
   const [fIsPromotional, setFIsPromotional] = useState(false);
   const [fPromoPrice, setFPromoPrice] = useState("");
   const [fPromoLabel, setFPromoLabel] = useState("");
@@ -2430,9 +2481,10 @@ function MenuAdminTab() {
   const [ePrice, setEPrice] = useState("");
   const [eStock, setEStock] = useState("");
   const [eDesc, setEDesc] = useState("");
-  const [eAvailabilityStatus, setEAvailabilityStatus] = useState<string>(
-    AVAILABILITY_OPTIONS[0],
+  const [eOverrideMode, setEOverrideMode] = useState<ManualOverrideMode>(
+    OVERRIDE_MODE_OPTIONS[0],
   );
+  const [eIngredients, setEIngredients] = useState<MenuIngredientInput[]>([]);
   const [eIsPromotional, setEIsPromotional] = useState(false);
   const [ePromoPrice, setEPromoPrice] = useState("");
   const [ePromoLabel, setEPromoLabel] = useState("");
@@ -2446,6 +2498,186 @@ function MenuAdminTab() {
       reader.onerror = reject;
       reader.readAsDataURL(file);
     });
+  }
+
+  function toOverrideMode(
+    manualOverride: unknown,
+    manualStatus: unknown,
+  ): ManualOverrideMode {
+    const isManual =
+      manualOverride === true ||
+      manualOverride === 1 ||
+      String(manualOverride ?? "").trim().toLowerCase() === "true";
+    if (!isManual) return "Auto";
+    return String(manualStatus ?? "").trim().toLowerCase() === "out of stock"
+      ? "Force Out of Stock"
+      : "Force Available";
+  }
+
+  function toIngredientsInput(
+    ingredients: MenuIngredientRow[] | undefined,
+  ): MenuIngredientInput[] {
+    return (ingredients ?? []).map((ingredient) => ({
+      productId: String(ingredient.product_id ?? ""),
+      quantityRequired: String(ingredient.quantity_required ?? ""),
+      productName: ingredient.product_name,
+      unit: ingredient.unit,
+      stock: Number(ingredient.stock ?? 0),
+    }));
+  }
+
+  function toOverridePayload(mode: ManualOverrideMode) {
+    if (mode === "Force Available") {
+      return { manual_override: true, manual_status: "Available" };
+    }
+    if (mode === "Force Out of Stock") {
+      return { manual_override: true, manual_status: "Out of Stock" };
+    }
+    return { manual_override: false, manual_status: "Available" };
+  }
+
+  function buildIngredientPayload(inputs: MenuIngredientInput[]) {
+    const sanitized = inputs
+      .map((entry) => ({
+        productId: entry.productId.trim(),
+        quantityRequired: entry.quantityRequired.trim(),
+      }))
+      .filter(
+        (entry) =>
+          entry.productId.length > 0 || entry.quantityRequired.length > 0,
+      );
+
+    for (const entry of sanitized) {
+      if (!entry.productId || !entry.quantityRequired) {
+        throw new Error(
+          "Each ingredient row needs both an ingredient and a required quantity.",
+        );
+      }
+      if (Number(entry.quantityRequired) <= 0) {
+        throw new Error("Ingredient quantities must be greater than zero.");
+      }
+    }
+
+    return sanitized.map((entry) => ({
+      product_id: Number(entry.productId),
+      quantity_required: Number(entry.quantityRequired),
+    }));
+  }
+
+  function addIngredientRow(
+    setter: Dispatch<SetStateAction<MenuIngredientInput[]>>,
+  ) {
+    setter((prev) => [...prev, { productId: "", quantityRequired: "" }]);
+  }
+
+  function updateIngredientRow(
+    setter: Dispatch<SetStateAction<MenuIngredientInput[]>>,
+    index: number,
+    field: "productId" | "quantityRequired",
+    value: string,
+  ) {
+    setter((prev) =>
+      prev.map((entry, rowIndex) =>
+        rowIndex === index ? { ...entry, [field]: value } : entry,
+      ),
+    );
+  }
+
+  function removeIngredientRow(
+    setter: Dispatch<SetStateAction<MenuIngredientInput[]>>,
+    index: number,
+  ) {
+    setter((prev) => prev.filter((_, rowIndex) => rowIndex !== index));
+  }
+
+  function renderOverrideButtons(
+    value: ManualOverrideMode,
+    onChange: (mode: ManualOverrideMode) => void,
+  ) {
+    return (
+      <div className="grid grid-cols-3 gap-2">
+        {OVERRIDE_MODE_OPTIONS.map((option) => (
+          <button
+            key={option}
+            type="button"
+            className={`rounded-lg border px-3 py-2 text-[11px] font-semibold transition-colors ${
+              value === option
+                ? "border-gray-800 bg-gray-800 text-white"
+                : "border-gray-200 bg-white text-gray-600 hover:border-gray-400"
+            }`}
+            onClick={() => onChange(option)}
+          >
+            {option}
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  function renderIngredientsEditor(
+    value: MenuIngredientInput[],
+    setter: Dispatch<SetStateAction<MenuIngredientInput[]>>,
+  ) {
+    return (
+      <FormGroup label="Required Ingredients">
+        <div className="space-y-2">
+          {value.length === 0 && (
+            <p className="text-[11px] text-gray-400">
+              No ingredients assigned. This menu item will fall back to the
+              existing stock-based availability.
+            </p>
+          )}
+          {value.map((ingredient, index) => (
+            <div key={`${ingredient.productId}-${index}`} className="grid grid-cols-3 gap-2">
+              <select
+                className={inputClass}
+                value={ingredient.productId}
+                onChange={(e) =>
+                  updateIngredientRow(setter, index, "productId", e.target.value)
+                }
+              >
+                <option value="">Select ingredient</option>
+                {ingredientOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.name} ({option.category})
+                  </option>
+                ))}
+              </select>
+              <input
+                className={inputClass}
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="Qty required"
+                value={ingredient.quantityRequired}
+                onChange={(e) =>
+                  updateIngredientRow(
+                    setter,
+                    index,
+                    "quantityRequired",
+                    e.target.value,
+                  )
+                }
+              />
+              <button
+                type="button"
+                className={dangerBtnClass}
+                onClick={() => removeIngredientRow(setter, index)}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            className={ghostBtnClass}
+            onClick={() => addIngredientRow(setter)}
+          >
+            + Add Ingredient
+          </button>
+        </div>
+      </FormGroup>
+    );
   }
 
   function normalizeManagementRows(data: ApiInventoryRow[]) {
@@ -2482,6 +2714,18 @@ function MenuAdminTab() {
         | null;
       if (!data || !Array.isArray(data)) return;
 
+      const allOptions = data
+        .map((item) => ({
+          id: Number(item.product_id ?? item.id ?? item.inventory_id ?? 0),
+          name: String(item.product_name ?? item.name ?? "Unnamed Product"),
+          category: String(item.category ?? "Uncategorized"),
+          unit: String(item.unit ?? "piece"),
+          stock: Number(item.quantity ?? item.stock ?? 0),
+        }))
+        .filter((item) => item.id > 0)
+        .sort((a, b) => a.name.localeCompare(b.name));
+      setIngredientOptions(allOptions);
+
       const normalized = normalizeManagementRows(data);
       setProducts(
         normalized.map((item) => ({
@@ -2503,10 +2747,19 @@ function MenuAdminTab() {
           stock: Number((item as any).quantity ?? (item as any).stock ?? 0),
           description: String((item as any).description ?? ""),
           image: item.image || "/img/placeholder.jpg",
-          availabilityStatus:
-            String(item.availability_status ?? "Available") === "Hidden"
-              ? "Unavailable"
-              : "Available",
+          availabilityStatus: String(item.availability_status ?? "Available"),
+          manualOverride: Boolean(Number(item.manual_override ?? 0)),
+          manualStatus: String(item.manual_status ?? "Available"),
+          overrideMode: toOverrideMode(
+            item.manual_override,
+            item.manual_status,
+          ),
+          availableServings:
+            item.available_servings === null ||
+            item.available_servings === undefined ||
+            String(item.available_servings) === ""
+              ? null
+              : Number(item.available_servings),
           isPromotional: Boolean(Number(item.is_promotional ?? 0)),
           promoPrice:
             item.promo_price !== null &&
@@ -2515,6 +2768,7 @@ function MenuAdminTab() {
               ? String(item.promo_price)
               : "",
           promoLabel: String(item.promo_label ?? ""),
+          ingredients: toIngredientsInput(item.ingredients),
         })),
       );
     } catch (error) {
@@ -2539,7 +2793,8 @@ function MenuAdminTab() {
     setFPrice("");
     setFStock("");
     setFDesc("");
-    setFAvailabilityStatus(AVAILABILITY_OPTIONS[0]);
+    setFOverrideMode(OVERRIDE_MODE_OPTIONS[0]);
+    setFIngredients([]);
     setFIsPromotional(false);
     setFPromoPrice("");
     setFPromoLabel("");
@@ -2554,11 +2809,8 @@ function MenuAdminTab() {
     setEPrice(product.price);
     setEStock(String(product.stock));
     setEDesc(product.description ?? "");
-    setEAvailabilityStatus(
-      product.availabilityStatus === "Hidden"
-        ? "Unavailable"
-        : product.availabilityStatus || "Available",
-    );
+    setEOverrideMode(product.overrideMode);
+    setEIngredients(product.ingredients);
     setEIsPromotional(Boolean(product.isPromotional));
     setEPromoPrice(product.promoPrice ?? "");
     setEPromoLabel(product.promoLabel ?? "");
@@ -2584,6 +2836,8 @@ function MenuAdminTab() {
       setSaving(true);
       let imageUrl = "/img/placeholder.jpg";
       if (fImageFile) imageUrl = await toBase64(fImageFile);
+      const ingredients = buildIngredientPayload(fIngredients);
+      const manualOverridePayload = toOverridePayload(fOverrideMode);
 
       await api.post("/products", {
         name: fName.trim(),
@@ -2593,13 +2847,15 @@ function MenuAdminTab() {
         quantity: parseFloat(fStock) || 0,
         description: fDesc.trim() || null,
         image: imageUrl,
-        availability_status: fAvailabilityStatus,
+        ...manualOverridePayload,
+        override_mode: fOverrideMode,
         is_promotional: fIsPromotional,
         promo_price:
           fIsPromotional && fPromoPrice.trim()
             ? parseFloat(fPromoPrice)
             : null,
         promo_label: fIsPromotional ? fPromoLabel.trim() || null : null,
+        ingredients,
       });
 
       await loadProducts();
@@ -2648,13 +2904,15 @@ function MenuAdminTab() {
         unit: editProduct.unit || UNIT_OPTIONS[0],
         quantity: parseFloat(eStock) || 0,
         description: eDesc.trim() || null,
-        availability_status: eAvailabilityStatus,
+        ...toOverridePayload(eOverrideMode),
+        override_mode: eOverrideMode,
         is_promotional: eIsPromotional,
         promo_price:
           eIsPromotional && ePromoPrice.trim()
             ? parseFloat(ePromoPrice)
             : null,
         promo_label: eIsPromotional ? ePromoLabel.trim() || null : null,
+        ingredients: buildIngredientPayload(eIngredients),
       };
       if (editImageUrl) payload.image = editImageUrl;
 
@@ -2717,48 +2975,18 @@ function MenuAdminTab() {
     }
   }
 
-  async function handleStockUpdate(id: number, delta: number) {
-    const product = products.find((entry) => entry.id === id);
-    if (!product) return;
-
-    const newStock = Math.max(0, product.stock + delta);
-    try {
-      await tryPut([`/products/${product.rawProductId ?? product.id}`], {
-        quantity: newStock,
-      });
-      setProducts((prev) =>
-        prev.map((entry) =>
-          entry.id === id ? { ...entry, stock: newStock } : entry,
-        ),
-      );
-    } catch (error) {
-      notify(
-        addNotification,
-        `Failed to update stock: ${error instanceof Error ? error.message : "Unknown error"}`,
-        "error",
-      );
-    }
-  }
-
   async function handleAvailabilityToggle(product: MgmtProduct) {
-    const nextStatus =
-      product.availabilityStatus === "Unavailable"
-        ? "Available"
-        : "Unavailable";
+    const nextMode: ManualOverrideMode =
+      product.overrideMode === "Auto" ? "Force Out of Stock" : "Auto";
     try {
       await tryPut([`/products/${product.rawProductId ?? product.id}`], {
-        availability_status: nextStatus,
+        ...toOverridePayload(nextMode),
+        override_mode: nextMode,
       });
-      setProducts((prev) =>
-        prev.map((entry) =>
-          entry.id === product.id
-            ? { ...entry, availabilityStatus: nextStatus }
-            : entry,
-        ),
-      );
+      await loadProducts();
       notify(
         addNotification,
-        `"${product.name}" is now ${nextStatus}.`,
+        `"${product.name}" override set to ${nextMode}.`,
         "success",
       );
     } catch (error) {
@@ -2785,7 +3013,7 @@ function MenuAdminTab() {
     return sum + price * product.stock;
   }, 0);
   const hiddenCount = products.filter(
-    (product) => product.availabilityStatus === "Unavailable",
+    (product) => product.availabilityStatus === "Out of Stock",
   ).length;
   const promoCount = products.filter((product) => product.isPromotional).length;
   const outOfStockCount = products.filter((product) => product.stock === 0).length;
@@ -2799,7 +3027,7 @@ function MenuAdminTab() {
         <h2 className="text-xl font-bold text-gray-900">Menu Management</h2>
         <p className="text-gray-500 text-sm mt-1">
           Add, edit, hide, promote, and maintain menu items, prices,
-          categories, descriptions, images, and availability.
+          categories, descriptions, images, ingredients, and availability.
         </p>
       </div>
 
@@ -2819,7 +3047,7 @@ function MenuAdminTab() {
         <StatCard
           label="Unavailable"
           value={hiddenCount}
-          meta="Hidden from customers"
+          meta="Currently out of stock"
           color="yellow"
         />
         <StatCard
@@ -2945,15 +3173,20 @@ function MenuAdminTab() {
               <td className="px-[14px] py-[11px]">
                 <span
                   className={`inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
-                    product.availabilityStatus === "Unavailable"
+                    product.availabilityStatus === "Out of Stock"
                       ? "bg-gray-200 text-gray-700"
                       : "bg-emerald-50 text-emerald-700"
                   }`}
                 >
-                  {product.availabilityStatus === "Unavailable"
-                    ? "Unavailable"
-                    : "Available"}
+                  {product.availabilityStatus}
                 </span>
+                <div className="mt-1 text-[10px] text-gray-400">
+                  {product.overrideMode === "Auto"
+                    ? product.ingredients.length > 0
+                      ? "Auto from ingredients"
+                      : "Auto from stock fallback"
+                    : product.overrideMode}
+                </div>
               </td>
               <td className="px-[14px] py-[11px]">
                 <div className="flex gap-[5px]">
@@ -2967,9 +3200,9 @@ function MenuAdminTab() {
                     className={ghostBtnClass}
                     onClick={() => void handleAvailabilityToggle(product)}
                   >
-                    {product.availabilityStatus === "Unavailable"
-                      ? "Set Available"
-                      : "Set Unavailable"}
+                    {product.overrideMode === "Auto"
+                      ? "Force Out"
+                      : "Set Auto"}
                   </button>
                   <button
                     className={dangerBtnClass}
@@ -3039,12 +3272,10 @@ function MenuAdminTab() {
             value={fStock}
             onChange={(e) => setFStock(e.target.value)}
           />
-          <FormSelect
-            label="Availability Status"
-            opts={AVAILABILITY_OPTIONS}
-            value={fAvailabilityStatus}
-            onChange={(e) => setFAvailabilityStatus(e.target.value)}
-          />
+          <FormGroup label="Availability Mode">
+            {renderOverrideButtons(fOverrideMode, setFOverrideMode)}
+          </FormGroup>
+          {renderIngredientsEditor(fIngredients, setFIngredients)}
           <FormGroup label="Promotional Menu">
             <label className="flex items-center gap-2 text-[12px] text-gray-700">
               <input
@@ -3172,12 +3403,13 @@ function MenuAdminTab() {
               onChange={(e) => setEStock(e.target.value)}
             />
           </div>
-          <FormSelect
-            label="Availability Status"
-            opts={AVAILABILITY_OPTIONS}
-            value={eAvailabilityStatus}
-            onChange={(e) => setEAvailabilityStatus(e.target.value)}
-          />
+          <FormGroup label="Availability Mode">
+            {renderOverrideButtons(eOverrideMode, setEOverrideMode)}
+            <p className="mt-2 text-[11px] text-gray-400">
+              Current customer status: {editProduct.availabilityStatus}
+            </p>
+          </FormGroup>
+          {renderIngredientsEditor(eIngredients, setEIngredients)}
           <FormGroup label="Promotional Menu">
             <label className="flex items-center gap-2 text-[12px] text-gray-700">
               <input
@@ -3430,11 +3662,6 @@ export default function Inventory() {
   });
 
   const totalStock = inventoryItems.reduce((sum, item) => sum + item.stock, 0);
-  const totalBatches = inventoryItems.reduce(
-    (sum, item) => sum + (item.batches?.length || 0),
-    0,
-  );
-
   return (
     <div className="flex min-h-screen bg-gray-50 font-[Poppins,sans-serif]">
       <Sidebar />
