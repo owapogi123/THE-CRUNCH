@@ -61,6 +61,7 @@ async function setup(options = {}) {
       "DROP TABLE IF EXISTS purchase_orders;",
       "DROP TABLE IF EXISTS po_counter;",
       "DROP TABLE IF EXISTS feedback;",
+      "DROP TABLE IF EXISTS menu_item_ingredients;",
       "DROP TABLE IF EXISTS Order_Tracking;",
       "DROP TABLE IF EXISTS Kitchen;",
       "DROP TABLE IF EXISTS Receipt;",
@@ -141,7 +142,25 @@ CREATE TABLE IF NOT EXISTS Menu (
     Availability BOOLEAN DEFAULT TRUE,
     Promo VARCHAR(100),
     Stock INT DEFAULT 0,
+    manual_override TINYINT(1) NOT NULL DEFAULT 0,
+    manual_status VARCHAR(20) NOT NULL DEFAULT 'Available',
     FOREIGN KEY (Category_ID) REFERENCES Categories(Category_ID)
+);
+
+CREATE TABLE IF NOT EXISTS menu_item_ingredients (
+    menu_ingredient_id INT AUTO_INCREMENT PRIMARY KEY,
+    menu_product_id INT NOT NULL,
+    product_id INT NOT NULL,
+    quantity_required DECIMAL(10,2) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_menu_ingredient (menu_product_id, product_id),
+    CONSTRAINT fk_menu_item_ingredients_menu
+      FOREIGN KEY (menu_product_id) REFERENCES Menu(Product_ID)
+      ON DELETE CASCADE,
+    CONSTRAINT fk_menu_item_ingredients_product
+      FOREIGN KEY (product_id) REFERENCES Menu(Product_ID)
+      ON DELETE CASCADE
 );
 
   CREATE TABLE IF NOT EXISTS products (
@@ -530,6 +549,18 @@ END
       "products",
       "promo_label",
       "`promo_label` VARCHAR(100) NULL",
+    );
+    await ensureColumn(
+      connection,
+      "Menu",
+      "manual_override",
+      "`manual_override` TINYINT(1) NOT NULL DEFAULT 0",
+    );
+    await ensureColumn(
+      connection,
+      "Menu",
+      "manual_status",
+      "`manual_status` VARCHAR(20) NOT NULL DEFAULT 'Available'",
     );
 
     await ensureColumn(

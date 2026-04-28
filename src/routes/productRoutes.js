@@ -1,5 +1,12 @@
 const router = require("express").Router();
 const db = require("../config/db");
+const {
+    deriveManualOverrideState,
+    ensureMenuAvailabilitySchema,
+    fetchMenuIngredients,
+    normalizeMenuIngredients,
+    replaceMenuIngredients,
+} = require("../utils/menuAvailability");
 
 async function hasColumn(tableName, columnName) {
     const [rows] = await db.query(`SHOW COLUMNS FROM ${tableName} LIKE ?`, [
@@ -103,6 +110,7 @@ function normalizePromoValues(isPromotional, promoPrice, promoLabel) {
 router.get("/", async (req, res) => {
     try {
         await ensureMenuManagementColumns();
+        await ensureMenuAvailabilitySchema(db);
         const includeRaw = String(req.query.includeRaw || "").toLowerCase();
         const includeRawMaterials = includeRaw === "1" || includeRaw === "true";
 
@@ -115,13 +123,26 @@ router.get("/", async (req, res) => {
                 p.*,
                 m.Category_Name AS category,
                 m.Promo AS inventoryPromo,
-                CAST(COALESCE(m.Stock, i.Stock, p.quantity, 0) AS SIGNED) AS remainingStock
+                CAST(COALESCE(m.Stock, i.Stock, p.quantity, 0) AS SIGNED) AS remainingStock,
+                COALESCE(m.manual_override, 0) AS manual_override,
+                COALESCE(m.manual_status, 'Available') AS manual_status
              FROM products p
              LEFT JOIN Menu m ON m.Product_ID = p.id
              LEFT JOIN Inventory i ON i.Product_ID = p.id
              ${whereClause}`
         );
-        res.json(rows);
+
+        const ingredientMap = await fetchMenuIngredients(
+            db,
+            rows.map((row) => row.id),
+        );
+
+        res.json(
+            rows.map((row) => ({
+                ...row,
+                ingredients: ingredientMap.get(Number(row.id)) ?? [],
+            })),
+        );
     } catch (err) {
         console.error(err);
         res.status(500).json({ message: 'DB error', error: err.message });
@@ -132,6 +153,7 @@ router.get("/", async (req, res) => {
 router.post("/", async (req, res) => {
     try {
         await ensureMenuManagementColumns();
+        await ensureMenuAvailabilitySchema(db);
         const {
             name,
             price,
@@ -144,11 +166,22 @@ router.post("/", async (req, res) => {
             is_promotional,
             promo_price,
             promo_label,
+            manual_override,
+            manual_status,
+            override_mode,
+            ingredients,
         } = req.body;
 
         const normalizedAvailabilityStatus = normalizeAvailabilityStatus(
             availability_status,
         );
+        const normalizedIngredients = normalizeMenuIngredients(ingredients);
+        const manualOverrideState = deriveManualOverrideState({
+            manual_override,
+            manual_status,
+            override_mode,
+            availability_status,
+        });
         const normalizedPromo = normalizePromoValues(
             is_promotional,
             promo_price,
@@ -189,13 +222,36 @@ router.post("/", async (req, res) => {
         // Menu table has an auto-increment counter lower than newId this will
         // bump it automatically.
         await db.query(
-            "INSERT INTO Menu (Product_ID, Product_Name, Category_Name, Price, Stock, Promo) VALUES (?,?,?,?,?,?)",
-            [newId, name, category || null, price || 0, quantity || 0, promoTag]
+            `INSERT INTO Menu
+                (Product_ID, Product_Name, Category_Name, Price, Stock, Promo, manual_override, manual_status)
+             VALUES (?,?,?,?,?,?,?,?)`,
+            [
+                newId,
+                name,
+                category || null,
+                price || 0,
+                quantity || 0,
+                promoTag,
+                manualOverrideState?.manualOverride ?? 0,
+                manualOverrideState?.manualStatus ?? "Available",
+            ]
         );
+
+        if (normalizedIngredients !== null) {
+            await replaceMenuIngredients(db, newId, normalizedIngredients);
+        }
 
         res.status(201).json({ message: "Product added", id: newId });
     } catch (err) {
         if (err && err.message === "Invalid promo price value") {
+            return res.status(400).json({ message: err.message });
+        }
+        if (
+            err &&
+            (err.message === "ingredients must be an array" ||
+                err.message === "Each ingredient must include a valid product_id" ||
+                err.message === "Each ingredient must include a positive quantity_required")
+        ) {
             return res.status(400).json({ message: err.message });
         }
         console.error(err);
@@ -207,6 +263,7 @@ router.post("/", async (req, res) => {
 router.put("/:id", async (req, res) => {
     try {
         await ensureMenuManagementColumns();
+        await ensureMenuAvailabilitySchema(db);
 
         const productId = Number(req.params.id);
         if (!Number.isFinite(productId) || productId <= 0) {
@@ -224,6 +281,10 @@ router.put("/:id", async (req, res) => {
             is_promotional,
             promo_price,
             promo_label,
+            manual_override,
+            manual_status,
+            override_mode,
+            ingredients,
         } = req.body;
 
         const productFields = [];
@@ -287,6 +348,21 @@ router.put("/:id", async (req, res) => {
             productValues.push(normalizeAvailabilityStatus(availability_status));
         }
 
+        const manualOverrideState = deriveManualOverrideState({
+            manual_override,
+            manual_status,
+            override_mode,
+            availability_status,
+        });
+        if (manualOverrideState) {
+            menuFields.push("manual_override = ?");
+            menuValues.push(manualOverrideState.manualOverride);
+            menuFields.push("manual_status = ?");
+            menuValues.push(manualOverrideState.manualStatus);
+        }
+
+        const normalizedIngredients = normalizeMenuIngredients(ingredients);
+
         if (
             is_promotional !== undefined ||
             promo_price !== undefined ||
@@ -313,7 +389,8 @@ router.put("/:id", async (req, res) => {
         if (
             productFields.length === 0 &&
             menuFields.length === 0 &&
-            inventoryFields.length === 0
+            inventoryFields.length === 0 &&
+            normalizedIngredients === null
         ) {
             return res.status(400).json({ message: "No fields to update" });
         }
@@ -340,8 +417,14 @@ router.put("/:id", async (req, res) => {
             );
         }
 
+        if (normalizedIngredients !== null) {
+            await replaceMenuIngredients(db, productId, normalizedIngredients);
+        }
+
         const [rows] = await db.query(
-            `SELECT p.*, m.Category_Name AS category
+            `SELECT p.*, m.Category_Name AS category,
+                    COALESCE(m.manual_override, 0) AS manual_override,
+                    COALESCE(m.manual_status, 'Available') AS manual_status
              FROM products p
              LEFT JOIN Menu m ON m.Product_ID = p.id
              WHERE p.id = ?`,
@@ -352,9 +435,21 @@ router.put("/:id", async (req, res) => {
             return res.status(404).json({ message: "Product not found" });
         }
 
-        res.json(rows[0]);
+        const ingredientMap = await fetchMenuIngredients(db, [productId]);
+        res.json({
+            ...rows[0],
+            ingredients: ingredientMap.get(productId) ?? [],
+        });
     } catch (err) {
         if (err && err.message === "Invalid promo price value") {
+            return res.status(400).json({ message: err.message });
+        }
+        if (
+            err &&
+            (err.message === "ingredients must be an array" ||
+                err.message === "Each ingredient must include a valid product_id" ||
+                err.message === "Each ingredient must include a positive quantity_required")
+        ) {
             return res.status(400).json({ message: err.message });
         }
         console.error("PUT /products/:id error:", err);
@@ -365,6 +460,7 @@ router.put("/:id", async (req, res) => {
 // DELETE product
 router.delete("/:id", async (req, res) => {
     try {
+        await ensureMenuAvailabilitySchema(db);
         const productId = Number(req.params.id);
         if (!Number.isFinite(productId) || productId <= 0) {
             return res.status(400).json({ message: "Invalid product ID" });
@@ -374,6 +470,11 @@ router.delete("/:id", async (req, res) => {
         await db.query("SET FOREIGN_KEY_CHECKS=0");
 
         try {
+            await db.query(
+                "DELETE FROM menu_item_ingredients WHERE menu_product_id = ? OR product_id = ?",
+                [productId, productId],
+            );
+
             // Delete batches associated with this product
             await db.query("DELETE FROM batches WHERE product_id = ?", [productId]);
 

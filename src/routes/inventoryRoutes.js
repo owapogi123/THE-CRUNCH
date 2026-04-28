@@ -1,6 +1,10 @@
 const router = require("express").Router();
 const db = require("../config/db");
 const { deductStockForOrder } = require("../services/inventoryService");
+const {
+  ensureMenuAvailabilitySchema,
+  fetchMenuIngredients,
+} = require("../utils/menuAvailability");
 
 async function hasColumn(tableName, columnName) {
   const [rows] = await db.query(`SHOW COLUMNS FROM ${tableName} LIKE ?`, [
@@ -140,6 +144,7 @@ router.get("/", async (req, res) => {
     await ensureInventoryAlertColumns();
     await ensureMenuManagementColumns();
     await ensureBatchShelfLifeColumns();
+    await ensureMenuAvailabilitySchema(db);
 
     // Ensure inventory rows exist for all menu products.
     await db.query(
@@ -191,13 +196,54 @@ router.get("/", async (req, res) => {
          CASE WHEN COALESCE(m.Promo, '') = 'RAW_MATERIAL' THEN 1 ELSE 0 END    AS isRawMaterial,
          COALESCE(p.image, '/img/placeholder.jpg')                              AS image,
          COALESCE(p.menu_code, CONCAT('M-', LPAD(i.Product_ID, 3, '0')))        AS menu_code,
-         COALESCE(p.availability_status, 'Available')                           AS availability_status,
+         CASE
+           WHEN COALESCE(m.manual_override, 0) = 1 THEN
+             CASE
+               WHEN LOWER(COALESCE(m.manual_status, 'available')) IN ('out of stock', 'unavailable')
+                 THEN 'Out of Stock'
+               ELSE 'Available'
+             END
+           WHEN COALESCE(ia.ingredientCount, 0) > 0 THEN
+             CASE
+               WHEN COALESCE(ia.availableServings, 0) <= 0 THEN 'Out of Stock'
+               ELSE 'Available'
+             END
+           ELSE
+             CASE
+               WHEN LOWER(COALESCE(p.availability_status, 'available')) IN ('hidden', 'unavailable', 'out of stock')
+                 THEN 'Out of Stock'
+               WHEN LOWER(COALESCE(m.Category_Name, '')) LIKE '%menu food%'
+                 THEN 'Available'
+               WHEN COALESCE(i.Stock, 0) > 0
+                 THEN 'Available'
+               ELSE 'Out of Stock'
+             END
+         END                                                                     AS availability_status,
          COALESCE(p.is_promotional, 0)                                          AS is_promotional,
          p.promo_price                                                          AS promo_price,
-         COALESCE(p.promo_label, '')                                            AS promo_label
+         COALESCE(p.promo_label, '')                                            AS promo_label,
+         COALESCE(m.manual_override, 0)                                         AS manual_override,
+         COALESCE(m.manual_status, 'Available')                                 AS manual_status,
+         ia.availableServings                                                   AS available_servings,
+         COALESCE(ia.ingredientCount, 0)                                        AS ingredient_count
        FROM Inventory i
        LEFT JOIN Menu m ON m.Product_ID = i.Product_ID
        LEFT JOIN products p ON p.id = i.Product_ID
+       LEFT JOIN (
+         SELECT
+           mi.menu_product_id,
+           COUNT(*) AS ingredientCount,
+           MIN(
+             CASE
+               WHEN mi.quantity_required > 0
+                 THEN COALESCE(inv.Daily_Withdrawn, 0) / mi.quantity_required
+               ELSE 0
+             END
+           ) AS availableServings
+         FROM menu_item_ingredients mi
+         LEFT JOIN Inventory inv ON inv.Product_ID = mi.product_id
+         GROUP BY mi.menu_product_id
+       ) ia ON ia.menu_product_id = i.Product_ID
        LEFT JOIN (
          SELECT product_id, MAX(unit) AS unit
          FROM batches
@@ -235,7 +281,17 @@ router.get("/", async (req, res) => {
        ORDER BY i.Inventory_ID ASC`,
     );
 
-    res.json(rows);
+    const ingredientMap = await fetchMenuIngredients(
+      db,
+      rows.map((row) => row.product_id ?? row.id),
+    );
+
+    res.json(
+      rows.map((row) => ({
+        ...row,
+        ingredients: ingredientMap.get(Number(row.product_id ?? row.id ?? 0)) ?? [],
+      })),
+    );
   } catch (err) {
     console.error("Error fetching inventory:", err);
     res.status(500).json({ message: "DB error", error: err.message });
