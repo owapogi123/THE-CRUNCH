@@ -57,6 +57,12 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
     path: "/sales-reports",
     roles: ["administrator", "cashier"],
   },
+
+  {
+    label: "Settings",
+    path: "/settings",
+    roles: ["administrator", "cashier"],
+  },
 ];
 
 export function Sidebar() {

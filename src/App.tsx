@@ -10,6 +10,7 @@ import Menu from "./pages/menu";
 import StaffAccounts from "./pages/staffaccounts";
 import StockManager from "./pages/stockmanager";
 import Products from "./pages/products";
+import Settings from "./pages/settings";
 
 // ── Cashier / Cook pages
 import Order from "./pages/Order";
@@ -172,6 +173,11 @@ export default function App() {
       {/* ── Fallbacks ────────────────────────────────────────── */}
       <Route path="/unauthorized" element={<Unauthorized />} />
       <Route path="*" element={<Navigate to="/" replace />} />
+
+
+
+      {/* ── Settings ────────────────────────────────────────── */}
+      <Route path="/settings" element={protect(<Settings />, ["administrator" , "cook" , "cashier" , "inventory_manager"])} />
     </Routes>
   );
 }
