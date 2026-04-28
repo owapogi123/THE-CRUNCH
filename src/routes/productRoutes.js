@@ -106,6 +106,41 @@ function normalizePromoValues(isPromotional, promoPrice, promoLabel) {
     };
 }
 
+function computeAvailableServings(ingredients) {
+    if (!ingredients || ingredients.length === 0) {
+        return null;
+    }
+
+    let servings = Number.POSITIVE_INFINITY;
+    for (const ingredient of ingredients) {
+        const quantityRequired = Number(ingredient.quantity_required ?? 0);
+        if (!Number.isFinite(quantityRequired) || quantityRequired <= 0) {
+            return 0;
+        }
+        const dailyWithdrawn = Number(ingredient.daily_withdrawn ?? 0);
+        servings = Math.min(servings, dailyWithdrawn / quantityRequired);
+    }
+
+    return Number.isFinite(servings) ? servings : null;
+}
+
+async function attachIngredientAvailability(rows) {
+    const ingredientMap = await fetchMenuIngredients(
+        db,
+        rows.map((row) => row.id),
+    );
+
+    return rows.map((row) => {
+        const ingredients = ingredientMap.get(Number(row.id)) ?? [];
+        return {
+            ...row,
+            ingredient_count: ingredients.length,
+            available_servings: computeAvailableServings(ingredients),
+            ingredients,
+        };
+    });
+}
+
 // GET all products (old backend used `products` table)
 router.get("/", async (req, res) => {
     try {
@@ -132,17 +167,7 @@ router.get("/", async (req, res) => {
              ${whereClause}`
         );
 
-        const ingredientMap = await fetchMenuIngredients(
-            db,
-            rows.map((row) => row.id),
-        );
-
-        res.json(
-            rows.map((row) => ({
-                ...row,
-                ingredients: ingredientMap.get(Number(row.id)) ?? [],
-            })),
-        );
+        res.json(await attachIngredientAvailability(rows));
     } catch (err) {
         console.error(err);
         res.status(500).json({ message: 'DB error', error: err.message });
@@ -435,11 +460,8 @@ router.put("/:id", async (req, res) => {
             return res.status(404).json({ message: "Product not found" });
         }
 
-        const ingredientMap = await fetchMenuIngredients(db, [productId]);
-        res.json({
-            ...rows[0],
-            ingredients: ingredientMap.get(productId) ?? [],
-        });
+        const [enrichedRow] = await attachIngredientAvailability(rows);
+        res.json(enrichedRow);
     } catch (err) {
         if (err && err.message === "Invalid promo price value") {
             return res.status(400).json({ message: err.message });
