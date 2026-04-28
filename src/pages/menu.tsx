@@ -856,10 +856,10 @@ import { useState, useCallback, useEffect, useRef } from "react";
               style={{
                 position: "fixed",
                 inset: 0,
-                zIndex: 65,
-                backdropFilter: "blur(3px)",
-                background: "rgba(0,0,0,0.35)",
-              }}
+                zIndex: 9998,
+                backdropFilter: "blur(6px)",
+                background: "rgba(0,0,0,0.6)",
+}}
             />
             <div
               style={{
@@ -1173,7 +1173,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
               style={{
                 position: "fixed",
                 inset: 0,
-                zIndex: 61,
+                zIndex: 9999,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
