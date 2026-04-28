@@ -418,6 +418,41 @@ async function ensureKitchenTimingColumns() {
   kitchenTimingColumnsReady = true;
 }
 
+async function ensureLegacyCashierRow(conn, cashierId) {
+  const normalizedCashierId = Number(cashierId);
+  if (!Number.isFinite(normalizedCashierId) || normalizedCashierId <= 0) {
+    return null;
+  }
+
+  const [cashierRows] = await conn.query(
+    "SELECT Cashier_ID FROM Cashier WHERE Cashier_ID = ? LIMIT 1",
+    [normalizedCashierId],
+  );
+  if (cashierRows.length > 0) {
+    return normalizedCashierId;
+  }
+
+  const [userRows] = await conn.query(
+    `SELECT id, username
+     FROM users
+     WHERE id = ?
+       AND role IN ('administrator', 'cashier', 'inventory_manager')
+     LIMIT 1`,
+    [normalizedCashierId],
+  );
+  if (userRows.length === 0) {
+    return null;
+  }
+
+  await conn.query(
+    `INSERT INTO Cashier (Cashier_ID, UserName, Password)
+     VALUES (?, ?, ?)`,
+    [normalizedCashierId, userRows[0].username || `staff-${normalizedCashierId}`, ""],
+  );
+
+  return normalizedCashierId;
+}
+
 // ─── ROUTES (specific paths MUST come before /:id wildcards) ──────────────────
 
 // GET /orders — list all orders for dashboard
@@ -997,6 +1032,7 @@ router.get("/paymongo/checkout/:checkoutSessionId", async (req, res) => {
 // POST /orders — place a new order (cashier or online customer)
 router.post("/", async (req, res) => {
   let conn;
+  let txStarted = false;
   try {
     await ensureOnlineOrderColumns();
     await ensureOrderStockDeductionColumn();
@@ -1116,6 +1152,12 @@ router.post("/", async (req, res) => {
     }
 
     conn = await db.getConnection();
+    await conn.beginTransaction();
+    txStarted = true;
+    const persistedCashierId = await ensureLegacyCashierRow(
+      conn,
+      resolvedCashierId,
+    );
 
     // Insert the order header
     const [orderResult] = await conn.query(
@@ -1125,7 +1167,7 @@ router.post("/", async (req, res) => {
       [
         total,
         customerId || null,
-        resolvedCashierId,
+        persistedCashierId,
         finalOrderType,
         initialStatus,
         resolvedCustomerUserId,
@@ -1185,7 +1227,7 @@ router.post("/", async (req, res) => {
     // Insert payment record
     await conn.query(
       "INSERT INTO payments (Order_ID, Payment_Type, Payment_Status, ProcessBy) VALUES (?, ?, 'Pending', ?)",
-      [orderId, finalPaymentMethod, resolvedCashierId]
+      [orderId, finalPaymentMethod, persistedCashierId]
     );
 
     if (isPaidPaymentStatus(effectivePaymentStatus)) {
@@ -1196,6 +1238,7 @@ router.post("/", async (req, res) => {
     }
 
     await conn.commit();
+    txStarted = false;
     res.json({
       message: "Order placed",
       orderId,
@@ -1203,7 +1246,7 @@ router.post("/", async (req, res) => {
       trackingStatus: initialStatus,
     });
   } catch (err) {
-    if (conn) await conn.rollback();
+    if (conn && txStarted) await conn.rollback();
     console.error("POST /orders error:", JSON.stringify({
       message: err.message,
       code: err.code,
@@ -1242,6 +1285,10 @@ router.patch("/:id", async (req, res) => {
     await ensureOrderStockDeductionColumn();
 
     conn = await db.getConnection();
+    const persistedCashierId = await ensureLegacyCashierRow(
+      conn,
+      resolvedCashierId,
+    );
 
     const [existingRows] = await conn.query(
       `SELECT
@@ -1395,9 +1442,9 @@ router.patch("/:id", async (req, res) => {
       values.push(new Date());
     }
 
-    if (resolvedCashierId != null) {
+    if (persistedCashierId != null) {
       fields.push("Cashier_ID = ?");
-      values.push(resolvedCashierId);
+      values.push(persistedCashierId);
     }
 
     if (handoverTimestamp) {
