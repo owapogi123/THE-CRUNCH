@@ -35,16 +35,11 @@ function toPositiveIntegerOrNull(value) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-function isRawMaterialLabel(value) {
+function isStrictRawMaterialCategory(value) {
   const normalized = String(value || "")
     .trim()
     .toLowerCase();
-  return (
-    normalized === "raw material" ||
-    normalized === "raw materials" ||
-    normalized === "raw_material" ||
-    normalized === "raw_materials"
-  );
+  return normalized === "raw material" || normalized === "raw materials";
 }
 
 function computeUsableUntil(baseValue, shelfLifeDays, shelfLifeHours) {
@@ -622,9 +617,7 @@ router.patch("/:id/receive", async (req, res) => {
       const shelfLifeHours = toPositiveIntegerOrNull(
         shelfLifeInput.shelfLifeHours,
       );
-      const isRawMaterial =
-        isRawMaterialLabel(item.category) ||
-        isRawMaterialLabel(productRow?.category_name);
+      const isRawMaterial = isStrictRawMaterialCategory(item.category);
       const itemExpiryDate = isRawMaterial
         ? null
         : toDateString(itemExpiryDates?.[item.item_id]);
