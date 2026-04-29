@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { api } from "../lib/api";
+import { useAuth } from "../context/authcontext";
 
 // ─── SPRING PRESETS ───────────────────────────────────────────────────────────
 const SP  = { type: "spring" as const, stiffness: 340, damping: 30 };
@@ -38,7 +39,7 @@ interface Recipe {
   note?:       string
   variant?:    "original" | "spicy"
   category:    string
-  available:   boolean   // ← driven by backend
+  available:   boolean
 }
 
 interface CartItem          { recipe: Recipe; quantity: number; flavors: string[] }
@@ -55,29 +56,12 @@ interface PaymentSessionState {
 }
 type PaymentMethodType = "gcash" | "cash";
 
-const DEFAULT_NUTRITION: Nutrition = {
-  calories: 0,
-  protein: 0,
-  fats: 0,
-  carbs: 0,
-};
+const DEFAULT_NUTRITION: Nutrition = { calories: 0, protein: 0, fats: 0, carbs: 0 };
 
-const normalizeName = (value: unknown) =>
-  String(value ?? "")
-    .trim()
-    .toLowerCase();
-
-const normalizeCategory = (value: unknown) =>
-  String(value ?? "Uncategorized")
-    .trim()
-    .toUpperCase();
-
+const normalizeName     = (value: unknown) => String(value ?? "").trim().toLowerCase();
+const normalizeCategory = (value: unknown) => String(value ?? "Uncategorized").trim().toUpperCase();
 const isUnavailableStatus = (value: unknown) =>
-  ["unavailable", "out of stock", "hidden"].includes(
-    String(value ?? "")
-      .trim()
-      .toLowerCase(),
-  );
+  ["unavailable", "out of stock", "hidden"].includes(String(value ?? "").trim().toLowerCase());
 
 function mapInventoryRecipes(
   inventoryRows: InventoryMenuRow[],
@@ -90,59 +74,37 @@ function mapInventoryRecipes(
     const key = normalizeName(row.product_name ?? row.name);
     if (!key) continue;
     const existing = deduped.get(key);
-    if (
-      !existing ||
-      Number(row.product_id ?? row.id ?? 0) >
-        Number(existing.product_id ?? existing.id ?? 0)
-    ) {
+    if (!existing || Number(row.product_id ?? row.id ?? 0) > Number(existing.product_id ?? existing.id ?? 0)) {
       deduped.set(key, row);
     }
   }
 
-  const menuMetaByName = new Map(
-    (menuItems ?? []).map((item) => [normalizeName(item.name), item]),
-  );
-
-  const normalizedFallbackMeals = fallbackMealTypes.map((meal) =>
-    String(meal).trim().toLowerCase(),
-  );
+  const menuMetaByName = new Map((menuItems ?? []).map((item) => [normalizeName(item.name), item]));
+  const normalizedFallbackMeals = fallbackMealTypes.map((meal) => String(meal).trim().toLowerCase());
 
   return Array.from(deduped.values()).map((row) => {
-    const id = Number(row.product_id ?? row.id ?? 0);
-    const name = String(row.product_name ?? row.name ?? `Product #${id}`);
+    const id       = Number(row.product_id ?? row.id ?? 0);
+    const name     = String(row.product_name ?? row.name ?? `Product #${id}`);
     const category = normalizeCategory(row.category);
     const menuMeta = menuMetaByName.get(normalizeName(name));
-    const normalizedMetaMeals = (menuMeta?.mealTypes ?? []).map((meal) =>
-      String(meal).trim().toLowerCase(),
-    );
-    const hasSupportedMealType = normalizedMetaMeals.some((meal) =>
-      normalizedFallbackMeals.includes(meal),
-    );
+    const normalizedMetaMeals = (menuMeta?.mealTypes ?? []).map((meal) => String(meal).trim().toLowerCase());
+    const hasSupportedMealType = normalizedMetaMeals.some((meal) => normalizedFallbackMeals.includes(meal));
     const available = !isUnavailableStatus(row.availability_status);
 
     return {
-      id,
-      name,
-      price: Number(row.price ?? menuMeta?.price ?? 0),
+      id, name,
+      price:       Number(row.price ?? menuMeta?.price ?? 0),
       category,
-      image: String(
-        row.image || menuMeta?.image || "/placeholder.jpg",
-      ),
+      image:       String(row.image || menuMeta?.image || "/placeholder.jpg"),
       available,
-      description:
-        menuMeta?.description ||
-        `Freshly prepared ${String(category).toLowerCase()} from The Crunch.`,
-      nutrition: menuMeta?.nutrition ?? DEFAULT_NUTRITION,
-      maxFlavors: menuMeta?.maxFlavors,
-      mealTypes:
-        menuMeta?.mealTypes &&
-        menuMeta.mealTypes.length > 0 &&
-        hasSupportedMealType
-          ? menuMeta.mealTypes
-          : fallbackMealTypes,
-      tag: menuMeta?.tag,
-      note: menuMeta?.note,
-      variant: menuMeta?.variant,
+      description: menuMeta?.description || `Freshly prepared ${String(category).toLowerCase()} from The Crunch.`,
+      nutrition:   menuMeta?.nutrition ?? DEFAULT_NUTRITION,
+      maxFlavors:  menuMeta?.maxFlavors,
+      mealTypes:   menuMeta?.mealTypes && menuMeta.mealTypes.length > 0 && hasSupportedMealType
+                     ? menuMeta.mealTypes : fallbackMealTypes,
+      tag:         menuMeta?.tag,
+      note:        menuMeta?.note,
+      variant:     menuMeta?.variant,
     };
   });
 }
@@ -164,7 +126,7 @@ const TAG_COLORS: Record<string, { bg: string; text: string }> = {
 
 const NAV_LINKS = [
   { label: "Home",  path: "/" },
-   { label: "About", path: "/aboutthecrunch" },
+  { label: "About", path: "/aboutthecrunch" },
   { label: "Menu",  path: "/usersmenu" },
 ];
 
@@ -182,6 +144,7 @@ const externalD  = `<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 
 const cashD      = `<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/>`;
 const gcashD     = `<rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 10v4M10 12h4"/><circle cx="12" cy="12" r="3"/>`;
 const shieldD    = `<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>`;
+const userD      = `<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>`;
 
 // ─── SMALL COMPONENTS ─────────────────────────────────────────────────────────
 function Avatar({ src, size = 40 }: { src: string; size?: number }) {
@@ -335,7 +298,7 @@ function OrderTypeModal({ onClose }: { onClose: () => void }) {
             <motion.div key="choose" initial={{ opacity: 0, x: -18 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -18 }} transition={SPG}
               style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
               {[
-                { icon: bagD,     title: "Pick-up Order",   desc: "Order online and pick up your items at the store when it's ready.", cta: "Browse the Menu",       action: onClose,             ctaStyle: { background: "#f5c842", color: "#111" } },
+                { icon: bagD,     title: "Pick-up Order",   desc: "Order online and pick up your items at the store when it's ready.", cta: "Browse the Menu",        action: onClose,                  ctaStyle: { background: "#f5c842", color: "#111" } },
                 { icon: scooterD, title: "Delivery Order",  desc: "Order for delivery through Foodpanda or Grab.",                     cta: "Order via Delivery App", action: () => setView("delivery"), ctaStyle: { background: "rgba(249,159,4,0.07)", border: "1px solid rgba(240,237,232,0.12)", color: "rgb(215,162,71)" } },
               ].map(card => (
                 <motion.button key={card.title} onClick={card.action} whileHover={{ borderColor: "rgba(245,200,66,0.45)", y: -4 }} whileTap={{ scale: 0.97 }} transition={SPG}
@@ -452,7 +415,7 @@ function HistoryDrawer({ orders, menuItems, onClose }: { orders: CustomerOrder[]
               <p style={{ color: "rgba(240,237,232,0.25)", fontSize: 14, lineHeight: 1.75, margin: 0 }}>No completed pickup orders yet.<br />Finished orders will be saved here.</p>
             </div>
           ) : orders.map((order, oi) => {
-            const isOpen = expanded === order.id;
+            const isOpen  = expanded === order.id;
             const totalQty = order.items.reduce((s, i) => s + i.quantity, 0);
             return (
               <motion.div key={order.id} initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ ...SPG, delay: oi * 0.04 }} style={{ marginBottom: 10 }}>
@@ -563,9 +526,9 @@ function OrderDrawer({ cart, onClose, onRemove, onChangeQty, onClear, onSendPaym
   paymentSession: PaymentSessionState | null; paymentMessage: string | null; isSubmitting: boolean;
   selectedPaymentMethod: PaymentMethodType; onPaymentMethodChange: (m: PaymentMethodType) => void; onRequestCashTerms: () => void;
 }) {
-  const total     = cart.reduce((s, i) => s + i.recipe.price * i.quantity, 0);
-  const totalQty  = cart.reduce((s, i) => s + i.quantity, 0);
-  const isCash    = selectedPaymentMethod === "cash";
+  const total    = cart.reduce((s, i) => s + i.recipe.price * i.quantity, 0);
+  const totalQty = cart.reduce((s, i) => s + i.quantity, 0);
+  const isCash   = selectedPaymentMethod === "cash";
   const primaryLabel  = isCash ? "Place Order" : (paymentSession?.paid ? "Place Order" : paymentSession ? "Check Payment Status" : "Send Payment");
   const primaryAction = isCash ? onRequestCashTerms : (paymentSession?.paid ? onPlaceOrder : paymentSession ? onVerifyPayment : onSendPayment);
 
@@ -707,18 +670,15 @@ function RecipeCard({ recipe, isFav, justAdded, flavorSel, variantSel, onToggleF
       whileHover={{ borderColor: isAvailable ? "rgba(245,200,66,0.22)" : "rgba(240,237,232,0.1)" }}
       style={{ background: "#151210", borderRadius: 24, padding: "clamp(20px,4vw,32px) clamp(20px,4vw,36px)", border: "1px solid rgba(240,237,232,0.07)", display: "flex", flexWrap: "wrap", gap: "clamp(20px,4vw,40px)", alignItems: "flex-start", position: "relative", overflow: "hidden", opacity: isAvailable ? 1 : 0.72 }}>
 
-      {/* Top accent line */}
       <div style={{ position: "absolute", top: 0, left: 32, right: 32, height: 2, background: isAvailable ? "linear-gradient(90deg,transparent,rgba(245,200,66,0.18),transparent)" : "linear-gradient(90deg,transparent,rgba(240,237,232,0.06),transparent)" }} />
 
       <div style={{ flex: "1 1 260px" }}>
-        {/* Title row */}
         <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
           <h2 style={{ fontSize: "clamp(16px,2.5vw,18px)", fontWeight: 800, color: isAvailable ? "#f0ede8" : "rgba(240,237,232,0.45)", margin: 0, lineHeight: 1.28, flex: 1 }}>
             {recipe.name}
           </h2>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, flexWrap: "wrap" }}>
             {recipe.tag && isAvailable && <Tag tag={recipe.tag} />}
-            {/* ── NOT AVAILABLE BADGE ── */}
             {!isAvailable && (
               <span style={{ fontSize: 10, fontWeight: 700, padding: "4px 10px", borderRadius: 20, background: "rgba(239,68,68,0.1)", color: "#f87171", border: "1px solid rgba(239,68,68,0.22)", whiteSpace: "nowrap", letterSpacing: "0.06em", textTransform: "uppercase", flexShrink: 0 }}>
                 Not Available
@@ -730,14 +690,13 @@ function RecipeCard({ recipe, isFav, justAdded, flavorSel, variantSel, onToggleF
         <p style={{ fontSize: 13, color: "rgba(240,237,232,0.42)", lineHeight: 1.7, marginBottom: recipe.note ? 6 : 18, fontWeight: 300 }}>{recipe.description}</p>
         {recipe.note && <p style={{ fontSize: 11, color: "#f5c842", fontWeight: 600, marginBottom: 16 }}>{recipe.note}</p>}
 
-        {/* Nutrition */}
         <p style={{ fontSize: 10, fontWeight: 700, color: "rgba(240,237,232,0.2)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.12em" }}>Nutrition</p>
         <div style={{ display: "flex", gap: "clamp(14px,3vw,24px)", marginBottom: 20 }}>
           {[
-            { label: "Cal",    unit: "kcal", value: recipe.nutrition.calories },
-            { label: "Protein",unit: "g",    value: recipe.nutrition.protein  },
-            { label: "Fats",   unit: "g",    value: recipe.nutrition.fats     },
-            { label: "Carbs",  unit: "g",    value: recipe.nutrition.carbs    },
+            { label: "Cal",     unit: "kcal", value: recipe.nutrition.calories },
+            { label: "Protein", unit: "g",    value: recipe.nutrition.protein  },
+            { label: "Fats",    unit: "g",    value: recipe.nutrition.fats     },
+            { label: "Carbs",   unit: "g",    value: recipe.nutrition.carbs    },
           ].map(n => (
             <div key={n.label} style={{ textAlign: "center" }}>
               <div style={{ fontSize: "clamp(16px,2.5vw,20px)", fontWeight: 800, color: isAvailable ? "#f0ede8" : "rgba(240,237,232,0.3)", lineHeight: 1 }}>{n.value}</div>
@@ -747,20 +706,17 @@ function RecipeCard({ recipe, isFav, justAdded, flavorSel, variantSel, onToggleF
           ))}
         </div>
 
-        {/* Variant / Flavor — hidden when unavailable */}
         {isAvailable && recipe.variant !== undefined && <VariantToggle selected={variantSel} onChange={onVariantChange} />}
         {isAvailable && recipe.maxFlavors !== undefined && flavors.length > 0 && (
           <FlavorPicker maxFlavors={recipe.maxFlavors} selected={flavorSel} onChange={onFlavorChange} flavors={flavors} />
         )}
 
-        {/* Actions */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <motion.button onClick={onToggleFav} whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.93 }} transition={SP}
               style={{ display: "flex", alignItems: "center", gap: 7, background: isFav ? "rgba(245,200,66,0.1)" : "rgba(240,237,232,0.05)", color: isFav ? "#f5c842" : "rgba(240,237,232,0.45)", border: `1px solid ${isFav ? "rgba(245,200,66,0.3)" : "rgba(240,237,232,0.1)"}`, borderRadius: 12, padding: "10px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
               {isFav ? "★ Saved" : "☆ Save"}
             </motion.button>
-
             <motion.button onClick={() => { if (isAvailable) onAddToCart(); }} disabled={!isAvailable} whileHover={isAvailable ? { scale: 1.04 } : {}} whileTap={isAvailable ? { scale: 0.93 } : {}} transition={SP}
               style={{ display: "flex", alignItems: "center", gap: 7, background: !isAvailable ? "rgba(240,237,232,0.04)" : justAdded ? "rgba(74,222,128,0.1)" : "#f5c842", color: !isAvailable ? "rgba(240,237,232,0.2)" : justAdded ? "#4ade80" : "#111", border: !isAvailable ? "1px solid rgba(240,237,232,0.1)" : justAdded ? "1px solid rgba(74,222,128,0.25)" : "none", borderRadius: 12, padding: "10px 22px", fontSize: 13, fontWeight: 700, cursor: !isAvailable ? "not-allowed" : "pointer", fontFamily: "inherit", minWidth: 140, justifyContent: "center", opacity: !isAvailable ? 0.55 : 1 }}>
               <AnimatePresence mode="wait">
@@ -770,7 +726,6 @@ function RecipeCard({ recipe, isFav, justAdded, flavorSel, variantSel, onToggleF
               </AnimatePresence>
             </motion.button>
           </div>
-
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: 10, color: "rgba(240,237,232,0.25)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 2 }}>Price</div>
             <div style={{ fontSize: "clamp(20px,3vw,26px)", fontWeight: 900, color: isAvailable ? "#f5c842" : "rgba(240,237,232,0.3)", letterSpacing: "-0.04em" }}>₱{recipe.price.toFixed(2)}</div>
@@ -778,7 +733,6 @@ function RecipeCard({ recipe, isFav, justAdded, flavorSel, variantSel, onToggleF
         </div>
       </div>
 
-      {/* Image */}
       <motion.div whileHover={isAvailable ? { scale: 1.05 } : {}} transition={SPG}
         style={{ width: "clamp(120px,20vw,200px)", height: "clamp(120px,20vw,200px)", borderRadius: "50%", overflow: "hidden", flexShrink: 0, boxShadow: "0 12px 48px rgba(0,0,0,0.45)", border: "1px solid rgba(240,237,232,0.08)", alignSelf: "center", position: "relative", background: "#1a1208" }}>
         <img
@@ -797,9 +751,33 @@ function RecipeCard({ recipe, isFav, justAdded, flavorSel, variantSel, onToggleF
   );
 }
 
+// ─── USER PILL ────────────────────────────────────────────────────────────────
+function UserPill({ name }: { name: string }) {
+  const initials = name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.85 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={SPG}
+      style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(245,200,66,0.07)", border: "1px solid rgba(245,200,66,0.18)", borderRadius: 10, padding: "6px 12px 6px 8px" }}
+    >
+      <div style={{ width: 26, height: 26, borderRadius: "50%", background: "linear-gradient(135deg,#f5c842,#e6a800)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        <span style={{ fontSize: 10, fontWeight: 800, color: "#111" }}>{initials}</span>
+      </div>
+      <span style={{ fontSize: 12, fontWeight: 600, color: "rgba(240,237,232,0.65)", maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name.split(" ")[0]}</span>
+    </motion.div>
+  );
+}
+
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 export default function Delicacy() {
   const navigate = useNavigate();
+
+  // ── Auth from shared context (stays in sync with AboutTheCrunch) ──
+  const { user, logout } = useAuth();
+  const customerUserId = user ? Number((user as any).id ?? (user as any).userId ?? 0) : 0;
+  const customerName   = user ? ((user as any).name ?? (user as any).userName ?? "The Crunch Customer") : "The Crunch Customer";
+  const customerEmail  = user ? ((user as any).email ?? (user as any).userEmail ?? "") : "";
 
   // ── Data from API ──
   const [menuItems,  setMenuItems]  = useState<Recipe[]>([]);
@@ -831,10 +809,7 @@ export default function Delicacy() {
   const [paymentMethod,  setPaymentMethod]  = useState<PaymentMethodType>("gcash");
   const [showCashTerms,  setShowCashTerms]  = useState(false);
 
-  const cardRefs       = useRef<Record<number, HTMLDivElement | null>>({});
-  const customerUserId = Number(localStorage.getItem("userId") || 0);
-  const customerName   = localStorage.getItem("userName")  || "The Crunch Customer";
-  const customerEmail  = localStorage.getItem("userEmail") || "";
+  const cardRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
   // ── Fetch all menu data from backend ──
   useEffect(() => {
@@ -844,44 +819,20 @@ export default function Delicacy() {
     Promise.allSettled([
       api.get<InventoryMenuRow[]>("/inventory"),
       api.get<Recipe[]>("/menu/items"),
-      api.get<string[]>("/menu/flavors"),     // flavor names array
-      api.get<string[]>("/menu/meal-types"),  // meal type names
+      api.get<string[]>("/menu/flavors"),
+      api.get<string[]>("/menu/meal-types"),
     ])
       .then(([inventoryResult, menuItemsResult, flavorListResult, mealsResult]) => {
         if (cancelled) return;
-        const inventoryRows =
-          inventoryResult.status === "fulfilled" &&
-          Array.isArray(inventoryResult.value)
-            ? inventoryResult.value
-            : [];
-        const menuItemsMeta =
-          menuItemsResult.status === "fulfilled" &&
-          Array.isArray(menuItemsResult.value)
-            ? menuItemsResult.value
-            : [];
-        const flavorList =
-          flavorListResult.status === "fulfilled" &&
-          Array.isArray(flavorListResult.value)
-            ? flavorListResult.value
-            : [];
-        const meals =
-          mealsResult.status === "fulfilled" &&
-          Array.isArray(mealsResult.value) &&
-          mealsResult.value.length > 0
-            ? mealsResult.value
-            : ["Breakfast", "Lunch", "Dinner"];
+        const inventoryRows  = inventoryResult.status  === "fulfilled" && Array.isArray(inventoryResult.value)  ? inventoryResult.value  : [];
+        const menuItemsMeta  = menuItemsResult.status  === "fulfilled" && Array.isArray(menuItemsResult.value)  ? menuItemsResult.value  : [];
+        const flavorList     = flavorListResult.status === "fulfilled" && Array.isArray(flavorListResult.value) ? flavorListResult.value : [];
+        const meals          = mealsResult.status      === "fulfilled" && Array.isArray(mealsResult.value) && mealsResult.value.length > 0 ? mealsResult.value : ["Breakfast", "Lunch", "Dinner"];
 
-        const allMeals =
-          meals.length > 0 ? meals : ["Breakfast", "Lunch", "Dinner"];
-        const mergedRecipes = mapInventoryRecipes(
-          inventoryRows,
-          menuItemsMeta,
-          allMeals,
-        );
-        const allCats = [
-          "All",
-          ...Array.from(new Set(mergedRecipes.map((item) => item.category))),
-        ];
+        const allMeals       = meals.length > 0 ? meals : ["Breakfast", "Lunch", "Dinner"];
+        const mergedRecipes  = mapInventoryRecipes(inventoryRows, menuItemsMeta, allMeals);
+        const allCats        = ["All", ...Array.from(new Set(mergedRecipes.map((item) => item.category)))];
+
         setMenuItems(mergedRecipes);
         setFlavors(flavorList);
         setCategories(allCats);
@@ -901,7 +852,7 @@ export default function Delicacy() {
     return () => window.removeEventListener("scroll", fn);
   }, []);
 
-  // ── Restore payment session from localStorage ──
+  // ── Restore payment session ──
   useEffect(() => {
     const raw = localStorage.getItem(PAYMENT_SESSION_KEY);
     if (!raw) return;
@@ -915,7 +866,7 @@ export default function Delicacy() {
 
   // ── Handle GCash return URL ──
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
+    const params       = new URLSearchParams(window.location.search);
     const paymentState = params.get("payment");
     if (!paymentState) return;
 
@@ -928,8 +879,7 @@ export default function Delicacy() {
     if (paymentState === "cancelled") {
       setDrawerOpen(true);
       setPaymentMessage("GCash checkout was cancelled. You can try again when you're ready.");
-      clearParam();
-      return;
+      clearParam(); return;
     }
     if (paymentState !== "success") { clearParam(); return; }
 
@@ -955,7 +905,7 @@ export default function Delicacy() {
     return () => { cancelled = true; };
   }, []);
 
-  // ── Handle ?showOrderModal and ?item deep-links ──
+  // ── Deep links ──
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("showOrderModal") === "true") setOrderTypeOpen(true);
@@ -1007,13 +957,13 @@ export default function Delicacy() {
 
   const addToCart = (recipe: Recipe) => {
     if (!recipe.available) return;
-    const flavors = flavorSels[recipe.id] ?? [];
+    const recFlavors = flavorSels[recipe.id] ?? [];
     clearPayment();
     setCart(prev => {
       const found = prev.find(c => c.recipe.id === recipe.id);
       return found
-        ? prev.map(c => c.recipe.id === recipe.id ? { ...c, quantity: c.quantity + 1, flavors } : c)
-        : [...prev, { recipe, quantity: 1, flavors }];
+        ? prev.map(c => c.recipe.id === recipe.id ? { ...c, quantity: c.quantity + 1, flavors: recFlavors } : c)
+        : [...prev, { recipe, quantity: 1, flavors: recFlavors }];
     });
     setJustAdded(recipe.id);
     setTimeout(() => setJustAdded(null), 1400);
@@ -1095,8 +1045,9 @@ export default function Delicacy() {
     finally { setIsSubmitting(false); }
   };
 
+  // ── Logout via shared context — syncs instantly across all pages ──
   const handleLogout = () => {
-    ["isAuthenticated", "authToken", "userName", "userRole", "userId"].forEach(k => localStorage.removeItem(k));
+    logout();
     navigate("/aboutthecrunch");
   };
 
@@ -1113,8 +1064,12 @@ export default function Delicacy() {
       </div>
 
       {/* ── NAV ── */}
-      <motion.nav initial={{ y: -80, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ duration: 0.65, ease: EASE }}
+      <motion.nav
+        initial={{ y: -80, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ duration: 0.65, ease: EASE }}
         style={{ position: "sticky", top: 0, zIndex: 100, background: scrolled ? "rgba(14,12,10,0.96)" : "rgba(14,12,10,0.80)", backdropFilter: "blur(24px)", borderBottom: "1px solid rgba(240,237,232,0.07)", padding: "0 clamp(16px,4vw,40px)", height: 68, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+
         <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} transition={SP} onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}>
           <span style={{ fontSize: 20, fontWeight: 900, color: "#f0ede8" }}>The <span style={{ color: "#f5c842" }}>Crunch</span></span>
         </motion.button>
@@ -1129,6 +1084,7 @@ export default function Delicacy() {
               {item.label}
             </motion.button>
           ))}
+
           <div style={{ width: 1, height: 16, background: "rgba(240,237,232,0.12)", margin: "0 4px" }} />
 
           {/* History */}
@@ -1161,11 +1117,29 @@ export default function Delicacy() {
             </AnimatePresence>
           </motion.button>
 
-          {/* Log Out */}
-          <motion.button whileHover={{ scale: 1.06 }} whileTap={{ scale: 0.9 }} transition={SP} onClick={handleLogout}
-            style={{ background: "rgba(240,237,232,0.06)", color: "#f0ede8", border: "1px solid rgba(240,237,232,0.12)", borderRadius: 10, padding: "9px 18px", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600 }}>
-            Log Out
-          </motion.button>
+          {/* User pill + Log Out — shown only when authenticated */}
+          <AnimatePresence>
+            {user && (
+              <motion.div
+                key="auth-controls"
+                initial={{ opacity: 0, x: 10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 10 }}
+                transition={SPG}
+                style={{ display: "flex", alignItems: "center", gap: 8 }}
+              >
+                <UserPill name={customerName} />
+                <motion.button
+                  whileHover={{ scale: 1.06 }}
+                  whileTap={{ scale: 0.9 }}
+                  transition={SP}
+                  onClick={handleLogout}
+                  style={{ background: "rgba(240,237,232,0.06)", color: "#f0ede8", border: "1px solid rgba(240,237,232,0.12)", borderRadius: 10, padding: "9px 18px", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600 }}>
+                  Log Out
+                </motion.button>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </motion.nav>
 
@@ -1178,9 +1152,29 @@ export default function Delicacy() {
             <div style={{ width: 28, height: 1, background: "#f5c842" }} />
             <span style={{ fontSize: 11, fontWeight: 600, color: "#f5c842", letterSpacing: "0.25em", textTransform: "uppercase" }}>The Crunch Fairview</span>
           </div>
-          <h1 style={{ fontSize: "clamp(36px,6vw,68px)", fontWeight: 900, color: "#f0ede8", margin: 0, letterSpacing: "-0.025em", lineHeight: 1.02 }}>
-            Our <em style={{ color: "#f5c842" }}>Menu.</em>
-          </h1>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+            <h1 style={{ fontSize: "clamp(36px,6vw,68px)", fontWeight: 900, color: "#f0ede8", margin: 0, letterSpacing: "-0.025em", lineHeight: 1.02 }}>
+              Our <em style={{ color: "#f5c842" }}>Menu.</em>
+            </h1>
+            {/* Welcome badge */}
+            <AnimatePresence>
+              {user && (
+                <motion.div
+                  initial={{ opacity: 0, y: -8, scale: 0.92 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -8, scale: 0.92 }}
+                  transition={SPG}
+                  style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(245,200,66,0.06)", border: "1px solid rgba(245,200,66,0.14)", borderRadius: 14, padding: "10px 16px" }}
+                >
+                  <div style={{ color: "#f5c842", display: "flex" }}><Icon d={userD} size={15} /></div>
+                  <div>
+                    <p style={{ fontSize: 9, fontWeight: 700, color: "rgba(245,200,66,0.55)", textTransform: "uppercase", letterSpacing: "0.14em", margin: "0 0 1px" }}>Welcome back</p>
+                    <p style={{ fontSize: 13, fontWeight: 700, color: "#f0ede8", margin: 0 }}>{customerName}</p>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </motion.div>
 
         <TrackingPanel orders={activeOrders} />
@@ -1215,11 +1209,7 @@ export default function Delicacy() {
           {/* Recipe Cards */}
           <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 16 }}>
             {loading ? (
-              <>
-                <RecipeSkeleton />
-                <RecipeSkeleton />
-                <RecipeSkeleton />
-              </>
+              <><RecipeSkeleton /><RecipeSkeleton /><RecipeSkeleton /></>
             ) : (
               <AnimatePresence mode="popLayout">
                 {displayed.length > 0 ? displayed.map(recipe => {
@@ -1265,7 +1255,7 @@ export default function Delicacy() {
       </div>
 
       {/* ── MODALS & DRAWERS ── */}
-      <AnimatePresence>{orderTypeOpen  && <OrderTypeModal onClose={() => setOrderTypeOpen(false)} />}</AnimatePresence>
+      <AnimatePresence>{orderTypeOpen && <OrderTypeModal onClose={() => setOrderTypeOpen(false)} />}</AnimatePresence>
       <AnimatePresence>
         {drawerOpen && (
           <OrderDrawer
@@ -1278,8 +1268,8 @@ export default function Delicacy() {
         )}
       </AnimatePresence>
       <AnimatePresence>{showCashTerms && <CashTermsModal onAccept={() => { setShowCashTerms(false); handlePlaceCashOrder(); }} onDecline={() => setShowCashTerms(false)} />}</AnimatePresence>
-      <AnimatePresence>{historyOpen   && <HistoryDrawer orders={orderHistory} menuItems={menuItems} onClose={() => setHistoryOpen(false)} />}</AnimatePresence>
-      <AnimatePresence>{showCheckout  && <CheckoutModal orderNumber={lastOrderNum} onClose={() => { setShowCheckout(false); setLastOrderNum(null); }} />}</AnimatePresence>
+      <AnimatePresence>{historyOpen  && <HistoryDrawer orders={orderHistory} menuItems={menuItems} onClose={() => setHistoryOpen(false)} />}</AnimatePresence>
+      <AnimatePresence>{showCheckout && <CheckoutModal orderNumber={lastOrderNum} onClose={() => { setShowCheckout(false); setLastOrderNum(null); }} />}</AnimatePresence>
     </div>
   );
 }

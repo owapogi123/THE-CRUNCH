@@ -105,12 +105,12 @@ export default function AboutTheCrunch() {
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
-  // ── Auth from context — stays in sync with login/logout everywhere ──
+  // ── Single source of truth: auth context shared with Delicacy (usersmenu) ──
   const { user, logout } = useAuth();
   const isAuthenticated = !!user;
 
   const handleLogout = () => {
-    logout();
+    logout();           // clears context + localStorage in one shot
     setMenuOpen(false);
     navigate('/products');
   };
@@ -192,16 +192,32 @@ export default function AboutTheCrunch() {
           </nav>
         )}
 
-        {/* Desktop Auth Buttons */}
+        {/* Desktop Auth — reactive to shared auth context */}
         {!isTablet ? (
-          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+          <AnimatePresence mode="wait">
             {isAuthenticated ? (
-              <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} onClick={handleLogout}
-                style={{ background: '#f5c842', border: 'none', borderRadius: 8, padding: '8px 20px', fontSize: 12.5, fontWeight: 700, color: '#1a0a00', cursor: 'pointer', fontFamily: PP }}>
+              <motion.button
+                key="logout"
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                transition={{ duration: 0.2 }}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.97 }}
+                onClick={handleLogout}
+                style={{ background: '#f5c842', border: 'none', borderRadius: 8, padding: '8px 20px', fontSize: 12.5, fontWeight: 700, color: '#1a0a00', cursor: 'pointer', fontFamily: PP, flexShrink: 0 }}
+              >
                 Log Out
               </motion.button>
             ) : (
-              <>
+              <motion.div
+                key="login-btns"
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                transition={{ duration: 0.2 }}
+                style={{ display: 'flex', gap: 8, flexShrink: 0 }}
+              >
                 <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} onClick={() => navigate('/login')}
                   style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: '8px 18px', fontSize: 12.5, fontWeight: 500, color: '#ede9e2', cursor: 'pointer', fontFamily: PP }}>
                   Log In
@@ -210,9 +226,9 @@ export default function AboutTheCrunch() {
                   style={{ background: '#f5c842', border: 'none', borderRadius: 8, padding: '8px 20px', fontSize: 12.5, fontWeight: 700, color: '#1a0a00', cursor: 'pointer', fontFamily: PP }}>
                   Sign Up
                 </motion.button>
-              </>
+              </motion.div>
             )}
-          </div>
+          </AnimatePresence>
         ) : (
           /* Hamburger */
           <button
@@ -251,23 +267,33 @@ export default function AboutTheCrunch() {
               >{l}</button>
             ))}
             <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
-              {isAuthenticated ? (
-                <button onClick={handleLogout}
-                  style={{ flex: 1, background: '#f5c842', border: 'none', borderRadius: 10, padding: '13px', fontSize: 14, fontWeight: 700, color: '#1a0a00', cursor: 'pointer', fontFamily: PP }}>
-                  Log Out
-                </button>
-              ) : (
-                <>
-                  <button onClick={() => { setMenuOpen(false); navigate('/login'); }}
-                    style={{ flex: 1, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10, padding: '13px', fontSize: 14, fontWeight: 500, color: '#ede9e2', cursor: 'pointer', fontFamily: PP }}>
-                    Log In
-                  </button>
-                  <button onClick={() => { setMenuOpen(false); navigate('/login?tab=signup'); }}
-                    style={{ flex: 1, background: '#f5c842', border: 'none', borderRadius: 10, padding: '13px', fontSize: 14, fontWeight: 700, color: '#1a0a00', cursor: 'pointer', fontFamily: PP }}>
-                    Sign Up
-                  </button>
-                </>
-              )}
+              <AnimatePresence mode="wait">
+                {isAuthenticated ? (
+                  <motion.button
+                    key="mobile-logout"
+                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                    onClick={handleLogout}
+                    style={{ flex: 1, background: '#f5c842', border: 'none', borderRadius: 10, padding: '13px', fontSize: 14, fontWeight: 700, color: '#1a0a00', cursor: 'pointer', fontFamily: PP }}
+                  >
+                    Log Out
+                  </motion.button>
+                ) : (
+                  <motion.div
+                    key="mobile-login-btns"
+                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                    style={{ display: 'flex', gap: 10, flex: 1 }}
+                  >
+                    <button onClick={() => { setMenuOpen(false); navigate('/login'); }}
+                      style={{ flex: 1, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10, padding: '13px', fontSize: 14, fontWeight: 500, color: '#ede9e2', cursor: 'pointer', fontFamily: PP }}>
+                      Log In
+                    </button>
+                    <button onClick={() => { setMenuOpen(false); navigate('/login?tab=signup'); }}
+                      style={{ flex: 1, background: '#f5c842', border: 'none', borderRadius: 10, padding: '13px', fontSize: 14, fontWeight: 700, color: '#1a0a00', cursor: 'pointer', fontFamily: PP }}>
+                      Sign Up
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </motion.div>
         )}

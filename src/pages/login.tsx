@@ -40,6 +40,132 @@ const baseInputStyle: React.CSSProperties = {
   transition: "border-color 0.25s, background 0.25s, box-shadow 0.25s",
 };
 
+// ── Time-based greeting helpers ──────────────────────────────────────────────
+
+interface TimeGreeting {
+  title: string;
+  sub: string;
+  iconType: "sun" | "moon" | "sunset" | "sunrise" | "cloud";
+}
+
+function getTimeGreeting(): TimeGreeting {
+  const h = new Date().getHours();
+
+  if (h >= 5 && h <= 8)
+    return {
+      iconType: "sunrise",
+      title: "Good morning, early bird.",
+      sub: "The day is just beginning — let's make it great.",
+    };
+  if (h >= 9 && h <= 11)
+    return {
+      iconType: "sun",
+      title: "Good morning!",
+      sub: "How are you doing today?",
+    };
+  if (h === 12)
+    return {
+      iconType: "sun",
+      title: "Good noon!",
+      sub: "Grab a bite — then let's get to work.",
+    };
+  if (h >= 13 && h <= 16)
+    return {
+      iconType: "cloud",
+      title: "Good afternoon.",
+      sub: "Hope your day's going well so far.",
+    };
+  if (h >= 17 && h <= 20)
+    return {
+      iconType: "sunset",
+      title: "Good evening.",
+      sub: "Please fulfill your needs — we're here for you.",
+    };
+  if (h >= 21 && h <= 23)
+    return {
+      iconType: "moon",
+      title: "Good night.",
+      sub: "Working late? We've got you covered.",
+    };
+  // 0–4 (midnight to early morning)
+  return {
+    iconType: "moon",
+    title: "Burning the midnight oil?",
+    sub: "We're still here — whenever you need us.",
+  };
+}
+
+function TimeIcon({ type }: { type: TimeGreeting["iconType"] }) {
+  const stroke = YELLOW;
+  const sw = "1.8";
+  const lc = "round";
+  const lj = "round";
+
+  if (type === "sun")
+    return (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+        stroke={stroke} strokeWidth={sw} strokeLinecap={lc} strokeLinejoin={lj}>
+        <circle cx="12" cy="12" r="5" />
+        <line x1="12" y1="1" x2="12" y2="3" />
+        <line x1="12" y1="21" x2="12" y2="23" />
+        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+        <line x1="1" y1="12" x2="3" y2="12" />
+        <line x1="21" y1="12" x2="23" y2="12" />
+        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+      </svg>
+    );
+
+  if (type === "sunrise")
+    return (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+        stroke={stroke} strokeWidth={sw} strokeLinecap={lc} strokeLinejoin={lj}>
+        <path d="M17 18a5 5 0 0 0-10 0" />
+        <line x1="12" y1="2" x2="12" y2="9" />
+        <line x1="4.22" y1="10.22" x2="5.64" y2="11.64" />
+        <line x1="1" y1="18" x2="3" y2="18" />
+        <line x1="21" y1="18" x2="23" y2="18" />
+        <line x1="18.36" y1="11.64" x2="19.78" y2="10.22" />
+        <line x1="23" y1="22" x2="1" y2="22" />
+        <polyline points="8 6 12 2 16 6" />
+      </svg>
+    );
+
+  if (type === "sunset")
+    return (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+        stroke={stroke} strokeWidth={sw} strokeLinecap={lc} strokeLinejoin={lj}>
+        <path d="M17 18a5 5 0 0 0-10 0" />
+        <line x1="12" y1="9" x2="12" y2="2" />
+        <line x1="4.22" y1="10.22" x2="5.64" y2="11.64" />
+        <line x1="1" y1="18" x2="3" y2="18" />
+        <line x1="21" y1="18" x2="23" y2="18" />
+        <line x1="18.36" y1="11.64" x2="19.78" y2="10.22" />
+        <line x1="23" y1="22" x2="1" y2="22" />
+        <polyline points="16 5 12 9 8 5" />
+      </svg>
+    );
+
+  if (type === "moon")
+    return (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+        stroke={stroke} strokeWidth={sw} strokeLinecap={lc} strokeLinejoin={lj}>
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+      </svg>
+    );
+
+  // cloud (afternoon default)
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+      stroke={stroke} strokeWidth={sw} strokeLinecap={lc} strokeLinejoin={lj}>
+      <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
+    </svg>
+  );
+}
+
+// ── Shared field wrapper ─────────────────────────────────────────────────────
+
 interface FieldProps {
   label: string;
   children: React.ReactNode;
@@ -66,6 +192,8 @@ function Field({ label, children, extra }: FieldProps) {
   );
 }
 
+// ── Framer Motion page variants ──────────────────────────────────────────────
+
 const pageVariants = {
   enter: (dir: number) => ({
     rotateY: dir > 0 ? 80 : -80,
@@ -79,6 +207,8 @@ const pageVariants = {
     scale: 0.96,
   }),
 };
+
+// ── Sign In Form ─────────────────────────────────────────────────────────────
 
 function SignInForm({ formData, handleChange, handleSubmit, isLoading, error, showPassword, setShowPassword, goToSignUp }: any) {
   return (
@@ -94,7 +224,7 @@ function SignInForm({ formData, handleChange, handleSubmit, isLoading, error, sh
         }}>
           Sign in to your<br />
           <span style={{ fontWeight: 300, fontStyle: "italic", color: "rgba(255,255,255,0.45)", fontSize: 24 }}>
-            workspace
+            Account
           </span>
         </h1>
       </div>
@@ -151,6 +281,8 @@ function SignInForm({ formData, handleChange, handleSubmit, isLoading, error, sh
   );
 }
 
+// ── Sign Up Form ─────────────────────────────────────────────────────────────
+
 function SignUpForm({ formData, handleChange, handleSubmit, isLoading, error, showPassword, setShowPassword, showConfirm, setShowConfirm, goToSignIn }: any) {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -165,7 +297,7 @@ function SignUpForm({ formData, handleChange, handleSubmit, isLoading, error, sh
         }}>
           Create your<br />
           <span style={{ fontWeight: 300, fontStyle: "italic", color: "rgba(255,255,255,0.45)", fontSize: 24 }}>
-            account
+            Account
           </span>
         </h1>
       </div>
@@ -234,10 +366,12 @@ function SignUpForm({ formData, handleChange, handleSubmit, isLoading, error, sh
   );
 }
 
+// ── Main Login Page ──────────────────────────────────────────────────────────
+
 export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, login } = useAuth();
+  const { login } = useAuth();
 
   const [isLogin, setIsLogin] = useState(true);
   const [direction, setDirection] = useState(1);
@@ -247,14 +381,20 @@ export default function Login() {
   const [isLoading, setIsLoading] = useState(false);
   const [formData, setFormData] = useState({ email: "", password: "", confirmPassword: "", name: "" });
 
+  // ── Real-time greeting — updates every minute ──
+  const [greeting, setGreeting] = useState<TimeGreeting>(() => getTimeGreeting());
+
+  useEffect(() => {
+    const tick = () => setGreeting(getTimeGreeting());
+    const id = setInterval(tick, 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   // ── Tab from URL param ──
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     if (params.get("tab") === "signup") { setDirection(1); setIsLogin(false); }
   }, [location.search]);
-
-  // ── REMOVED the auto-redirect useEffect that was bouncing logged-in users back ──
-  // We only navigate AFTER a successful form submission (see handleSubmit below)
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) =>
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -267,14 +407,12 @@ export default function Login() {
     if (isLogin) {
       try {
         const data = await authApi.login(formData.email, formData.password);
-        // Store auth in context
         login({
           token: data.token,
           username: data.username,
           role: data.role,
           userId: String(data.userId),
         });
-        // Navigate based on role — only happens after successful login
         navigate(ROLE_MAP[data.role] ?? "/", { replace: true });
       } catch (err: any) {
         setError(err.message || "Invalid credentials.");
@@ -301,7 +439,6 @@ export default function Login() {
           role: data.role,
           userId: String(data.userId),
         });
-        // Customers always go to /products after sign-up
         navigate(ROLE_MAP[data.role] ?? "/products", { replace: true });
       } catch (err: any) {
         if (
@@ -503,44 +640,44 @@ export default function Login() {
               padding: "18px 22px 22px",
               display: "flex", flexDirection: "column", justifyContent: "space-between",
             }}>
-              <motion.div
-                key={isLogin ? "lp-li" : "lp-su"}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.4 }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                  <div style={{
-                    width: 32, height: 32, borderRadius: 8, flexShrink: 0,
-                    background: "rgba(245,197,24,0.13)",
-                    border: "1px solid rgba(245,197,24,0.22)",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                  }}>
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
-                      stroke={YELLOW} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                      {isLogin
-                        ? <><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" /><polyline points="10 17 15 12 10 7" /><line x1="15" y1="12" x2="3" y2="12" /></>
-                        : <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><line x1="19" y1="8" x2="19" y2="14" /><line x1="22" y1="11" x2="16" y2="11" /></>
-                      }
-                    </svg>
+              {/*
+               * ── REAL-TIME GREETING ──
+               * `greeting` state updates every minute via the setInterval in useEffect.
+               * The AnimatePresence key on the title causes a smooth fade when it changes.
+               */}
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={greeting.title}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.4 }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                    <div style={{
+                      width: 32, height: 32, borderRadius: 8, flexShrink: 0,
+                      background: "rgba(245,197,24,0.13)",
+                      border: "1px solid rgba(245,197,24,0.22)",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      <TimeIcon type={greeting.iconType} />
+                    </div>
+                    <p style={{
+                      fontFamily: "'Poppins', sans-serif", fontSize: 15, fontWeight: 700,
+                      color: "#fff", margin: 0, lineHeight: 1.3,
+                    }}>
+                      {greeting.title}
+                    </p>
                   </div>
-                  <p style={{
-                    fontFamily: "'Poppins', sans-serif", fontSize: 15, fontWeight: 700,
-                    color: "#fff", margin: 0, lineHeight: 1.3,
-                  }}>
-                    {isLogin ? "Good to see you again." : "Join the team today."}
-                  </p>
-                </div>
 
-                <p style={{
-                  fontFamily: "'Poppins', sans-serif", fontSize: 12, fontWeight: 300,
-                  color: "rgba(255,255,255,0.35)", margin: 0, lineHeight: 1.65,
-                }}>
-                  {isLogin
-                    ? "Access your dashboard, orders, and more."
-                    : "Create your account and get started."}
-                </p>
-              </motion.div>
+                  <p style={{
+                    fontFamily: "'Poppins', sans-serif", fontSize: 12, fontWeight: 300,
+                    color: "rgba(255,255,255,0.35)", margin: 0, lineHeight: 1.65,
+                  }}>
+                    {greeting.sub}
+                  </p>
+                </motion.div>
+              </AnimatePresence>
 
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 14 }}>
                 <div style={{ width: 6, height: 6, borderRadius: "50%", background: YELLOW, flexShrink: 0 }} />
