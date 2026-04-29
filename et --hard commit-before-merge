@@ -1,0 +1,165 @@
+[33mb6515b0[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmaster[m[33m, [m[1;31mupstream/master[m[33m, [m[1;31mupstream/HEAD[m[33m, [m[1;31mcodev/master[m[33m)[m Merge branch 'master' of https://github.com/owapogi123/THE-CRUNCH
+[33m695f884[m FIXING AUTOMATICALLY SHOWS ONLINE ORDERING
+[33mdb4d4d9[m FIXING AUTOMATIC DROPDOWN
+[33me4dde31[m pullzs
+[33mf7a474b[m hys
+[33m7d0278a[m Merge branch 'master' of https://github.com/owapogi123/THE-CRUNCH
+[33m02c120a[m pull this
+[33m8b7333d[m ADDING STATUS IN ONLINE ORDERS
+[33m9ebfa48[m ADDING FEEDBACK
+[33m91dbd5c[m lil fix
+[33m43f1abe[m SETTINGS
+[33m39ce757[m ADDING
+[33ma7f79bc[m lala
+[33m3792cba[m FIXING REFRESHING PAGE
+[33mf50d156[m FIXING ROUTINGS
+[33mc6124a9[m IMPROVING UI
+[33m9a88232[m CHANGING AGAIN LOG IN UI
+[33md394d3f[m CHANGING LOGIN UI
+[33mb4f7754[m railway na to
+[33md732308[m SHOWING NOT AVAILABLE ITEMS IN THE LISTS
+[33m08c59c5[m MOBILE VIEW SPECIFICALLY IN MENU FIRST, ANG MGA SUSUNOD AY MAMAYA
+[33mb66504f[m FIXING FRONTEND ADDING MOBILE VIEW
+[33m179ef52[m rest first
+[33m3aedb8c[m ADDING CASH AND GCASH PAYMENT INSIDE OF MY ORDER
+[33m96c04a4[m push push push
+[33m60016b1[m okay na
+[33m043d24b[m aray mo
+[33m47479fb[m Merge branch 'master' of https://github.com/owapogi123/THE-CRUNCH
+[33m6c03b66[m MERGED SOLVED
+[33m68af27b[m push bago ang sakuna
+[33m75554dc[m may bago
+[33m62bece1[m CHANGES
+[33m11a4f5e[m gawa mo pupush ko
+[33mdf8c753[m CHANGES
+[33m66f51be[m inayos
+[33maa7d0d7[m changes na madami
+[33ma4d2921[m may inayos
+[33m5dd050e[m sidebarz
+[33m2f85af1[m rest rest
+[33mc167efc[m HI
+[33m8d8794c[m REMOVING CANCELLATION, COMPLETION, ADD SALES IN ORDER SALES AND REVIEW
+[33m3c331a9[m i lab it it works first try
+[33m2b49875[m ADDING TABLES AT MENU ORDER
+[33m48923ac[m pull mo muna to
+[33me2c7472[m CONNECTING USERS MENU IN MENU
+[33m3f17a70[m HI
+[33mf23e9f8[m madaming bago
+[33mf762ff5[m ADDING PAGING IN SALES LOG
+[33mfbb7488[m notif sa admin to
+[33m51dc93f[m UPDATING MANAGE PRODUCTS CAN ADD IMAGES
+[33m6388ad3[m ADDING FILTER IN INVENTORY, ADDING IMAGES IN PRODUCT
+[33m4635133[m supplier fix push mo
+[33mcb74595[m supplier sa stockmanager and small bugs
+[33m63b1552[m use codev login.tsx
+[33mfe540a4[m ADDING STATUS IN SIDEBAR, TIME IN TIME OUT IN STAFF ACCOUNTS
+[33m07d13e2[m ADDING GCASH PAYMENT IN E-PAYMENT
+[33meda1337[m pull mo ule to
+[33maea68e1[m ADDING ENTER AMOUNT IN MENU, AND PDF FILE IN SALES AND REPORTS
+[33mcaa4f0d[m saving local changes before pull
+[33m4a8c8c6[m fix in stockmanager
+[33m5b88e7a[m stockmanager small fix wait for more
+[33md4e2390[m CHANGING DESIGN UI
+[33md8e3fde[m SIGURADUHIN MONG NAKA PULL TO
+[33m2fa48f7[m MOVING ORDER HISTORY IN SALES REPORTS WITH DESCRIPTION OF THE ORDER
+[33mb69b75a[m ADDING DISCOUNT BUTTON IN MENU VAT
+[33m9db8508[m ADDING DISCOUNT DROPDOWN BUTTON IN MENU
+[33mfac07c4[m NASAN YUNG DISCOUNT?
+[33mc974a68[m ADDING CASHIERS NAME AND REFUND BUTTON IN SALES REPORT
+[33mf7d0f78[m binago ko table sa sales log
+[33m1266e3b[m CHANGING UI LOGIN, AND  MENU
+[33m6bf96a1[m fix the calendar add data to the table
+[33m1cf0c96[m FIXED MERGING
+[33m006c429[m REMOVE ORDER TABLE IN INDEX, MERGING ORDER TABLE IN SALES REPORTS.
+[33m632a1aa[m[33m ([m[1;31morigin/dev[m[33m, [m[1;31mcodev/dev[m[33m)[m ready for deployment i think
+[33ma00e6df[m IMPORT NOTIFICATION
+[33m5e38eb8[m NOTIFICATIONS IMPORT
+[33m5641fc3[m stockmanager fix
+[33m670aac6[m SUPPLIER HISTORY
+[33m6ea9336[m SUPPLIER HISTORY
+[33m9e9c6d8[m add edit in alerts
+[33mb53cec1[m add report stock
+[33m7df9b4f[m changes in stockmanager
+[33m3ea1682[m USERS MENU ADDING NAVBAR AND HISTORY OF PURCHASE
+[33mccae398[m ADD DATE, INVENTORY ADD A MANAGE PRODUCTS (CONFIGURATION) , STOCKMANAGER ADD EXPIRATION DATE
+[33m81a0b51[m add delivery order
+[33m3202e23[m CHANGING NOTIFICATIONS, ADD CONFIRM DIALOG
+[33m4168b8b[m REMOVING PRODUCTS, SALES & REPORTS
+[33mcf57868[m fix to routes
+[33ma773728[m Merge branch 'master' of https://github.com/owapogi123/THE-CRUNCH
+[33m3a21eb9[m CONNECTING LOGIN/LOGOUT BUTTONS
+[33mea6fd13[m Merge branch 'master' of https://github.com/owapogi123/THE-CRUNCH
+[33mdd7cf40[m LOGIN, SIGN UP CHANGES
+[33mdfc9454[m Merge branch 'master' of https://github.com/owapogi123/THE-CRUNCH
+[33m3335b0e[m before pulling
+[33m4d7fd6d[m PRODUCT, LOGIN MERGING THE LOG IN LOG OUT
+[33m62cdc00[m fix the blank page
+[33m6ac061b[m useraccounts here and other routes, still fixing
+[33m2eaee98[m LOOK MESSENGER FOR THE CHANGES
+[33mb26785a[m i pull mo tong hayop ka
+[33m8159aad[m CLEAN, AND ADD MOBILE RESPONSIVE SETUP
+[33m40c0fb7[m Refactor code structure for improved readability and maintainability
+[33mf74164f[m change in stockmanager and in api.ts and small changes in the rest
+[33mf2fb395[m changes ins stockmanager add quickedit and do some changes
+[33mc2d7e7b[m "STOCK MANAGER: ADD PURCHASE ORDER TAB"
+[33m40de2e4[m "STOCK MANAGER: Add Purchase Orders to sidebar and routing"
+[33mba803b1[m "STOCK MANAGER ADD PURCHASE ORDER TAB"
+[33m7dd54dc[m small changes
+[33m9796d9d[m latest changes
+[33m04cf768[m Merge branch 'master' of https://github.com/owapogi123/THE-CRUNCH
+[33m0942672[m[33m ([m[1;31morigin/master[m[33m, [m[1;31morigin/HEAD[m[33m)[m Resolve merge conflicts with upstream/master
+[33m550e17c[m "FRONT-END ENHANCED"
+[33m15234b6[m "NEW FEATURES AND IMPROVEMENTS"
+[33me7078d7[m Merge branch 'master' of https://github.com/owapogi123/THE-CRUNCH
+[33m27728cd[m EXCLUDE LOGIN.TSX, REMOVED ANY VARIABLE, ROUTINGS GOOD
+[33m7285b21[m NEW CHANGES, REMOVED "ANY" VAR, ROUTINGS ALL GOOD
+[33m8fcb873[m menu changes
+[33maf060e3[m fix the login button styling and add the about the crunch page route
+[33me3156a7[m Merge pull request #2 from jaycii0007/master
+[33m8243fb2[m app.tsx change
+[33ma1d39d9[m with login page
+[33m123dc4b[m Ignore login.tsx
+[33mb4524e2[m changers in stockmanager, added stock status, suppliers, and reports endpoints
+[33mf8f2008[m changes in stockmanager, inventory, menu, sales-reports, and order pages to integrate new stock management features and update inventory client interactions.
+[33m9c3cfb9[m Merge pull request #1 from jaycii0007/master
+[33me965b28[m Merge branch 'owapogi123:master' into master
+[33m8731a87[m major change in menu.tsx and order.tsx
+[33m24bcc49[m NEW COMMIT EXCLUDING LOGIN.TSX
+[33mf413f0d[m Merge branch 'master' of https://github.com/owapogi123/THE-CRUNCH
+[33m11b203d[m "ADDED STOCK MANAGER PAGE WITH NO LOCAL STORAGE"
+[33m31cbd97[m Merge branch 'master' of https://github.com/owapogi123/THE-CRUNCH
+[33mae4d7f8[m add stock view to order.tsx
+[33mc90efb0[m fix order retrieval to exclude completed and cancelled orders
+[33maf7d9ab[m Merge branch 'master' of https://github.com/owapogi123/THE-CRUNCH
+[33m7edb259[m fix: remove frontend submodule
+[33m06e3e50[m delete commit
+[33m0573929[m delete commit message
+[33m011a0ff[m Co-authored-by: Y0r7 <owapogi123@users.noreply.github.com>
+[33med11fb0[m Merge branch 'master' of https://github.com/owapogi123/THE-CRUNCH
+[33m6ff9cb5[m Co-authored-by: jaycii0007 <jaycii0007@users.noreply.github.com>
+[33m72302ca[m Merge branch 'master' of https://github.com/owapogi123/THE-CRUNCH
+[33mc2e60b7[m installing the backend dependencies
+[33md599b62[m Co-authored-by: Y0r7 <owapogi123@users.noreply.github.com>
+[33m04e518d[m UPDATED, EXCLUDING THE LOGIN.TSX
+[33m1c27296[m MESSAGE
+[33mdaa03f9[m Merge branch 'master' of https://github.com/owapogi123/THE-CRUNCH
+[33me5fd089[m Merge branch 'master' of https://github.com/owapogi123/THE-CRUNCH
+[33m6a8bd61[m claude
+[33mb9ae962[m NEW UPDATE TITE
+[33me1dbee0[m small change to the order page and the home page to make it look better
+[33m5fe7dda[m small change to app.tsx
+[33ma361927[m small change to order page
+[33mad4d03a[m order.tsx with cash and e-payment options
+[33m64b0b5b[m order.tsx and add the cancel order button in the order page and also add the cancel order function in the app.tsx file
+[33mafdc3e0[m working with the backend and frontend to implement batch inventory management features, including new API endpoints and React hooks for handling batch operations. The changes include modifications to existing files and the addition of new files to support the new functionality.
+[33m252c1c1[m third commit message
+[33m14a3650[m chore: add framer-motion dependency
+[33m61d5d0f[m fix: resolve JSX mismatches in products.tsx
+[33mab3c235[m Merge branch 'master' of https://github.com/owapogi123/THE-CRUNCH
+[33mbc7a02b[m second commit
+[33mf2b684a[m Updated Frontend
+[33m1d74b79[m initial commit
+[33m6c467d8[m commit before rebase
+[33ma0e5ba0[m ETO NA BALDERAMOS
+[33m9f9fdc5[m CHORE: Update inventory and orders
+[33mfbea678[m Initial commit for THE-CRUNCH project

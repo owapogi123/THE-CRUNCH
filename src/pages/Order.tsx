@@ -186,7 +186,16 @@ export default function Order() {
 
   const patch = async (id: string, body: object) => { try { await api.patch(`/orders/${id}`, body); fetchAll(); } catch {} };
   const handleStart  = (id: string) => patch(id, { status: "preparing" });
-  const handleReady  = (id: string) => patch(id, { status: "Ready for Pickup" });
+  const handleReady = async (order: OrderCard) => {
+    try {
+      await api.patch(`/orders/${order.id}`, { status: "Ready for Pickup" });
+      if (order.orderType !== "delivery") {
+        await api.patch(`/orders/${order.id}`, { status: "Completed" });
+      }
+      fetchAll();
+    } catch {}
+  };
+  const handleComplete = (id: string) => patch(id, { status: "Completed" });
   const handleCancel = async (id: string) => {
     setCancellingId(id);
     try { await api.patch(`/orders/${id}`, { status: "Cancelled" }); fetchAll(); }
@@ -600,7 +609,7 @@ export default function Order() {
 
                             {/* Ready / Served */}
                             {!isReady ? (
-                              <button onClick={() => isPrep && handleReady(order.id)} disabled={!isPrep}
+                              <button onClick={() => isPrep && handleReady(order)} disabled={!isPrep}
                                 style={{
                                   flex: 1, padding: "7px 0", borderRadius: 9, fontSize: 11, fontWeight: 500,
                                   cursor: isPrep ? "pointer" : "not-allowed", fontFamily: F,
@@ -610,20 +619,9 @@ export default function Order() {
                                   color: isPrep ? "#374151" : "#d1d5db",
                                   transition: "all 0.12s",
                                 }}>
-                                {order.isOnlinePickup ? "Ready for Pickup" : "Ready"}
+                                {order.orderType === "delivery" ? "Ready for Pickup" : "Complete"}
                               </button>
-                            ) : order.isOnlinePickup ? (
-                              <button
-                                disabled
-                                style={{
-                                  flex: 1, padding: "7px 0", borderRadius: 9, fontSize: 11, fontWeight: 600,
-                                  cursor: "not-allowed", fontFamily: F,
-                                  border: "1px solid #e5e7eb", background: "#f9fafb", color: "#9ca3af",
-                                  transition: "all 0.12s",
-                                }}>
-                                Awaiting Pickup
-                              </button>
-                            ) : (
+                            ) : order.orderType === "delivery" ? (
                               <button
                                 disabled
                                 style={{
@@ -633,6 +631,17 @@ export default function Order() {
                                   transition: "all 0.12s",
                                 }}>
                                 Awaiting Cashier
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => handleComplete(order.id)}
+                                style={{
+                                  flex: 1, padding: "7px 0", borderRadius: 9, fontSize: 11, fontWeight: 600,
+                                  cursor: "pointer", fontFamily: F,
+                                  border: "1px solid #16a34a", background: "#16a34a", color: "#fff",
+                                  transition: "all 0.12s",
+                                }}>
+                                Complete Now
                               </button>
                             )}
                           </div>
