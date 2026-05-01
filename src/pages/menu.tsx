@@ -11,6 +11,10 @@ import {
   Hash,
   ChevronDown,
   Delete,
+  X,
+  AlertCircle,
+  CheckCircle2,
+  Info,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { api, apiCall } from "../lib/api";
@@ -39,6 +43,13 @@ const DISCOUNT_RATE = 0.2;
 
 type CustomerType = "regular" | "pwd" | "senior";
 type PaymentMethod = "cash" | "gcash_onsite";
+type ToastType = "success" | "error" | "info";
+
+interface ToastItem {
+  id: string;
+  type: ToastType;
+  message: string;
+}
 
 interface MenuItem {
   id: number;
@@ -362,6 +373,111 @@ const btn = (bg: string, color: string, extra?: object) => ({
   cursor: "pointer",
   ...extra,
 });
+
+// ─── TOAST SYSTEM ─────────────────────────────────────────────────────────────
+function ToastContainer({ toasts, onDismiss }: { toasts: ToastItem[]; onDismiss: (id: string) => void }) {
+  const config: Record<ToastType, { bg: string; border: string; icon: React.ReactNode; iconColor: string }> = {
+    error: {
+      bg: "#fff1f2",
+      border: "#fecaca",
+      iconColor: "#dc2626",
+      icon: <AlertCircle style={{ width: 15, height: 15, flexShrink: 0 }} />,
+    },
+    success: {
+      bg: "#f0fdf4",
+      border: "#bbf7d0",
+      iconColor: "#16a34a",
+      icon: <CheckCircle2 style={{ width: 15, height: 15, flexShrink: 0 }} />,
+    },
+    info: {
+      bg: "#eff6ff",
+      border: "#bfdbfe",
+      iconColor: "#2563eb",
+      icon: <Info style={{ width: 15, height: 15, flexShrink: 0 }} />,
+    },
+  };
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        bottom: 24,
+        right: 24,
+        zIndex: 999999,
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        pointerEvents: "none",
+        maxWidth: 340,
+        width: "calc(100vw - 48px)",
+      }}
+    >
+      <AnimatePresence>
+        {toasts.map((toast) => {
+          const c = config[toast.type];
+          return (
+            <motion.div
+              key={toast.id}
+              layout
+              initial={{ opacity: 0, y: 16, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 8, scale: 0.95 }}
+              transition={{ type: "spring", stiffness: 420, damping: 30 }}
+              style={{
+                background: c.bg,
+                border: `1px solid ${c.border}`,
+                borderRadius: 12,
+                padding: "11px 14px",
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 10,
+                boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
+                pointerEvents: "auto",
+                fontFamily: F,
+              }}
+            >
+              <span style={{ color: c.iconColor, marginTop: 1 }}>{c.icon}</span>
+              <p style={{ fontSize: 12, fontWeight: 500, color: "#111", flex: 1, margin: 0, lineHeight: 1.5 }}>
+                {toast.message}
+              </p>
+              <button
+                onClick={() => onDismiss(toast.id)}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  flexShrink: 0,
+                  marginTop: 1,
+                }}
+              >
+                <X style={{ width: 13, height: 13, color: "#9ca3af" }} />
+              </button>
+            </motion.div>
+          );
+        })}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function useToast() {
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+
+  const dismiss = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const toast = useCallback((type: ToastType, message: string, duration = 4000) => {
+    const id = `${Date.now()}-${Math.random()}`;
+    setToasts((prev) => [...prev, { id, type, message }]);
+    setTimeout(() => dismiss(id), duration);
+  }, [dismiss]);
+
+  return { toasts, toast, dismiss };
+}
 
 // ─── PAYMENT STATUS BADGE ─────────────────────────────────────────────────────
 function PaymentStatusBadge({
@@ -1035,7 +1151,6 @@ function AmountEntryModal({
     <AnimatePresence>
       {show && (
         <>
-          {/* Backdrop */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -1050,8 +1165,6 @@ function AmountEntryModal({
               background: "rgba(0,0,0,0.6)",
             }}
           />
-
-          {/* Modal container */}
           <div
             style={{
               position: "fixed",
@@ -1064,7 +1177,6 @@ function AmountEntryModal({
               pointerEvents: "none",
             }}
           >
-            {/* Modal card — flex column so header is sticky and body scrolls */}
             <motion.div
               initial={{ opacity: 0, scale: 0.96, y: 10 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -1084,7 +1196,6 @@ function AmountEntryModal({
                 overflow: "hidden",
               }}
             >
-              {/* ── Sticky header: Amount Due ── */}
               <div
                 style={{
                   padding: "22px 22px 16px",
@@ -1111,7 +1222,6 @@ function AmountEntryModal({
                 </p>
               </div>
 
-              {/* ── Scrollable body ── */}
               <div
                 style={{
                   padding: "14px 18px 18px",
@@ -1313,7 +1423,6 @@ function AmountEntryModal({
                     </motion.button>
                   </>
                 ) : (
-                  // ── GCash / E-Payment ──
                   <div>
                     <div
                       style={{
@@ -2033,6 +2142,7 @@ function SuccessModal({
 export default function CashierView() {
   const isMobile = useIsMobile();
   const isFirstPoll = useRef(true);
+  const { toasts, toast, dismiss } = useToast();
 
   const [products, setProducts] = useState<MenuItem[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(false);
@@ -2220,9 +2330,10 @@ export default function CashierView() {
         cashierId: getCashierId(),
       });
       setOnlineOrderNotifs((prev) => prev.filter((o) => o.id !== id));
+      toast("success", "Order confirmed and moved to cook queue.");
     } catch (err) {
       console.error("Failed to proceed online order:", err);
-      alert("Failed to confirm payment and move the online order to the cook queue.");
+      toast("error", "Failed to confirm payment. Please try again.");
     }
   };
 
@@ -2230,9 +2341,10 @@ export default function CashierView() {
     try {
       await updateQueueOrder(id, { status: "Cancelled", cashierId: getCashierId() });
       setOnlineOrderNotifs((prev) => prev.filter((o) => o.id !== id));
+      toast("info", "Order has been cancelled.");
     } catch (err) {
       console.error("Failed to cancel online order:", err);
-      alert("Failed to cancel online order.");
+      toast("error", "Failed to cancel order. Please try again.");
     }
   };
 
@@ -2240,9 +2352,10 @@ export default function CashierView() {
     try {
       await updateQueueOrder(id, { status: "Completed", cashierId: getCashierId() });
       setReadyPickupOrders((prev) => prev.filter((o) => o.id !== id));
+      toast("success", "Customer pickup confirmed successfully.");
     } catch (err) {
       console.error("Failed to confirm pickup:", err);
-      alert("Failed to confirm customer pickup.");
+      toast("error", "Failed to confirm customer pickup. Please try again.");
     }
   };
 
@@ -2272,13 +2385,12 @@ export default function CashierView() {
       ]);
       setHandoverOrder(null);
       setRiderNameInput("");
+      toast("success", `Order handed to rider ${riderNameInput.trim()}.`);
     } catch (err) {
       console.error("Failed to hand order to rider:", err);
       const message =
-        err instanceof Error
-          ? err.message
-          : "Failed to record rider handover.";
-      alert(message);
+        err instanceof Error ? err.message : "Failed to record rider handover.";
+      toast("error", message);
     } finally {
       setSavingHandover(false);
     }
@@ -2294,13 +2406,6 @@ export default function CashierView() {
     return tabOk && p.name.toLowerCase().includes(searchQuery.toLowerCase());
   });
 
-  const readyForPickupOrders = readyPickupOrders;
-  const readyForDeliveryOrders = deliveryHandoverOrders.filter(
-    (order) =>
-      !order.handoverTimestamp &&
-      order.trackingStatus.toLowerCase() !== "handed to rider" &&
-      order.trackingStatus.toLowerCase() !== "out for delivery",
-  );
   const totalQty = cart.reduce((s, i) => s + i.quantity, 0);
   const gross = cart.reduce((s, i) => s + i.price * i.quantity, 0);
   const pricing = computePricing(gross, customerType);
@@ -2361,7 +2466,7 @@ export default function CashierView() {
 
     if (paymentMethod === "gcash_onsite") {
       if (!selectedImage) {
-        alert("Please upload or capture the onsite e-payment proof first.");
+        toast("error", "Please upload or capture the onsite e-payment proof first.");
         setPlacing(false);
         return;
       }
@@ -2376,7 +2481,7 @@ export default function CashierView() {
         proofImageUrl = upload.fileUrl;
       } catch (error) {
         console.error("Failed to upload payment proof:", error);
-        alert("Failed to upload the payment proof. Please try again.");
+        toast("error", "Failed to upload the payment proof. Please try again.");
         setPlacing(false);
         return;
       }
@@ -2425,7 +2530,7 @@ export default function CashierView() {
       }
     } catch (err) {
       console.error("Order failed:", err);
-      alert("Failed to submit order. Please try again.");
+      toast("error", "Failed to submit order. Please try again.");
     } finally {
       setPlacing(false);
     }
@@ -2594,21 +2699,45 @@ export default function CashierView() {
                     gap: 6,
                     padding: "5px 10px 5px 8px",
                     borderRadius: 20,
-                    border: `1px solid ${readyForDeliveryOrders.length + handedToRiderOrders.length > 0 ? "#111" : "#efefef"}`,
+                    border: `1px solid ${
+                      (deliveryHandoverOrders.filter(
+                        (o) =>
+                          !o.handoverTimestamp &&
+                          o.trackingStatus.toLowerCase() !== "handed to rider" &&
+                          o.trackingStatus.toLowerCase() !== "out for delivery",
+                      ).length + handedToRiderOrders.length) > 0
+                        ? "#111"
+                        : "#efefef"
+                    }`,
                     background:
-                      readyForDeliveryOrders.length + handedToRiderOrders.length > 0
+                      (deliveryHandoverOrders.filter(
+                        (o) =>
+                          !o.handoverTimestamp &&
+                          o.trackingStatus.toLowerCase() !== "handed to rider" &&
+                          o.trackingStatus.toLowerCase() !== "out for delivery",
+                      ).length + handedToRiderOrders.length) > 0
                         ? deliveryHandoverOpen ? "#f3f4f6" : "#fafafa"
                         : "#fafafa",
                     cursor: "pointer",
                     fontFamily: F,
                     boxShadow:
-                      readyForDeliveryOrders.length + handedToRiderOrders.length > 0
+                      (deliveryHandoverOrders.filter(
+                        (o) =>
+                          !o.handoverTimestamp &&
+                          o.trackingStatus.toLowerCase() !== "handed to rider" &&
+                          o.trackingStatus.toLowerCase() !== "out for delivery",
+                      ).length + handedToRiderOrders.length) > 0
                         ? "0 0 0 3px rgba(17,17,17,0.06)"
                         : "none",
                     transition: "all 0.2s",
                   }}
                 >
-                  {readyForDeliveryOrders.length + handedToRiderOrders.length > 0 && (
+                  {(deliveryHandoverOrders.filter(
+                    (o) =>
+                      !o.handoverTimestamp &&
+                      o.trackingStatus.toLowerCase() !== "handed to rider" &&
+                      o.trackingStatus.toLowerCase() !== "out for delivery",
+                  ).length + handedToRiderOrders.length) > 0 && (
                     <motion.div
                       animate={{ scale: [1, 1.4, 1], opacity: [1, 0.45, 1] }}
                       transition={{ repeat: Infinity, duration: 1.4 }}
@@ -2626,16 +2755,33 @@ export default function CashierView() {
                       fontSize: 11,
                       fontWeight: 600,
                       color:
-                        readyForDeliveryOrders.length + handedToRiderOrders.length > 0
+                        (deliveryHandoverOrders.filter(
+                          (o) =>
+                            !o.handoverTimestamp &&
+                            o.trackingStatus.toLowerCase() !== "handed to rider" &&
+                            o.trackingStatus.toLowerCase() !== "out for delivery",
+                        ).length + handedToRiderOrders.length) > 0
                           ? "#111"
                           : "#bbb",
                     }}
                   >
                     Delivery Handover
                   </span>
-                  {readyForDeliveryOrders.length + handedToRiderOrders.length > 0 && (
+                  {(deliveryHandoverOrders.filter(
+                    (o) =>
+                      !o.handoverTimestamp &&
+                      o.trackingStatus.toLowerCase() !== "handed to rider" &&
+                      o.trackingStatus.toLowerCase() !== "out for delivery",
+                  ).length + handedToRiderOrders.length) > 0 && (
                     <motion.span
-                      key={readyForDeliveryOrders.length + handedToRiderOrders.length}
+                      key={
+                        deliveryHandoverOrders.filter(
+                          (o) =>
+                            !o.handoverTimestamp &&
+                            o.trackingStatus.toLowerCase() !== "handed to rider" &&
+                            o.trackingStatus.toLowerCase() !== "out for delivery",
+                        ).length + handedToRiderOrders.length
+                      }
                       initial={{ scale: 0.6, opacity: 0 }}
                       animate={{ scale: 1, opacity: 1 }}
                       transition={SP}
@@ -2650,7 +2796,12 @@ export default function CashierView() {
                         textAlign: "center",
                       }}
                     >
-                      {readyForDeliveryOrders.length + handedToRiderOrders.length}
+                      {deliveryHandoverOrders.filter(
+                        (o) =>
+                          !o.handoverTimestamp &&
+                          o.trackingStatus.toLowerCase() !== "handed to rider" &&
+                          o.trackingStatus.toLowerCase() !== "out for delivery",
+                      ).length + handedToRiderOrders.length}
                     </motion.span>
                   )}
                   <motion.div
@@ -2663,7 +2814,12 @@ export default function CashierView() {
                         width: 11,
                         height: 11,
                         color:
-                          readyForDeliveryOrders.length + handedToRiderOrders.length > 0
+                          (deliveryHandoverOrders.filter(
+                            (o) =>
+                              !o.handoverTimestamp &&
+                              o.trackingStatus.toLowerCase() !== "handed to rider" &&
+                              o.trackingStatus.toLowerCase() !== "out for delivery",
+                          ).length + handedToRiderOrders.length) > 0
                             ? "#111"
                             : "#ccc",
                       }}
@@ -2691,7 +2847,7 @@ export default function CashierView() {
                       overflow: "hidden",
                     }}
                   >
-                    {onlineOrderNotifs.length === 0 && readyForPickupOrders.length === 0 ? (
+                    {onlineOrderNotifs.length === 0 && readyPickupOrders.length === 0 ? (
                       <div style={{ padding: "16px", textAlign: "center" }}>
                         <p style={{ fontSize: 11, color: "#bbb", fontFamily: F, margin: 0 }}>
                           No online pickup orders waiting for cashier action
@@ -2704,7 +2860,7 @@ export default function CashierView() {
                             style={{
                               padding: "10px 14px 8px",
                               borderBottom:
-                                readyForPickupOrders.length > 0 ? "1px solid #d1fae5" : "none",
+                                readyPickupOrders.length > 0 ? "1px solid #d1fae5" : "none",
                             }}
                           >
                             <p
@@ -2869,7 +3025,7 @@ export default function CashierView() {
                           ))}
                         </AnimatePresence>
 
-                        {readyForPickupOrders.length > 0 && (
+                        {readyPickupOrders.length > 0 && (
                           <div
                             style={{
                               padding: "10px 14px 8px",
@@ -2892,7 +3048,7 @@ export default function CashierView() {
                           </div>
                         )}
                         <AnimatePresence>
-                          {readyForPickupOrders.map((notif, idx) => (
+                          {readyPickupOrders.map((notif, idx) => (
                             <motion.div
                               key={`ready-${notif.id}`}
                               layout
@@ -3042,7 +3198,12 @@ export default function CashierView() {
                       overflow: "hidden",
                     }}
                   >
-                    {readyForDeliveryOrders.length === 0 && handedToRiderOrders.length === 0 ? (
+                    {deliveryHandoverOrders.filter(
+                      (o) =>
+                        !o.handoverTimestamp &&
+                        o.trackingStatus.toLowerCase() !== "handed to rider" &&
+                        o.trackingStatus.toLowerCase() !== "out for delivery",
+                    ).length === 0 && handedToRiderOrders.length === 0 ? (
                       <div style={{ padding: "16px", textAlign: "center" }}>
                         <p style={{ fontSize: 11, color: "#bbb", fontFamily: F, margin: 0 }}>
                           No delivery orders waiting for rider handover
@@ -3050,7 +3211,12 @@ export default function CashierView() {
                       </div>
                     ) : (
                       <div>
-                        {readyForDeliveryOrders.length > 0 && (
+                        {deliveryHandoverOrders.filter(
+                          (o) =>
+                            !o.handoverTimestamp &&
+                            o.trackingStatus.toLowerCase() !== "handed to rider" &&
+                            o.trackingStatus.toLowerCase() !== "out for delivery",
+                        ).length > 0 && (
                           <div
                             style={{
                               padding: "10px 14px 8px",
@@ -3073,129 +3239,136 @@ export default function CashierView() {
                           </div>
                         )}
                         <AnimatePresence>
-                          {readyForDeliveryOrders.map((notif, idx) => (
-                            <motion.div
-                              key={`delivery-${notif.id}`}
-                              layout
-                              initial={{ opacity: 0, x: -8 }}
-                              animate={{ opacity: 1, x: 0 }}
-                              exit={{ opacity: 0, x: 8, height: 0, padding: 0 }}
-                              transition={{ delay: idx * 0.04, ...SP }}
-                              style={{
-                                display: "grid",
-                                gap: 10,
-                                padding: "12px 14px",
-                                borderTop: idx > 0 ? "1px solid #e5e7eb" : "none",
-                              }}
-                            >
-                              <div
+                          {deliveryHandoverOrders
+                            .filter(
+                              (o) =>
+                                !o.handoverTimestamp &&
+                                o.trackingStatus.toLowerCase() !== "handed to rider" &&
+                                o.trackingStatus.toLowerCase() !== "out for delivery",
+                            )
+                            .map((notif, idx) => (
+                              <motion.div
+                                key={`delivery-${notif.id}`}
+                                layout
+                                initial={{ opacity: 0, x: -8 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                exit={{ opacity: 0, x: 8, height: 0, padding: 0 }}
+                                transition={{ delay: idx * 0.04, ...SP }}
                                 style={{
-                                  display: "flex",
-                                  alignItems: "flex-start",
-                                  justifyContent: "space-between",
+                                  display: "grid",
                                   gap: 10,
+                                  padding: "12px 14px",
+                                  borderTop: idx > 0 ? "1px solid #e5e7eb" : "none",
                                 }}
                               >
-                                <div style={{ minWidth: 0, flex: 1 }}>
-                                  <div
-                                    style={{
-                                      display: "flex",
-                                      alignItems: "center",
-                                      gap: 6,
-                                      marginBottom: 4,
-                                      flexWrap: "wrap",
-                                    }}
-                                  >
-                                    <span
-                                      style={{
-                                        fontSize: 12,
-                                        fontWeight: 700,
-                                        color: "#111",
-                                        fontFamily: F,
-                                      }}
-                                    >
-                                      {notif.orderNumber}
-                                    </span>
-                                    <span
-                                      style={{
-                                        fontSize: 9,
-                                        fontWeight: 600,
-                                        padding: "2px 7px",
-                                        borderRadius: 99,
-                                        background: "#f3f4f6",
-                                        color: "#111",
-                                      }}
-                                    >
-                                      {notif.trackingStatus}
-                                    </span>
-                                  </div>
-                                  <div
-                                    style={{
-                                      display: "flex",
-                                      alignItems: "center",
-                                      gap: 6,
-                                      flexWrap: "wrap",
-                                    }}
-                                  >
-                                    <span
-                                      style={{
-                                        fontSize: 9,
-                                        fontWeight: 500,
-                                        padding: "1px 7px",
-                                        borderRadius: 99,
-                                        background: "#f3f4f6",
-                                        color: "#4b5563",
-                                        textTransform: "capitalize",
-                                      }}
-                                    >
-                                      {notif.orderType}
-                                    </span>
-                                    <span style={{ fontSize: 9, color: "#6b7280" }}>
-                                      {new Date(notif.createdAt).toLocaleTimeString("en-PH", {
-                                        hour: "2-digit",
-                                        minute: "2-digit",
-                                        hour12: true,
-                                      })}
-                                    </span>
-                                    <span style={{ fontSize: 11, fontWeight: 700, color: "#111" }}>
-                                      ₱{Number(notif.total).toFixed(2)}
-                                    </span>
-                                  </div>
-                                </div>
-                                <motion.button
-                                  whileTap={{ scale: 0.95 }}
-                                  onClick={() => openRiderHandover(notif)}
+                                <div
                                   style={{
-                                    padding: "7px 11px",
-                                    borderRadius: 9,
-                                    border: "1px solid #111",
-                                    background: "#111",
-                                    color: "#fff",
-                                    cursor: "pointer",
-                                    fontSize: 10.5,
-                                    fontWeight: 600,
-                                    fontFamily: F,
-                                    flexShrink: 0,
+                                    display: "flex",
+                                    alignItems: "flex-start",
+                                    justifyContent: "space-between",
+                                    gap: 10,
                                   }}
                                 >
-                                  Handed to Rider
-                                </motion.button>
-                              </div>
-                              <div style={{ display: "grid", gap: 5 }}>
-                                {notif.items.map((item, itemIndex) => (
-                                  <span
-                                    key={`delivery-handover-${notif.id}-${itemIndex}`}
-                                    style={{ fontSize: 10.5, color: "#374151", fontFamily: F }}
+                                  <div style={{ minWidth: 0, flex: 1 }}>
+                                    <div
+                                      style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 6,
+                                        marginBottom: 4,
+                                        flexWrap: "wrap",
+                                      }}
+                                    >
+                                      <span
+                                        style={{
+                                          fontSize: 12,
+                                          fontWeight: 700,
+                                          color: "#111",
+                                          fontFamily: F,
+                                        }}
+                                      >
+                                        {notif.orderNumber}
+                                      </span>
+                                      <span
+                                        style={{
+                                          fontSize: 9,
+                                          fontWeight: 600,
+                                          padding: "2px 7px",
+                                          borderRadius: 99,
+                                          background: "#f3f4f6",
+                                          color: "#111",
+                                        }}
+                                      >
+                                        {notif.trackingStatus}
+                                      </span>
+                                    </div>
+                                    <div
+                                      style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 6,
+                                        flexWrap: "wrap",
+                                      }}
+                                    >
+                                      <span
+                                        style={{
+                                          fontSize: 9,
+                                          fontWeight: 500,
+                                          padding: "1px 7px",
+                                          borderRadius: 99,
+                                          background: "#f3f4f6",
+                                          color: "#4b5563",
+                                          textTransform: "capitalize",
+                                        }}
+                                      >
+                                        {notif.orderType}
+                                      </span>
+                                      <span style={{ fontSize: 9, color: "#6b7280" }}>
+                                        {new Date(notif.createdAt).toLocaleTimeString("en-PH", {
+                                          hour: "2-digit",
+                                          minute: "2-digit",
+                                          hour12: true,
+                                        })}
+                                      </span>
+                                      <span style={{ fontSize: 11, fontWeight: 700, color: "#111" }}>
+                                        ₱{Number(notif.total).toFixed(2)}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <motion.button
+                                    whileTap={{ scale: 0.95 }}
+                                    onClick={() => openRiderHandover(notif)}
+                                    style={{
+                                      padding: "7px 11px",
+                                      borderRadius: 9,
+                                      border: "1px solid #111",
+                                      background: "#111",
+                                      color: "#fff",
+                                      cursor: "pointer",
+                                      fontSize: 10.5,
+                                      fontWeight: 600,
+                                      fontFamily: F,
+                                      flexShrink: 0,
+                                    }}
                                   >
-                                    {item.quantity}x {item.name}
-                                  </span>
-                                ))}
-                              </div>
-                              <span style={{ fontSize: 10, color: "#9ca3af", fontFamily: F }}>
-                                Record this once the rider physically collects the order
-                              </span>
-                            </motion.div>
-                          ))}
+                                    Handed to Rider
+                                  </motion.button>
+                                </div>
+                                <div style={{ display: "grid", gap: 5 }}>
+                                  {notif.items.map((item, itemIndex) => (
+                                    <span
+                                      key={`delivery-handover-${notif.id}-${itemIndex}`}
+                                      style={{ fontSize: 10.5, color: "#374151", fontFamily: F }}
+                                    >
+                                      {item.quantity}x {item.name}
+                                    </span>
+                                  ))}
+                                </div>
+                                <span style={{ fontSize: 10, color: "#9ca3af", fontFamily: F }}>
+                                  Record this once the rider physically collects the order
+                                </span>
+                              </motion.div>
+                            ))}
                         </AnimatePresence>
 
                         {handedToRiderOrders.length > 0 && (
@@ -3203,7 +3376,14 @@ export default function CashierView() {
                             style={{
                               padding: "10px 14px 8px",
                               borderTop:
-                                readyForDeliveryOrders.length > 0 ? "1px solid #e5e7eb" : "none",
+                                deliveryHandoverOrders.filter(
+                                  (o) =>
+                                    !o.handoverTimestamp &&
+                                    o.trackingStatus.toLowerCase() !== "handed to rider" &&
+                                    o.trackingStatus.toLowerCase() !== "out for delivery",
+                                ).length > 0
+                                  ? "1px solid #e5e7eb"
+                                  : "none",
                             }}
                           >
                             <p
@@ -3709,6 +3889,9 @@ export default function CashierView() {
         discountAmount={savedPricing.discountAmount}
         vatAmount={savedPricing.vatAmount}
       />
+
+      {/* ── Toast notifications ── */}
+      <ToastContainer toasts={toasts} onDismiss={dismiss} />
     </>
   );
 }

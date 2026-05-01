@@ -1056,7 +1056,7 @@ export default function SettingsPage() {
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Mono:wght@400;500&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap');
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
         @keyframes spin { to { transform: rotate(360deg); } }
         ::-webkit-scrollbar { width: 4px; }
@@ -1071,16 +1071,33 @@ export default function SettingsPage() {
         }
         .tab-btn:hover { color: #484340; }
         .tab-btn.active { color: #1c1a18; font-weight: 600; }
+
+        /* ── Sidebar nav links — matching screenshot ── */
         .sidebar-link {
-          width: 100%; text-align: left; border-radius: 10px;
-          padding: ${isMobile ? "11px 14px" : "9px 14px"};
-          font-size: ${isMobile ? "0.95rem" : "0.84rem"};
+          width: 100%;
+          text-align: left;
+          border-radius: 12px;
+          padding: ${isMobile ? "13px 16px" : "11px 16px"};
+          font-size: ${isMobile ? "1rem" : "0.93rem"};
           font-family: 'DM Sans', sans-serif;
-          cursor: pointer; transition: background 0.15s; display: block;
-          text-decoration: none; color: #111827;
+          font-weight: 400;
+          letter-spacing: -0.01em;
+          cursor: pointer;
+          transition: background 0.15s, color 0.15s;
+          display: block;
+          text-decoration: none;
+          color: #111827;
+          line-height: 1.3;
         }
-        .sidebar-link:hover { background: #f9fafb; }
-        .sidebar-link.active-link { background: #f3f4f6; font-weight: 600; }
+        .sidebar-link:hover {
+          background: #f5f5f4;
+        }
+        .sidebar-link.active-link {
+          background: #f0efee;
+          font-weight: 700;
+          color: #000;
+        }
+
         select option { font-family: 'DM Sans', sans-serif; }
       `}</style>
 
@@ -1164,19 +1181,16 @@ export default function SettingsPage() {
               <div style={{ height: 1, background: "#f3f4f6", margin: "0 0 6px" }} />
 
               {/* Nav */}
-              <div style={{ flex: 1, overflowY: "auto", padding: "0 14px" }} className="hide-scroll">
-                <p style={{ fontSize: "0.67rem", color: "#9ca3af", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", margin: "8px 0 5px", padding: "0 6px" }}>
+              <div style={{ flex: 1, overflowY: "auto", padding: "0 12px" }} className="hide-scroll">
+                <p style={{ fontSize: "0.67rem", color: "#9ca3af", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", margin: "10px 0 6px", padding: "0 4px" }}>
                   Navigation
                 </p>
-                <nav style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                <nav style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                   {visibleItems.map((item, i) => (
                     <motion.div key={item.label} initial={{ x: -20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ delay: 0.12 + i * 0.035 }}>
                       <NavLink to={item.path} end onClick={() => setIsOpen(false)}>
                         {({ isActive }) => (
-                          <div
-                            className={`sidebar-link${isActive ? " active-link" : ""}`}
-                            style={{ fontWeight: isActive ? 600 : 400 }}
-                          >
+                          <div className={`sidebar-link${isActive ? " active-link" : ""}`}>
                             {item.label}
                           </div>
                         )}
@@ -1187,12 +1201,18 @@ export default function SettingsPage() {
               </div>
 
               {/* Logout */}
-              <div style={{ padding: "10px 14px 22px", borderTop: "1px solid #f3f4f6", flexShrink: 0 }}>
+              <div style={{ padding: "10px 12px 22px", borderTop: "1px solid #f3f4f6", flexShrink: 0 }}>
                 <div
                   className="sidebar-link"
                   onClick={() => { logout(); setIsOpen(false); navigate("/login"); }}
-                  onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "#fef2f2"; (e.currentTarget as HTMLDivElement).style.color = "#dc2626"; }}
-                  onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "transparent"; (e.currentTarget as HTMLDivElement).style.color = "#111827"; }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLDivElement).style.background = "#fef2f2";
+                    (e.currentTarget as HTMLDivElement).style.color = "#dc2626";
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLDivElement).style.background = "transparent";
+                    (e.currentTarget as HTMLDivElement).style.color = "#111827";
+                  }}
                 >
                   Log out
                 </div>
