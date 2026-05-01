@@ -2303,7 +2303,8 @@ export default function CashierView() {
   }, []);
 
   const getCashierId = () => {
-    const raw = sessionStorage.getItem("userId");
+    const raw =
+      localStorage.getItem("userId") ?? sessionStorage.getItem("userId");
     return raw ? Number(raw) : null;
   };
 
@@ -2355,6 +2356,13 @@ export default function CashierView() {
       toast("success", "Customer pickup confirmed successfully.");
     } catch (err) {
       console.error("Failed to confirm pickup:", err);
+      if (
+        typeof err === "object" &&
+        err !== null &&
+        "data" in err
+      ) {
+        console.error("Confirm pickup backend response:", (err as { data?: unknown }).data);
+      }
       toast("error", "Failed to confirm customer pickup. Please try again.");
     }
   };

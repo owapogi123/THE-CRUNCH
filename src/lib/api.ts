@@ -50,6 +50,7 @@ interface FetchOptions extends Omit<RequestInit, "body"> {
 
 interface ApiErrorData {
   message?: string;
+  error?: string;
   [key: string]: unknown;
 }
 
@@ -152,7 +153,11 @@ export const apiCall = async <T = unknown>(
       }
       const message =
         typeof errData === "object" && errData !== null
-          ? (errData.message ?? `HTTP ${response.status}`)
+          ? ((errData.message === "DB error" || errData.message === "Internal Server Error") &&
+            typeof errData.error === "string" &&
+            errData.error.trim()
+              ? errData.error
+              : (errData.message ?? `HTTP ${response.status}`))
           : `HTTP ${response.status}`;
       const err = new Error(message) as ApiError;
       err.status = response.status;
