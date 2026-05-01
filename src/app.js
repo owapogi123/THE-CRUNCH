@@ -63,6 +63,11 @@ app.use("/api", contentRoutes);
 const orderRoutes = require("./routes/orderRoutes");
 app.use("/api/orders", orderRoutes);
 
+// Local fallback for optional dine-in table support.
+app.get("/api/tables", (req, res) => {
+  res.json([]);
+});
+
 // Test route
 app.get("/api", (req, res) => {
   res.json({ status: "success", message: "API is working" });

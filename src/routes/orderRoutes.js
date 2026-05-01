@@ -26,6 +26,7 @@ function normalizeOrderType(value) {
 function normalizePaymentMethod(value) {
   const v = String(value || "").toLowerCase().trim();
   if (!v) return "cash";
+  if (v === "cash on pickup" || v === "cash_on_pickup") return "cash_on_pickup";
   if (
     v === "gcash_onsite" ||
     v === "onsite_epayment" ||
@@ -37,6 +38,22 @@ function normalizePaymentMethod(value) {
   }
   if (v === "gcash") return "gcash";
   return v === "cash" ? "cash" : String(value);
+}
+
+function getStoredPaymentMethod(method, options = {}) {
+  const normalizedMethod = normalizePaymentMethod(method);
+  const { isOnlinePickupOrder = false } = options;
+
+  if (normalizedMethod === "gcash") return "GCash";
+  if (normalizedMethod === "gcash_onsite") return "Onsite GCash / E-Payment";
+  if (
+    normalizedMethod === "cash_on_pickup" ||
+    (normalizedMethod === "cash" && isOnlinePickupOrder)
+  ) {
+    return "Cash on Pickup";
+  }
+  if (normalizedMethod === "cash") return "Cash";
+  return method ? String(method) : "Cash";
 }
 
 const DEFAULT_ESTIMATED_PREP_MINUTES = 10;
@@ -458,6 +475,7 @@ async function ensureLegacyCashierRow(conn, cashierId) {
 // GET /orders — list all orders for dashboard
 router.get("/", async (req, res) => {
   try {
+    await ensureOnlineOrderColumns();
     await ensureDeliveryTrackingColumns();
     const [orders] = await db.query(
       `SELECT
@@ -467,21 +485,26 @@ router.get("/", async (req, res) => {
          o.Order_Date      AS date,
          o.Order_Type      AS orderType,
          o.payment_reference AS paymentReference,
+         o.payment_status  AS paymentStatus,
+         o.payment_method  AS paymentMethod,
+         o.proof_image_url AS proofImageUrl,
+         o.verified_by     AS verifiedBy,
          o.handoverTimestamp AS handoverTimestamp,
          o.riderName       AS riderName,
-         p.Payment_Type    AS paymentMethod,
+         p.Payment_Type    AS paymentRecordMethod,
          p.Payment_ID      AS paymentId,
          oi.Product_ID     AS productId,
          oi.Quantity       AS quantity,
          oi.Subtotal       AS subtotal,
          COALESCE(m.Product_Name, pr.name) AS productName,
          COALESCE(m.Price,        pr.price) AS price,
-         u.username        AS cashierName
+         COALESCE(u.username, c.UserName) AS cashierName
        FROM orders o
        LEFT JOIN order_item oi ON o.Order_ID = oi.Order_ID
        LEFT JOIN Menu      m  ON m.Product_ID  = oi.Product_ID
        LEFT JOIN products  pr ON pr.id          = oi.Product_ID
-       LEFT JOIN users     u  ON u.id           = o.Cashier_ID
+       LEFT JOIN users     u  ON u.id           = COALESCE(o.Cashier_ID, o.verified_by)
+       LEFT JOIN Cashier   c  ON c.Cashier_ID   = COALESCE(o.Cashier_ID, o.verified_by)
        LEFT JOIN (
          SELECT p1.Order_ID, p1.Payment_ID, p1.Payment_Type
          FROM payments p1
@@ -627,6 +650,7 @@ router.get("/queue", async (req, res) => {
 //     "new-online" as an :id parameter.
 router.get("/new-online", async (req, res) => {
   try {
+    await ensureOnlineOrderColumns();
     const [rows] = await db.query(
       `SELECT
          o.Order_ID        AS id,
@@ -634,6 +658,15 @@ router.get("/new-online", async (req, res) => {
          o.Total_Amount    AS total,
          o.Order_Date      AS createdAt,
          o.Order_Type      AS orderType,
+         o.payment_status  AS paymentStatus,
+         o.payment_method  AS paymentMethod,
+         (
+           SELECT p.Payment_Status
+           FROM payments p
+           WHERE p.Order_ID = o.Order_ID
+           ORDER BY p.Payment_ID DESC
+           LIMIT 1
+         ) AS paymentRecordStatus,
          oi.Quantity       AS quantity,
          COALESCE(m.Product_Name, pr.name) AS productName
        FROM orders o
@@ -655,6 +688,10 @@ router.get("/new-online", async (req, res) => {
           createdAt: r.createdAt,
           orderType: normalizeOrderType(r.orderType),
           trackingStatus: r.status || "Awaiting Cashier Review",
+          paymentStatus: normalizePaymentStatus(
+            r.paymentStatus || r.paymentRecordStatus || "Pending"
+          ),
+          paymentMethod: r.paymentMethod || null,
           items: [],
         };
       }
@@ -685,6 +722,7 @@ router.get("/ready-pickup", async (req, res) => {
          o.Order_Date      AS createdAt,
          o.Order_Type      AS orderType,
          o.payment_status  AS paymentStatus,
+         o.payment_method  AS paymentMethod,
          (
            SELECT p.Payment_Status
            FROM payments p
@@ -719,6 +757,7 @@ router.get("/ready-pickup", async (req, res) => {
           paymentStatus: normalizePaymentStatus(
             r.paymentStatus || r.paymentRecordStatus || "Pending"
           ),
+          paymentMethod: r.paymentMethod || null,
           handoverTimestamp: r.handoverTimestamp,
           riderName: r.riderName,
           items: [],
@@ -829,6 +868,7 @@ router.get("/customer/:customerUserId", requireAuthenticatedUser, async (req, re
          o.Order_Type AS orderType,
          o.payment_reference AS paymentReference,
          o.payment_status AS paymentStatus,
+         o.payment_method AS storedPaymentMethod,
          p.Payment_Type AS paymentMethod,
          oi.Quantity AS quantity,
          COALESCE(m.Product_Name, pr.name) AS productName
@@ -867,7 +907,7 @@ router.get("/customer/:customerUserId", requireAuthenticatedUser, async (req, re
           trackingStatus,
           paymentReference: row.paymentReference || null,
           paymentStatus: normalizePaymentStatus(row.paymentStatus || null),
-          paymentMethod: row.paymentMethod || "gcash",
+          paymentMethod: row.storedPaymentMethod || row.paymentMethod || "GCash",
           items: [],
         };
       }
@@ -1081,7 +1121,7 @@ router.post("/", async (req, res) => {
     }
 
     const finalOrderType = normalizeOrderType(order_type || orderType);
-    const finalPaymentMethod = normalizePaymentMethod(
+    const normalizedPaymentMethod = normalizePaymentMethod(
       payment_method || paymentMethod || "cash"
     );
     const submittedPaymentReference = String(payment_reference || paymentReference || "").trim() || null;
@@ -1093,6 +1133,10 @@ router.post("/", async (req, res) => {
     const resolvedCustomerUserId = Number(customerUserId) > 0 ? Number(customerUserId) : null;
     const isOnlinePickupOrder =
       resolvedCustomerUserId && resolvedCashierId == null && finalOrderType === "take-out";
+    const storedPaymentMethod = getStoredPaymentMethod(
+      normalizedPaymentMethod,
+      { isOnlinePickupOrder },
+    );
     let effectivePaymentReference = submittedPaymentReference;
     let effectivePaymentStatus = "Pending";
     let verifiedBy = null;
@@ -1103,9 +1147,9 @@ router.post("/", async (req, res) => {
         : "Pending";
 
     if (resolvedCashierId != null) {
-      if (finalPaymentMethod === "cash") {
+      if (normalizedPaymentMethod === "cash") {
         effectivePaymentStatus = "Paid";
-      } else if (finalPaymentMethod === "gcash_onsite") {
+      } else if (normalizedPaymentMethod === "gcash_onsite") {
         effectivePaymentStatus = normalizePaymentStatus(
           payment_status || paymentStatus || "Pending Verification"
         );
@@ -1129,7 +1173,7 @@ router.post("/", async (req, res) => {
           payment_status || paymentStatus || "Paid"
         );
       }
-    } else if (isOnlinePickupOrder && finalPaymentMethod.toLowerCase() === "gcash") {
+    } else if (isOnlinePickupOrder && normalizedPaymentMethod === "gcash") {
       const checkoutToVerify = submittedCheckoutSessionId || submittedPaymentReference;
       const verification = await verifyPayMongoCheckoutSession(checkoutToVerify);
       if (!checkoutToVerify) {
@@ -1140,7 +1184,10 @@ router.post("/", async (req, res) => {
       }
       effectivePaymentStatus = "Paid";
       effectivePaymentReference = verification.paymentReference || checkoutToVerify;
-    } else if (isOnlinePickupOrder && finalPaymentMethod.toLowerCase() === "cash") {
+    } else if (
+      isOnlinePickupOrder &&
+      (normalizedPaymentMethod === "cash" || normalizedPaymentMethod === "cash_on_pickup")
+    ) {
       effectivePaymentStatus = "Pending Payment";
       effectivePaymentReference = null;
       initialStatus = "Awaiting Cashier Review";
@@ -1155,11 +1202,11 @@ router.post("/", async (req, res) => {
     }
 
     if (resolvedCustomerUserId && resolvedCashierId == null && finalOrderType === "take-out") {
-      if (finalPaymentMethod.toLowerCase() !== "gcash" && finalPaymentMethod.toLowerCase() !== "cash") {
+      if (normalizedPaymentMethod !== "gcash" && normalizedPaymentMethod !== "cash" && normalizedPaymentMethod !== "cash_on_pickup") {
         return res.status(400).json({ message: "Online pickup orders must use GCash or cash payment" });
       }
 
-      if (finalPaymentMethod.toLowerCase() !== "gcash") {
+      if (normalizedPaymentMethod !== "gcash") {
         // Cash on pickup is allowed, but remains blocked from the cook queue until payment is confirmed.
       } else if (!effectivePaymentReference) {
         return res.status(400).json({ message: "Online pickup orders require a verified payment reference" });
@@ -1188,7 +1235,7 @@ router.post("/", async (req, res) => {
         resolvedCustomerUserId,
         effectivePaymentReference,
         effectivePaymentStatus,
-        finalPaymentMethod,
+        storedPaymentMethod,
         submittedProofImageUrl,
         verifiedBy,
         verifiedAt,
@@ -1242,7 +1289,7 @@ router.post("/", async (req, res) => {
     // Insert payment record
     await conn.query(
       "INSERT INTO payments (Order_ID, Payment_Type, Payment_Status, ProcessBy) VALUES (?, ?, 'Pending', ?)",
-      [orderId, finalPaymentMethod, persistedCashierId]
+      [orderId, storedPaymentMethod, persistedCashierId]
     );
 
     if (isPaidPaymentStatus(effectivePaymentStatus)) {

@@ -49,6 +49,23 @@ async function deductStockForOrder(
   if (qty <= 0) return;
   const safeRecordedBy = await resolveRecordedByAdminId(recordedBy, connection);
 
+  const [menuRows] = await connection.query(
+    `SELECT Product_ID
+     FROM Menu
+     WHERE Product_ID = ?
+     LIMIT 1`,
+    [productId],
+  );
+
+  // Some legacy order_item rows point to product IDs that no longer exist in Menu.
+  // Skip stock logging for those orphaned rows so order completion can still succeed.
+  if (!menuRows.length) {
+    console.warn(
+      `[inventoryService] Skipping stock deduction for missing Menu product ${productId}`,
+    );
+    return;
+  }
+
   // Ensure an inventory row exists.
   await connection.query(
     `INSERT INTO Inventory (Product_ID, Quantity, Stock, Item_Purchased)
