@@ -58,6 +58,8 @@ interface SaleLog {
   total: number;
   status: Status;
   paymentMethod: string;
+  paymentStatus: string;
+  proofImageUrl?: string;
   operator: string;
   cashierName: string;
   note?: string;
@@ -75,9 +77,11 @@ interface Order {
   orderType: string;
   status: Status;
   paymentCategory: string;
+  paymentStatus: string;
   cashierName?: string;
   riderName?: string;
   handoverTimestamp?: string | null;
+  proofImageUrl?: string | null;
 }
 
 interface RawOrderRow {
@@ -97,6 +101,10 @@ interface RawOrderRow {
   status?: string;
   paymentMethod?: string;
   payment_method?: string;
+  paymentStatus?: string;
+  payment_status?: string;
+  proofImageUrl?: string;
+  proof_image_url?: string;
   productId?: number;
   productName?: string;
   price?: number;
@@ -315,6 +323,38 @@ function normalizeLogType(status: Status): LogType {
   return "Sale";
 }
 
+function formatPaymentStatus(value?: string | null): string {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized) return "Pending";
+  if (normalized === "pending payment") return "Unpaid";
+  if (normalized === "paid") return "Paid";
+  return String(value);
+}
+
+function openProofImage(
+  e: { preventDefault: () => void; stopPropagation: () => void },
+  proofImageUrl?: string | null,
+) {
+  e.preventDefault();
+  e.stopPropagation();
+  if (proofImageUrl) {
+    const trimmed = String(proofImageUrl).trim();
+    const rawApiBase =
+      (import.meta as { env?: { VITE_API_URL?: string } }).env?.VITE_API_URL ??
+      "";
+    const backendBase = rawApiBase
+      ? rawApiBase.replace(/\/+$/, "").replace(/\/api$/i, "")
+      : window.location.origin;
+    const resolvedUrl = /^https?:\/\//i.test(trimmed)
+      ? trimmed
+      : new URL(
+          trimmed.startsWith("/") ? trimmed : `/${trimmed}`,
+          `${backendBase}/`,
+        ).toString();
+    window.open(resolvedUrl, "_blank", "noopener,noreferrer");
+  }
+}
+
 function processRawRows(rows: RawOrderRow[]): {
   logs: SaleLog[];
   orders: Order[];
@@ -328,9 +368,11 @@ function processRawRows(rows: RawOrderRow[]): {
     orderType: string;
     status: string;
     paymentMethod: string;
+    paymentStatus: string;
     cashierName: string;
     riderName: string;
     handoverTimestamp: string | null;
+    proofImageUrl: string | null;
     orderNumber: string;
     transactionId: string;
   };
@@ -348,6 +390,8 @@ function processRawRows(rows: RawOrderRow[]): {
         paymentMethod:
           String(r.paymentMethod ?? r.payment_method ?? "cash").trim() ||
           "cash",
+        paymentStatus:
+          String(r.paymentStatus ?? r.payment_status ?? "").trim() || "Pending",
         cashierName:
           String(
             r.cashierName ??
@@ -360,6 +404,8 @@ function processRawRows(rows: RawOrderRow[]): {
         handoverTimestamp:
           String(r.handoverTimestamp ?? r.handover_timestamp ?? "").trim() ||
           null,
+        proofImageUrl:
+          String(r.proofImageUrl ?? r.proof_image_url ?? "").trim() || null,
         orderNumber: String(r.orderNumber ?? r.order_number ?? "").trim(),
         transactionId:
           String(
@@ -379,9 +425,13 @@ function processRawRows(rows: RawOrderRow[]): {
     const handoverTimestamp = String(
       r.handoverTimestamp ?? r.handover_timestamp ?? "",
     ).trim();
+    const proofImageUrl = String(
+      r.proofImageUrl ?? r.proof_image_url ?? "",
+    ).trim();
 
     if (riderName) orderMap[r.id].riderName = riderName;
     if (handoverTimestamp) orderMap[r.id].handoverTimestamp = handoverTimestamp;
+    if (proofImageUrl) orderMap[r.id].proofImageUrl = proofImageUrl;
 
     orderMap[r.id].rows.push(r);
   }
@@ -426,6 +476,8 @@ function processRawRows(rows: RawOrderRow[]): {
       total: order.total,
       status,
       paymentMethod: order.paymentMethod,
+      paymentStatus: order.paymentStatus,
+      proofImageUrl: order.proofImageUrl || undefined,
       operator: order.cashierName,
       cashierName: order.cashierName,
       _dateObj: orderDate,
@@ -450,9 +502,11 @@ function processRawRows(rows: RawOrderRow[]): {
       orderType: order.orderType,
       status,
       paymentCategory: order.paymentMethod,
+      paymentStatus: order.paymentStatus,
       cashierName: order.cashierName,
       riderName: order.riderName || undefined,
       handoverTimestamp: order.handoverTimestamp,
+      proofImageUrl: order.proofImageUrl,
     };
   }
 
@@ -1577,6 +1631,10 @@ function RefundModal({
   const total = log?.total ?? order?.total ?? 0;
   const cashierName = log?.cashierName ?? order?.cashierName ?? "—";
   const paymentMethod = log?.paymentMethod ?? order?.paymentCategory ?? "—";
+  const paymentStatus = formatPaymentStatus(
+    log?.paymentStatus ?? order?.paymentStatus ?? null,
+  );
+  const proofImageUrl = log?.proofImageUrl ?? order?.proofImageUrl ?? null;
 
   return (
     <AnimatePresence>
@@ -1677,7 +1735,8 @@ function RefundModal({
                   { label: "Product", value: product },
                   { label: "Amount", value: `₱${total.toLocaleString()}` },
                   { label: "Cashier", value: cashierName },
-                  { label: "Payment", value: paymentMethod },
+                  { label: "Payment Method", value: paymentMethod },
+                  { label: "Payment Status", value: paymentStatus },
                 ].map((f) => (
                   <div
                     key={f.label}
@@ -1727,6 +1786,42 @@ function RefundModal({
                     </span>
                   </div>
                 ))}
+                {proofImageUrl && (
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 16,
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 11,
+                        color: "#94a3b8",
+                        fontWeight: 600,
+                      }}
+                    >
+                      Payment Proof
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => openProofImage(e, proofImageUrl)}
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: "#2563eb",
+                        textDecoration: "none",
+                        background: "transparent",
+                        border: "none",
+                        padding: 0,
+                        cursor: "pointer",
+                      }}
+                    >
+                      View Proof
+                    </button>
+                  </div>
+                )}
               </div>
 
               <p
@@ -2041,6 +2136,7 @@ function LogRow({ log, index }: { log: SaleLog; index: number }) {
                 { label: "Transaction ID", value: log.transactionId },
                 { label: "Cashier", value: log.cashierName },
                 { label: "Payment Method", value: log.paymentMethod },
+                { label: "Payment Status", value: formatPaymentStatus(log.paymentStatus) },
                 {
                   label: "Unit Price",
                   value: `₱${log.unitPrice.toLocaleString()}`,
@@ -2091,6 +2187,39 @@ function LogRow({ log, index }: { log: SaleLog; index: number }) {
                   </p>
                 </div>
               ))}
+              {log.proofImageUrl && (
+                <div>
+                  <p
+                    style={{
+                      color: "#94a3b8",
+                      fontSize: 10,
+                      fontWeight: 600,
+                      letterSpacing: 1,
+                      margin: "0 0 2px",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    Payment Proof
+                  </p>
+                  <button
+                    type="button"
+                    onClick={(e) => openProofImage(e, log.proofImageUrl)}
+                    style={{
+                      color: "#2563eb",
+                      fontSize: 13,
+                      fontWeight: 600,
+                      margin: 0,
+                      textDecoration: "none",
+                      background: "transparent",
+                      border: "none",
+                      padding: 0,
+                      cursor: "pointer",
+                    }}
+                  >
+                    View Proof
+                  </button>
+                </div>
+              )}
               {log.note && (
                 <div>
                   <p
@@ -2414,9 +2543,13 @@ function OrderRow({
                       { label: "Total Qty", value: `${totalQty} pcs` },
                       {
                         label: "Subtotal",
-                        value: `₱${order.total.toLocaleString()}`,
+                          value: `₱${order.total.toLocaleString()}`,
                       },
-                      { label: "Payment", value: order.paymentCategory },
+                      { label: "Payment Method", value: order.paymentCategory },
+                      {
+                        label: "Payment Status",
+                        value: formatPaymentStatus(order.paymentStatus),
+                      },
                       {
                         label: "Order Status",
                         value: order.status,
@@ -2487,6 +2620,43 @@ function OrderRow({
                       </div>
                     ))}
                   </div>
+
+                  {order.proofImageUrl && (
+                    <div style={{ marginBottom: canRefund ? 16 : 0 }}>
+                      <p
+                        style={{
+                          color: "#94a3b8",
+                          fontSize: 9,
+                          fontWeight: 700,
+                          letterSpacing: 1.2,
+                          margin: "0 0 8px",
+                          textTransform: "uppercase",
+                        }}
+                      >
+                        Payment Proof
+                      </p>
+                      <button
+                        type="button"
+                        onClick={(e) => openProofImage(e, order.proofImageUrl)}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                          padding: "8px 12px",
+                          borderRadius: 10,
+                          border: "1px solid #bfdbfe",
+                          background: "#eff6ff",
+                          color: "#1d4ed8",
+                          fontSize: 12,
+                          fontWeight: 600,
+                          textDecoration: "none",
+                          cursor: "pointer",
+                        }}
+                      >
+                        View Proof
+                      </button>
+                    </div>
+                  )}
 
                   <div style={{ marginBottom: canRefund ? 16 : 0 }}>
                     <p

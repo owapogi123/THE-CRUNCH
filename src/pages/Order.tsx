@@ -632,18 +632,7 @@ export default function Order() {
                                 }}>
                                 Awaiting Cashier
                               </button>
-                            ) : (
-                              <button
-                                onClick={() => handleComplete(order.id)}
-                                style={{
-                                  flex: 1, padding: "7px 0", borderRadius: 9, fontSize: 11, fontWeight: 600,
-                                  cursor: "pointer", fontFamily: F,
-                                  border: "1px solid #16a34a", background: "#16a34a", color: "#fff",
-                                  transition: "all 0.12s",
-                                }}>
-                                Complete Now
-                              </button>
-                            )}
+                            ) : null}
                           </div>
 
                           {/* Cancel */}

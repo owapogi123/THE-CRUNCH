@@ -987,7 +987,7 @@ export default function Delicacy() {
     setIsSubmitting(true);
     try {
       const total = cart.reduce((s, i) => s + i.recipe.price * i.quantity, 0);
-      const res   = await api.post<{ orderId: number; orderNumber: string }>("/orders", { items: buildItems(), total, customerUserId, order_type: "take-out", payment_method: "cash", payment_status: "Pending" });
+      const res   = await api.post<{ orderId: number; orderNumber: string }>("/orders", { items: buildItems(), total, customerUserId, order_type: "take-out", payment_method: "cash_on_pickup", payment_status: "Pending Payment" });
       await fetchOrders();
       setLastOrderNum(res.orderNumber || `#${res.orderId}`);
       setDrawerOpen(false);

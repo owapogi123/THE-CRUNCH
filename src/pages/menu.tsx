@@ -233,6 +233,24 @@ const formatOrderTimestamp = (value?: string | null) => {
   });
 };
 
+const formatPaymentMethodLabel = (paymentMethod?: string | null) => {
+  const normalized = String(paymentMethod || "").toLowerCase().trim();
+  if (!normalized) return "—";
+  if (normalized === "gcash") return "GCash";
+  if (normalized === "cash on pickup" || normalized === "cash_on_pickup") {
+    return "Cash on Pickup";
+  }
+  if (normalized === "cash") return "Cash";
+  if (
+    normalized === "gcash_onsite" ||
+    normalized === "onsite gcash / e-payment" ||
+    normalized === "onsite e-payment"
+  ) {
+    return "Onsite GCash / E-Payment";
+  }
+  return paymentMethod || "—";
+};
+
 const buildReceiptHtml = ({
   orderNumber,
   date,
@@ -482,21 +500,17 @@ function useToast() {
 // ─── PAYMENT STATUS BADGE ─────────────────────────────────────────────────────
 function PaymentStatusBadge({
   paymentStatus,
-  paymentMethod,
 }: {
   paymentStatus?: string | null;
-  paymentMethod?: string | null;
 }) {
-  const isPaid = paymentStatus?.toLowerCase() === "paid";
-  const methodLabel = isPaid
-    ? paymentMethod === "cash"
-      ? " · Cash"
-      : paymentMethod === "gcash_onsite"
-        ? " · E-Payment"
-        : paymentMethod
-          ? ` · ${paymentMethod}`
-          : ""
-    : "";
+  const normalizedStatus = String(paymentStatus || "").toLowerCase().trim();
+  const isPaid = normalizedStatus === "paid";
+  const label =
+    normalizedStatus === "pending payment" || !normalizedStatus
+      ? "Unpaid"
+      : isPaid
+        ? "Paid"
+        : paymentStatus || "Unpaid";
 
   return isPaid ? (
     <span
@@ -514,7 +528,7 @@ function PaymentStatusBadge({
         whiteSpace: "nowrap",
       }}
     >
-      ✓ Paid{methodLabel}
+      {label}
     </span>
   ) : (
     <span
@@ -529,7 +543,7 @@ function PaymentStatusBadge({
         whiteSpace: "nowrap",
       }}
     >
-      Unpaid
+      {label}
     </span>
   );
 }
@@ -843,6 +857,7 @@ function RiderHandoverModal({
   show,
   order,
   riderName,
+  handoverTime,
   saving,
   onChange,
   onConfirm,
@@ -851,6 +866,7 @@ function RiderHandoverModal({
   show: boolean;
   order: OnlineNotif | null;
   riderName: string;
+  handoverTime: string;
   saving: boolean;
   onChange: (value: string) => void;
   onConfirm: () => void;
@@ -961,6 +977,35 @@ function RiderHandoverModal({
                       boxSizing: "border-box",
                     }}
                   />
+                </div>
+                <div style={{ marginBottom: 12 }}>
+                  <p
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 600,
+                      color: "#bbb",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.07em",
+                      marginBottom: 6,
+                    }}
+                  >
+                    Handover Time
+                  </p>
+                  <div
+                    style={{
+                      width: "100%",
+                      padding: "10px 12px",
+                      fontSize: 12,
+                      fontFamily: F,
+                      border: "1px solid #efefef",
+                      borderRadius: 10,
+                      background: "#f5f5f5",
+                      color: "#333",
+                      boxSizing: "border-box",
+                    }}
+                  >
+                    {handoverTime || "—"}
+                  </div>
                 </div>
                 <div
                   style={{
@@ -2178,6 +2223,7 @@ export default function CashierView() {
   const [handedToRiderOrders, setHandedToRiderOrders] = useState<OnlineNotif[]>([]);
   const [handoverOrder, setHandoverOrder] = useState<OnlineNotif | null>(null);
   const [riderNameInput, setRiderNameInput] = useState("");
+  const [handoverTime, setHandoverTime] = useState("");
   const [savingHandover, setSavingHandover] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [deliveryHandoverOpen, setDeliveryHandoverOpen] = useState(false);
@@ -2315,12 +2361,19 @@ export default function CashierView() {
   const openRiderHandover = (order: OnlineNotif) => {
     setHandoverOrder(order);
     setRiderNameInput(order.riderName ?? "");
+    setHandoverTime(
+      new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+    );
   };
 
   const closeRiderHandover = () => {
     if (savingHandover) return;
     setHandoverOrder(null);
     setRiderNameInput("");
+    setHandoverTime("");
   };
 
   const handleProceedOnlineOrder = async (id: number) => {
@@ -2976,9 +3029,36 @@ export default function CashierView() {
                                     <span style={{ fontSize: 11, fontWeight: 700, color: "#111" }}>
                                       ₱{Number(notif.total).toFixed(2)}
                                     </span>
+                                  </div>
+                                  <div
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 8,
+                                      flexWrap: "wrap",
+                                      marginTop: 6,
+                                    }}
+                                  >
+                                    <span
+                                      style={{
+                                        fontSize: 10,
+                                        color: "#374151",
+                                        fontFamily: F,
+                                      }}
+                                    >
+                                      Payment: {formatPaymentMethodLabel(notif.paymentMethod)}
+                                    </span>
+                                    <span
+                                      style={{
+                                        fontSize: 10,
+                                        color: "#374151",
+                                        fontFamily: F,
+                                      }}
+                                    >
+                                      Status:
+                                    </span>
                                     <PaymentStatusBadge
                                       paymentStatus={notif.paymentStatus}
-                                      paymentMethod={notif.paymentMethod}
                                     />
                                   </div>
                                 </div>
@@ -3145,7 +3225,6 @@ export default function CashierView() {
                                     </span>
                                     <PaymentStatusBadge
                                       paymentStatus={notif.paymentStatus}
-                                      paymentMethod={notif.paymentMethod}
                                     />
                                   </div>
                                 </div>
@@ -3877,6 +3956,7 @@ export default function CashierView() {
         show={handoverOrder !== null}
         order={handoverOrder}
         riderName={riderNameInput}
+        handoverTime={handoverTime}
         saving={savingHandover}
         onChange={setRiderNameInput}
         onConfirm={() => { void handleRiderHandover(); }}
