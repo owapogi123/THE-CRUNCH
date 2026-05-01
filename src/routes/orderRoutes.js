@@ -684,6 +684,14 @@ router.get("/ready-pickup", async (req, res) => {
          o.Total_Amount    AS total,
          o.Order_Date      AS createdAt,
          o.Order_Type      AS orderType,
+         o.payment_status  AS paymentStatus,
+         (
+           SELECT p.Payment_Status
+           FROM payments p
+           WHERE p.Order_ID = o.Order_ID
+           ORDER BY p.Payment_ID DESC
+           LIMIT 1
+         ) AS paymentRecordStatus,
          o.handoverTimestamp AS handoverTimestamp,
          o.riderName       AS riderName,
          oi.Quantity       AS quantity,
@@ -708,6 +716,9 @@ router.get("/ready-pickup", async (req, res) => {
           createdAt: r.createdAt,
           orderType: normalizeOrderType(r.orderType),
           trackingStatus: r.status || "Ready for Pickup",
+          paymentStatus: normalizePaymentStatus(
+            r.paymentStatus || r.paymentRecordStatus || "Pending"
+          ),
           handoverTimestamp: r.handoverTimestamp,
           riderName: r.riderName,
           items: [],
@@ -721,7 +732,11 @@ router.get("/ready-pickup", async (req, res) => {
       }
     }
 
-    res.json(Object.values(grouped));
+    res.json(
+      Object.values(grouped).filter((order) =>
+        isPaidPaymentStatus(order.paymentStatus)
+      )
+    );
   } catch (err) {
     console.error("GET /orders/ready-pickup error:", err.message);
     res.status(500).json({ message: "DB error", error: err.message });
@@ -1325,11 +1340,20 @@ router.patch("/:id", async (req, res) => {
       submittedPaymentStatus !== undefined &&
       submittedPaymentStatus !== null &&
       String(submittedPaymentStatus).trim() !== "";
+    const persistedOrderPaymentStatus = normalizePaymentStatus(
+      existingRows[0].paymentStatus
+    );
+    const persistedPaymentRecordStatus = normalizePaymentStatus(
+      existingRows[0].paymentRecordStatus
+    );
+    const effectiveCurrentPaymentStatus =
+      isPaidPaymentStatus(persistedOrderPaymentStatus) ||
+      !isPaidPaymentStatus(persistedPaymentRecordStatus)
+        ? persistedOrderPaymentStatus
+        : persistedPaymentRecordStatus;
     const nextPaymentStatus = hasPaymentStatusUpdate
       ? normalizePaymentStatus(submittedPaymentStatus)
-      : normalizePaymentStatus(
-          existingRows[0].paymentStatus || existingRows[0].paymentRecordStatus
-        );
+      : effectiveCurrentPaymentStatus;
 
     if (!hasStatusUpdate && !hasTimerUpdate && !hasPaymentStatusUpdate && !startedAt && resolvedCashierId == null && !handoverTimestamp && riderName === undefined) {
       return res.status(400).json({ message: "No valid fields to update" });
