@@ -3891,7 +3891,7 @@ export default function CashierView() {
                       { value: "regular", label: "Regular customer" },
                       { value: "pwd", label: "PWD (20% off, VAT exempt)" },
                       { value: "senior", label: "Senior Citizen (20% off, VAT exempt)" },
-                    ]}
+                    ]}  
                   />
                 </div>
 
