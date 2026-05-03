@@ -5,6 +5,11 @@ const {
   ensureMenuAvailabilitySchema,
   fetchMenuIngredients,
 } = require("../utils/menuAvailability");
+const {
+  STOCK_ITEM,
+  ensureProductsItemTypeSchema,
+  getProductItemTypeExpression,
+} = require("../utils/productItemType");
 
 async function hasColumn(tableName, columnName) {
   const [rows] = await db.query(`SHOW COLUMNS FROM ${tableName} LIKE ?`, [
@@ -55,6 +60,7 @@ async function ensureBatchShelfLifeColumns() {
 
 async function ensureMenuManagementColumns() {
   await ensureProductsImageColumn();
+  await ensureProductsItemTypeSchema(db);
 
   if (!(await hasColumn("products", "menu_code"))) {
     await db.query("ALTER TABLE products ADD COLUMN menu_code VARCHAR(20) NULL");
@@ -145,14 +151,23 @@ router.get("/", async (req, res) => {
     await ensureMenuManagementColumns();
     await ensureBatchShelfLifeColumns();
     await ensureMenuAvailabilitySchema(db);
+    const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+    const productItemTypeExpr = getProductItemTypeExpression(
+      hasItemTypeColumn,
+      "p",
+      "m",
+    );
 
     // Ensure inventory rows exist for all menu products.
     await db.query(
       `INSERT INTO Inventory (Product_ID, Quantity, Stock, Item_Purchased)
        SELECT m.Product_ID, m.Stock, m.Stock, m.Product_Name
        FROM Menu m
+       JOIN products p ON p.id = m.Product_ID
        LEFT JOIN Inventory i ON i.Product_ID = m.Product_ID
-       WHERE i.Inventory_ID IS NULL`,
+       WHERE i.Inventory_ID IS NULL
+         AND ${productItemTypeExpr} = ?`,
+      [STOCK_ITEM],
     );
 
     const hasReorderPoint = await hasColumn("Inventory", "Reorder_Point");
@@ -191,6 +206,7 @@ router.get("/", async (req, res) => {
          COALESCE(m.Product_Name, i.Item_Purchased, 'Unnamed Product')          AS name,
          COALESCE(i.Stock, 0)                                                   AS stock,
          COALESCE(CAST(m.Price AS CHAR), '0')                                   AS price,
+         ${productItemTypeExpr}                                                 AS item_type,
          COALESCE(p.description, '')                                            AS description,
          COALESCE(m.Promo, '')                                                  AS promo,
          CASE WHEN COALESCE(m.Promo, '') = 'RAW_MATERIAL' THEN 1 ELSE 0 END    AS isRawMaterial,
@@ -212,8 +228,6 @@ router.get("/", async (req, res) => {
              CASE
                WHEN LOWER(COALESCE(p.availability_status, 'available')) IN ('hidden', 'unavailable', 'out of stock')
                  THEN 'Out of Stock'
-               WHEN LOWER(COALESCE(m.Category_Name, '')) LIKE '%menu food%'
-                 THEN 'Available'
                WHEN COALESCE(i.Stock, 0) > 0
                  THEN 'Available'
                ELSE 'Out of Stock'
@@ -229,7 +243,7 @@ router.get("/", async (req, res) => {
        FROM Inventory i
        LEFT JOIN Menu m ON m.Product_ID = i.Product_ID
        LEFT JOIN products p ON p.id = i.Product_ID
-       LEFT JOIN (
+         LEFT JOIN (
          SELECT
            mi.menu_product_id,
            COUNT(*) AS ingredientCount,
@@ -241,7 +255,10 @@ router.get("/", async (req, res) => {
              END
            ) AS availableServings
          FROM menu_item_ingredients mi
+         LEFT JOIN products ip ON ip.id = mi.product_id
+         LEFT JOIN Menu im ON im.Product_ID = mi.product_id
          LEFT JOIN Inventory inv ON inv.Product_ID = mi.product_id
+         WHERE ${getProductItemTypeExpression(hasItemTypeColumn, "ip", "im")} = 'stock_item'
          GROUP BY mi.menu_product_id
        ) ia ON ia.menu_product_id = i.Product_ID
        LEFT JOIN (
@@ -278,7 +295,9 @@ router.get("/", async (req, res) => {
            AND LOWER(COALESCE(o.Status, '')) NOT IN ('cancelled')
          GROUP BY oi.Product_ID
        ) ot ON ot.Product_ID = i.Product_ID
+       WHERE ${productItemTypeExpr} = ?
        ORDER BY i.Inventory_ID ASC`,
+      [STOCK_ITEM],
     );
 
     const ingredientMap = await fetchMenuIngredients(

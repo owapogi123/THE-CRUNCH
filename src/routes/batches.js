@@ -1,8 +1,15 @@
 const express = require("express");
 const router = express.Router();
 const db = require("../config/db");
+const {
+  STOCK_ITEM,
+  ensureProductsItemTypeSchema,
+  getProductItemTypeExpression,
+  assertProductsMatchItemType,
+} = require("../utils/productItemType");
 
 async function ensureBatchesTable() {
+  const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
   await db.query(`
     CREATE TABLE IF NOT EXISTS batches (
       batch_id INT PRIMARY KEY AUTO_INCREMENT,
@@ -63,12 +70,20 @@ async function ensureBatchesTable() {
   `);
 
   // Ensure FK target rows exist in products before migrating.
-  await db.query(`
+  const bootstrapProductInsertSql = hasItemTypeColumn
+    ? `
+    INSERT INTO products (id, name, price, quantity, description, item_type)
+    SELECT m.Product_ID, m.Product_Name, COALESCE(m.Price, 0), COALESCE(m.Stock, 0), NULL, 'stock_item'
+    FROM Menu m
+    WHERE NOT EXISTS (SELECT 1 FROM products p WHERE p.id = m.Product_ID)
+  `
+    : `
     INSERT INTO products (id, name, price, quantity, description)
     SELECT m.Product_ID, m.Product_Name, COALESCE(m.Price, 0), COALESCE(m.Stock, 0), NULL
     FROM Menu m
     WHERE NOT EXISTS (SELECT 1 FROM products p WHERE p.id = m.Product_ID)
-  `);
+  `;
+  await db.query(bootstrapProductInsertSql);
 
   // Migrate legacy rows to the new table shape.
   await db.query(`
@@ -628,6 +643,8 @@ router.patch("/kitchen/:kitchen_batch_id/reconcile", async (req, res) => {
 router.get("/product/:product_id", async (req, res) => {
   try {
     await ensureBatchesTable();
+    const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+    const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p");
 
     const productId = toNumber(req.params.product_id);
     if (!Number.isFinite(productId) || productId <= 0) {
@@ -639,8 +656,9 @@ router.get("/product/:product_id", async (req, res) => {
        FROM batches b
        JOIN products p ON b.product_id = p.id
        WHERE b.product_id = ?
+         AND ${itemTypeExpr} = ?
        ORDER BY b.received_date ASC`,
-      [productId],
+      [productId, STOCK_ITEM],
     );
 
     res.json(rows);
@@ -654,15 +672,19 @@ router.get("/product/:product_id", async (req, res) => {
 router.get("/returned/yesterday", async (_req, res) => {
   try {
     await ensureBatchesTable();
+    const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+    const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p");
 
     const [rows] = await db.query(
       `SELECT b.*, p.name AS product_name
        FROM batches b
        JOIN products p ON b.product_id = p.id
        WHERE b.status = 'returned'
+         AND ${itemTypeExpr} = ?
          AND b.returned_qty > 0
          AND DATE(b.updated_at) = CURDATE() - INTERVAL 1 DAY
        ORDER BY b.received_date ASC`,
+      [STOCK_ITEM],
     );
 
     res.json(rows);
@@ -676,15 +698,19 @@ router.get("/returned/yesterday", async (_req, res) => {
 router.get("/active", async (_req, res) => {
   try {
     await ensureBatchesTable();
+    const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+    const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p");
 
     const [rows] = await db.query(
       `SELECT b.*, p.name AS product_name
        FROM batches b
        JOIN products p ON b.product_id = p.id
        WHERE b.status IN ('active', 'returned')
+         AND ${itemTypeExpr} = ?
          AND b.remaining_qty > 0
          AND (b.expiry_date IS NULL OR b.expiry_date >= CURDATE())
        ORDER BY CASE WHEN b.status = 'returned' THEN 0 ELSE 1 END, b.received_date ASC, b.batch_id ASC`,
+      [STOCK_ITEM],
     );
 
     res.json(rows);
@@ -708,6 +734,7 @@ router.post("/default", async (req, res) => {
 
     conn = await db.getConnection();
     await conn.beginTransaction();
+    const hasItemTypeColumn = await ensureProductsItemTypeSchema(conn);
 
     // Ensure product exists in `products` for FK integrity of batches.product_id -> products.id.
     const [productRows] = await conn.query(
@@ -732,30 +759,50 @@ router.post("/default", async (req, res) => {
       }
 
       const menu = menuRows[0];
+      const upsertSql = hasItemTypeColumn
+        ? `INSERT INTO products (id, name, price, quantity, description, item_type)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             name = VALUES(name),
+             price = VALUES(price)`
+        : `INSERT INTO products (id, name, price, quantity, description)
+           VALUES (?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             name = VALUES(name),
+             price = VALUES(price)`;
       await conn.query(
-        `INSERT INTO products (id, name, price, quantity, description)
-         VALUES (?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE
-           name = VALUES(name),
-           price = VALUES(price)`,
-        [
-          productId,
-          menu.Product_Name || `Product ${productId}`,
-          toNumber(menu.Price),
-          toNumber(menu.stock),
-          null,
-        ],
+        upsertSql,
+        hasItemTypeColumn
+          ? [
+              productId,
+              menu.Product_Name || `Product ${productId}`,
+              toNumber(menu.Price),
+              toNumber(menu.stock),
+              null,
+              STOCK_ITEM,
+            ]
+          : [
+              productId,
+              menu.Product_Name || `Product ${productId}`,
+              toNumber(menu.Price),
+              toNumber(menu.stock),
+              null,
+            ],
       );
     }
+
+    await assertProductsMatchItemType(conn, [productId], STOCK_ITEM, "Batch");
 
     // Ensure inventory row exists.
     await conn.query(
       `INSERT INTO Inventory (Product_ID, Quantity, Stock, Item_Purchased)
        SELECT m.Product_ID, COALESCE(m.Stock, 0), COALESCE(m.Stock, 0), m.Product_Name
        FROM Menu m
+       JOIN products p ON p.id = m.Product_ID
        WHERE m.Product_ID = ?
+         AND ${getProductItemTypeExpression(hasItemTypeColumn, "p", "m")} = ?
          AND NOT EXISTS (SELECT 1 FROM Inventory i WHERE i.Product_ID = m.Product_ID)`,
-      [productId],
+      [productId, STOCK_ITEM],
     );
 
     const [existing] = await conn.query(

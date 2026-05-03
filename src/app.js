@@ -56,6 +56,8 @@ const uploadProofRoutes = require("./routes/uploadProofRoutes");
 app.use("/api/upload-proof", uploadProofRoutes);
 const feedbackRoutes = require("./routes/feedbackRoutes");
 app.use("/api/feedback", feedbackRoutes);
+const settingsRoutes = require("./routes/settingsRoutes");
+app.use("/api/settings", settingsRoutes);
 const contentRoutes = require("./routes/contentRoutes");
 app.use("/api", contentRoutes);
 

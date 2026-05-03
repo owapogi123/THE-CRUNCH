@@ -1,4 +1,6 @@
 const db = require("../config/db");
+const { fetchMenuIngredients } = require("../utils/menuAvailability");
+const { STOCK_ITEM } = require("../utils/productItemType");
 
 function normalizePaymentStatus(value) {
   const v = String(value || "").toLowerCase().trim();
@@ -139,14 +141,66 @@ async function deductSalesStockForCompletedOrder(
     [numericOrderId],
   );
 
+  const menuProductIds = items
+    .map((item) => Number(item.productId) || 0)
+    .filter((productId) => productId > 0);
+  const ingredientMap = await fetchMenuIngredients(connection, menuProductIds);
+  const deductions = new Map();
+
   for (const item of items) {
     const productId = Number(item.productId) || 0;
-    const requiredQty = Number(item.quantity) || 0;
+    const orderedQty = Number(item.quantity) || 0;
 
-    if (productId <= 0 || requiredQty <= 0) {
+    if (productId <= 0 || orderedQty <= 0) {
       throw new Error(`Invalid order item for stock deduction on order ${numericOrderId}`);
     }
 
+    const ingredients = ingredientMap.get(productId) ?? [];
+    if (ingredients.length === 0) {
+      const current = deductions.get(productId) ?? 0;
+      deductions.set(productId, current + orderedQty);
+      continue;
+    }
+
+    for (const ingredient of ingredients) {
+      const ingredientProductId = Number(ingredient.product_id) || 0;
+      const quantityRequired = Number(ingredient.quantity_required) || 0;
+      const ingredientItemType = String(ingredient.item_type || STOCK_ITEM);
+      if (ingredientProductId <= 0 || quantityRequired <= 0) {
+        throw new Error(
+          `Invalid ingredient configuration for menu product ${productId}`,
+        );
+      }
+      if (ingredientItemType !== STOCK_ITEM) {
+        throw new Error(
+          `Ingredient product ${ingredientProductId} must be ${STOCK_ITEM}, found ${ingredientItemType}.`,
+        );
+      }
+      const totalRequired = orderedQty * quantityRequired;
+      const current = deductions.get(ingredientProductId) ?? 0;
+      deductions.set(ingredientProductId, current + totalRequired);
+    }
+  }
+
+  const deductionEntries = Array.from(deductions.entries());
+  for (const [productId, requiredQty] of deductionEntries) {
+    const [inventoryRows] = await connection.query(
+      `SELECT COALESCE(Daily_Withdrawn, 0) AS dailyWithdrawn
+       FROM Inventory
+       WHERE Product_ID = ?
+       LIMIT 1`,
+      [productId],
+    );
+
+    const availableQty = Number(inventoryRows[0]?.dailyWithdrawn ?? 0);
+    if (availableQty < requiredQty) {
+      throw new Error(
+        `Insufficient Daily_Withdrawn for product ${productId}. Required ${requiredQty}, available ${availableQty}.`,
+      );
+    }
+  }
+
+  for (const [productId, requiredQty] of deductionEntries) {
     await deductStockForOrder(productId, requiredQty, recordedBy, connection);
   }
 

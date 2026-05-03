@@ -171,6 +171,7 @@ async function fetchMenuIngredients(db, menuIds) {
        mi.product_id,
        mi.quantity_required,
        COALESCE(p.name, m.Product_Name, CONCAT('Product #', mi.product_id)) AS product_name,
+       COALESCE(p.item_type, 'stock_item') AS item_type,
        COALESCE(bu.unit, 'piece') AS unit,
        COALESCE(inv.Daily_Withdrawn, 0) AS daily_withdrawn,
        COALESCE(inv.Stock, 0) AS stock
@@ -195,6 +196,7 @@ async function fetchMenuIngredients(db, menuIds) {
     current.push({
       product_id: Number(row.product_id),
       product_name: String(row.product_name),
+      item_type: String(row.item_type || "stock_item"),
       quantity_required: Number(row.quantity_required),
       unit: String(row.unit ?? "piece"),
       daily_withdrawn: Number(row.daily_withdrawn ?? 0),

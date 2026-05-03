@@ -1586,7 +1586,17 @@ router.patch("/:id", async (req, res) => {
       code: err.code,
       sqlMessage: err.sqlMessage,
     }, null, 2));
-    res.status(500).json({ message: "DB error", error: err.message });
+    const errorMessage = String(err?.message || "Unknown error");
+    const isClientError =
+      /cannot deduct stock for an unpaid order/i.test(errorMessage) ||
+      /cannot move to the cook queue until payment is confirmed as paid/i.test(errorMessage) ||
+      /insufficient daily_withdrawn/i.test(errorMessage) ||
+      /must be stock_item/i.test(errorMessage) ||
+      /invalid order status transition/i.test(errorMessage) ||
+      /timer can only be updated/i.test(errorMessage);
+    res
+      .status(isClientError ? 400 : 500)
+      .json({ message: isClientError ? errorMessage : "DB error", error: errorMessage });
   } finally {
     if (conn) conn.release();
   }

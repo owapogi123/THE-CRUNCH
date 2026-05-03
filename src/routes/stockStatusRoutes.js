@@ -1,5 +1,11 @@
 const router = require("express").Router();
 const db = require("../config/db");
+const {
+  STOCK_ITEM,
+  ensureProductsItemTypeSchema,
+  getProductItemTypeExpression,
+  assertProductsMatchItemType,
+} = require("../utils/productItemType");
 
 function normaliseRecordedBy(recorded_by) {
   if (recorded_by == null) return null;
@@ -72,20 +78,25 @@ async function applySpoilageToKitchenBatches(conn, product_id, qty) {
   }
 }
 
-async function ensureInventoryRow(conn, product_id) {
+async function ensureInventoryRow(conn, product_id, hasItemTypeColumn = true) {
+  const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p", "m");
   await conn.query(
     `INSERT INTO Inventory (Product_ID, Quantity, Stock, Item_Purchased)
      SELECT m.Product_ID, m.Stock, m.Stock, m.Stock
      FROM Menu m
+     JOIN products p ON p.id = m.Product_ID
      WHERE m.Product_ID = ?
+       AND ${itemTypeExpr} = ?
        AND NOT EXISTS (SELECT 1 FROM Inventory i WHERE i.Product_ID = m.Product_ID)`,
-    [product_id],
+    [product_id, STOCK_ITEM],
   );
 }
 
 // GET /api/stock-status/today
 router.get("/today", async (req, res) => {
   try {
+    const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+    const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p", "m");
     const [rows] = await db.query(
       `SELECT
          ss.Status_ID                              AS status_id,
@@ -97,8 +108,11 @@ router.get("/today", async (req, res) => {
          ss.RecordedBy                             AS recorded_by
        FROM Stock_Status ss
        LEFT JOIN Menu m ON m.Product_ID = ss.Product_ID
+       LEFT JOIN products p ON p.id = ss.Product_ID
        WHERE DATE(ss.Status_Date) = CURDATE()
+         AND ${itemTypeExpr} = ?
        ORDER BY ss.Status_Date DESC, ss.Status_ID DESC`,
+      [STOCK_ITEM],
     );
     res.json(rows);
   } catch (err) {
@@ -126,6 +140,8 @@ router.post("/", async (req, res) => {
 
     conn = await db.getConnection();
     await conn.beginTransaction();
+    const hasItemTypeColumn = await ensureProductsItemTypeSchema(conn);
+    await assertProductsMatchItemType(conn, [product_id], STOCK_ITEM, "Stock");
 
     // 1. Log to Stock_Status
     const [result] = await conn.query(
@@ -172,6 +188,11 @@ router.post("/", async (req, res) => {
     await conn.commit();
 
     // Return the created record
+    const createdRowItemTypeExpr = getProductItemTypeExpression(
+      hasItemTypeColumn,
+      "p",
+      "m",
+    );
     const [createdRows] = await db.query(
       `SELECT
          ss.Status_ID                              AS status_id,
@@ -183,15 +204,21 @@ router.post("/", async (req, res) => {
          ss.RecordedBy                             AS recorded_by
        FROM Stock_Status ss
        LEFT JOIN Menu m ON m.Product_ID = ss.Product_ID
-       WHERE ss.Status_ID = ?`,
-      [result.insertId],
+       LEFT JOIN products p ON p.id = ss.Product_ID
+       WHERE ss.Status_ID = ?
+         AND ${createdRowItemTypeExpr} = ?`,
+      [result.insertId, STOCK_ITEM],
     );
 
     res.status(201).json(createdRows[0]);
   } catch (err) {
     if (conn) await conn.rollback();
     console.error("POST /stock-status error:", err);
-    res.status(500).json({ message: "DB error", error: err.message });
+    const errorMessage = String(err?.message || "Unknown error");
+    const isClientError = /must be stock_item|was not found/i.test(errorMessage);
+    res
+      .status(isClientError ? 400 : 500)
+      .json({ message: isClientError ? errorMessage : "DB error", error: errorMessage });
   } finally {
     if (conn) conn.release();
   }
@@ -212,8 +239,10 @@ router.post("/spoilage", async (req, res) => {
 
     conn = await db.getConnection();
     await conn.beginTransaction();
+    const hasItemTypeColumn = await ensureProductsItemTypeSchema(conn);
+    await assertProductsMatchItemType(conn, [product_id], STOCK_ITEM, "Stock");
 
-    await ensureInventoryRow(conn, product_id);
+    await ensureInventoryRow(conn, product_id, hasItemTypeColumn);
 
     const [inventoryRows] = await conn.query(
       `SELECT
@@ -273,7 +302,11 @@ router.post("/spoilage", async (req, res) => {
   } catch (err) {
     if (conn) await conn.rollback();
     console.error("POST /stock-status/spoilage error:", err);
-    res.status(500).json({ message: "DB error", error: err.message });
+    const errorMessage = String(err?.message || "Unknown error");
+    const isClientError = /must be stock_item|was not found/i.test(errorMessage);
+    res
+      .status(isClientError ? 400 : 500)
+      .json({ message: isClientError ? errorMessage : "DB error", error: errorMessage });
   } finally {
     if (conn) conn.release();
   }

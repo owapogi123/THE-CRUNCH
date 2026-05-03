@@ -1,5 +1,6 @@
 require("dotenv").config();
 const mysql = require("mysql2/promise");
+const { ensureProductsItemTypeSchema } = require("../utils/productItemType");
 
 const DB_HOST = process.env.DB_HOST || "localhost";
 const DB_USER = process.env.DB_USER || "root";
@@ -396,10 +397,77 @@ CREATE TABLE IF NOT EXISTS feedback (
       FOREIGN KEY (customer_user_id) REFERENCES users(id)
       ON DELETE SET NULL
 );
+
+CREATE TABLE IF NOT EXISTS inventory_categories (
+    category_id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    uses_shelf_life BOOLEAN DEFAULT FALSE,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS inventory_units (
+    unit_id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    abbreviation VARCHAR(30) NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
 `;
 
     await connection.query(createStatements);
     log.log("Tables created.");
+
+    await connection.query(
+      `INSERT INTO inventory_categories (name, uses_shelf_life)
+       SELECT 'Raw Material', TRUE
+       WHERE NOT EXISTS (
+         SELECT 1 FROM inventory_categories WHERE LOWER(name) = LOWER('Raw Material')
+       )`,
+    );
+    await connection.query(
+      `INSERT INTO inventory_categories (name, uses_shelf_life)
+       SELECT 'Sauces', FALSE
+       WHERE NOT EXISTS (
+         SELECT 1 FROM inventory_categories WHERE LOWER(name) = LOWER('Sauces')
+       )`,
+    );
+    await connection.query(
+      `INSERT INTO inventory_categories (name, uses_shelf_life)
+       SELECT 'Ingredients', FALSE
+       WHERE NOT EXISTS (
+         SELECT 1 FROM inventory_categories WHERE LOWER(name) = LOWER('Ingredients')
+       )`,
+    );
+    await connection.query(
+      `INSERT INTO inventory_categories (name, uses_shelf_life)
+       SELECT 'Aromatics', FALSE
+       WHERE NOT EXISTS (
+         SELECT 1 FROM inventory_categories WHERE LOWER(name) = LOWER('Aromatics')
+       )`,
+    );
+
+    for (const unitName of [
+      "kg",
+      "g",
+      "liter",
+      "ml",
+      "piece",
+      "pack",
+      "bottle",
+      "case",
+    ]) {
+      await connection.query(
+        `INSERT INTO inventory_units (name)
+         SELECT ?
+         WHERE NOT EXISTS (
+           SELECT 1 FROM inventory_units WHERE LOWER(name) = LOWER(?)
+         )`,
+        [unitName, unitName],
+      );
+    }
 
     if (!(await tableExists(connection, "orders")) && (await tableExists(connection, "Orders"))) {
       await connection.query("RENAME TABLE `Orders` TO `orders`");
@@ -550,6 +618,7 @@ END
       "promo_label",
       "`promo_label` VARCHAR(100) NULL",
     );
+    await ensureProductsItemTypeSchema(connection);
     await ensureColumn(
       connection,
       "Menu",

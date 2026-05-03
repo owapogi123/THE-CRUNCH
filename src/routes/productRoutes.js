@@ -7,6 +7,14 @@ const {
     normalizeMenuIngredients,
     replaceMenuIngredients,
 } = require("../utils/menuAvailability");
+const {
+    MENU_ITEM,
+    STOCK_ITEM,
+    ensureProductsItemTypeSchema,
+    getProductItemTypeExpression,
+    normalizeItemType,
+    assertProductsMatchItemType,
+} = require("../utils/productItemType");
 
 async function hasColumn(tableName, columnName) {
     const [rows] = await db.query(`SHOW COLUMNS FROM ${tableName} LIKE ?`, [
@@ -23,6 +31,7 @@ async function ensureProductsImageColumn() {
 
 async function ensureMenuManagementColumns() {
     await ensureProductsImageColumn();
+    await ensureProductsItemTypeSchema(db);
 
     if (!(await hasColumn("products", "menu_code"))) {
         await db.query("ALTER TABLE products ADD COLUMN menu_code VARCHAR(20) NULL");
@@ -78,6 +87,19 @@ function normalizeAvailabilityStatus(value) {
         : "Available";
 }
 
+function parseItemTypeInput(value, fallback = STOCK_ITEM) {
+    if (value === undefined || value === null || String(value).trim() === "") {
+        return fallback;
+    }
+
+    const normalized = String(value).trim().toLowerCase();
+    if (normalized === STOCK_ITEM || normalized === MENU_ITEM) {
+        return normalized;
+    }
+
+    throw new Error("item_type must be either stock_item or menu_item");
+}
+
 function normalizePromoValues(isPromotional, promoPrice, promoLabel) {
     const enabled =
         isPromotional === true ||
@@ -124,6 +146,30 @@ function computeAvailableServings(ingredients) {
     return Number.isFinite(servings) ? servings : null;
 }
 
+function resolveAvailabilityStatus(row, ingredients) {
+    const manualOverride = Number(row.manual_override ?? 0) === 1;
+    const manualStatus = String(row.manual_status ?? "Available")
+        .trim()
+        .toLowerCase();
+    if (manualOverride) {
+        return manualStatus === "out of stock" || manualStatus === "unavailable"
+            ? "Out of Stock"
+            : "Available";
+    }
+
+    if (ingredients.length > 0) {
+        const availableServings = computeAvailableServings(ingredients);
+        return (availableServings ?? 0) > 0 ? "Available" : "Out of Stock";
+    }
+
+    const fallback = String(row.availability_status ?? "Available")
+        .trim()
+        .toLowerCase();
+    return fallback === "hidden" || fallback === "unavailable" || fallback === "out of stock"
+        ? "Out of Stock"
+        : "Available";
+}
+
 async function attachIngredientAvailability(rows) {
     const ingredientMap = await fetchMenuIngredients(
         db,
@@ -131,11 +177,15 @@ async function attachIngredientAvailability(rows) {
     );
 
     return rows.map((row) => {
-        const ingredients = ingredientMap.get(Number(row.id)) ?? [];
+        const ingredients = (ingredientMap.get(Number(row.id)) ?? []).filter(
+            (ingredient) => String(ingredient.item_type || STOCK_ITEM) === STOCK_ITEM,
+        );
+        const availableServings = computeAvailableServings(ingredients);
         return {
             ...row,
             ingredient_count: ingredients.length,
-            available_servings: computeAvailableServings(ingredients),
+            available_servings: availableServings,
+            availability_status: resolveAvailabilityStatus(row, ingredients),
             ingredients,
         };
     });
@@ -146,25 +196,45 @@ router.get("/", async (req, res) => {
     try {
         await ensureMenuManagementColumns();
         await ensureMenuAvailabilitySchema(db);
+        const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+        const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p", "m");
+        const requestedItemType = String(req.query.item_type || "")
+            .trim()
+            .toLowerCase();
         const includeRaw = String(req.query.includeRaw || "").toLowerCase();
         const includeRawMaterials = includeRaw === "1" || includeRaw === "true";
+        const filters = [];
+        const values = [];
 
-        const whereClause = includeRawMaterials
-            ? ""
-            : "WHERE COALESCE(m.Promo, '') <> 'RAW_MATERIAL'";
+        if (requestedItemType === STOCK_ITEM || requestedItemType === MENU_ITEM) {
+            filters.push(`${itemTypeExpr} = ?`);
+            values.push(requestedItemType);
+        }
+
+        if (!includeRawMaterials) {
+            filters.push("COALESCE(m.Promo, '') <> 'RAW_MATERIAL'");
+        }
+
+        const whereClause = filters.length > 0
+            ? `WHERE ${filters.join(" AND ")}`
+            : "";
 
         const [rows] = await db.query(
             `SELECT
                 p.*,
+                ${itemTypeExpr} AS item_type,
                 m.Category_Name AS category,
                 m.Promo AS inventoryPromo,
+                COALESCE(i.Stock, 0) AS stock,
+                COALESCE(i.Daily_Withdrawn, 0) AS dailyWithdrawn,
                 CAST(COALESCE(m.Stock, i.Stock, p.quantity, 0) AS SIGNED) AS remainingStock,
                 COALESCE(m.manual_override, 0) AS manual_override,
                 COALESCE(m.manual_status, 'Available') AS manual_status
              FROM products p
              LEFT JOIN Menu m ON m.Product_ID = p.id
              LEFT JOIN Inventory i ON i.Product_ID = p.id
-             ${whereClause}`
+             ${whereClause}`,
+            values,
         );
 
         res.json(await attachIngredientAvailability(rows));
@@ -179,6 +249,7 @@ router.post("/", async (req, res) => {
     try {
         await ensureMenuManagementColumns();
         await ensureMenuAvailabilitySchema(db);
+        const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
         const {
             name,
             price,
@@ -186,6 +257,7 @@ router.post("/", async (req, res) => {
             description,
             category,
             raw_material,
+            item_type,
             image,
             availability_status,
             is_promotional,
@@ -201,33 +273,63 @@ router.post("/", async (req, res) => {
             availability_status,
         );
         const normalizedIngredients = normalizeMenuIngredients(ingredients);
+        const normalizedItemType = parseItemTypeInput(item_type, STOCK_ITEM);
+        if (normalizedIngredients !== null) {
+            await assertProductsMatchItemType(
+                db,
+                normalizedIngredients.map((ingredient) => ingredient.productId),
+                STOCK_ITEM,
+                "Ingredient",
+            );
+        }
         const manualOverrideState = deriveManualOverrideState({
             manual_override,
             manual_status,
             override_mode,
             availability_status,
         });
+        if (normalizedIngredients !== null && normalizedItemType !== MENU_ITEM) {
+            return res.status(400).json({
+                message: "Ingredients can only be assigned to menu_item products",
+            });
+        }
         const normalizedPromo = normalizePromoValues(
             is_promotional,
             promo_price,
             promo_label,
         );
 
+        const insertColumns = [
+            "name",
+            "price",
+            "quantity",
+            "description",
+            "image",
+            "availability_status",
+            "is_promotional",
+            "promo_price",
+            "promo_label",
+        ];
+        const insertValues = [
+            name,
+            price || 0,
+            quantity || 0,
+            description || null,
+            image || null,
+            normalizedAvailabilityStatus,
+            normalizedPromo.isPromotional,
+            normalizedPromo.promoPrice,
+            normalizedPromo.promoLabel,
+        ];
+        if (hasItemTypeColumn) {
+            insertColumns.push("item_type");
+            insertValues.push(normalizedItemType);
+        }
+
         const [result] = await db.query(
-            `INSERT INTO products
-                (name, price, quantity, description, image, availability_status, is_promotional, promo_price, promo_label)
-             VALUES (?,?,?,?,?,?,?,?,?)`,
-            [
-                name,
-                price || 0,
-                quantity || 0,
-                description || null,
-                image || null,
-                normalizedAvailabilityStatus,
-                normalizedPromo.isPromotional,
-                normalizedPromo.promoPrice,
-                normalizedPromo.promoLabel,
-            ]
+            `INSERT INTO products (${insertColumns.join(", ")})
+             VALUES (${insertColumns.map(() => "?").join(",")})`,
+            insertValues,
         );
 
         const newId = result.insertId;
@@ -236,9 +338,11 @@ router.post("/", async (req, res) => {
             [newId],
         );
         const normalizedCategory = String(category || "").toLowerCase().trim();
-        const promoTag = raw_material
-            ? "RAW_MATERIAL"
-            : normalizedCategory.includes("suppl")
+        const promoTag = normalizedItemType === MENU_ITEM
+            ? "MENU FOOD"
+            : raw_material
+                ? "RAW_MATERIAL"
+                : normalizedCategory.includes("suppl")
                 ? "SUPPLIES"
                 : "FINISHED_GOODS";
 
@@ -273,9 +377,11 @@ router.post("/", async (req, res) => {
         }
         if (
             err &&
-            (err.message === "ingredients must be an array" ||
+            (err.message === "item_type must be either stock_item or menu_item" ||
+                err.message === "ingredients must be an array" ||
                 err.message === "Each ingredient must include a valid product_id" ||
-                err.message === "Each ingredient must include a positive quantity_required")
+                err.message === "Each ingredient must include a positive quantity_required" ||
+                /must be (stock_item|menu_item)|was not found/i.test(err.message))
         ) {
             return res.status(400).json({ message: err.message });
         }
@@ -289,10 +395,22 @@ router.put("/:id", async (req, res) => {
     try {
         await ensureMenuManagementColumns();
         await ensureMenuAvailabilitySchema(db);
+        const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
 
         const productId = Number(req.params.id);
         if (!Number.isFinite(productId) || productId <= 0) {
             return res.status(400).json({ message: "Invalid product ID" });
+        }
+        const itemTypeSelect = hasItemTypeColumn ? "item_type" : "NULL AS item_type";
+        const [[existingProduct]] = await db.query(
+            `SELECT ${itemTypeSelect}
+             FROM products
+             WHERE id = ?
+             LIMIT 1`,
+            [productId],
+        );
+        if (!existingProduct) {
+            return res.status(404).json({ message: "Product not found" });
         }
 
         const {
@@ -302,6 +420,7 @@ router.put("/:id", async (req, res) => {
             description,
             category,
             image,
+            item_type,
             availability_status,
             is_promotional,
             promo_price,
@@ -387,6 +506,27 @@ router.put("/:id", async (req, res) => {
         }
 
         const normalizedIngredients = normalizeMenuIngredients(ingredients);
+        const effectiveTargetItemType = parseItemTypeInput(
+            item_type,
+            normalizeItemType(existingProduct.item_type, MENU_ITEM),
+        );
+        if (normalizedIngredients !== null) {
+            if (effectiveTargetItemType !== MENU_ITEM) {
+                return res.status(400).json({
+                    message: "Ingredients can only be assigned to menu_item products",
+                });
+            }
+            await assertProductsMatchItemType(
+                db,
+                normalizedIngredients.map((ingredient) => ingredient.productId),
+                STOCK_ITEM,
+                "Ingredient",
+            );
+        }
+        if (item_type !== undefined && hasItemTypeColumn) {
+            productFields.push("item_type = ?");
+            productValues.push(effectiveTargetItemType);
+        }
 
         if (
             is_promotional !== undefined ||
@@ -426,6 +566,13 @@ router.put("/:id", async (req, res) => {
                 [...productValues, productId],
             );
         }
+
+        await assertProductsMatchItemType(
+            db,
+            [productId],
+            effectiveTargetItemType,
+            effectiveTargetItemType === MENU_ITEM ? "Menu" : "Stock",
+        );
 
         if (menuFields.length > 0) {
             await db.query(
@@ -468,9 +615,11 @@ router.put("/:id", async (req, res) => {
         }
         if (
             err &&
-            (err.message === "ingredients must be an array" ||
+            (err.message === "item_type must be either stock_item or menu_item" ||
+                err.message === "ingredients must be an array" ||
                 err.message === "Each ingredient must include a valid product_id" ||
-                err.message === "Each ingredient must include a positive quantity_required")
+                err.message === "Each ingredient must include a positive quantity_required" ||
+                /must be (stock_item|menu_item)|was not found/i.test(err.message))
         ) {
             return res.status(400).json({ message: err.message });
         }

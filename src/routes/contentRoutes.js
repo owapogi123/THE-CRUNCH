@@ -1,5 +1,10 @@
 const router = require("express").Router();
 const db = require("../config/db");
+const {
+  MENU_ITEM,
+  ensureProductsItemTypeSchema,
+  getProductItemTypeExpression,
+} = require("../utils/productItemType");
 
 const DEFAULT_FLAVORS = [
   {
@@ -65,6 +70,8 @@ router.get("/flavors", async (_req, res) => {
 
 router.get("/menu-sections", async (_req, res) => {
   try {
+    const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+    const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p", "m");
     const [rows] = await db.query(
       `SELECT
           COALESCE(m.Product_ID, p.id) AS product_id,
@@ -77,8 +84,9 @@ router.get("/menu-sections", async (_req, res) => {
           COALESCE(p.availability_status, 'Available') AS availability_status
        FROM Menu m
        LEFT JOIN products p ON p.id = m.Product_ID
-       WHERE COALESCE(m.Promo, '') <> 'RAW_MATERIAL'
+       WHERE ${itemTypeExpr} = ?
        ORDER BY category_name ASC, product_name ASC`,
+      [MENU_ITEM],
     );
 
     const grouped = new Map();
@@ -120,6 +128,8 @@ router.get("/menu-sections", async (_req, res) => {
 
 router.get("/promos", async (_req, res) => {
   try {
+    const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+    const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p", "m");
     const [rows] = await db.query(
       `SELECT
           p.id,
@@ -132,10 +142,14 @@ router.get("/promos", async (_req, res) => {
           COALESCE(p.is_promotional, 0) AS is_promotional
        FROM products p
        LEFT JOIN Menu m ON m.Product_ID = p.id
-       WHERE COALESCE(p.is_promotional, 0) = 1
+       WHERE ${itemTypeExpr} = ?
+         AND (
+           COALESCE(p.is_promotional, 0) = 1
           OR p.promo_price IS NOT NULL
           OR COALESCE(TRIM(p.promo_label), '') <> ''
+         )
        ORDER BY p.id DESC`,
+      [MENU_ITEM],
     );
 
     const promos = rows.map((row, index) => {

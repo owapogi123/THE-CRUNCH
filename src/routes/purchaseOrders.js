@@ -3,6 +3,11 @@
 const express = require("express");
 const router = express.Router();
 const db = require("../config/db");
+const {
+  STOCK_ITEM,
+  ensureProductsItemTypeSchema,
+  getProductItemTypeExpression,
+} = require("../utils/productItemType");
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -483,6 +488,8 @@ router.patch("/:id/receive", async (req, res) => {
   try {
     await ensureTables();
     await ensureBatchShelfLifeColumns();
+    const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+    const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p", "m");
 
     conn = await db.getConnection();
     await conn.beginTransaction();
@@ -542,8 +549,9 @@ router.patch("/:id/receive", async (req, res) => {
          FROM products p
          LEFT JOIN Menu m ON m.Product_ID = p.id
          WHERE LOWER(TRIM(p.name)) = LOWER(TRIM(?))
+           AND ${itemTypeExpr} = ?
          LIMIT 1`,
-        [item.name],
+        [item.name, STOCK_ITEM],
       );
 
       if (matchedProduct) {
@@ -558,28 +566,46 @@ router.patch("/:id/receive", async (req, res) => {
                   COALESCE(m.Promo, '') AS promo,
                   COALESCE(m.Category_Name, '') AS category_name
            FROM Menu m
+           LEFT JOIN products p ON p.id = m.Product_ID
            WHERE LOWER(TRIM(m.Product_Name)) = LOWER(TRIM(?))
+             AND ${itemTypeExpr} = ?
            LIMIT 1`,
-          [item.name],
+          [item.name, STOCK_ITEM],
         );
 
         if (matchedMenu) {
           productId = matchedMenu.product_id;
           productRow = matchedMenu;
 
+          const upsertSql = hasItemTypeColumn
+            ? `INSERT INTO products (id, name, price, quantity, description, item_type)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON DUPLICATE KEY UPDATE
+                 name = VALUES(name),
+                 price = VALUES(price)`
+            : `INSERT INTO products (id, name, price, quantity, description)
+               VALUES (?, ?, ?, ?, ?)
+               ON DUPLICATE KEY UPDATE
+                 name = VALUES(name),
+                 price = VALUES(price)`;
           await conn.query(
-            `INSERT INTO products (id, name, price, quantity, description)
-             VALUES (?, ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE
-               name = VALUES(name),
-               price = VALUES(price)`,
-            [
-              matchedMenu.product_id,
-              matchedMenu.product_name || item.name,
-              toNumber(matchedMenu.price),
-              toNumber(matchedMenu.stock),
-              null,
-            ],
+            upsertSql,
+            hasItemTypeColumn
+              ? [
+                  matchedMenu.product_id,
+                  matchedMenu.product_name || item.name,
+                  toNumber(matchedMenu.price),
+                  toNumber(matchedMenu.stock),
+                  null,
+                  STOCK_ITEM,
+                ]
+              : [
+                  matchedMenu.product_id,
+                  matchedMenu.product_name || item.name,
+                  toNumber(matchedMenu.price),
+                  toNumber(matchedMenu.stock),
+                  null,
+                ],
           );
         }
       }
