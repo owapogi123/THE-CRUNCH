@@ -92,6 +92,7 @@ interface ApiInventoryRow {
   id?: number;
   product_id?: number;
   inventory_id?: number;
+  item_type?: string;
   menu_code?: string;
   name?: string;
   product_name?: string;
@@ -1977,16 +1978,9 @@ function MenuManagementTab() {
         | ApiInventoryRow[]
         | null;
       if (data && Array.isArray(data)) {
-        const rows = data.filter((item) => {
-          const promo = String(item?.promo ?? "").toUpperCase().trim();
-          const category = String(item?.category ?? "").toLowerCase().trim();
-          return (
-            promo === "SUPPLIES" ||
-            promo === "MENU FOOD" ||
-            category.includes("suppl") ||
-            category.includes("menu food")
-          );
-        });
+        const rows = data.filter(
+          (item) => String(item?.item_type ?? "stock_item").trim().toLowerCase() === "stock_item",
+        );
 
         const groupedByName = new Map<string, ApiInventoryRow[]>();
         for (const item of rows) {
@@ -2681,7 +2675,9 @@ function MenuAdminTab() {
   }
 
   function normalizeManagementRows(data: ApiInventoryRow[]) {
-    const rows = data.filter((item) => !Boolean(item?.isRawMaterial));
+    const rows = data.filter(
+      (item) => String(item?.item_type ?? "menu_item").trim().toLowerCase() === "menu_item",
+    );
 
     const groupedByName = new Map<string, ApiInventoryRow[]>();
     for (const item of rows) {
@@ -2709,24 +2705,29 @@ function MenuAdminTab() {
   const loadProducts = async () => {
     try {
       setLoading(true);
-      const data = (await apiCall("/inventory", { method: "GET" })) as
-        | ApiInventoryRow[]
-        | null;
-      if (!data || !Array.isArray(data)) return;
+      const [menuData, stockData] = await Promise.all([
+        apiCall("/products?item_type=menu_item", { method: "GET" }),
+        apiCall("/inventory", { method: "GET" }),
+      ]);
+      const productData = Array.isArray(menuData) ? (menuData as ApiInventoryRow[]) : [];
+      const inventoryData = Array.isArray(stockData) ? (stockData as ApiInventoryRow[]) : [];
 
-      const allOptions = data
+      const allOptions = inventoryData
+        .filter(
+          (item) => String(item?.item_type ?? "stock_item").trim().toLowerCase() === "stock_item",
+        )
         .map((item) => ({
           id: Number(item.product_id ?? item.id ?? item.inventory_id ?? 0),
           name: String(item.product_name ?? item.name ?? "Unnamed Product"),
           category: String(item.category ?? "Uncategorized"),
           unit: String(item.unit ?? "piece"),
-          stock: Number(item.quantity ?? item.stock ?? 0),
+          stock: Number(item.dailyWithdrawn ?? item.quantity ?? item.stock ?? 0),
         }))
         .filter((item) => item.id > 0)
         .sort((a, b) => a.name.localeCompare(b.name));
       setIngredientOptions(allOptions);
 
-      const normalized = normalizeManagementRows(data);
+      const normalized = normalizeManagementRows(productData);
       setProducts(
         normalized.map((item) => ({
           id: Number(item.product_id ?? item.inventory_id ?? item.id ?? 0),
@@ -2842,6 +2843,7 @@ function MenuAdminTab() {
       await api.post("/products", {
         name: fName.trim(),
         category: fCat.trim(),
+        item_type: "menu_item",
         price: parseFloat(fPrice),
         unit: UNIT_OPTIONS[0],
         quantity: parseFloat(fStock) || 0,
@@ -2900,6 +2902,7 @@ function MenuAdminTab() {
       const payload: Record<string, unknown> = {
         name: eName.trim(),
         category: eCat.trim(),
+        item_type: "menu_item",
         price: parseFloat(ePrice),
         unit: editProduct.unit || UNIT_OPTIONS[0],
         quantity: parseFloat(eStock) || 0,
@@ -3539,16 +3542,9 @@ export default function Inventory() {
         | ApiInventoryRow[]
         | null;
       if (data && Array.isArray(data)) {
-        const inventoryRows = data.filter((item) => {
-          const promo = String(item?.promo ?? "").toUpperCase().trim();
-          const category = String(item?.category ?? "").toLowerCase().trim();
-          return (
-            promo === "SUPPLIES" ||
-            promo === "MENU FOOD" ||
-            category.includes("suppl") ||
-            category.includes("menu food")
-          );
-        });
+        const inventoryRows = data.filter(
+          (item) => String(item?.item_type ?? "stock_item").trim().toLowerCase() === "stock_item",
+        );
 
         const groupedByName = new Map<string, ApiInventoryRow[]>();
         for (const item of inventoryRows) {
@@ -3609,6 +3605,7 @@ export default function Inventory() {
       const created = await api.post<{ id?: number }>("/products", {
         name: productData.name,
         category: productData.category,
+        item_type: "stock_item",
         price: productData.price,
         unit: productData.unit,
         quantity: productData.stock ?? 0,

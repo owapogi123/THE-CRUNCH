@@ -15,6 +15,7 @@ interface Nutrition { calories: number; protein: number; fats: number; carbs: nu
 interface InventoryMenuRow {
   product_id?: number;
   id?: number;
+  item_type?: string;
   product_name?: string;
   name?: string;
   price?: number | string;
@@ -70,7 +71,9 @@ function mapInventoryRecipes(
 ): Recipe[] {
   const deduped = new Map<string, InventoryMenuRow>();
   for (const row of inventoryRows ?? []) {
-    if (row.isRawMaterial) continue;
+    if (String(row.item_type ?? "menu_item").trim().toLowerCase() !== "menu_item") {
+      continue;
+    }
     const key = normalizeName(row.product_name ?? row.name);
     if (!key) continue;
     const existing = deduped.get(key);
@@ -817,7 +820,7 @@ export default function Delicacy() {
     setLoading(true);
 
     Promise.allSettled([
-      api.get<InventoryMenuRow[]>("/inventory"),
+      api.get<InventoryMenuRow[]>("/products?item_type=menu_item"),
       api.get<Recipe[]>("/menu/items"),
       api.get<string[]>("/menu/flavors"),
       api.get<string[]>("/menu/meal-types"),

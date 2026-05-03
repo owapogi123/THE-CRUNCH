@@ -184,7 +184,23 @@ export default function Order() {
   useEffect(() => { const t = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(t); }, []);
   useEffect(() => { void fetchUsage(); }, []);
 
-  const patch = async (id: string, body: object) => { try { await api.patch(`/orders/${id}`, body); fetchAll(); } catch {} };
+  const patch = async (id: string, body: object) => {
+    try {
+      await api.patch(`/orders/${id}`, body);
+      fetchAll();
+      return true;
+    } catch (error) {
+      addNotification({
+        id: crypto.randomUUID(),
+        label:
+          error instanceof Error
+            ? error.message
+            : "Failed to update order status.",
+        type: "error",
+      });
+      return false;
+    }
+  };
   const handleStart  = (id: string) => patch(id, { status: "preparing" });
   const handleReady = async (order: OrderCard) => {
     try {
@@ -193,7 +209,16 @@ export default function Order() {
         await api.patch(`/orders/${order.id}`, { status: "Completed" });
       }
       fetchAll();
-    } catch {}
+    } catch (error) {
+      addNotification({
+        id: crypto.randomUUID(),
+        label:
+          error instanceof Error
+            ? error.message
+            : "Failed to complete order.",
+        type: "error",
+      });
+    }
   };
   const handleComplete = (id: string) => patch(id, { status: "Completed" });
   const handleCancel = async (id: string) => {

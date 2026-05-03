@@ -56,6 +56,7 @@ interface MenuItem {
   name: string;
   price: number;
   category: string;
+  itemType?: string;
   remainingStock: number;
   availabilityStatus: string;
   image?: string | null;
@@ -126,7 +127,7 @@ interface ReceiptData {
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 const isFood = (item: MenuItem) =>
-  item.category.toUpperCase().includes("MENU FOOD");
+  String(item.itemType ?? "menu_item").trim().toLowerCase() === "menu_item";
 
 const isUnavailableStatus = (value: unknown) =>
   ["unavailable", "out of stock", "hidden"].includes(
@@ -190,7 +191,9 @@ const computePricing = (gross: number, ct: CustomerType) => {
 const mapProducts = (data: Record<string, unknown>[]): MenuItem[] => {
   const map = new Map<string, Record<string, unknown>>();
   for (const p of data ?? []) {
-    if (p.isRawMaterial) continue;
+    if (String(p.item_type ?? "menu_item").trim().toLowerCase() !== "menu_item") {
+      continue;
+    }
     const key = String(p.product_name ?? p.name ?? "").trim().toLowerCase();
     const ex = map.get(key);
     if (
@@ -205,6 +208,7 @@ const mapProducts = (data: Record<string, unknown>[]): MenuItem[] => {
     name: String(p.product_name ?? p.name ?? `Product #${p.id}`),
     price: Number(p.price ?? 0),
     category: String(p.category ?? "UNCATEGORIZED").toUpperCase(),
+    itemType: String(p.item_type ?? "menu_item"),
     remainingStock: Number(p.stock ?? p.quantity ?? p.dailyWithdrawn ?? 0),
     availabilityStatus: String(p.availability_status ?? "Available"),
     image: p.image ? String(p.image) : null,
@@ -2256,7 +2260,7 @@ export default function CashierView() {
   useEffect(() => {
     setLoadingProducts(true);
     api
-      .get<Record<string, unknown>[]>("/inventory")
+      .get<Record<string, unknown>[]>("/products?item_type=menu_item")
       .then((d) => {
         setProducts(mapProducts(d ?? []));
         setProductsError("");

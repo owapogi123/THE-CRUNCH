@@ -55,6 +55,7 @@ const PESO = "\u20B1";
 interface Product {
   inventory_id: number;
   product_id: number;
+  item_type?: string;
   product_name: string;
   category: string;
   unit: string;
@@ -210,6 +211,20 @@ interface KitchenUsagePayload {
   items: KitchenUsageItem[];
 }
 
+interface InventoryCategoryMaster {
+  category_id: number;
+  name: string;
+  uses_shelf_life: boolean | number;
+  is_active: boolean | number;
+}
+
+interface InventoryUnitMaster {
+  unit_id: number;
+  name: string;
+  abbreviation?: string | null;
+  is_active: boolean | number;
+}
+
 // ─── API ──────────────────────────────────────────────────────────────────────
 
 const API_BASE = "/api";
@@ -286,6 +301,7 @@ const api = {
     category?: string;
     description?: string;
     raw_material?: boolean;
+    item_type?: "stock_item" | "menu_item";
   }) =>
     apiFetch<{ message: string; id: number }>("/products", {
       method: "POST",
@@ -353,6 +369,10 @@ const api = {
     getMonthly: (year: number, month: number) =>
       apiFetch<ReportData>(`/reports/monthly?year=${year}&month=${month}`),
   },
+  getInventoryCategories: () =>
+    apiFetch<InventoryCategoryMaster[]>("/settings/inventory-categories?activeOnly=1"),
+  getInventoryUnits: () =>
+    apiFetch<InventoryUnitMaster[]>("/settings/inventory-units?activeOnly=1"),
   getKitchenUsageToday: () =>
     apiFetch<KitchenUsagePayload>(
       "/kitchen-usage/today?preferLatestPopulated=1",
@@ -542,6 +562,7 @@ const RAW_MATERIAL_UNITS = [
   "piece",
   "pack",
   "bottle",
+  "case",
 ] as const;
 const RAW_MATERIAL_CATEGORIES = [
   "Sauces",
@@ -597,6 +618,14 @@ const itemVariants: Variants = {
   },
 };
 
+const inventoryCategoryShelfLifeLookup = new Map<string, boolean>();
+
+function normalizeInventoryCategoryName(value?: string | null): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase();
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const calcPOTotal = (items: POItem[]) =>
@@ -606,14 +635,10 @@ const isWholeChicken = (p: Product) =>
 const isChoppedChicken = (p: Product) =>
   p.category.toLowerCase().includes("chopped chicken");
 const isChicken = (p: Product) => isWholeChicken(p) || isChoppedChicken(p);
-const isMenuFoodProduct = (p: Pick<Product, "category" | "promo">) =>
-  String(p.promo ?? "")
-    .toUpperCase()
-    .trim() === "MENU FOOD" ||
-  String(p.category ?? "")
-    .toLowerCase()
+const isMenuFoodProduct = (p: Pick<Product, "item_type">) =>
+  String(p.item_type ?? "")
     .trim()
-    .includes("menu food");
+    .toLowerCase() === "menu_item";
 const isReconcilable = (p: Product) =>
   !/(sauce|bottle|beverage|condiment|drink)/.test(p.category.toLowerCase());
 const getStockStatus = (p: Product): StockStatus =>
@@ -686,16 +711,16 @@ function mergeSupplierProducts(existing: string, incoming: string[]): string {
   return merged.join(", ");
 }
 function isStrictRawMaterialCategory(value?: string | null): boolean {
-  const normalized = String(value ?? "")
-    .trim()
-    .toLowerCase();
+  const normalized = normalizeInventoryCategoryName(value);
+  if (inventoryCategoryShelfLifeLookup.has(normalized)) {
+    return inventoryCategoryShelfLifeLookup.get(normalized) === true;
+  }
   return normalized === "raw material" || normalized === "raw materials";
 }
 
 function isStockManagerCategory(value?: string | null): boolean {
-  const normalized = String(value ?? "")
-    .trim()
-    .toLowerCase();
+  const normalized = normalizeInventoryCategoryName(value);
+  if (inventoryCategoryShelfLifeLookup.has(normalized)) return true;
   return (
     normalized.includes("suppl") ||
     normalized.includes("menu food") ||
@@ -711,9 +736,8 @@ function isStockManagerCategory(value?: string | null): boolean {
 }
 
 function isMainStockDashboardCategory(value?: string | null): boolean {
-  const normalized = String(value ?? "")
-    .trim()
-    .toLowerCase();
+  const normalized = normalizeInventoryCategoryName(value);
+  if (inventoryCategoryShelfLifeLookup.has(normalized)) return true;
   return (
     normalized.includes("sauces") ||
     normalized === "raw material" ||
@@ -769,6 +793,22 @@ function getShelfLifeDurationMs(
   return (Math.max(0, toNumber(days)) * 24 + Math.max(0, toNumber(hours))) * 60 * 60 * 1000;
 }
 
+function getPOItemUsableUntil(
+  order: Pick<PurchaseOrder, "receivedDate">,
+  item: Pick<POItem, "shelfLifeDays" | "shelfLifeHours">,
+): string | null {
+  const baseMs = order.receivedDate ? new Date(order.receivedDate).getTime() : NaN;
+  if (!Number.isFinite(baseMs)) return null;
+
+  const durationMs = getShelfLifeDurationMs(
+    item.shelfLifeDays,
+    item.shelfLifeHours,
+  );
+  if (durationMs <= 0) return null;
+
+  return new Date(baseMs + durationMs).toISOString();
+}
+
 function getShelfLifeStatus({
   usableUntil,
   shelfLifeDays,
@@ -820,6 +860,140 @@ function RawMaterialTimingCell({ product }: { product: Product }) {
         className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusClass}`}
       >
         {status}
+      </span>
+    </div>
+  );
+}
+
+type NearestTimingInfo = {
+  batchId: number | null;
+  date: string | null;
+  status: "expired" | "near" | "safe" | "none";
+  label: string;
+};
+
+function getNearestTimingInfo(
+  product: Product,
+  activeBatches: Batch[],
+): NearestTimingInfo {
+  const productBatches = activeBatches
+    .filter(
+      (batch) =>
+        batch.product_id === product.product_id &&
+        toNumber(batch.remaining_qty) > 0,
+    )
+    .sort(
+      (a, b) =>
+        new Date(a.received_date).getTime() - new Date(b.received_date).getTime(),
+    );
+
+  if (product.isRawMaterial) {
+    const usableUntil = product.usableUntil ?? null;
+    const usableUntilMs = usableUntil ? new Date(usableUntil).getTime() : NaN;
+    if (!Number.isFinite(usableUntilMs)) {
+      return {
+        batchId: productBatches[0]?.batch_id ?? null,
+        date: null,
+        status: "none",
+        label: "No batch date",
+      };
+    }
+
+    const shelfLifeStatus = getShelfLifeStatus({
+      usableUntil,
+      shelfLifeDays: product.shelfLifeDays,
+      shelfLifeHours: product.shelfLifeHours,
+    });
+
+    return {
+      batchId: productBatches[0]?.batch_id ?? null,
+      date: usableUntil,
+      status:
+        shelfLifeStatus === "Past Shelf Life"
+          ? "expired"
+          : shelfLifeStatus === "Near End of Shelf Life"
+            ? "near"
+            : "safe",
+      label:
+        shelfLifeStatus === "Past Shelf Life"
+          ? "Expired / Past Shelf Life"
+          : shelfLifeStatus === "Near End of Shelf Life"
+            ? "Near Expiry"
+            : "Safe",
+    };
+  }
+
+  const datedBatches = productBatches
+    .filter((batch) => !!batch.expiry_date)
+    .sort((a, b) => {
+      const aMs = new Date(a.expiry_date as string).getTime();
+      const bMs = new Date(b.expiry_date as string).getTime();
+      return aMs - bMs;
+    });
+
+  const earliestBatch = datedBatches[0];
+  if (!earliestBatch?.expiry_date) {
+    return {
+      batchId: null,
+      date: null,
+      status: "none",
+      label: "No batch date",
+    };
+  }
+
+  const date = earliestBatch.expiry_date;
+  return {
+    batchId: earliestBatch.batch_id,
+    date,
+    status: isExpired(date) ? "expired" : isExpiringSoon(date) ? "near" : "safe",
+    label: isExpired(date)
+      ? "Expired / Past Shelf Life"
+      : isExpiringSoon(date)
+        ? "Near Expiry"
+        : "Safe",
+  };
+}
+
+function NearestTimingCell({
+  info,
+}: {
+  info: NearestTimingInfo;
+}) {
+  const toneClass =
+    info.status === "expired"
+      ? "text-red-600"
+      : info.status === "near"
+        ? "text-amber-600"
+        : info.status === "safe"
+          ? "text-slate-700"
+          : "text-slate-400";
+  const badgeClass =
+    info.status === "expired"
+      ? "bg-red-100 text-red-700 border border-red-200"
+      : info.status === "near"
+        ? "bg-amber-50 text-amber-700 border border-amber-200"
+        : info.status === "safe"
+          ? "bg-slate-100 text-slate-600 border border-slate-200"
+          : "bg-slate-50 text-slate-400 border border-slate-200";
+
+  if (!info.date) {
+    return <span className="text-xs text-slate-400">No batch date</span>;
+  }
+
+  return (
+    <div className="text-right space-y-1">
+      {info.batchId !== null && (
+        <p className="text-xs font-semibold text-slate-600">
+          Batch #{info.batchId}
+        </p>
+      )}
+      <p className={`text-[11px] font-medium ${toneClass}`}>
+        {fmtDateTime(info.date)}
+      </p>
+      <span
+        className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${badgeClass}`}
+      >
+        {info.label}
       </span>
     </div>
   );
@@ -1598,31 +1772,71 @@ function PODetailDrawer({
             Order Items
           </p>
           <div className="space-y-2">
-            {order.items.map((item) => (
-              <div
-                key={item.id}
-                className="py-3 border-b border-gray-100 last:border-0"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-800">
-                      {item.name}
-                    </p>
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      {item.category} · {item.quantity} {item.unit}
-                    </p>
-                  </div>
-                  <div className="text-right flex-shrink-0">
-                    <p className="text-sm font-semibold text-gray-800">
-                      ₱{(item.quantity * item.unitCost).toLocaleString()}
-                    </p>
-                    <p className="text-xs text-gray-400">
-                      ₱{item.unitCost}/{item.unit}
-                    </p>
+            {order.items.map((item) => {
+              const rawMaterial = isRawMaterialPOItem(item);
+              const usableUntil = rawMaterial
+                ? getPOItemUsableUntil(order, item)
+                : null;
+
+              return (
+                <div
+                  key={item.id}
+                  className="py-3 border-b border-gray-100 last:border-0"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-800">
+                        {item.name}
+                      </p>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {item.category} · {item.quantity} {item.unit}
+                      </p>
+                      <div className="mt-2 space-y-1">
+                        <span
+                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${rawMaterial ? "bg-emerald-50 border border-emerald-200 text-emerald-700" : "bg-sky-50 border border-sky-200 text-sky-700"}`}
+                        >
+                          {rawMaterial ? "Shelf Life Based" : "Expiry Based"}
+                        </span>
+                        {rawMaterial ? (
+                          <>
+                            <p className="text-xs text-slate-500">
+                              Shelf Life:{" "}
+                              <span className="font-medium text-slate-700">
+                                {formatShelfLife(
+                                  item.shelfLifeDays,
+                                  item.shelfLifeHours,
+                                )}
+                              </span>
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              Usable Until:{" "}
+                              <span className="font-medium text-slate-700">
+                                {fmtDateTime(usableUntil)}
+                              </span>
+                            </p>
+                          </>
+                        ) : (
+                          <p className="text-xs text-slate-500">
+                            Expiry Date:{" "}
+                            <span className="font-medium text-slate-700">
+                              {fmtDate(item.expectedExpiryDate ?? null)}
+                            </span>
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <p className="text-sm font-semibold text-gray-800">
+                        ₱{(item.quantity * item.unitCost).toLocaleString()}
+                      </p>
+                      <p className="text-xs text-gray-400">
+                        ₱{item.unitCost}/{item.unit}
+                      </p>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
         <div className="bg-gray-50 rounded-xl p-4 space-y-2">
@@ -1895,64 +2109,79 @@ function ReceivePOModal({
                       {item.category} · {item.quantity} {item.unit}
                     </p>
                   </div>
-                  {rawMaterial ? (
-                    <span className="inline-flex items-center rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-                      Raw Material
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${rawMaterial ? "bg-emerald-50 border border-emerald-200 text-emerald-700" : "bg-sky-50 border border-sky-200 text-sky-700"}`}
+                    >
+                      {rawMaterial ? "Shelf Life Based" : "Expiry Based"}
                     </span>
-                  ) : currentExpiryDate ? (
-                    <ExpiryChip dateStr={currentExpiryDate} />
-                  ) : null}
+                    {!rawMaterial && currentExpiryDate ? (
+                      <ExpiryChip dateStr={currentExpiryDate} />
+                    ) : null}
+                  </div>
                 </div>
                 {rawMaterial ? (
-                  <div className="grid gap-3 md:grid-cols-[auto_1fr_1fr] items-end">
-                    <label className="text-xs font-semibold text-slate-500 pb-2">
-                      Shelf Life (for raw materials)
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={currentShelfLife.shelfLifeDays}
-                      onChange={(e) =>
-                        setItemShelfLife((prev) => ({
-                          ...prev,
-                          [item.id]: {
-                            ...(prev[item.id] || {
-                              shelfLifeDays: "",
-                              shelfLifeHours: "",
-                            }),
-                            shelfLifeDays: e.target.value,
-                          },
-                        }))
-                      }
-                      placeholder="Days"
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200"
-                    />
-                    <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={currentShelfLife.shelfLifeHours}
-                      onChange={(e) =>
-                        setItemShelfLife((prev) => ({
-                          ...prev,
-                          [item.id]: {
-                            ...(prev[item.id] || {
-                              shelfLifeDays: "",
-                              shelfLifeHours: "",
-                            }),
-                            shelfLifeHours: e.target.value,
-                          },
-                        }))
-                      }
-                      placeholder="Hours"
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200"
-                    />
+                  <div className="rounded-xl border border-emerald-100 bg-emerald-50/40 p-4">
+                    <p className="text-xs font-semibold text-emerald-700 mb-3">
+                      Shelf Life (Raw Material)
+                    </p>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-500 mb-1.5">
+                          Days
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={currentShelfLife.shelfLifeDays}
+                          onChange={(e) =>
+                            setItemShelfLife((prev) => ({
+                              ...prev,
+                              [item.id]: {
+                                ...(prev[item.id] || {
+                                  shelfLifeDays: "",
+                                  shelfLifeHours: "",
+                                }),
+                                shelfLifeDays: e.target.value,
+                              },
+                            }))
+                          }
+                          placeholder="Days"
+                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-500 mb-1.5">
+                          Hours
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={currentShelfLife.shelfLifeHours}
+                          onChange={(e) =>
+                            setItemShelfLife((prev) => ({
+                              ...prev,
+                              [item.id]: {
+                                ...(prev[item.id] || {
+                                  shelfLifeDays: "",
+                                  shelfLifeHours: "",
+                                }),
+                                shelfLifeHours: e.target.value,
+                              },
+                            }))
+                          }
+                          placeholder="Hours"
+                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200"
+                        />
+                      </div>
+                    </div>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-[auto_1fr] gap-3 items-end">
-                    <label className="text-xs font-semibold text-slate-500 pb-2">
-                      Actual Expiry Date
+                  <div className="rounded-xl border border-sky-100 bg-sky-50/40 p-4">
+                    <label className="block text-xs font-semibold text-sky-700 mb-3">
+                      Expiry Date
                     </label>
                     <input
                       type="date"
@@ -1967,9 +2196,9 @@ function ReceivePOModal({
                     />
                   </div>
                 )}
-                {rawMaterial && usableUntilPreview && (
+                {rawMaterial && (
                   <p className="text-[11px] text-emerald-600 font-medium mt-2">
-                    Usable until {fmtDateTime(usableUntilPreview)}.
+                    Usable Until: {fmtDateTime(usableUntilPreview)}
                   </p>
                 )}
                 {warn && dayCount !== null && (
@@ -4121,6 +4350,12 @@ export default function StockManager() {
   const [showRawMaterialForm, setShowRawMaterialForm] = useState(false);
   const [rawMaterialForm, setRawMaterialForm] =
     useState<RawMaterialForm>(BLANK_RAW_MATERIAL);
+  const [inventoryCategories, setInventoryCategories] = useState<
+    InventoryCategoryMaster[]
+  >([]);
+  const [inventoryUnits, setInventoryUnits] = useState<InventoryUnitMaster[]>(
+    [],
+  );
   const [showReconcile, setShowReconcile] = useState(false);
   const [reconcileItems, setReconcileItems] = useState<ReconcileRow[]>([]);
   const [cookReport, setCookReport] = useState<KitchenUsagePayload | null>(null);
@@ -4283,11 +4518,45 @@ export default function StockManager() {
     setIsLoading(true);
     setError(null);
     try {
-      const [inv, wd, sup] = await Promise.all([
+      const [
+        invRes,
+        wdRes,
+        supRes,
+        categoryRes,
+        unitRes,
+      ] = await Promise.allSettled([
         api.getInventory(),
         api.getWithdrawals(),
         api.getSuppliers(),
+        api.getInventoryCategories(),
+        api.getInventoryUnits(),
       ]);
+
+      if (
+        invRes.status !== "fulfilled" ||
+        wdRes.status !== "fulfilled" ||
+        supRes.status !== "fulfilled"
+      ) {
+        throw new Error("Failed to load data.");
+      }
+
+      const inv = invRes.value;
+      const wd = wdRes.value;
+      const sup = supRes.value;
+
+      const categoryList =
+        categoryRes.status === "fulfilled" ? categoryRes.value : [];
+      const unitList = unitRes.status === "fulfilled" ? unitRes.value : [];
+      inventoryCategoryShelfLifeLookup.clear();
+      for (const category of categoryList) {
+        inventoryCategoryShelfLifeLookup.set(
+          normalizeInventoryCategoryName(category.name),
+          category.uses_shelf_life === true || category.uses_shelf_life === 1,
+        );
+      }
+      setInventoryCategories(categoryList);
+      setInventoryUnits(unitList);
+
       const [batchesRes, returnsRes, kitchenRes, poRes, cookReportRes] =
         await Promise.allSettled([
           api.getActiveBatches(),
@@ -4320,25 +4589,20 @@ export default function StockManager() {
             p.shelfLifeHours !== undefined && p.shelfLifeHours !== null
               ? toNumber(p.shelfLifeHours)
               : null,
+          item_type:
+            typeof (p as { item_type?: unknown }).item_type === "string"
+              ? String((p as { item_type?: unknown }).item_type)
+              : "stock_item",
           promo: typeof p.promo === "string" ? p.promo : "",
           isRawMaterial: isStrictRawMaterialCategory(
             typeof p.category === "string" ? p.category : "",
           ),
         }))
-        .filter((p) => {
-          const promo = String(p.promo ?? "")
-            .toUpperCase()
-            .trim();
-          const cat = String(p.category ?? "")
-            .toLowerCase()
-            .trim();
-          return (
-            promo === "SUPPLIES" ||
-            promo === "MENU FOOD" ||
-            isStockManagerCategory(cat) ||
-            p.isRawMaterial
-          );
-        });
+        .filter(
+          (p) =>
+            String(p.item_type ?? "stock_item").trim().toLowerCase() ===
+            "stock_item",
+        );
 
       const groupedByName = new Map<string, Product[]>();
       for (const item of candidateProducts) {
@@ -4618,6 +4882,20 @@ export default function StockManager() {
             (s.products_supplied ?? "").toLowerCase().includes(q),
         );
   }, [suppliers, supplierSearch]);
+  const activeInventoryCategoryOptions = useMemo(() => {
+    const names = inventoryCategories
+      .filter((category) => category.is_active === true || category.is_active === 1)
+      .map((category) => category.name.trim())
+      .filter(Boolean);
+    return names.length > 0 ? names : [...RAW_MATERIAL_CATEGORIES];
+  }, [inventoryCategories]);
+  const activeInventoryUnitOptions = useMemo(() => {
+    const names = inventoryUnits
+      .filter((unit) => unit.is_active === true || unit.is_active === 1)
+      .map((unit) => unit.name.trim())
+      .filter(Boolean);
+    return names.length > 0 ? names : [...RAW_MATERIAL_UNITS];
+  }, [inventoryUnits]);
   const supplierProductSuggestions = useMemo(() => {
     const q = supplierProductInput.trim().toLowerCase();
     const existing = new Set(
@@ -5394,6 +5672,7 @@ export default function StockManager() {
         category: rawMaterialForm.category.trim(),
         description: rawMaterialForm.description.trim() || undefined,
         raw_material: isStrictRawMaterialCategory(rawMaterialForm.category),
+        item_type: "stock_item",
       });
       await fetchAll();
       setRawMaterialForm(BLANK_RAW_MATERIAL);
@@ -5453,6 +5732,96 @@ export default function StockManager() {
         err instanceof Error ? err.message : "Failed to return batch.",
         "error",
       );
+    }
+  }
+
+  async function handlePastShelfLifeDispose(product: Product) {
+    const qty = toNumber(product.dailyWithdrawn);
+    if (qty <= 0) {
+      showToast("No withdrawn quantity is available to dispose.", "error");
+      return;
+    }
+    if (
+      !window.confirm(
+        `Dispose ${fmtInt(qty)} ${product.unit} of ${product.product_name}? This will record spoilage from today's withdrawn quantity.`,
+      )
+    ) {
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      await api.postSpoilage({
+        product_id: product.product_id,
+        quantity: qty,
+        recorded_by: null,
+      });
+      await fetchAll();
+      showToast("Expired stock recorded as spoilage.", "success");
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : "Failed to dispose expired stock.",
+        "error",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handlePastShelfLifeReturn(product: Product) {
+    if (nonReturnableProductIds.has(product.product_id)) {
+      showToast("This expired item cannot be returned with the current flow.", "error");
+      return;
+    }
+
+    const batchesForProduct = kitchenBatches.filter((batch) => {
+      if (batch.product_id !== product.product_id) return false;
+      const availableQty =
+        toNumber(batch.withdrawn_qty) -
+        toNumber(batch.used_qty) -
+        toNumber(batch.returned_qty);
+      return batch.status === "active" && availableQty > 0;
+    });
+
+    if (batchesForProduct.length === 0) {
+      showToast("No active kitchen batches are available to return.", "error");
+      return;
+    }
+
+    const totalQty = batchesForProduct.reduce(
+      (sum, batch) =>
+        sum +
+        Math.max(
+          0,
+          toNumber(batch.withdrawn_qty) -
+            toNumber(batch.used_qty) -
+            toNumber(batch.returned_qty),
+        ),
+      0,
+    );
+
+    if (
+      !window.confirm(
+        `Return ${fmtInt(totalQty)} ${product.unit} of ${product.product_name} from kitchen batches?`,
+      )
+    ) {
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      for (const batch of batchesForProduct) {
+        await kitchenApi.returnUnused(batch.kitchen_batch_id);
+      }
+      await fetchAll();
+      showToast("Expired stock returned using existing kitchen return flow.", "success");
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : "Failed to return expired stock.",
+        "error",
+      );
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -5805,8 +6174,8 @@ export default function StockManager() {
                                 "Qty Purchased",
                                 "Withdrawn",
                                 "Shelf Life / Expiry",
+                                "Nearest Expiry / Shelf Life",
                                 "Returned",
-                                "Level",
                                 "Status",
                                 "Action",
                               ].map((h) => (
@@ -5828,6 +6197,12 @@ export default function StockManager() {
                                     shelfLifeHours: p.shelfLifeHours,
                                   })
                                 : null;
+                              const nearestTiming = getNearestTimingInfo(
+                                p,
+                                activeBatches,
+                              );
+                              const isPastShelfLife =
+                                shelfLifeStatus === "Past Shelf Life";
                               const status = getStockStatus(p);
                               const isOutOfStock = toNumber(p.mainStock) === 0;
                               const statusDotClass = isOutOfStock
@@ -5865,7 +6240,11 @@ export default function StockManager() {
                                     animation: `fadeInRow 0.28s ease forwards`,
                                     animationDelay: `${i * 0.04}s`,
                                   }}
-                                  className="border-b border-slate-50 hover:bg-slate-50/70 transition-colors"
+                                  className={`border-b transition-colors ${
+                                    isPastShelfLife
+                                      ? "border-red-100 bg-red-50/30 hover:bg-red-50/50 opacity-80"
+                                      : "border-slate-50 hover:bg-slate-50/70"
+                                  }`}
                                 >
                                   <td className="py-3.5 px-4">
                                     <div className="flex items-center gap-2">
@@ -5885,10 +6264,19 @@ export default function StockManager() {
                                     </span>
                                   </td>
                                   <td className="py-3.5 px-4 text-right font-semibold text-slate-700">
-                                    {p.mainStock}{" "}
-                                    <span className="text-slate-400 font-normal text-xs">
-                                      {p.unit}
-                                    </span>
+                                    <div className="inline-flex flex-col items-end gap-1">
+                                      <span>
+                                        {p.mainStock}{" "}
+                                        <span className="text-slate-400 font-normal text-xs">
+                                          {p.unit}
+                                        </span>
+                                      </span>
+                                      {isPastShelfLife && (
+                                        <span className="inline-flex items-center rounded-full bg-red-100 text-red-700 px-2 py-0.5 text-[10px] font-semibold">
+                                          Expired
+                                        </span>
+                                      )}
+                                    </div>
                                   </td>
                                   <td className="py-3.5 px-4 text-right text-slate-500">
                                     {p.item_purchased}
@@ -5903,22 +6291,11 @@ export default function StockManager() {
                                       <ExpiryChip dateStr={p.expiryDate} />
                                     )}
                                   </td>
+                                  <td className="py-3.5 px-4 text-right">
+                                    <NearestTimingCell info={nearestTiming} />
+                                  </td>
                                   <td className="py-3.5 px-4 text-right text-emerald-500 font-medium">
                                     {p.returned}
-                                  </td>
-                                  <td className="py-3.5 px-4 w-32">
-                                    <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
-                                      <motion.div
-                                        className={`h-full rounded-full ${statusBarClass}`}
-                                        initial={{ width: 0 }}
-                                        animate={{ width: `${pct}%` }}
-                                        transition={{
-                                          duration: 0.7,
-                                          delay: i * 0.05,
-                                          ease: "easeOut",
-                                        }}
-                                      />
-                                    </div>
                                   </td>
                                   <td className="py-3.5 px-4 text-center">
                                     <span
@@ -5928,15 +6305,43 @@ export default function StockManager() {
                                     </span>
                                   </td>
                                   <td className="py-3.5 px-4 text-center">
-                                    <button
-                                      onClick={() =>
-                                        handleDashboardDeleteProduct(p)
-                                      }
-                                      className="inline-flex items-center justify-center p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
-                                      title={`Delete ${p.product_name}`}
-                                    >
-                                      <TrashIcon />
-                                    </button>
+                                    {isPastShelfLife ? (
+                                      <div className="flex items-center justify-center gap-2">
+                                        <button
+                                          onClick={() =>
+                                            handlePastShelfLifeDispose(p)
+                                          }
+                                          disabled={
+                                            submitting ||
+                                            toNumber(p.dailyWithdrawn) <= 0
+                                          }
+                                          className="px-2.5 py-1 rounded-lg bg-red-500 text-white text-[11px] font-semibold hover:bg-red-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                          title={`Dispose expired ${p.product_name}`}
+                                        >
+                                          Dispose
+                                        </button>
+                                        <button
+                                          onClick={() =>
+                                            handlePastShelfLifeReturn(p)
+                                          }
+                                          disabled={submitting}
+                                          className="px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-700 text-[11px] font-semibold hover:bg-emerald-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                          title={`Return expired ${p.product_name}`}
+                                        >
+                                          Return
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        onClick={() =>
+                                          handleDashboardDeleteProduct(p)
+                                        }
+                                        className="inline-flex items-center justify-center p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                                        title={`Delete ${p.product_name}`}
+                                      >
+                                        <TrashIcon />
+                                      </button>
+                                    )}
                                   </td>
                                 </tr>
                               );
@@ -8018,8 +8423,14 @@ export default function StockManager() {
                           ) : filteredPOs.length === 0 ? (
                             <EmptyState message="No purchase orders found." />
                           ) : (
-                            filteredPOs.map((order, i) => (
-                              <div key={order.id}>
+                            filteredPOs.map((order, i) => {
+                              const itemCountText =
+                                order.items.length === 0
+                                  ? "No items"
+                                  : `${order.items.length} item${order.items.length !== 1 ? "s" : ""}`;
+
+                              return (
+                                <div key={order.id}>
                                 <div
                                   className="hidden lg:grid grid-cols-[1.5fr_2.5fr_2fr_2fr_2fr_2fr_1.5fr_auto] px-5 py-4 transition-colors items-center hover:bg-slate-50/70 cursor-pointer"
                                   onClick={() => setSelectedOrder(order)}
@@ -8041,8 +8452,7 @@ export default function StockManager() {
                                         {order.supplier}
                                       </p>
                                       <p className="text-xs text-slate-400">
-                                        {order.items.length} item
-                                        {order.items.length !== 1 ? "s" : ""}
+                                        {itemCountText}
                                       </p>
                                     </div>
                                     <span className="text-sm text-slate-500">
@@ -8121,6 +8531,9 @@ export default function StockManager() {
                                       <p className="text-xs text-slate-500 truncate">
                                         {order.supplier}
                                       </p>
+                                      <p className="text-xs text-slate-400">
+                                        {itemCountText}
+                                      </p>
                                     </div>
                                     <div className="flex items-center gap-2">
                                       <button
@@ -8163,7 +8576,8 @@ export default function StockManager() {
                                   </div>
                                 </motion.div>
                               </div>
-                            ))
+                              );
+                            })
                           )}
                         </div>
                       </div>
@@ -8683,7 +9097,7 @@ export default function StockManager() {
                         setRawMaterialForm((p) => ({ ...p, category: v }))
                       }
                     >
-                      {RAW_MATERIAL_CATEGORIES.map((category) => (
+                      {activeInventoryCategoryOptions.map((category) => (
                         <option key={category} value={category}>
                           {category}
                         </option>
@@ -8697,7 +9111,7 @@ export default function StockManager() {
                         setRawMaterialForm((p) => ({ ...p, unit: v }))
                       }
                     >
-                      {RAW_MATERIAL_UNITS.map((u) => (
+                      {activeInventoryUnitOptions.map((u) => (
                         <option key={u} value={u}>
                           {u}
                         </option>

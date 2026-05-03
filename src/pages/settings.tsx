@@ -76,6 +76,24 @@ interface FeedbackApiEntry {
   customer_name?: string;
 }
 
+interface InventoryCategoryRecord {
+  category_id: number;
+  name: string;
+  uses_shelf_life: boolean | number;
+  is_active: boolean | number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface InventoryUnitRecord {
+  unit_id: number;
+  name: string;
+  abbreviation?: string | null;
+  is_active: boolean | number;
+  created_at?: string;
+  updated_at?: string;
+}
+
 type TabKey =
   | "general"
   | "operations"
@@ -185,6 +203,10 @@ const DEFAULT: RestaurantSettings = {
   kitchenPrinterEnabled: false,
   maintenanceMode: false,
 };
+
+function asBool(value: boolean | number | null | undefined): boolean {
+  return value === true || value === 1;
+}
 
 // ─── Primitive UI components ──────────────────────────────────────────────────
 
@@ -424,6 +446,221 @@ function SettingsCard({
       </div>
       {children}
     </motion.div>
+  );
+}
+
+function InventoryCategoryEditor({
+  category,
+  busy,
+  onSave,
+  onDisable,
+}: {
+  category: InventoryCategoryRecord;
+  busy: boolean;
+  onSave: (
+    categoryId: number,
+    payload: { name?: string; uses_shelf_life?: boolean; is_active?: boolean },
+  ) => Promise<void>;
+  onDisable: (categoryId: number) => Promise<void>;
+}) {
+  const [name, setName] = useState(category.name);
+  const [usesShelfLife, setUsesShelfLife] = useState(asBool(category.uses_shelf_life));
+
+  useEffect(() => {
+    setName(category.name);
+    setUsesShelfLife(asBool(category.uses_shelf_life));
+  }, [category]);
+
+  return (
+    <div
+      style={{
+        border: "1px solid #ece8e2",
+        borderRadius: 10,
+        padding: "12px 14px",
+        background: asBool(category.is_active) ? "#fff" : "#faf7f4",
+        opacity: asBool(category.is_active) ? 1 : 0.75,
+      }}
+    >
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto auto", gap: 10, alignItems: "end" }}>
+        <div>
+          <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Category</p>
+          <StyledInput value={name} onChange={setName} placeholder="Category name" />
+        </div>
+        <div style={{ minWidth: 130 }}>
+          <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Shelf life</p>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, border: "1px solid #e4e1dc", borderRadius: 8, background: "#fafaf9", padding: "8px 10px" }}>
+            <span style={{ fontFamily: FONT, fontSize: "0.74rem", color: "#5a5652" }}>
+              {usesShelfLife ? "Enabled" : "Disabled"}
+            </span>
+            <Toggle value={usesShelfLife} onChange={setUsesShelfLife} />
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={async () => {
+              try {
+                await onSave(category.category_id, {
+                  name,
+                  uses_shelf_life: usesShelfLife,
+                });
+              } catch {
+                /* handled by parent */
+              }
+            }}
+            disabled={busy}
+            style={{
+              fontFamily: FONT,
+              fontSize: "0.73rem",
+              fontWeight: 600,
+              color: "#fff",
+              background: "#1f2937",
+              border: "none",
+              borderRadius: 8,
+              padding: "8px 12px",
+              cursor: "pointer",
+              opacity: busy ? 0.65 : 1,
+            }}
+          >
+            Save
+          </button>
+          {asBool(category.is_active) ? (
+            <button
+              onClick={async () => {
+                try {
+                  await onDisable(category.category_id);
+                } catch {
+                  /* handled by parent */
+                }
+              }}
+              disabled={busy}
+              style={{
+                fontFamily: FONT,
+                fontSize: "0.73rem",
+                fontWeight: 600,
+                color: "#b91c1c",
+                background: "#fff5f5",
+                border: "1px solid rgba(185,28,28,0.16)",
+                borderRadius: 8,
+                padding: "8px 12px",
+                cursor: "pointer",
+                opacity: busy ? 0.65 : 1,
+              }}
+            >
+              Disable
+            </button>
+          ) : (
+            <span style={{ fontFamily: FONT, fontSize: "0.72rem", fontWeight: 600, color: "#b0aaa3", alignSelf: "center" }}>
+              Disabled
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InventoryUnitEditor({
+  unit,
+  busy,
+  onSave,
+  onDisable,
+}: {
+  unit: InventoryUnitRecord;
+  busy: boolean;
+  onSave: (
+    unitId: number,
+    payload: { name?: string; abbreviation?: string | null; is_active?: boolean },
+  ) => Promise<void>;
+  onDisable: (unitId: number) => Promise<void>;
+}) {
+  const [name, setName] = useState(unit.name);
+  const [abbreviation, setAbbreviation] = useState(unit.abbreviation ?? "");
+
+  useEffect(() => {
+    setName(unit.name);
+    setAbbreviation(unit.abbreviation ?? "");
+  }, [unit]);
+
+  return (
+    <div
+      style={{
+        border: "1px solid #ece8e2",
+        borderRadius: 10,
+        padding: "12px 14px",
+        background: asBool(unit.is_active) ? "#fff" : "#faf7f4",
+        opacity: asBool(unit.is_active) ? 1 : 0.75,
+      }}
+    >
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,150px) auto", gap: 10, alignItems: "end" }}>
+        <div>
+          <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Unit</p>
+          <StyledInput value={name} onChange={setName} placeholder="Unit name" />
+        </div>
+        <div>
+          <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Abbreviation</p>
+          <StyledInput value={abbreviation} onChange={setAbbreviation} placeholder="optional" />
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={async () => {
+              try {
+                await onSave(unit.unit_id, {
+                  name,
+                  abbreviation,
+                });
+              } catch {
+                /* handled by parent */
+              }
+            }}
+            disabled={busy}
+            style={{
+              fontFamily: FONT,
+              fontSize: "0.73rem",
+              fontWeight: 600,
+              color: "#fff",
+              background: "#1f2937",
+              border: "none",
+              borderRadius: 8,
+              padding: "8px 12px",
+              cursor: "pointer",
+              opacity: busy ? 0.65 : 1,
+            }}
+          >
+            Save
+          </button>
+          {asBool(unit.is_active) ? (
+            <button
+              onClick={async () => {
+                try {
+                  await onDisable(unit.unit_id);
+                } catch {
+                  /* handled by parent */
+                }
+              }}
+              disabled={busy}
+              style={{
+                fontFamily: FONT,
+                fontSize: "0.73rem",
+                fontWeight: 600,
+                color: "#b91c1c",
+                background: "#fff5f5",
+                border: "1px solid rgba(185,28,28,0.16)",
+                borderRadius: 8,
+                padding: "8px 12px",
+                cursor: "pointer",
+                opacity: busy ? 0.65 : 1,
+              }}
+            >
+              Disable
+            </button>
+          ) : (
+            <span style={{ fontFamily: FONT, fontSize: "0.72rem", fontWeight: 600, color: "#b0aaa3", alignSelf: "center" }}>
+              Disabled
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -667,11 +904,44 @@ function InventoryTab({
   settings,
   setStr,
   setBool,
+  categories,
+  units,
+  mastersLoading,
+  mastersError,
+  onReloadMasters,
+  onAddCategory,
+  onUpdateCategory,
+  onDisableCategory,
+  onAddUnit,
+  onUpdateUnit,
+  onDisableUnit,
 }: {
   settings: RestaurantSettings;
   setStr: (k: keyof RestaurantSettings, v: string) => void;
   setBool: (k: keyof RestaurantSettings, v: boolean) => void;
+  categories: InventoryCategoryRecord[];
+  units: InventoryUnitRecord[];
+  mastersLoading: boolean;
+  mastersError: string | null;
+  onReloadMasters: () => void;
+  onAddCategory: (payload: { name: string; uses_shelf_life: boolean }) => Promise<void>;
+  onUpdateCategory: (
+    categoryId: number,
+    payload: { name?: string; uses_shelf_life?: boolean; is_active?: boolean },
+  ) => Promise<void>;
+  onDisableCategory: (categoryId: number) => Promise<void>;
+  onAddUnit: (payload: { name: string; abbreviation?: string | null }) => Promise<void>;
+  onUpdateUnit: (
+    unitId: number,
+    payload: { name?: string; abbreviation?: string | null; is_active?: boolean },
+  ) => Promise<void>;
+  onDisableUnit: (unitId: number) => Promise<void>;
 }) {
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [newCategoryShelfLife, setNewCategoryShelfLife] = useState(false);
+  const [newUnitName, setNewUnitName] = useState("");
+  const [newUnitAbbreviation, setNewUnitAbbreviation] = useState("");
+
   return (
     <>
       <SettingsCard title="Stock Alerts" delay={0}>
@@ -684,6 +954,190 @@ function InventoryTab({
       <SettingsCard title="Food Freshness" delay={0.04}>
         <ToggleRow label="Track expiry dates" desc="Monitor ingredient and product expiry" value={settings.trackExpiry} onChange={(v) => setBool("trackExpiry", v)} />
         <ToggleRow label="Waste logging" desc="Log discarded or expired food for reporting" value={settings.wasteLogging} onChange={(v) => setBool("wasteLogging", v)} last />
+      </SettingsCard>
+
+      <SettingsCard title="Category Defaults" delay={0.08}>
+        <div style={{ padding: "14px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
+          <p style={{ fontFamily: FONT, fontSize: "0.75rem", color: "#8b847d", lineHeight: 1.6 }}>
+            Manage inventory categories stored in the database. Shelf-life-enabled categories will be treated as raw-material style categories when the master list is available.
+          </p>
+
+          {mastersError && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+                background: "#fff7ed",
+                border: "1px solid #fed7aa",
+                borderRadius: 10,
+                padding: "10px 12px",
+              }}
+            >
+              <span style={{ fontFamily: FONT, fontSize: "0.74rem", color: "#9a3412" }}>
+                {mastersError}
+              </span>
+              <button
+                onClick={onReloadMasters}
+                style={{
+                  fontFamily: FONT,
+                  fontSize: "0.72rem",
+                  fontWeight: 600,
+                  color: ACCENT,
+                  background: "#fff",
+                  border: "1px solid #fed7aa",
+                  borderRadius: 8,
+                  padding: "5px 10px",
+                  cursor: "pointer",
+                }}
+              >
+                Reload
+              </button>
+            </div>
+          )}
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0,1fr) auto auto",
+              gap: 10,
+              alignItems: "end",
+            }}
+          >
+            <div>
+              <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Category name</p>
+              <StyledInput value={newCategoryName} onChange={setNewCategoryName} placeholder="e.g. Dry Goods" />
+            </div>
+            <div style={{ minWidth: 130 }}>
+              <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Shelf life</p>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, border: "1px solid #e4e1dc", borderRadius: 8, background: "#fafaf9", padding: "8px 10px" }}>
+                <span style={{ fontFamily: FONT, fontSize: "0.76rem", color: "#5a5652" }}>
+                  Uses shelf life
+                </span>
+                <Toggle value={newCategoryShelfLife} onChange={setNewCategoryShelfLife} />
+              </div>
+            </div>
+            <button
+              onClick={async () => {
+                try {
+                  await onAddCategory({
+                    name: newCategoryName,
+                    uses_shelf_life: newCategoryShelfLife,
+                  });
+                  setNewCategoryName("");
+                  setNewCategoryShelfLife(false);
+                } catch {
+                  /* handled by parent */
+                }
+              }}
+              disabled={mastersLoading}
+              style={{
+                fontFamily: FONT,
+                fontSize: "0.75rem",
+                fontWeight: 600,
+                color: "#fff",
+                background: ACCENT,
+                border: "none",
+                borderRadius: 8,
+                padding: "9px 14px",
+                cursor: "pointer",
+                opacity: mastersLoading ? 0.65 : 1,
+              }}
+            >
+              Add category
+            </button>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {categories.map((category) => (
+              <InventoryCategoryEditor
+                key={category.category_id}
+                category={category}
+                busy={mastersLoading}
+                onSave={onUpdateCategory}
+                onDisable={onDisableCategory}
+              />
+            ))}
+            {categories.length === 0 && (
+              <div style={{ textAlign: "center", padding: "18px 0", fontFamily: FONT, fontSize: "0.77rem", color: "#b0aaa3" }}>
+                No inventory categories found.
+              </div>
+            )}
+          </div>
+        </div>
+      </SettingsCard>
+
+      <SettingsCard title="Unit Defaults" delay={0.12}>
+        <div style={{ padding: "14px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
+          <p style={{ fontFamily: FONT, fontSize: "0.75rem", color: "#8b847d", lineHeight: 1.6 }}>
+            Manage unit options used by stock forms. Stock Manager still falls back to its current hardcoded list if this API is unavailable.
+          </p>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0,1fr) minmax(0,180px) auto",
+              gap: 10,
+              alignItems: "end",
+            }}
+          >
+            <div>
+              <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Unit name</p>
+              <StyledInput value={newUnitName} onChange={setNewUnitName} placeholder="e.g. tray" />
+            </div>
+            <div>
+              <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Abbreviation</p>
+              <StyledInput value={newUnitAbbreviation} onChange={setNewUnitAbbreviation} placeholder="optional" />
+            </div>
+            <button
+              onClick={async () => {
+                try {
+                  await onAddUnit({
+                    name: newUnitName,
+                    abbreviation: newUnitAbbreviation,
+                  });
+                  setNewUnitName("");
+                  setNewUnitAbbreviation("");
+                } catch {
+                  /* handled by parent */
+                }
+              }}
+              disabled={mastersLoading}
+              style={{
+                fontFamily: FONT,
+                fontSize: "0.75rem",
+                fontWeight: 600,
+                color: "#fff",
+                background: ACCENT,
+                border: "none",
+                borderRadius: 8,
+                padding: "9px 14px",
+                cursor: "pointer",
+                opacity: mastersLoading ? 0.65 : 1,
+              }}
+            >
+              Add unit
+            </button>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {units.map((unit) => (
+              <InventoryUnitEditor
+                key={unit.unit_id}
+                unit={unit}
+                busy={mastersLoading}
+                onSave={onUpdateUnit}
+                onDisable={onDisableUnit}
+              />
+            ))}
+            {units.length === 0 && (
+              <div style={{ textAlign: "center", padding: "18px 0", fontFamily: FONT, fontSize: "0.77rem", color: "#b0aaa3" }}>
+                No inventory units found.
+              </div>
+            )}
+          </div>
+        </div>
       </SettingsCard>
     </>
   );
@@ -958,6 +1412,10 @@ export default function SettingsPage() {
   const [feedback, setFeedback] = useState<FeedbackEntry[]>([]);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
+  const [inventoryCategories, setInventoryCategories] = useState<InventoryCategoryRecord[]>([]);
+  const [inventoryUnits, setInventoryUnits] = useState<InventoryUnitRecord[]>([]);
+  const [inventoryMastersLoading, setInventoryMastersLoading] = useState(false);
+  const [inventoryMastersError, setInventoryMastersError] = useState<string | null>(null);
 
   const initialized = useRef(false);
   const navigate = useNavigate();
@@ -1008,9 +1466,150 @@ export default function SettingsPage() {
     }
   }, []);
 
+  const fetchInventoryMasters = useCallback(async () => {
+    setInventoryMastersLoading(true);
+    setInventoryMastersError(null);
+    try {
+      const [categoriesRes, unitsRes] = await Promise.all([
+        fetch("/api/settings/inventory-categories"),
+        fetch("/api/settings/inventory-units"),
+      ]);
+
+      if (!categoriesRes.ok || !unitsRes.ok) {
+        throw new Error("Could not load inventory master lists.");
+      }
+
+      const [categoriesData, unitsData] = await Promise.all([
+        categoriesRes.json(),
+        unitsRes.json(),
+      ]);
+
+      setInventoryCategories(Array.isArray(categoriesData) ? categoriesData : []);
+      setInventoryUnits(Array.isArray(unitsData) ? unitsData : []);
+    } catch (err) {
+      setInventoryMastersError(
+        err instanceof Error && err.message
+          ? err.message
+          : "Could not load inventory master lists.",
+      );
+    } finally {
+      setInventoryMastersLoading(false);
+    }
+  }, []);
+
+  const addInventoryCategory = useCallback(
+    async (payload: { name: string; uses_shelf_life: boolean }) => {
+      const res = await fetch("/api/settings/inventory-categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.message || "Failed to create category");
+      }
+      setInventoryCategories((prev) => [data, ...prev]);
+    },
+    [],
+  );
+
+  const updateInventoryCategory = useCallback(
+    async (
+      categoryId: number,
+      payload: { name?: string; uses_shelf_life?: boolean; is_active?: boolean },
+    ) => {
+      const res = await fetch(`/api/settings/inventory-categories/${categoryId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.message || "Failed to update category");
+      }
+      setInventoryCategories((prev) =>
+        prev.map((item) => (item.category_id === categoryId ? data : item)),
+      );
+    },
+    [],
+  );
+
+  const disableInventoryCategory = useCallback(async (categoryId: number) => {
+    const res = await fetch(`/api/settings/inventory-categories/${categoryId}`, {
+      method: "DELETE",
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new Error(data?.message || "Failed to disable category");
+    }
+    setInventoryCategories((prev) =>
+      prev.map((item) =>
+        item.category_id === categoryId ? { ...item, is_active: false } : item,
+      ),
+    );
+  }, []);
+
+  const addInventoryUnit = useCallback(
+    async (payload: { name: string; abbreviation?: string | null }) => {
+      const res = await fetch("/api/settings/inventory-units", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.message || "Failed to create unit");
+      }
+      setInventoryUnits((prev) => [data, ...prev]);
+    },
+    [],
+  );
+
+  const updateInventoryUnit = useCallback(
+    async (
+      unitId: number,
+      payload: { name?: string; abbreviation?: string | null; is_active?: boolean },
+    ) => {
+      const res = await fetch(`/api/settings/inventory-units/${unitId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.message || "Failed to update unit");
+      }
+      setInventoryUnits((prev) =>
+        prev.map((item) => (item.unit_id === unitId ? data : item)),
+      );
+    },
+    [],
+  );
+
+  const disableInventoryUnit = useCallback(async (unitId: number) => {
+    const res = await fetch(`/api/settings/inventory-units/${unitId}`, {
+      method: "DELETE",
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new Error(data?.message || "Failed to disable unit");
+    }
+    setInventoryUnits((prev) =>
+      prev.map((item) =>
+        item.unit_id === unitId ? { ...item, is_active: false } : item,
+      ),
+    );
+  }, []);
+
   useEffect(() => {
     if (tab === "feedback") fetchFeedback();
   }, [tab, fetchFeedback]);
+
+  useEffect(() => {
+    if (tab === "inventory") {
+      fetchInventoryMasters();
+    }
+  }, [tab, fetchInventoryMasters]);
 
   // Setters
   const setStr = useCallback(
@@ -1389,7 +1988,82 @@ export default function SettingsPage() {
             >
               {tab === "general"       && <GeneralTab       {...sharedProps} />}
               {tab === "operations"    && <OperationsTab    {...sharedProps} setOrderType={setOrderType} />}
-              {tab === "inventory"     && <InventoryTab     {...sharedProps} />}
+              {tab === "inventory"     && (
+                <InventoryTab
+                  {...sharedProps}
+                  categories={inventoryCategories}
+                  units={inventoryUnits}
+                  mastersLoading={inventoryMastersLoading}
+                  mastersError={inventoryMastersError}
+                  onReloadMasters={fetchInventoryMasters}
+                  onAddCategory={async (payload) => {
+                    try {
+                      await addInventoryCategory(payload);
+                      setInventoryMastersError(null);
+                    } catch (err) {
+                      setInventoryMastersError(
+                        err instanceof Error ? err.message : "Failed to add category",
+                      );
+                      throw err;
+                    }
+                  }}
+                  onUpdateCategory={async (categoryId, payload) => {
+                    try {
+                      await updateInventoryCategory(categoryId, payload);
+                      setInventoryMastersError(null);
+                    } catch (err) {
+                      setInventoryMastersError(
+                        err instanceof Error ? err.message : "Failed to update category",
+                      );
+                      throw err;
+                    }
+                  }}
+                  onDisableCategory={async (categoryId) => {
+                    try {
+                      await disableInventoryCategory(categoryId);
+                      setInventoryMastersError(null);
+                    } catch (err) {
+                      setInventoryMastersError(
+                        err instanceof Error ? err.message : "Failed to disable category",
+                      );
+                      throw err;
+                    }
+                  }}
+                  onAddUnit={async (payload) => {
+                    try {
+                      await addInventoryUnit(payload);
+                      setInventoryMastersError(null);
+                    } catch (err) {
+                      setInventoryMastersError(
+                        err instanceof Error ? err.message : "Failed to add unit",
+                      );
+                      throw err;
+                    }
+                  }}
+                  onUpdateUnit={async (unitId, payload) => {
+                    try {
+                      await updateInventoryUnit(unitId, payload);
+                      setInventoryMastersError(null);
+                    } catch (err) {
+                      setInventoryMastersError(
+                        err instanceof Error ? err.message : "Failed to update unit",
+                      );
+                      throw err;
+                    }
+                  }}
+                  onDisableUnit={async (unitId) => {
+                    try {
+                      await disableInventoryUnit(unitId);
+                      setInventoryMastersError(null);
+                    } catch (err) {
+                      setInventoryMastersError(
+                        err instanceof Error ? err.message : "Failed to disable unit",
+                      );
+                      throw err;
+                    }
+                  }}
+                />
+              )}
               {tab === "notifications" && <NotificationsTab {...sharedProps} />}
               {tab === "billing"       && <BillingTab       {...sharedProps} />}
               {tab === "system"        && <SystemTab        settings={settings} setBool={setBool} />}
