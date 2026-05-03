@@ -45,12 +45,13 @@ interface KitchenUsageItem {
   withdrawn_qty: number;
   used_qty: number;
   spoilage_qty: number;
+  returned_qty: number;
   note: string;
 }
 interface KitchenUsageReport {
   report_id: number;
   report_date: string;
-  status: "draft" | "submitted" | "finalized";
+  status: "pending" | "finalized";
   prepared_by: number | null;
   finalized_by: number | null;
   finalized_at: string | null;
@@ -59,6 +60,90 @@ interface KitchenUsageReport {
 interface KitchenUsagePayload {
   report: KitchenUsageReport;
   items: KitchenUsageItem[];
+}
+interface UsageProductOption {
+  product_id: number;
+  product_name: string;
+  category: string;
+  unit: string;
+  dailyWithdrawn: number;
+  expiryDate?: string | null;
+  usableUntil?: string | null;
+  shelfLifeDays?: number | null;
+  shelfLifeHours?: number | null;
+}
+
+function buildUsageItem(
+  product: UsageProductOption,
+  existing?: KitchenUsageItem,
+): KitchenUsageItem {
+  return {
+    usage_item_id: existing?.usage_item_id,
+    product_id: product.product_id,
+    product_name: product.product_name,
+    category: product.category,
+    unit: product.unit,
+    withdrawn_qty: product.dailyWithdrawn,
+    used_qty: existing?.used_qty ?? 0,
+    spoilage_qty: existing?.spoilage_qty ?? 0,
+    returned_qty: existing?.returned_qty ?? 0,
+    note: existing?.note ?? "",
+  };
+}
+
+function syncUsageItems(
+  products: UsageProductOption[],
+  existingItems: KitchenUsageItem[],
+): KitchenUsageItem[] {
+  const existingByProductId = new Map(
+    existingItems
+      .filter((item) => Number.isFinite(Number(item.product_id)))
+      .map((item) => [Number(item.product_id), item]),
+  );
+
+  return products
+    .filter((product) => product.dailyWithdrawn > 0)
+    .map((product) =>
+      buildUsageItem(product, existingByProductId.get(product.product_id)),
+    );
+}
+
+function getUsageTotals(item: KitchenUsageItem) {
+  const reported = item.used_qty + item.spoilage_qty + item.returned_qty;
+  const remaining = item.withdrawn_qty - reported;
+  return {
+    reported,
+    remaining,
+    invalid: reported > item.withdrawn_qty,
+  };
+}
+
+function getUsageTimingState(product: UsageProductOption): {
+  tone: "expired" | "warning";
+  label: string;
+} | null {
+  const targetDate = product.usableUntil || product.expiryDate;
+  if (!targetDate) return null;
+
+  const targetMs = new Date(targetDate).getTime();
+  if (!Number.isFinite(targetMs)) return null;
+
+  const remainingMs = targetMs - Date.now();
+  if (remainingMs <= 0) {
+    return {
+      tone: "expired",
+      label: product.usableUntil ? "Past Shelf Life" : "Expired",
+    };
+  }
+
+  if (remainingMs <= 24 * 60 * 60 * 1000) {
+    return {
+      tone: "warning",
+      label: product.usableUntil ? "Near End of Shelf Life" : "Near Expiry",
+    };
+  }
+
+  return null;
 }
 
 function playAlertSound() {
@@ -151,6 +236,7 @@ export default function Order() {
   const [usageSaving, setUsageSaving] = useState(false);
   const [usageReport, setUsageReport] = useState<KitchenUsageReport | null>(null);
   const [usageItems, setUsageItems] = useState<KitchenUsageItem[]>([]);
+  const [usageProducts, setUsageProducts] = useState<UsageProductOption[]>([]);
   const { addNotification } = useNotifications();
 
   const fetchAll = async () => {
@@ -170,9 +256,31 @@ export default function Order() {
   const fetchUsage = async () => {
     try {
       setUsageLoading(true);
-      const data = await api.get<KitchenUsagePayload>("/kitchen-usage/today");
+      const [data, inventory] = await Promise.all([
+        api.get<KitchenUsagePayload>("/inventory/daily-usage?status=pending"),
+        api.get<Array<Record<string, unknown>>>("/inventory"),
+      ]);
+      const nextProducts = (inventory ?? []).map((item) => ({
+        product_id: Number(item.product_id ?? item.id ?? 0),
+        product_name: String(item.product_name ?? item.name ?? ""),
+        category: String(item.category ?? ""),
+        unit: String(item.unit ?? "unit"),
+        dailyWithdrawn: Number(item.dailyWithdrawn ?? 0),
+        expiryDate: item.expiryDate ? String(item.expiryDate) : null,
+        usableUntil: item.usableUntil ? String(item.usableUntil) : null,
+        shelfLifeDays:
+          item.shelfLifeDays === undefined || item.shelfLifeDays === null
+            ? null
+            : Number(item.shelfLifeDays),
+        shelfLifeHours:
+          item.shelfLifeHours === undefined || item.shelfLifeHours === null
+            ? null
+            : Number(item.shelfLifeHours),
+      }));
+
       setUsageReport(data.report);
-      setUsageItems(data.items ?? []);
+      setUsageProducts(nextProducts);
+      setUsageItems(syncUsageItems(nextProducts, data.items ?? []));
     } catch (e) {
       console.error(e);
     } finally {
@@ -220,7 +328,6 @@ export default function Order() {
       });
     }
   };
-  const handleComplete = (id: string) => patch(id, { status: "Completed" });
   const handleCancel = async (id: string) => {
     setCancellingId(id);
     try { await api.patch(`/orders/${id}`, { status: "Cancelled" }); fetchAll(); }
@@ -246,63 +353,38 @@ export default function Order() {
   };
   const updateUsageItem = (
     index: number,
-    field: "product_name" | "category" | "unit" | "withdrawn_qty" | "used_qty" | "spoilage_qty" | "note",
+    field: "used_qty" | "spoilage_qty" | "returned_qty" | "note",
     value: string,
   ) => {
     setUsageItems((prev) => prev.map((item, itemIndex) => {
       if (itemIndex !== index) return item;
-      if (field === "product_name" || field === "category" || field === "unit" || field === "note") {
+      if (field === "note") {
         return { ...item, [field]: value };
       }
       return { ...item, [field]: Math.max(0, Number(value) || 0) };
     }));
   };
-  const addUsageItem = () => {
-    setUsageItems((prev) => [
-      ...prev,
-      {
-        product_id: null,
-        product_name: "",
-        category: "RAW MATERIAL",
-        unit: "unit",
-        withdrawn_qty: 0,
-        used_qty: 0,
-        spoilage_qty: 0,
-        note: "",
-      },
-    ]);
-  };
-  const removeUsageItem = (index: number) => {
-    setUsageItems((prev) => prev.filter((_, itemIndex) => itemIndex !== index));
-  };
-  const saveUsage = async (status: "draft" | "submitted") => {
+  const saveUsage = async () => {
     try {
       setUsageSaving(true);
-      const data = await api.put<KitchenUsagePayload>("/kitchen-usage/today", {
+      const data = await api.post<KitchenUsagePayload>("/inventory/daily-usage", {
         report_date: usageReport?.report_date,
-        status,
-        prepared_by: userId,
+        created_by: userId,
         items: usageItems.map((item) => ({
           product_id: item.product_id,
-          product_name: item.product_name,
-          category: item.category,
-          unit: item.unit,
-          withdrawn_qty: item.withdrawn_qty,
           used_qty: item.used_qty,
           spoilage_qty: item.spoilage_qty,
+          returned_qty: item.returned_qty,
           note: item.note,
         })),
       });
       setUsageReport(data.report);
-      setUsageItems(data.items ?? []);
       addNotification({
         id: crypto.randomUUID(),
-        label:
-          status === "draft"
-            ? "Daily usage report saved as draft."
-            : "Daily usage report submitted for review.",
+        label: "Report submitted for review.",
         type: "success",
       });
+      await fetchUsage();
     } catch (e) {
       console.error(e);
       addNotification({
@@ -336,6 +418,131 @@ export default function Order() {
   const readyCount = orders.filter((o) => o.isReady).length;
 
   const STATUS_LABEL: Record<string, string> = { "dine-in": "Dine In", "take-out": "Take Out", "delivery": "Delivery" };
+  const usageHasErrors = usageItems.some((item) => getUsageTotals(item).invalid);
+  const usageInputDisabled = usageReport?.status === "finalized";
+  const usageSubmitDisabled =
+    usageSaving || usageInputDisabled || usageHasErrors || usageItems.length === 0;
+
+  const renderUsageForm = () => {
+    if (usageLoading) {
+      return <p style={{ fontSize: 12, color: "#9ca3af", margin: 0 }}>Loading report...</p>;
+    }
+
+    if (usageItems.length === 0) {
+      return (
+        <div style={{ border: "1px dashed #d1d5db", borderRadius: 14, padding: 20, textAlign: "center", color: "#9ca3af", fontSize: 12 }}>
+          No kitchen stock has been withdrawn yet for today.
+        </div>
+      );
+    }
+
+    return (
+      <>
+        <div style={{ marginBottom: 12 }}>
+          <p style={{ fontSize: 12, color: "#6b7280", margin: 0 }}>
+            Enter today&apos;s actual used, wasted, and returned quantities for each withdrawn stock item.
+          </p>
+        </div>
+
+        <div style={{ display: "grid", gap: 12 }}>
+          {usageItems.map((item, index) => {
+            const product = usageProducts.find((entry) => entry.product_id === item.product_id);
+            const timingState = product ? getUsageTimingState(product) : null;
+            const { remaining, invalid } = getUsageTotals(item);
+            const cardBorderColor =
+              timingState?.tone === "expired"
+                ? "#fecaca"
+                : timingState?.tone === "warning"
+                  ? "#fde68a"
+                  : "#e5e7eb";
+            const cardBackground =
+              timingState?.tone === "expired"
+                ? "#fff7f7"
+                : timingState?.tone === "warning"
+                  ? "#fffdf5"
+                  : "#fcfcfc";
+            const chipBackground =
+              timingState?.tone === "expired" ? "#fef2f2" : "#fffbeb";
+            const chipColor =
+              timingState?.tone === "expired" ? "#b91c1c" : "#b45309";
+
+            return (
+              <div
+                key={item.usage_item_id ?? item.product_id ?? `usage-${index}`}
+                style={{
+                  border: `1px solid ${cardBorderColor}`,
+                  borderRadius: 16,
+                  padding: 14,
+                  background: cardBackground,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#111", marginBottom: 4 }}>
+                      {item.product_name}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 11, color: "#6b7280" }}>{item.category}</span>
+                      <span style={{ fontSize: 11, color: "#9ca3af" }}>•</span>
+                      <span style={{ fontSize: 11, color: "#6b7280" }}>{item.unit}</span>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    <div style={{ borderRadius: 999, background: "#f3f4f6", color: "#374151", fontSize: 11, fontWeight: 600, padding: "6px 10px" }}>
+                      Withdrawn: {item.withdrawn_qty} {item.unit}
+                    </div>
+                    {timingState && (
+                      <div style={{ borderRadius: 999, background: chipBackground, color: chipColor, fontSize: 11, fontWeight: 700, padding: "6px 10px" }}>
+                        {timingState.label}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10, marginBottom: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>Used</div>
+                    <input type="number" min="0" step="0.01" value={item.used_qty === 0 ? "" : item.used_qty} onChange={(e) => updateUsageItem(index, "used_qty", e.target.value)} placeholder="0" disabled={usageInputDisabled} style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none", background: usageInputDisabled ? "#f8fafc" : "#fff" }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>Wasted</div>
+                    <input type="number" min="0" step="0.01" value={item.spoilage_qty === 0 ? "" : item.spoilage_qty} onChange={(e) => updateUsageItem(index, "spoilage_qty", e.target.value)} placeholder="0" disabled={usageInputDisabled} style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none", background: usageInputDisabled ? "#f8fafc" : "#fff" }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>Returned</div>
+                    <input type="number" min="0" step="0.01" value={item.returned_qty === 0 ? "" : item.returned_qty} onChange={(e) => updateUsageItem(index, "returned_qty", e.target.value)} placeholder="0" disabled={usageInputDisabled} style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none", background: usageInputDisabled ? "#f8fafc" : "#fff" }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>Remaining</div>
+                    <div style={{ padding: "10px 12px", borderRadius: 10, border: `1px solid ${invalid ? "#fecaca" : "#e5e7eb"}`, fontSize: 12, fontFamily: F, background: invalid ? "#fef2f2" : "#f8fafc", color: invalid ? "#b91c1c" : "#111", fontWeight: 600 }}>
+                      {remaining} {item.unit}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: invalid ? 8 : 0 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>Notes</div>
+                  <input value={item.note} onChange={(e) => updateUsageItem(index, "note", e.target.value)} placeholder="Optional notes for this item" disabled={usageInputDisabled} style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none", background: usageInputDisabled ? "#f8fafc" : "#fff" }} />
+                </div>
+
+                {invalid && (
+                  <div style={{ marginTop: 8, fontSize: 11, color: "#b91c1c", fontWeight: 600 }}>
+                    Total reported quantity cannot be greater than withdrawn stock.
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
+          <button onClick={() => { void saveUsage(); }} disabled={usageSubmitDisabled} style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid #111", background: usageSubmitDisabled ? "#9ca3af" : "#111", color: "#fff", fontSize: 12, fontWeight: 600, cursor: usageSubmitDisabled ? "not-allowed" : "pointer", fontFamily: F }}>
+            {usageSaving ? "Submitting..." : "Submit for Review"}
+          </button>
+        </div>
+      </>
+    );
+  };
 
   return (
     <div style={{ minHeight: "100vh", background: "#fafafa", fontFamily: F }}>
@@ -418,69 +625,7 @@ export default function Order() {
                   style={{ overflow: "hidden", borderTop: "1px solid #f3f4f6" }}
                 >
                   <div style={{ padding: 16 }}>
-                    {usageLoading ? (
-                      <p style={{ fontSize: 12, color: "#9ca3af", margin: 0 }}>Loading report...</p>
-                    ) : (
-                      <>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
-                          <p style={{ fontSize: 12, color: "#6b7280", margin: 0 }}>
-                            Fill out the cook report manually for today&apos;s usage.
-                          </p>
-                          <button
-                            type="button"
-                            onClick={addUsageItem}
-                            disabled={usageReport?.status === "finalized"}
-                            style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid #111", background: "#111", color: "#fff", fontSize: 12, fontWeight: 600, cursor: usageReport?.status === "finalized" ? "not-allowed" : "pointer", fontFamily: F }}
-                          >
-                            Add Row
-                          </button>
-                        </div>
-
-                        {usageItems.length === 0 ? (
-                          <div style={{ border: "1px dashed #d1d5db", borderRadius: 14, padding: 20, textAlign: "center", color: "#9ca3af", fontSize: 12 }}>
-                            No rows yet. Add a raw material entry to start the cook report.
-                          </div>
-                        ) : (
-                        <div style={{ display: "grid", gap: 10 }}>
-                          {usageItems.map((item, index) => (
-                            <div key={item.usage_item_id ?? `new-${index}`} style={{ border: "1px solid #f3f4f6", borderRadius: 14, padding: 12, background: "#fcfcfc" }}>
-                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
-                                <div style={{ fontSize: 12, fontWeight: 600, color: "#111" }}>Row {index + 1}</div>
-                                <button
-                                  type="button"
-                                  onClick={() => removeUsageItem(index)}
-                                  disabled={usageReport?.status === "finalized"}
-                                  style={{ padding: "6px 10px", borderRadius: 10, border: "1px solid #e5e7eb", background: "#fff", color: "#6b7280", fontSize: 11, fontWeight: 600, cursor: usageReport?.status === "finalized" ? "not-allowed" : "pointer", fontFamily: F }}
-                                >
-                                  Remove
-                                </button>
-                              </div>
-                              <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 0.8fr", gap: 8, marginBottom: 8 }}>
-                                <input value={item.product_name} onChange={(e) => updateUsageItem(index, "product_name", e.target.value)} placeholder="Raw material" disabled={usageReport?.status === "finalized"} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
-                                <input value={item.category} onChange={(e) => updateUsageItem(index, "category", e.target.value)} placeholder="Category" disabled={usageReport?.status === "finalized"} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
-                                <input value={item.unit} onChange={(e) => updateUsageItem(index, "unit", e.target.value)} placeholder="Unit" disabled={usageReport?.status === "finalized"} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
-                              </div>
-                              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
-                                <input type="number" min="0" step="0.01" value={item.withdrawn_qty} onChange={(e) => updateUsageItem(index, "withdrawn_qty", e.target.value)} placeholder="Withdrawn" disabled={usageReport?.status === "finalized"} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
-                                <input type="number" min="0" step="0.01" value={item.used_qty} onChange={(e) => updateUsageItem(index, "used_qty", e.target.value)} placeholder="Used" disabled={usageReport?.status === "finalized"} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
-                                <input type="number" min="0" step="0.01" value={item.spoilage_qty} onChange={(e) => updateUsageItem(index, "spoilage_qty", e.target.value)} placeholder="Spoilage" disabled={usageReport?.status === "finalized"} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
-                              </div>
-                              <input value={item.note} onChange={(e) => updateUsageItem(index, "note", e.target.value)} placeholder="Optional note" disabled={usageReport?.status === "finalized"} style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
-                            </div>
-                          ))}
-                        </div>
-                        )}
-
-                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
-                          <button onClick={() => { void saveUsage("draft"); }} disabled={usageSaving || usageReport?.status === "finalized"} style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid #e5e7eb", background: "#fff", color: "#374151", fontSize: 12, fontWeight: 600, cursor: usageSaving || usageReport?.status === "finalized" ? "not-allowed" : "pointer", fontFamily: F }}>
-                            {usageSaving ? "Saving..." : "Save Draft"}
-                          </button>
-                          <button onClick={() => { void saveUsage("submitted"); }} disabled={usageSaving || usageReport?.status === "finalized"} style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid #111", background: "#111", color: "#fff", fontSize: 12, fontWeight: 600, cursor: usageSaving || usageReport?.status === "finalized" ? "not-allowed" : "pointer", fontFamily: F }}>
-                            {usageReport?.status === "submitted" ? "Update Submission" : "Submit for Review"}
-                          </button>
-                        </div>
-                      </>
-                    )}
+                    {renderUsageForm()}
                   </div>
                 </motion.div>
               )}
@@ -713,78 +858,7 @@ export default function Order() {
                     style={{ overflow: "hidden", borderTop: "1px solid #f3f4f6" }}
                   >
                     <div style={{ padding: 16 }}>
-                      {usageLoading ? (
-                        <p style={{ fontSize: 12, color: "#9ca3af", margin: 0 }}>Loading report...</p>
-                      ) : (
-                        <>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
-                            <p style={{ fontSize: 12, color: "#6b7280", margin: 0 }}>
-                              Fill out the cook report manually for today&apos;s usage.
-                            </p>
-                            <button
-                              type="button"
-                              onClick={addUsageItem}
-                              disabled={usageReport?.status === "finalized"}
-                              style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid #111", background: "#111", color: "#fff", fontSize: 12, fontWeight: 600, cursor: usageReport?.status === "finalized" ? "not-allowed" : "pointer", fontFamily: F }}
-                            >
-                              Add Row
-                            </button>
-                          </div>
-
-                          {usageItems.length === 0 ? (
-                            <div style={{ border: "1px dashed #d1d5db", borderRadius: 14, padding: 20, textAlign: "center", color: "#9ca3af", fontSize: 12 }}>
-                              No rows yet. Add a raw material entry to start the cook report.
-                            </div>
-                          ) : (
-                          <div style={{ display: "grid", gap: 10 }}>
-                            {usageItems.map((item, index) => (
-                              <div key={item.usage_item_id ?? `new-${index}`} style={{ border: "1px solid #f3f4f6", borderRadius: 14, padding: 12, background: "#fcfcfc" }}>
-                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
-                                  <div style={{ fontSize: 12, fontWeight: 600, color: "#111" }}>Row {index + 1}</div>
-                                  <button
-                                    type="button"
-                                    onClick={() => removeUsageItem(index)}
-                                    disabled={usageReport?.status === "finalized"}
-                                    style={{ padding: "6px 10px", borderRadius: 10, border: "1px solid #e5e7eb", background: "#fff", color: "#6b7280", fontSize: 11, fontWeight: 600, cursor: usageReport?.status === "finalized" ? "not-allowed" : "pointer", fontFamily: F }}
-                                  >
-                                    Remove
-                                  </button>
-                                </div>
-                                <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 0.8fr", gap: 8, marginBottom: 8 }}>
-                                  <input value={item.product_name} onChange={(e) => updateUsageItem(index, "product_name", e.target.value)} placeholder="Raw material" disabled={usageReport?.status === "finalized"} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
-                                  <input value={item.category} onChange={(e) => updateUsageItem(index, "category", e.target.value)} placeholder="Category" disabled={usageReport?.status === "finalized"} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
-                                  <input value={item.unit} onChange={(e) => updateUsageItem(index, "unit", e.target.value)} placeholder="Unit" disabled={usageReport?.status === "finalized"} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
-                                </div>
-                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
-                                  <div>
-                                    <div style={{ fontSize: 10, fontWeight: 600, color: "#6b7280", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>Withdrawn</div>
-                                    <input type="number" min="0" step="0.01" value={item.withdrawn_qty === 0 ? "" : item.withdrawn_qty} onChange={(e) => updateUsageItem(index, "withdrawn_qty", e.target.value)} placeholder="0" disabled={usageReport?.status === "finalized"} style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
-                                  </div>
-                                  <div>
-                                    <div style={{ fontSize: 10, fontWeight: 600, color: "#6b7280", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>Used</div>
-                                    <input type="number" min="0" step="0.01" value={item.used_qty === 0 ? "" : item.used_qty} onChange={(e) => updateUsageItem(index, "used_qty", e.target.value)} placeholder="0" disabled={usageReport?.status === "finalized"} style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
-                                  </div>
-                                  <div>
-                                    <div style={{ fontSize: 10, fontWeight: 600, color: "#6b7280", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>Spoilage</div>
-                                    <input type="number" min="0" step="0.01" value={item.spoilage_qty === 0 ? "" : item.spoilage_qty} onChange={(e) => updateUsageItem(index, "spoilage_qty", e.target.value)} placeholder="0" disabled={usageReport?.status === "finalized"} style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
-                                  </div>
-                                </div>
-                                <input value={item.note} onChange={(e) => updateUsageItem(index, "note", e.target.value)} placeholder="Optional note" disabled={usageReport?.status === "finalized"} style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 12, fontFamily: F, outline: "none" }} />
-                              </div>
-                            ))}
-                          </div>
-                          )}
-
-                          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
-                            <button onClick={() => { void saveUsage("draft"); }} disabled={usageSaving || usageReport?.status === "finalized"} style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid #e5e7eb", background: "#fff", color: "#374151", fontSize: 12, fontWeight: 600, cursor: usageSaving || usageReport?.status === "finalized" ? "not-allowed" : "pointer", fontFamily: F }}>
-                              {usageSaving ? "Saving..." : "Save Draft"}
-                            </button>
-                            <button onClick={() => { void saveUsage("submitted"); }} disabled={usageSaving || usageReport?.status === "finalized"} style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid #111", background: "#111", color: "#fff", fontSize: 12, fontWeight: 600, cursor: usageSaving || usageReport?.status === "finalized" ? "not-allowed" : "pointer", fontFamily: F }}>
-                              {usageReport?.status === "submitted" ? "Update Submission" : "Submit for Review"}
-                            </button>
-                          </div>
-                        </>
-                      )}
+                      {renderUsageForm()}
                     </div>
                   </motion.div>
                 )}

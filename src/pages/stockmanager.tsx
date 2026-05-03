@@ -187,11 +187,12 @@ interface ReportData {
 interface KitchenUsageReport {
   report_id: number;
   report_date: string;
-  status: "draft" | "submitted" | "finalized";
+  status: "pending" | "finalized";
   prepared_by: number | null;
   prepared_by_name?: string | null;
   finalized_by: number | null;
   finalized_by_name?: string | null;
+  created_at?: string | null;
   finalized_at?: string | null;
   updated_at?: string | null;
 }
@@ -204,6 +205,7 @@ interface KitchenUsageItem {
   withdrawn_qty: number;
   used_qty: number;
   spoilage_qty: number;
+  returned_qty: number;
   note: string;
 }
 interface KitchenUsagePayload {
@@ -375,12 +377,12 @@ const api = {
     apiFetch<InventoryCategoryMaster[]>("/settings/inventory-categories?activeOnly=1"),
   getInventoryUnits: () =>
     apiFetch<InventoryUnitMaster[]>("/settings/inventory-units?activeOnly=1"),
-  getKitchenUsageToday: () =>
+  getDailyUsageReport: () =>
     apiFetch<KitchenUsagePayload>(
-      "/kitchen-usage/today?preferLatestPopulated=1",
+      "/inventory/daily-usage?preferLatestPopulated=1",
     ),
   finalizeKitchenUsage: (reportId: number, body: { finalized_by: number | null }) =>
-    apiFetch<KitchenUsagePayload>(`/kitchen-usage/${reportId}/finalize`, {
+    apiFetch<KitchenUsagePayload>(`/inventory/daily-usage/${reportId}/finalize`, {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
@@ -4473,6 +4475,9 @@ export default function StockManager() {
             withdrawn_qty: toNumber(item.withdrawn_qty),
             used_qty: toNumber(item.used_qty),
             spoilage_qty: toNumber(item.spoilage_qty),
+            returned_qty: toNumber(
+              (item as { returned_qty?: unknown }).returned_qty,
+            ),
             note: typeof item.note === "string" ? item.note : "",
           }))
         : [],
@@ -4513,7 +4518,7 @@ export default function StockManager() {
   const fetchCookReport = useCallback(async (silent = false) => {
     if (!silent) setCookReportLoading(true);
     try {
-      const payload = await api.getKitchenUsageToday();
+      const payload = await api.getDailyUsageReport();
       const normalized = normalizeKitchenUsagePayload(payload);
       setCookReport(normalized);
       if (normalized.items.length > 0) {
@@ -4592,7 +4597,7 @@ export default function StockManager() {
           api.getYesterdayReturns(),
           kitchenApi.getAll(),
           api.po.getAll(),
-          api.getKitchenUsageToday(),
+          api.getDailyUsageReport(),
         ]);
 
       const candidateProducts: Product[] = inv
@@ -4966,8 +4971,9 @@ export default function StockManager() {
           withdrawn: sum.withdrawn + toNumber(item.withdrawn_qty),
           used: sum.used + toNumber(item.used_qty),
           spoilage: sum.spoilage + toNumber(item.spoilage_qty),
+          returned: sum.returned + toNumber(item.returned_qty),
         }),
-        { withdrawn: 0, used: 0, spoilage: 0 },
+        { withdrawn: 0, used: 0, spoilage: 0, returned: 0 },
       ),
     [cookReportItems],
   );
@@ -6649,6 +6655,13 @@ export default function StockManager() {
                                   </span>
                                   <span>•</span>
                                   <span>
+                                    Returned:{" "}
+                                    <span className="font-semibold text-slate-700">
+                                      {fmtInt(cookReportTotals.returned)}
+                                    </span>
+                                  </span>
+                                  <span>•</span>
+                                  <span>
                                     Last updated:{" "}
                                     <span className="font-semibold text-slate-700">
                                       {cookReport.report.updated_at
@@ -6708,11 +6721,12 @@ export default function StockManager() {
                                       className="overflow-hidden"
                                     >
                                       <div className="rounded-2xl border border-slate-200 overflow-hidden">
-                                        <div className="grid grid-cols-[1.4fr_repeat(4,minmax(0,0.8fr))] gap-3 bg-slate-50 px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                                        <div className="grid grid-cols-[1.4fr_repeat(5,minmax(0,0.8fr))] gap-3 bg-slate-50 px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                                           <span>Raw Material</span>
                                           <span>Withdrawn</span>
                                           <span>Used</span>
                                           <span>Spoilage</span>
+                                          <span>Returned</span>
                                           <span>Variance</span>
                                         </div>
                                         <div className="divide-y divide-slate-100">
@@ -6720,14 +6734,15 @@ export default function StockManager() {
                                             const variance =
                                               toNumber(item.withdrawn_qty) -
                                               toNumber(item.used_qty) -
-                                              toNumber(item.spoilage_qty);
+                                              toNumber(item.spoilage_qty) -
+                                              toNumber(item.returned_qty);
 
                                             return (
                                               <div
                                                 key={item.product_id}
                                                 className="px-4 py-3"
                                               >
-                                                <div className="grid grid-cols-[1.4fr_repeat(4,minmax(0,0.8fr))] gap-3 items-start text-sm text-slate-700">
+                                                <div className="grid grid-cols-[1.4fr_repeat(5,minmax(0,0.8fr))] gap-3 items-start text-sm text-slate-700">
                                                   <div>
                                                     <p className="font-semibold text-slate-800">
                                                       {item.product_name}
@@ -6751,6 +6766,10 @@ export default function StockManager() {
                                                   </p>
                                                   <p>
                                                     {fmtInt(item.spoilage_qty)}{" "}
+                                                    {item.unit}
+                                                  </p>
+                                                  <p>
+                                                    {fmtInt(item.returned_qty)}{" "}
                                                     {item.unit}
                                                   </p>
                                                   <p

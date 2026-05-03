@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+﻿import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Card } from "@/components/ui/card";
 import {
@@ -23,7 +23,7 @@ import {
 import { Sidebar } from "@/components/Sidebar";
 import { api } from "@/lib/api";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Types Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 type Status = "Completed" | "Pending" | "Cancelled" | "Refunded";
 type LogType = "Sale" | "Refund" | "Void" | "Adjustment";
@@ -43,6 +43,7 @@ type OrderStatusFilter =
   | "Pending"
   | "Cancelled"
   | "Refunded";
+type PaymentMethodFilter = "All" | "Cash" | "GCash" | "Cash on Pickup";
 
 interface SaleLog {
   id: string;
@@ -120,7 +121,7 @@ interface RawOrderRow {
   handover_timestamp?: string;
 }
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Constants Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 const ORDER_PAGE_SIZE = 10;
 const LOG_PAGE_SIZE = 20;
@@ -168,7 +169,7 @@ const TYPE_COLOR: Record<LogType, string> = {
   Adjustment: "#8b5cf6",
 };
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Helpers Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 function daysInMonth(month: number, year: number): number {
   return new Date(year, month + 1, 0).getDate();
@@ -293,6 +294,7 @@ function getRevenueForPeriod(logs: SaleLog[], period: Period): number {
   return logs
     .filter((l) => {
       if (l.status !== "Completed") return false;
+      if (!isPaidPaymentStatus(l.paymentStatus)) return false;
       if (period === "All Time") return true;
       return l._dateObj >= start && l._dateObj <= now;
     })
@@ -329,6 +331,29 @@ function formatPaymentStatus(value?: string | null): string {
   if (normalized === "pending payment") return "Unpaid";
   if (normalized === "paid") return "Paid";
   return String(value);
+}
+
+function isPaidPaymentStatus(value?: string | null): boolean {
+  return formatPaymentStatus(value) === "Paid";
+}
+
+function normalizePaymentMethod(value?: string | null): PaymentMethodFilter {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (
+    normalized === "cash on pickup" ||
+    normalized === "cash_on_pickup" ||
+    normalized === "pickup_cash"
+  ) {
+    return "Cash on Pickup";
+  }
+  if (
+    normalized.includes("gcash") ||
+    normalized.includes("e-payment") ||
+    normalized.includes("epayment")
+  ) {
+    return "GCash";
+  }
+  return "Cash";
 }
 
 function openProofImage(
@@ -388,10 +413,15 @@ function processRawRows(rows: RawOrderRow[]): {
         orderType: r.orderType ?? r.order_type ?? "Order",
         status: r.status ?? "",
         paymentMethod:
-          String(r.paymentMethod ?? r.payment_method ?? "cash").trim() ||
-          "cash",
+          normalizePaymentMethod(
+            String(r.paymentMethod ?? r.payment_method ?? "cash").trim() ||
+              "cash",
+          ),
         paymentStatus:
-          String(r.paymentStatus ?? r.payment_status ?? "").trim() || "Pending",
+          formatPaymentStatus(
+            String(r.paymentStatus ?? r.payment_status ?? "").trim() ||
+              "Pending",
+          ),
         cashierName:
           String(
             r.cashierName ??
@@ -476,7 +506,7 @@ function processRawRows(rows: RawOrderRow[]): {
       total: order.total,
       status,
       paymentMethod: order.paymentMethod,
-      paymentStatus: order.paymentStatus,
+      paymentStatus: formatPaymentStatus(order.paymentStatus),
       proofImageUrl: order.proofImageUrl || undefined,
       operator: order.cashierName,
       cashierName: order.cashierName,
@@ -502,7 +532,7 @@ function processRawRows(rows: RawOrderRow[]): {
       orderType: order.orderType,
       status,
       paymentCategory: order.paymentMethod,
-      paymentStatus: order.paymentStatus,
+      paymentStatus: formatPaymentStatus(order.paymentStatus),
       cashierName: order.cashierName,
       riderName: order.riderName || undefined,
       handoverTimestamp: order.handoverTimestamp,
@@ -516,7 +546,7 @@ function processRawRows(rows: RawOrderRow[]): {
   };
 }
 
-// ─── Print Helper ─────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Print Helper Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 function triggerPrint(
   revenue: number,
@@ -524,11 +554,18 @@ function triggerPrint(
   logs: SaleLog[],
   orders: Order[],
 ) {
-  const completed = logs.filter((l) => l.status === "Completed");
-  const pending = logs.filter((l) => l.status === "Pending");
-  const cancelled = logs.filter((l) => l.status === "Cancelled");
-  const refunded = logs.filter((l) => l.status === "Refunded");
-
+  const paidCompleted = logs.filter(
+    (l) => l.status === "Completed" && isPaidPaymentStatus(l.paymentStatus),
+  );
+  const gcashSales = paidCompleted.filter(
+    (l) => normalizePaymentMethod(l.paymentMethod) === "GCash",
+  );
+  const cashSales = paidCompleted.filter(
+    (l) => normalizePaymentMethod(l.paymentMethod) === "Cash",
+  );
+  const cashOnPickupSales = paidCompleted.filter(
+    (l) => normalizePaymentMethod(l.paymentMethod) === "Cash on Pickup",
+  );
   const now = new Date();
   const dateLabel = now.toLocaleDateString("en-US", {
     month: "long",
@@ -542,7 +579,7 @@ function triggerPrint(
   });
 
   const completedOrders = orders
-    .filter((o) => o.status === "Completed")
+    .filter((o) => o.status === "Completed" && isPaidPaymentStatus(o.paymentStatus))
     .sort(
       (a, b) =>
         (parseDateSafe(b.date)?.getTime() ?? 0) -
@@ -556,7 +593,7 @@ function triggerPrint(
           month: "short",
           day: "numeric",
           year: "numeric",
-        }) ?? "—";
+        }) ?? "â€”";
       const fmtHandover =
         parseDateSafe(o.handoverTimestamp)?.toLocaleString("en-US", {
           month: "short",
@@ -565,18 +602,18 @@ function triggerPrint(
           hour: "2-digit",
           minute: "2-digit",
           hour12: true,
-        }) ?? "—";
+        }) ?? "â€”";
       return `
         <tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
           <td>${o.transactionId}</td>
           <td>${fmtDate}</td>
           <td>${o.time}</td>
-          <td style="max-width:200px">${o.items.map((it) => `${it.name} ×${it.quantity}`).join(", ")}</td>
-          <td>${o.orderType === "delivery" ? (o.riderName ?? "—") : "—"}</td>
-          <td>${o.orderType === "delivery" ? fmtHandover : "—"}</td>
-          <td>${o.cashierName ?? "—"}</td>
+          <td style="max-width:200px">${o.items.map((it) => `${it.name} Ã—${it.quantity}`).join(", ")}</td>
+          <td>${o.orderType === "delivery" ? (o.riderName ?? "â€”") : "â€”"}</td>
+          <td>${o.orderType === "delivery" ? fmtHandover : "â€”"}</td>
+          <td>${o.cashierName ?? "â€”"}</td>
           <td style="text-transform:capitalize;color:#2563eb">${o.paymentCategory}</td>
-          <td style="text-align:right;font-weight:700">₱${o.total.toLocaleString()}</td>
+          <td style="text-align:right;font-weight:700">PHP ${o.total.toLocaleString()}</td>
         </tr>
       `;
     })
@@ -587,7 +624,7 @@ function triggerPrint(
     <html>
     <head>
       <meta charset="utf-8"/>
-      <title>Sales Report – ${period}</title>
+      <title>Sales Report â€“ ${period}</title>
       <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet"/>
       <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -645,35 +682,35 @@ function triggerPrint(
       <div class="revenue-hero">
         <div>
           <p class="revenue-label">Total Revenue</p>
-          <p class="revenue-amount">₱${revenue.toLocaleString()}</p>
+          <p class="revenue-amount">PHP ${revenue.toLocaleString()}</p>
         </div>
         <div class="revenue-stats">
-          <div class="stat-item"><p class="stat-number" style="color:#4ade80">${completed.length}</p><p class="stat-label">Completed</p></div>
-          <div class="stat-item"><p class="stat-number" style="color:#fbbf24">${pending.length}</p><p class="stat-label">Pending</p></div>
-          <div class="stat-item"><p class="stat-number" style="color:#f87171">${cancelled.length}</p><p class="stat-label">Cancelled</p></div>
-          <div class="stat-item"><p class="stat-number" style="color:#60a5fa">${refunded.length}</p><p class="stat-label">Refunded</p></div>
+          <div class="stat-item"><p class="stat-number" style="color:#4ade80">${paidCompleted.length}</p><p class="stat-label">Paid Orders</p></div>
+          <div class="stat-item"><p class="stat-number" style="color:#60a5fa">PHP ${gcashSales.reduce((sum, log) => sum + log.total, 0).toLocaleString()}</p><p class="stat-label">GCash Sales</p></div>
+          <div class="stat-item"><p class="stat-number" style="color:#f59e0b">PHP ${cashSales.reduce((sum, log) => sum + log.total, 0).toLocaleString()}</p><p class="stat-label">Cash Sales</p></div>
+          <div class="stat-item"><p class="stat-number" style="color:#0f172a">${cashOnPickupSales.length}</p><p class="stat-label">Pickup Cash</p></div>
         </div>
       </div>
       <div class="summary-grid">
         <div class="summary-card" style="background:#f0fdf4;border:1px solid #bbf7d0">
-          <p class="summary-card-label">Completed Revenue</p>
-          <p class="summary-card-value" style="color:#16a34a">₱${completed.reduce((s, l) => s + l.total, 0).toLocaleString()}</p>
-          <p class="summary-card-sub">${completed.length} orders</p>
+          <p class="summary-card-label">Total Sales</p>
+          <p class="summary-card-value" style="color:#16a34a">PHP ${paidCompleted.reduce((sum, log) => sum + log.total, 0).toLocaleString()}</p>
+          <p class="summary-card-sub">Completed + paid only</p>
         </div>
-        <div class="summary-card" style="background:#fffbeb;border:1px solid #fde68a">
-          <p class="summary-card-label">Pending Orders</p>
-          <p class="summary-card-value" style="color:#d97706">₱${pending.reduce((s, l) => s + l.total, 0).toLocaleString()}</p>
-          <p class="summary-card-sub">${pending.length} orders</p>
-        </div>
-        <div class="summary-card" style="background:#fef2f2;border:1px solid #fecaca">
-          <p class="summary-card-label">Cancelled</p>
-          <p class="summary-card-value" style="color:#dc2626">${cancelled.length} orders</p>
-          <p class="summary-card-sub">voided</p>
+        <div class="summary-card" style="background:#f8fafc;border:1px solid #cbd5e1">
+          <p class="summary-card-label">Completed Orders</p>
+          <p class="summary-card-value" style="color:#0f172a">${paidCompleted.length}</p>
+          <p class="summary-card-sub">Paid transactions</p>
         </div>
         <div class="summary-card" style="background:#eff6ff;border:1px solid #bfdbfe">
-          <p class="summary-card-label">Refunded</p>
-          <p class="summary-card-value" style="color:#2563eb">₱${refunded.reduce((s, l) => s + l.total, 0).toLocaleString()}</p>
-          <p class="summary-card-sub">${refunded.length} orders</p>
+          <p class="summary-card-label">GCash Sales</p>
+          <p class="summary-card-value" style="color:#2563eb">PHP ${gcashSales.reduce((sum, log) => sum + log.total, 0).toLocaleString()}</p>
+          <p class="summary-card-sub">${gcashSales.length} orders</p>
+        </div>
+        <div class="summary-card" style="background:#fff7ed;border:1px solid #fdba74">
+          <p class="summary-card-label">Cash Sales</p>
+          <p class="summary-card-value" style="color:#d97706">PHP ${cashSales.reduce((sum, log) => sum + log.total, 0).toLocaleString()}</p>
+          <p class="summary-card-sub">${cashOnPickupSales.length > 0 ? `${cashSales.length} cash · ${cashOnPickupSales.length} pickup cash` : `${cashSales.length} orders`}</p>
         </div>
       </div>
       <p class="section-title">Completed Orders (${completedOrders.length})</p>
@@ -709,7 +746,7 @@ function triggerPrint(
   };
 }
 
-// ─── Drum Picker Column ────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Drum Picker Column Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 interface DrumColProps {
   label: string;
@@ -969,7 +1006,7 @@ function DrumCol({ label, items, selectedIndex, onChange }: DrumColProps) {
   );
 }
 
-// ─── Drum Date Picker ──────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Drum Date Picker Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 interface DrumDatePickerProps {
   open: boolean;
@@ -1198,7 +1235,7 @@ function DrumDatePicker({
   );
 }
 
-// ─── Revenue Dropdown ─────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Revenue Dropdown Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 interface RevenueDropdownProps {
   period: Period;
@@ -1241,9 +1278,10 @@ function RevenueDropdown({
     period === "All Time"
       ? logs
       : logs.filter((l) => l._dateObj >= start && l._dateObj <= now);
-  const completedCount = inPeriod.filter(
-    (l) => l.status === "Completed",
-  ).length;
+  const paidCompleted = inPeriod.filter(
+    (l) => l.status === "Completed" && isPaidPaymentStatus(l.paymentStatus),
+  );
+  const completedCount = paidCompleted.length;
   const pendingCount = inPeriod.filter((l) => l.status === "Pending").length;
   const cancelledCount = inPeriod.filter(
     (l) => l.status === "Cancelled",
@@ -1374,7 +1412,7 @@ function RevenueDropdown({
           </AnimatePresence>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {[
-              { label: "Completed", count: completedCount, color: "#16a34a" },
+              { label: "Paid", count: completedCount, color: "#16a34a" },
               { label: "Pending", count: pendingCount, color: "#d97706" },
               { label: "Cancelled", count: cancelledCount, color: "#dc2626" },
               { label: "Refunded", count: refundedCount, color: "#2563eb" },
@@ -1495,7 +1533,7 @@ function RevenueDropdown({
                     </div>
                   </div>
                   {period === p && (
-                    <span style={{ color: "#f97316", fontSize: 12 }}>✓</span>
+                    <span style={{ color: "#f97316", fontSize: 12 }}>Ã¢Å“â€œ</span>
                   )}
                 </motion.div>
               ))}
@@ -1606,7 +1644,7 @@ function RevenueDropdown({
   );
 }
 
-// ─── Refund Modal ──────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Refund Modal Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 interface RefundModalProps {
   open: boolean;
@@ -1629,8 +1667,8 @@ function RefundModal({
   const product =
     log?.product ?? (order ? order.items.map((i) => i.name).join(", ") : "");
   const total = log?.total ?? order?.total ?? 0;
-  const cashierName = log?.cashierName ?? order?.cashierName ?? "—";
-  const paymentMethod = log?.paymentMethod ?? order?.paymentCategory ?? "—";
+  const cashierName = log?.cashierName ?? order?.cashierName ?? "Ã¢â‚¬â€";
+  const paymentMethod = log?.paymentMethod ?? order?.paymentCategory ?? "Ã¢â‚¬â€";
   const paymentStatus = formatPaymentStatus(
     log?.paymentStatus ?? order?.paymentStatus ?? null,
   );
@@ -1898,8 +1936,7 @@ function RefundModal({
                       >
                         <RotateCcw size={13} />
                       </motion.span>
-                      Processing…
-                    </>
+                      Processing…                    </>
                   ) : (
                     <>
                       <RotateCcw size={13} /> Confirm Refund
@@ -1915,97 +1952,176 @@ function RefundModal({
   );
 }
 
-// ─── Summary Bar ───────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Summary Bar Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 function SummaryBar({ logs }: { logs: SaleLog[] }) {
-  const completed = logs.filter((l) => l.status === "Completed");
-  const pending = logs.filter((l) => l.status === "Pending");
-  const cancelled = logs.filter((l) => l.status === "Cancelled");
-  const refunded = logs.filter((l) => l.status === "Refunded");
+  const paidCompleted = logs.filter(
+    (l) => l.status === "Completed" && isPaidPaymentStatus(l.paymentStatus),
+  );
+  const gcashSales = paidCompleted.filter(
+    (l) => normalizePaymentMethod(l.paymentMethod) === "GCash",
+  );
+  const cashSales = paidCompleted.filter(
+    (l) => normalizePaymentMethod(l.paymentMethod) === "Cash",
+  );
+  const cashOnPickupSales = paidCompleted.filter(
+    (l) => normalizePaymentMethod(l.paymentMethod) === "Cash on Pickup",
+  );
 
   const stats = [
     {
-      label: "Completed Sales",
-      value: `₱${completed.reduce((s, l) => s + l.total, 0).toLocaleString()}`,
-      sub: `${completed.length} items`,
+      label: "Total Sales",
+      value: `PHP ${paidCompleted
+.reduce((sum, log) => sum + log.total, 0)
+        .toLocaleString()}`,
+      sub: "Completed + paid only",
       color: "#16a34a",
       bg: "#f0fdf4",
       border: "#bbf7d0",
     },
     {
-      label: "Pending Orders",
-      value: `₱${pending.reduce((s, l) => s + l.total, 0).toLocaleString()}`,
-      sub: `${pending.length} items`,
-      color: "#d97706",
-      bg: "#fffbeb",
-      border: "#fde68a",
+      label: "Completed Orders",
+      value: `${paidCompleted.length}`,
+      sub: "Paid transactions",
+      color: "#0f172a",
+      bg: "#f8fafc",
+      border: "#cbd5e1",
     },
     {
-      label: "Cancelled",
-      value: `${cancelled.length} orders`,
-      sub: "voided",
-      color: "#dc2626",
-      bg: "#fef2f2",
-      border: "#fecaca",
-    },
-    {
-      label: "Refunded",
-      value: `₱${refunded.reduce((s, l) => s + l.total, 0).toLocaleString()}`,
-      sub: `${refunded.length} orders`,
+      label: "GCash Sales",
+      value: `PHP ${gcashSales
+        .reduce((sum, log) => sum + log.total, 0)
+        .toLocaleString()}`,
+      sub: `${gcashSales.length} orders`,
       color: "#2563eb",
       bg: "#eff6ff",
       border: "#bfdbfe",
     },
+    {
+      label: "Cash Sales",
+      value: `PHP ${cashSales
+        .reduce((sum, log) => sum + log.total, 0)
+        .toLocaleString()}`,
+      sub:
+        cashOnPickupSales.length > 0
+          ? `${cashSales.length} cash · ${cashOnPickupSales.length} pickup cash`
+          : `${cashSales.length} orders`,
+      color: "#d97706",
+      bg: "#fffbeb",
+      border: "#fde68a",
+    },
+  ];
+
+  const paymentBreakdown = [
+    {
+      label: "Cash",
+      value: `PHP ${cashSales
+        .reduce((sum, log) => sum + log.total, 0)
+        .toLocaleString()}`,
+      count: cashSales.length,
+    },
+    {
+      label: "GCash",
+      value: `PHP ${gcashSales
+        .reduce((sum, log) => sum + log.total, 0)
+        .toLocaleString()}`,
+      count: gcashSales.length,
+    },
+    ...(cashOnPickupSales.length > 0
+      ? [
+          {
+            label: "Cash on Pickup",
+            value: `PHP ${cashOnPickupSales
+              .reduce((sum, log) => sum + log.total, 0)
+              .toLocaleString()}`,
+            count: cashOnPickupSales.length,
+          },
+        ]
+      : []),
   ];
 
   return (
-    <div
-      style={{ display: "flex", gap: 16, marginBottom: 24, flexWrap: "wrap" }}
-    >
-      {stats.map((s) => (
-        <motion.div
-          key={s.label}
-          whileHover={{ y: -2, boxShadow: "0 4px 16px rgba(0,0,0,0.08)" }}
-          style={{
-            flex: 1,
-            minWidth: 160,
-            background: s.bg,
-            border: `1px solid ${s.border}`,
-            borderRadius: 14,
-            padding: "16px 20px",
-            boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
-          }}
-        >
-          <p
+    <>
+      <div
+        style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap" }}
+      >
+        {stats.map((s) => (
+          <motion.div
+            key={s.label}
+            whileHover={{ y: -2, boxShadow: "0 4px 16px rgba(0,0,0,0.08)" }}
             style={{
-              color: "#94a3b8",
-              fontSize: 10,
-              fontWeight: 600,
-              margin: "0 0 6px",
-              letterSpacing: 1,
-              textTransform: "uppercase",
+              flex: 1,
+              minWidth: 160,
+              background: s.bg,
+              border: `1px solid ${s.border}`,
+              borderRadius: 14,
+              padding: "16px 20px",
+              boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
             }}
           >
-            {s.label}
-          </p>
-          <p
+            <p
+              style={{
+                color: "#94a3b8",
+                fontSize: 10,
+                fontWeight: 600,
+                margin: "0 0 6px",
+                letterSpacing: 1,
+                textTransform: "uppercase",
+              }}
+            >
+              {s.label}
+            </p>
+            <p
+              style={{
+                color: s.color,
+                fontSize: 22,
+                fontWeight: 700,
+                margin: "0 0 2px",
+              }}
+            >
+              {s.value}
+            </p>
+            <p style={{ color: "#94a3b8", fontSize: 11, margin: 0 }}>{s.sub}</p>
+          </motion.div>
+        ))}
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          gap: 10,
+          marginBottom: 24,
+          flexWrap: "wrap",
+        }}
+      >
+        {paymentBreakdown.map((item) => (
+          <div
+            key={item.label}
             style={{
-              color: s.color,
-              fontSize: 22,
-              fontWeight: 700,
-              margin: "0 0 2px",
+              background: "#fff",
+              border: "1px solid #e2e8f0",
+              borderRadius: 12,
+              padding: "12px 14px",
+              minWidth: 170,
             }}
           >
-            {s.value}
-          </p>
-          <p style={{ color: "#94a3b8", fontSize: 11, margin: 0 }}>{s.sub}</p>
-        </motion.div>
-      ))}
-    </div>
+            <p style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", letterSpacing: 1, textTransform: "uppercase", margin: "0 0 4px" }}>
+              {item.label}
+            </p>
+            <p style={{ fontSize: 18, fontWeight: 700, color: "#0f172a", margin: "0 0 2px" }}>
+              {item.value}
+            </p>
+            <p style={{ fontSize: 11, color: "#64748b", margin: 0 }}>
+              {item.count} order{item.count !== 1 ? "s" : ""}
+            </p>
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 
-// ─── Log Row ───────────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Log Row Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 function LogRow({ log, index }: { log: SaleLog; index: number }) {
   const [open, setOpen] = useState(false);
@@ -2081,7 +2197,7 @@ function LogRow({ log, index }: { log: SaleLog; index: number }) {
             flexShrink: 0,
           }}
         >
-          {log.total === 0 ? "—" : `₱${Math.abs(log.total).toLocaleString()}`}
+          {log.total === 0 ? "Ã¢â‚¬â€" : `₱${Math.abs(log.total).toLocaleString()}`}
         </span>
         <span
           style={{
@@ -2242,7 +2358,7 @@ function LogRow({ log, index }: { log: SaleLog; index: number }) {
                       margin: 0,
                     }}
                   >
-                    ⚠ {log.note}
+                    Ã¢Å¡Â  {log.note}
                   </p>
                 </div>
               )}
@@ -2254,7 +2370,7 @@ function LogRow({ log, index }: { log: SaleLog; index: number }) {
   );
 }
 
-// ─── Empty State ───────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Empty State Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 function EmptyState({ message }: { message: string }) {
   return (
@@ -2278,7 +2394,7 @@ function EmptyState({ message }: { message: string }) {
   );
 }
 
-// ─── Log Pagination ────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Log Pagination Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 interface LogPaginationProps {
   currentPage: number;
@@ -2313,7 +2429,7 @@ function LogPagination({
   return (
     <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100 px-1">
       <span className="text-sm text-gray-500">
-        Showing {start}–{end} of {totalCount} sales
+        Showing {start}Ã¢â‚¬â€œ{end} of {totalCount} sales
       </span>
       <div className="flex items-center gap-2">
         <Button
@@ -2356,7 +2472,7 @@ function LogPagination({
   );
 }
 
-// ─── Order Row ─────────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Order Row Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 const statusStyle: Record<string, { bg: string; text: string }> = {
   Completed: { bg: "#f0fdf4", text: "#16a34a" },
@@ -2373,11 +2489,9 @@ const orderTypeStyle: Record<string, { bg: string; text: string }> = {
 
 function OrderRow({
   order,
-  index,
   onRefund,
 }: {
   order: Order;
-  index: number;
   onRefund: (order: Order) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -2396,7 +2510,7 @@ function OrderRow({
           day: "numeric",
           year: "numeric",
         })
-      : "—";
+      : "Ã¢â‚¬â€";
   };
   const fmtTime = (v?: string | null) => {
     const d = parseDateSafe(v);
@@ -2406,7 +2520,7 @@ function OrderRow({
           minute: "2-digit",
           hour12: true,
         })
-      : "—";
+      : "Ã¢â‚¬â€";
   };
 
   const totalQty = order.items.reduce((s, i) => s + i.quantity, 0);
@@ -2418,7 +2532,7 @@ function OrderRow({
       ? "Dine In"
       : order.orderType === "take-out"
         ? "Take Out"
-        : order.orderType || "—";
+        : order.orderType || "Ã¢â‚¬â€";
 
   return (
     <>
@@ -2527,15 +2641,15 @@ function OrderRow({
                       { label: "Order ID", value: order.orderNumber },
                       { label: "Date", value: fmtDate(order.date) },
                       { label: "Time", value: fmtTime(order.date) },
-                      { label: "Cashier", value: order.cashierName || "—" },
+                      { label: "Cashier", value: order.cashierName || "Ã¢â‚¬â€" },
                       ...(isDelivery
                         ? [
-                            { label: "Rider", value: order.riderName || "—" },
+                            { label: "Rider", value: order.riderName || "Ã¢â‚¬â€" },
                             {
                               label: "Handover",
                               value:
-                                fmtTime(order.handoverTimestamp) === "—"
-                                  ? "—"
+                                fmtTime(order.handoverTimestamp) === "Ã¢â‚¬â€"
+                                  ? "Ã¢â‚¬â€"
                                   : `${fmtDate(order.handoverTimestamp)} ${fmtTime(order.handoverTimestamp)}`,
                             },
                           ]
@@ -2754,7 +2868,7 @@ function OrderRow({
   );
 }
 
-// ─── Orders Tab ────────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Orders Tab Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 const ORDER_STATUS_FILTERS: OrderStatusFilter[] = [
   "All",
@@ -2762,6 +2876,13 @@ const ORDER_STATUS_FILTERS: OrderStatusFilter[] = [
   "Pending",
   "Cancelled",
   "Refunded",
+];
+
+const ORDER_PAYMENT_FILTERS: PaymentMethodFilter[] = [
+  "All",
+  "Cash",
+  "GCash",
+  "Cash on Pickup",
 ];
 
 const statusActiveColor: Record<OrderStatusFilter, string> = {
@@ -2785,6 +2906,8 @@ function OrdersTab({
   const [toDate, setToDate] = useState<Date | null>(null);
   const [activeQuick, setActiveQuick] = useState<QuickKey | null>("all");
   const [statusFilter, setStatusFilter] = useState<OrderStatusFilter>("All");
+  const [paymentMethodFilter, setPaymentMethodFilter] =
+    useState<PaymentMethodFilter>("All");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerTarget, setPickerTarget] = useState<"from" | "to">("from");
   const [pickerInitial, setPickerInitial] = useState<Date>(now);
@@ -2829,10 +2952,16 @@ function OrdersTab({
   }
 
   const dateFiltered = filterOrdersByRange(orders, fromDate, toDate);
-  const filtered =
+  const statusFiltered =
     statusFilter === "All"
       ? dateFiltered
       : dateFiltered.filter((o) => o.status === statusFilter);
+  const filtered =
+    paymentMethodFilter === "All"
+      ? statusFiltered
+      : statusFiltered.filter(
+          (o) => normalizePaymentMethod(o.paymentCategory) === paymentMethodFilter,
+        );
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / ORDER_PAGE_SIZE));
 
@@ -2846,9 +2975,13 @@ function OrdersTab({
     currentPage * ORDER_PAGE_SIZE,
   );
 
-  const totalRevenue = filtered.reduce((sum, o) => sum + o.total, 0);
+  const totalRevenue = filtered
+    .filter(
+      (o) => o.status === "Completed" && isPaidPaymentStatus(o.paymentStatus),
+    )
+    .reduce((sum, o) => sum + o.total, 0);
   const completedCount = filtered.filter(
-    (o) => o.status === "Completed",
+    (o) => o.status === "Completed" && isPaidPaymentStatus(o.paymentStatus),
   ).length;
   const hasRange = !!(fromDate || toDate);
 
@@ -2962,6 +3095,25 @@ function OrdersTab({
           ))}
         </div>
 
+        <div className="flex gap-2 flex-wrap mb-5">
+          {ORDER_PAYMENT_FILTERS.map((method) => (
+            <button
+              key={method}
+              onClick={() => {
+                setPaymentMethodFilter(method);
+                setCurrentPage(1);
+              }}
+              className={`text-xs font-semibold px-3 py-1 rounded-full border transition-colors ${
+                paymentMethodFilter === method
+                  ? "bg-[#0f172a] text-white border-[#0f172a]"
+                  : "bg-gray-50 text-gray-500 border-gray-200 hover:border-gray-300 hover:text-gray-700"
+              }`}
+            >
+              {method}
+            </button>
+          ))}
+        </div>
+
         <Table>
           <TableHeader>
             <TableRow className="border-gray-200 hover:bg-transparent">
@@ -2997,11 +3149,10 @@ function OrdersTab({
                 </TableCell>
               </TableRow>
             ) : (
-              paginated.map((order, i) => (
+              paginated.map((order) => (
                 <OrderRow
                   key={order.id}
                   order={order}
-                  index={i}
                   onRefund={onRefund}
                 />
               ))
@@ -3012,7 +3163,7 @@ function OrdersTab({
         {filtered.length > ORDER_PAGE_SIZE && (
           <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
             <span className="text-sm text-gray-500">
-              Showing {(currentPage - 1) * ORDER_PAGE_SIZE + 1}–
+              Showing {(currentPage - 1) * ORDER_PAGE_SIZE + 1}Ã¢â‚¬â€œ
               {Math.min(currentPage * ORDER_PAGE_SIZE, filtered.length)} of{" "}
               {filtered.length} orders
             </span>
@@ -3062,27 +3213,27 @@ function OrdersTab({
   );
 }
 
-// ─── Main Page ─────────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Main Page Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 export default function SalesReports() {
   const now = new Date();
 
-  // ── Core state ──
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Core state Ã¢â€â‚¬Ã¢â€â‚¬
   const [logs, setLogs] = useState<SaleLog[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
 
-  // ── UI state ──
+  // Ã¢â€â‚¬Ã¢â€â‚¬ UI state Ã¢â€â‚¬Ã¢â€â‚¬
   const [activeTab, setActiveTab] = useState<TabKey>("logs");
   const [search, setSearch] = useState("");
   const [logPage, setLogPage] = useState(1);
   const [period, setPeriod] = useState<Period>("Today");
 
-  // ── Refund state ──
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Refund state Ã¢â€â‚¬Ã¢â€â‚¬
   const [refundLog, setRefundLog] = useState<SaleLog | null>(null);
   const [refundOrder, setRefundOrder] = useState<Order | null>(null);
   const [refundLoading, setRefundLoading] = useState(false);
 
-  // ── Log date filter state ──
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Log date filter state Ã¢â€â‚¬Ã¢â€â‚¬
   const [logFromDate, setLogFromDate] = useState<Date | null>(null);
   const [logToDate, setLogToDate] = useState<Date | null>(null);
   const [activeLogQuick, setActiveLogQuick] = useState<QuickKey | null>("all");
@@ -3090,7 +3241,7 @@ export default function SalesReports() {
   const [logPickerTarget, setLogPickerTarget] = useState<"from" | "to">("from");
   const [logPickerInitial, setLogPickerInitial] = useState<Date>(now);
 
-  // ── Data fetching ──
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Data fetching Ã¢â€â‚¬Ã¢â€â‚¬
   const fetchSalesData = useCallback(async () => {
     try {
       const rows = await api.get<RawOrderRow[]>("/orders");
@@ -3113,7 +3264,7 @@ export default function SalesReports() {
     setLogPage(1);
   }, [search, logFromDate, logToDate]);
 
-  // ── Log date picker handlers ──
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Log date picker handlers Ã¢â€â‚¬Ã¢â€â‚¬
   function openLogDatePicker(target: "from" | "to") {
     setLogPickerTarget(target);
     setLogPickerInitial(
@@ -3155,7 +3306,7 @@ export default function SalesReports() {
     setLogPage(1);
   }
 
-  // ── Refund handler ──
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Refund handler Ã¢â€â‚¬Ã¢â€â‚¬
   async function handleRefundConfirm() {
     const orderId = refundLog?.orderId ?? refundOrder?.id;
     if (orderId == null) return;
@@ -3173,8 +3324,10 @@ export default function SalesReports() {
     }
   }
 
-  // ── Derived log data ──
-  const completedLogs = logs.filter((l) => l.status === "Completed");
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Derived log data Ã¢â€â‚¬Ã¢â€â‚¬
+  const completedLogs = logs.filter(
+    (l) => l.status === "Completed" && isPaidPaymentStatus(l.paymentStatus),
+  );
   const dateFilteredLogs = filterLogsByRange(
     completedLogs,
     logFromDate,
@@ -3287,7 +3440,7 @@ export default function SalesReports() {
       />
 
       <div style={{ padding: "40px 40px 40px 88px" }}>
-        {/* ── Header ── */}
+        {/* Ã¢â€â‚¬Ã¢â€â‚¬ Header Ã¢â€â‚¬Ã¢â€â‚¬ */}
         <motion.div
           initial={{ opacity: 0, y: -12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -3335,7 +3488,7 @@ export default function SalesReports() {
           />
         </motion.div>
 
-        {/* ── Summary Bar ── */}
+        {/* Ã¢â€â‚¬Ã¢â€â‚¬ Summary Bar Ã¢â€â‚¬Ã¢â€â‚¬ */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -3344,7 +3497,7 @@ export default function SalesReports() {
           <SummaryBar logs={logs} />
         </motion.div>
 
-        {/* ── Tabs ── */}
+        {/* Ã¢â€â‚¬Ã¢â€â‚¬ Tabs Ã¢â€â‚¬Ã¢â€â‚¬ */}
         <div
           style={{
             display: "inline-flex",
@@ -3412,7 +3565,7 @@ export default function SalesReports() {
           })}
         </div>
 
-        {/* ── Sales Logs Tab ── */}
+        {/* Ã¢â€â‚¬Ã¢â€â‚¬ Sales Logs Tab Ã¢â€â‚¬Ã¢â€â‚¬ */}
         {activeTab === "logs" && (
           <>
             <motion.div
@@ -3531,7 +3684,7 @@ export default function SalesReports() {
                     display: "inline-block",
                   }}
                 />
-                Showing completed sales only
+                Showing completed paid sales only
               </div>
             </motion.div>
 
@@ -3705,7 +3858,7 @@ export default function SalesReports() {
           </>
         )}
 
-        {/* ── Orders Tab ── */}
+        {/* Ã¢â€â‚¬Ã¢â€â‚¬ Orders Tab Ã¢â€â‚¬Ã¢â€â‚¬ */}
         {activeTab === "orders" && (
           <motion.div
             initial={{ opacity: 0, y: 8 }}
@@ -3722,3 +3875,5 @@ export default function SalesReports() {
     </div>
   );
 }
+
+

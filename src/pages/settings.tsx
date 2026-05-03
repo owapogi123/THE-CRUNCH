@@ -37,9 +37,17 @@ interface RestaurantSettings {
   enableLoyaltyPoints: boolean;
   // Inventory
   lowStockThreshold: string;
+  criticalStockThreshold: string;
   autoReorderEnabled: boolean;
   trackExpiry: boolean;
   wasteLogging: boolean;
+  defaultUsageType: "manual" | "auto";
+  requireInventoryApproval: boolean;
+  allowNegativeStock: boolean;
+  nearExpiryWarningDays: string;
+  requireDailyUsageSubmission: boolean;
+  autoFinalizeUsage: boolean;
+  outOfStockBehavior: "hide" | "disable";
   // Notifications
   emailNotifications: boolean;
   smsNotifications: boolean;
@@ -80,6 +88,9 @@ interface InventoryCategoryRecord {
   category_id: number;
   name: string;
   uses_shelf_life: boolean | number;
+  type?: "raw_material" | "ingredient" | "finished";
+  shelf_life_enabled?: boolean | number;
+  default_shelf_life_days?: number | null;
   is_active: boolean | number;
   created_at?: string;
   updated_at?: string;
@@ -89,6 +100,8 @@ interface InventoryUnitRecord {
   unit_id: number;
   name: string;
   abbreviation?: string | null;
+  base_unit?: string | null;
+  conversion_to_base?: number | null;
   is_active: boolean | number;
   created_at?: string;
   updated_at?: string;
@@ -171,6 +184,22 @@ const TIMEZONES = [
   { value: "Europe/London",    label: "Europe/London (GMT +00:00)" },
 ];
 
+const USAGE_TYPE_OPTIONS = [
+  { value: "manual", label: "Manual" },
+  { value: "auto", label: "Auto" },
+] as const;
+
+const OUT_OF_STOCK_BEHAVIOR_OPTIONS = [
+  { value: "disable", label: "Disable item" },
+  { value: "hide", label: "Hide item" },
+] as const;
+
+const CATEGORY_TYPE_OPTIONS = [
+  { value: "raw_material", label: "Raw Material" },
+  { value: "ingredient", label: "Ingredient" },
+  { value: "finished", label: "Finished" },
+] as const;
+
 const DEFAULT: RestaurantSettings = {
   restaurantName: "",
   tagline: "",
@@ -188,9 +217,17 @@ const DEFAULT: RestaurantSettings = {
   allowSplitBills: false,
   enableLoyaltyPoints: false,
   lowStockThreshold: "",
+  criticalStockThreshold: "",
   autoReorderEnabled: false,
   trackExpiry: false,
   wasteLogging: false,
+  defaultUsageType: "manual",
+  requireInventoryApproval: true,
+  allowNegativeStock: false,
+  nearExpiryWarningDays: "3",
+  requireDailyUsageSubmission: true,
+  autoFinalizeUsage: false,
+  outOfStockBehavior: "disable",
   emailNotifications: true,
   smsNotifications: false,
   orderAlerts: true,
@@ -459,16 +496,39 @@ function InventoryCategoryEditor({
   busy: boolean;
   onSave: (
     categoryId: number,
-    payload: { name?: string; uses_shelf_life?: boolean; is_active?: boolean },
+    payload: {
+      name?: string;
+      uses_shelf_life?: boolean;
+      type?: "raw_material" | "ingredient" | "finished";
+      shelf_life_enabled?: boolean;
+      default_shelf_life_days?: number | null;
+      is_active?: boolean;
+    },
   ) => Promise<void>;
   onDisable: (categoryId: number) => Promise<void>;
 }) {
   const [name, setName] = useState(category.name);
   const [usesShelfLife, setUsesShelfLife] = useState(asBool(category.uses_shelf_life));
+  const [categoryType, setCategoryType] = useState<"raw_material" | "ingredient" | "finished">(
+    category.type ?? (asBool(category.uses_shelf_life) ? "raw_material" : "ingredient"),
+  );
+  const [shelfLifeEnabled, setShelfLifeEnabled] = useState(
+    asBool(category.shelf_life_enabled ?? category.uses_shelf_life),
+  );
+  const [defaultShelfLifeDays, setDefaultShelfLifeDays] = useState(
+    category.default_shelf_life_days != null ? String(category.default_shelf_life_days) : "",
+  );
 
   useEffect(() => {
     setName(category.name);
     setUsesShelfLife(asBool(category.uses_shelf_life));
+    setCategoryType(
+      category.type ?? (asBool(category.uses_shelf_life) ? "raw_material" : "ingredient"),
+    );
+    setShelfLifeEnabled(asBool(category.shelf_life_enabled ?? category.uses_shelf_life));
+    setDefaultShelfLifeDays(
+      category.default_shelf_life_days != null ? String(category.default_shelf_life_days) : "",
+    );
   }, [category]);
 
   return (
@@ -481,19 +541,42 @@ function InventoryCategoryEditor({
         opacity: asBool(category.is_active) ? 1 : 0.75,
       }}
     >
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto auto", gap: 10, alignItems: "end" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,170px) minmax(0,170px) minmax(0,150px) auto", gap: 10, alignItems: "end" }}>
         <div>
           <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Category</p>
           <StyledInput value={name} onChange={setName} placeholder="Category name" />
+        </div>
+        <div>
+          <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Type</p>
+          <StyledSelect
+            value={categoryType}
+            onChange={(v) => setCategoryType(v as "raw_material" | "ingredient" | "finished")}
+            options={[...CATEGORY_TYPE_OPTIONS]}
+          />
         </div>
         <div style={{ minWidth: 130 }}>
           <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Shelf life</p>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, border: "1px solid #e4e1dc", borderRadius: 8, background: "#fafaf9", padding: "8px 10px" }}>
             <span style={{ fontFamily: FONT, fontSize: "0.74rem", color: "#5a5652" }}>
-              {usesShelfLife ? "Enabled" : "Disabled"}
+              {shelfLifeEnabled ? "Enabled" : "Disabled"}
             </span>
-            <Toggle value={usesShelfLife} onChange={setUsesShelfLife} />
+            <Toggle
+              value={shelfLifeEnabled}
+              onChange={(value) => {
+                setShelfLifeEnabled(value);
+                setUsesShelfLife(value);
+              }}
+            />
           </div>
+        </div>
+        <div>
+          <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Default shelf life days</p>
+          <StyledInput
+            value={defaultShelfLifeDays}
+            onChange={setDefaultShelfLifeDays}
+            type="number"
+            placeholder="optional"
+          />
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button
@@ -502,6 +585,12 @@ function InventoryCategoryEditor({
                 await onSave(category.category_id, {
                   name,
                   uses_shelf_life: usesShelfLife,
+                  type: categoryType,
+                  shelf_life_enabled: shelfLifeEnabled,
+                  default_shelf_life_days:
+                    defaultShelfLifeDays.trim() === ""
+                      ? null
+                      : Number(defaultShelfLifeDays),
                 });
               } catch {
                 /* handled by parent */
@@ -569,16 +658,30 @@ function InventoryUnitEditor({
   busy: boolean;
   onSave: (
     unitId: number,
-    payload: { name?: string; abbreviation?: string | null; is_active?: boolean },
+    payload: {
+      name?: string;
+      abbreviation?: string | null;
+      base_unit?: string | null;
+      conversion_to_base?: number | null;
+      is_active?: boolean;
+    },
   ) => Promise<void>;
   onDisable: (unitId: number) => Promise<void>;
 }) {
   const [name, setName] = useState(unit.name);
   const [abbreviation, setAbbreviation] = useState(unit.abbreviation ?? "");
+  const [baseUnit, setBaseUnit] = useState(unit.base_unit ?? "");
+  const [conversionToBase, setConversionToBase] = useState(
+    unit.conversion_to_base != null ? String(unit.conversion_to_base) : "",
+  );
 
   useEffect(() => {
     setName(unit.name);
     setAbbreviation(unit.abbreviation ?? "");
+    setBaseUnit(unit.base_unit ?? "");
+    setConversionToBase(
+      unit.conversion_to_base != null ? String(unit.conversion_to_base) : "",
+    );
   }, [unit]);
 
   return (
@@ -591,7 +694,7 @@ function InventoryUnitEditor({
         opacity: asBool(unit.is_active) ? 1 : 0.75,
       }}
     >
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,150px) auto", gap: 10, alignItems: "end" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,130px) minmax(0,150px) minmax(0,140px) auto", gap: 10, alignItems: "end" }}>
         <div>
           <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Unit</p>
           <StyledInput value={name} onChange={setName} placeholder="Unit name" />
@@ -600,6 +703,14 @@ function InventoryUnitEditor({
           <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Abbreviation</p>
           <StyledInput value={abbreviation} onChange={setAbbreviation} placeholder="optional" />
         </div>
+        <div>
+          <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Base unit</p>
+          <StyledInput value={baseUnit} onChange={setBaseUnit} placeholder="optional" />
+        </div>
+        <div>
+          <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Conversion to base</p>
+          <StyledInput value={conversionToBase} onChange={setConversionToBase} type="number" placeholder="optional" />
+        </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button
             onClick={async () => {
@@ -607,6 +718,9 @@ function InventoryUnitEditor({
                 await onSave(unit.unit_id, {
                   name,
                   abbreviation,
+                  base_unit: baseUnit,
+                  conversion_to_base:
+                    conversionToBase.trim() === "" ? null : Number(conversionToBase),
                 });
               } catch {
                 /* handled by parent */
@@ -924,23 +1038,51 @@ function InventoryTab({
   mastersLoading: boolean;
   mastersError: string | null;
   onReloadMasters: () => void;
-  onAddCategory: (payload: { name: string; uses_shelf_life: boolean }) => Promise<void>;
+  onAddCategory: (payload: {
+    name: string;
+    uses_shelf_life: boolean;
+    type: "raw_material" | "ingredient" | "finished";
+    shelf_life_enabled: boolean;
+    default_shelf_life_days?: number | null;
+  }) => Promise<void>;
   onUpdateCategory: (
     categoryId: number,
-    payload: { name?: string; uses_shelf_life?: boolean; is_active?: boolean },
+    payload: {
+      name?: string;
+      uses_shelf_life?: boolean;
+      type?: "raw_material" | "ingredient" | "finished";
+      shelf_life_enabled?: boolean;
+      default_shelf_life_days?: number | null;
+      is_active?: boolean;
+    },
   ) => Promise<void>;
   onDisableCategory: (categoryId: number) => Promise<void>;
-  onAddUnit: (payload: { name: string; abbreviation?: string | null }) => Promise<void>;
+  onAddUnit: (payload: {
+    name: string;
+    abbreviation?: string | null;
+    base_unit?: string | null;
+    conversion_to_base?: number | null;
+  }) => Promise<void>;
   onUpdateUnit: (
     unitId: number,
-    payload: { name?: string; abbreviation?: string | null; is_active?: boolean },
+    payload: {
+      name?: string;
+      abbreviation?: string | null;
+      base_unit?: string | null;
+      conversion_to_base?: number | null;
+      is_active?: boolean;
+    },
   ) => Promise<void>;
   onDisableUnit: (unitId: number) => Promise<void>;
 }) {
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newCategoryShelfLife, setNewCategoryShelfLife] = useState(false);
+  const [newCategoryType, setNewCategoryType] = useState<"raw_material" | "ingredient" | "finished">("ingredient");
+  const [newCategoryShelfLifeDays, setNewCategoryShelfLifeDays] = useState("");
   const [newUnitName, setNewUnitName] = useState("");
   const [newUnitAbbreviation, setNewUnitAbbreviation] = useState("");
+  const [newUnitBase, setNewUnitBase] = useState("");
+  const [newUnitConversion, setNewUnitConversion] = useState("");
 
   return (
     <>
@@ -948,15 +1090,40 @@ function InventoryTab({
         <FieldRow label="Low stock threshold">
           <StyledInput value={settings.lowStockThreshold} onChange={(v) => setStr("lowStockThreshold", v)} type="number" placeholder="e.g. 10 units" />
         </FieldRow>
+        <FieldRow label="Critical stock threshold">
+          <StyledInput value={settings.criticalStockThreshold} onChange={(v) => setStr("criticalStockThreshold", v)} type="number" placeholder="e.g. 5 units" />
+        </FieldRow>
+        <FieldRow label="Out-of-stock behavior">
+          <StyledSelect value={settings.outOfStockBehavior} onChange={(v) => setStr("outOfStockBehavior", v)} options={[...OUT_OF_STOCK_BEHAVIOR_OPTIONS]} />
+        </FieldRow>
         <ToggleRow label="Auto-reorder" desc="Trigger reorders automatically when stock falls below threshold" value={settings.autoReorderEnabled} onChange={(v) => setBool("autoReorderEnabled", v)} last />
       </SettingsCard>
 
-      <SettingsCard title="Food Freshness" delay={0.04}>
+      <SettingsCard title="Inventory Control" delay={0.04}>
+        <FieldRow label="Default usage type">
+          <StyledSelect value={settings.defaultUsageType} onChange={(v) => setStr("defaultUsageType", v)} options={[...USAGE_TYPE_OPTIONS]} />
+        </FieldRow>
+        <FieldRow label="Near expiry warning days">
+          <StyledInput value={settings.nearExpiryWarningDays} onChange={(v) => setStr("nearExpiryWarningDays", v)} type="number" placeholder="e.g. 3" />
+        </FieldRow>
+        <ToggleRow label="Require inventory approval" desc="Hold sensitive inventory actions for inventory-manager review" value={settings.requireInventoryApproval} onChange={(v) => setBool("requireInventoryApproval", v)} />
+        <ToggleRow label="Allow negative stock" desc="Permit temporary negative kitchen stock balances when enabled" value={settings.allowNegativeStock} onChange={(v) => setBool("allowNegativeStock", v)} last />
+      </SettingsCard>
+
+      <SettingsCard title="Daily Usage Settings" delay={0.08}>
+        <FieldRow label="Default usage type">
+          <StyledSelect value={settings.defaultUsageType} onChange={(v) => setStr("defaultUsageType", v)} options={[...USAGE_TYPE_OPTIONS]} />
+        </FieldRow>
+        <ToggleRow label="Require daily usage submission" desc="Require cooks to submit a daily usage report for review" value={settings.requireDailyUsageSubmission} onChange={(v) => setBool("requireDailyUsageSubmission", v)} />
+        <ToggleRow label="Auto-finalize usage" desc="Finalize daily usage automatically when review is not required" value={settings.autoFinalizeUsage} onChange={(v) => setBool("autoFinalizeUsage", v)} last />
+      </SettingsCard>
+
+      <SettingsCard title="Food Freshness" delay={0.12}>
         <ToggleRow label="Track expiry dates" desc="Monitor ingredient and product expiry" value={settings.trackExpiry} onChange={(v) => setBool("trackExpiry", v)} />
         <ToggleRow label="Waste logging" desc="Log discarded or expired food for reporting" value={settings.wasteLogging} onChange={(v) => setBool("wasteLogging", v)} last />
       </SettingsCard>
 
-      <SettingsCard title="Category Defaults" delay={0.08}>
+      <SettingsCard title="Category Defaults" delay={0.16}>
         <div style={{ padding: "14px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
           <p style={{ fontFamily: FONT, fontSize: "0.75rem", color: "#8b847d", lineHeight: 1.6 }}>
             Manage inventory categories stored in the database. Shelf-life-enabled categories will be treated as raw-material style categories when the master list is available.
@@ -1000,7 +1167,7 @@ function InventoryTab({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "minmax(0,1fr) auto auto",
+              gridTemplateColumns: "minmax(0,1fr) minmax(0,150px) auto minmax(0,170px) auto",
               gap: 10,
               alignItems: "end",
             }}
@@ -1008,6 +1175,10 @@ function InventoryTab({
             <div>
               <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Category name</p>
               <StyledInput value={newCategoryName} onChange={setNewCategoryName} placeholder="e.g. Dry Goods" />
+            </div>
+            <div>
+              <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Type</p>
+              <StyledSelect value={newCategoryType} onChange={(v) => setNewCategoryType(v as "raw_material" | "ingredient" | "finished")} options={[...CATEGORY_TYPE_OPTIONS]} />
             </div>
             <div style={{ minWidth: 130 }}>
               <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Shelf life</p>
@@ -1018,15 +1189,27 @@ function InventoryTab({
                 <Toggle value={newCategoryShelfLife} onChange={setNewCategoryShelfLife} />
               </div>
             </div>
+            <div>
+              <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Default shelf life days</p>
+              <StyledInput value={newCategoryShelfLifeDays} onChange={setNewCategoryShelfLifeDays} type="number" placeholder="optional" />
+            </div>
             <button
               onClick={async () => {
                 try {
                   await onAddCategory({
                     name: newCategoryName,
                     uses_shelf_life: newCategoryShelfLife,
+                    type: newCategoryType,
+                    shelf_life_enabled: newCategoryShelfLife,
+                    default_shelf_life_days:
+                      newCategoryShelfLifeDays.trim() === ""
+                        ? null
+                        : Number(newCategoryShelfLifeDays),
                   });
                   setNewCategoryName("");
                   setNewCategoryShelfLife(false);
+                  setNewCategoryType("ingredient");
+                  setNewCategoryShelfLifeDays("");
                 } catch {
                   /* handled by parent */
                 }
@@ -1068,7 +1251,7 @@ function InventoryTab({
         </div>
       </SettingsCard>
 
-      <SettingsCard title="Unit Defaults" delay={0.12}>
+      <SettingsCard title="Unit Defaults" delay={0.2}>
         <div style={{ padding: "14px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
           <p style={{ fontFamily: FONT, fontSize: "0.75rem", color: "#8b847d", lineHeight: 1.6 }}>
             Manage unit options used by stock forms. Stock Manager still falls back to its current hardcoded list if this API is unavailable.
@@ -1077,7 +1260,7 @@ function InventoryTab({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "minmax(0,1fr) minmax(0,180px) auto",
+              gridTemplateColumns: "minmax(0,1fr) minmax(0,140px) minmax(0,160px) minmax(0,150px) auto",
               gap: 10,
               alignItems: "end",
             }}
@@ -1090,15 +1273,30 @@ function InventoryTab({
               <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Abbreviation</p>
               <StyledInput value={newUnitAbbreviation} onChange={setNewUnitAbbreviation} placeholder="optional" />
             </div>
+            <div>
+              <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Base unit</p>
+              <StyledInput value={newUnitBase} onChange={setNewUnitBase} placeholder="optional" />
+            </div>
+            <div>
+              <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Conversion to base</p>
+              <StyledInput value={newUnitConversion} onChange={setNewUnitConversion} type="number" placeholder="optional" />
+            </div>
             <button
               onClick={async () => {
                 try {
                   await onAddUnit({
                     name: newUnitName,
                     abbreviation: newUnitAbbreviation,
+                    base_unit: newUnitBase,
+                    conversion_to_base:
+                      newUnitConversion.trim() === ""
+                        ? null
+                        : Number(newUnitConversion),
                   });
                   setNewUnitName("");
                   setNewUnitAbbreviation("");
+                  setNewUnitBase("");
+                  setNewUnitConversion("");
                 } catch {
                   /* handled by parent */
                 }
@@ -1418,6 +1616,7 @@ export default function SettingsPage() {
   const [inventoryMastersError, setInventoryMastersError] = useState<string | null>(null);
 
   const initialized = useRef(false);
+  const hydratingSettings = useRef(false);
   const navigate = useNavigate();
   const { user, logout, isOnline } = useAuth();
   const isMobile = useIsMobile();
@@ -1427,9 +1626,46 @@ export default function SettingsPage() {
     (item) => userRole && item.roles.includes(userRole as Exclude<Role, null>)
   );
 
-  // Mark unsaved after first mount
   useEffect(() => {
-    if (!initialized.current) { initialized.current = true; return; }
+    let cancelled = false;
+
+    const loadSettings = async () => {
+      try {
+        const res = await fetch("/api/settings");
+        if (!res.ok) throw new Error("Could not load settings");
+        const data = await res.json().catch(() => ({}));
+        if (cancelled) return;
+        hydratingSettings.current = true;
+        setSettings((prev) => ({
+          ...prev,
+          ...(data && typeof data === "object" ? data : {}),
+          orderTypes: {
+            ...prev.orderTypes,
+            ...(data?.orderTypes && typeof data.orderTypes === "object"
+              ? data.orderTypes
+              : {}),
+          },
+        }));
+      } catch {
+        /* keep defaults */
+      } finally {
+        window.setTimeout(() => {
+          hydratingSettings.current = false;
+          initialized.current = true;
+        }, 0);
+      }
+    };
+
+    void loadSettings();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Mark unsaved after initial load
+  useEffect(() => {
+    if (hydratingSettings.current) return;
+    if (!initialized.current) return;
     setUnsaved(true);
   }, [settings]);
 
@@ -1498,7 +1734,13 @@ export default function SettingsPage() {
   }, []);
 
   const addInventoryCategory = useCallback(
-    async (payload: { name: string; uses_shelf_life: boolean }) => {
+    async (payload: {
+      name: string;
+      uses_shelf_life: boolean;
+      type: "raw_material" | "ingredient" | "finished";
+      shelf_life_enabled: boolean;
+      default_shelf_life_days?: number | null;
+    }) => {
       const res = await fetch("/api/settings/inventory-categories", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1516,7 +1758,14 @@ export default function SettingsPage() {
   const updateInventoryCategory = useCallback(
     async (
       categoryId: number,
-      payload: { name?: string; uses_shelf_life?: boolean; is_active?: boolean },
+      payload: {
+        name?: string;
+        uses_shelf_life?: boolean;
+        type?: "raw_material" | "ingredient" | "finished";
+        shelf_life_enabled?: boolean;
+        default_shelf_life_days?: number | null;
+        is_active?: boolean;
+      },
     ) => {
       const res = await fetch(`/api/settings/inventory-categories/${categoryId}`, {
         method: "PATCH",
@@ -1550,7 +1799,12 @@ export default function SettingsPage() {
   }, []);
 
   const addInventoryUnit = useCallback(
-    async (payload: { name: string; abbreviation?: string | null }) => {
+    async (payload: {
+      name: string;
+      abbreviation?: string | null;
+      base_unit?: string | null;
+      conversion_to_base?: number | null;
+    }) => {
       const res = await fetch("/api/settings/inventory-units", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1568,7 +1822,13 @@ export default function SettingsPage() {
   const updateInventoryUnit = useCallback(
     async (
       unitId: number,
-      payload: { name?: string; abbreviation?: string | null; is_active?: boolean },
+      payload: {
+        name?: string;
+        abbreviation?: string | null;
+        base_unit?: string | null;
+        conversion_to_base?: number | null;
+        is_active?: boolean;
+      },
     ) => {
       const res = await fetch(`/api/settings/inventory-units/${unitId}`, {
         method: "PATCH",
@@ -1640,6 +1900,19 @@ export default function SettingsPage() {
         body: JSON.stringify(settings),
       });
       if (!res.ok) throw new Error("Save failed");
+      const saved = await res.json().catch(() => null);
+      if (saved && typeof saved === "object") {
+        setSettings((prev) => ({
+          ...prev,
+          ...saved,
+          orderTypes: {
+            ...prev.orderTypes,
+            ...(saved.orderTypes && typeof saved.orderTypes === "object"
+              ? saved.orderTypes
+              : {}),
+          },
+        }));
+      }
       setSaveStatus("saved");
       setUnsaved(false);
       setTimeout(() => setSaveStatus("idle"), 2400);
