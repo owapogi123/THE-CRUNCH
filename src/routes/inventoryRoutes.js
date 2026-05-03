@@ -143,6 +143,248 @@ async function ensureBatchTable() {
   }
 }
 
+async function addColumnIfMissing(conn, tableName, columnName, definition) {
+  const [rows] = await conn.query(`SHOW COLUMNS FROM \`${tableName}\` LIKE ?`, [
+    columnName,
+  ]);
+  if (rows.length > 0) return;
+  await conn.query(
+    `ALTER TABLE \`${tableName}\` ADD COLUMN \`${columnName}\` ${definition}`,
+  );
+}
+
+async function ensureDailyUsageTables(conn = db) {
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS daily_usage_reports (
+      report_id INT PRIMARY KEY AUTO_INCREMENT,
+      report_date DATE NOT NULL,
+      status ENUM('pending','finalized') NOT NULL DEFAULT 'pending',
+      created_by INT NULL,
+      finalized_by INT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      finalized_at DATETIME NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_daily_usage_report_date (report_date)
+    )
+  `);
+
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS daily_usage_report_items (
+      usage_item_id INT PRIMARY KEY AUTO_INCREMENT,
+      report_id INT NOT NULL,
+      product_id INT NOT NULL,
+      product_name VARCHAR(255) NOT NULL,
+      category VARCHAR(120) DEFAULT '',
+      unit VARCHAR(50) DEFAULT 'unit',
+      withdrawn_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
+      used_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
+      wasted_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
+      returned_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
+      notes TEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_daily_usage_report_product (report_id, product_id),
+      CONSTRAINT fk_daily_usage_items_report
+        FOREIGN KEY (report_id) REFERENCES daily_usage_reports(report_id)
+        ON DELETE CASCADE
+    )
+  `);
+
+  await addColumnIfMissing(
+    conn,
+    "daily_usage_reports",
+    "updated_at",
+    "TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP",
+  );
+}
+
+function toReportDateString(value) {
+  if (!value) return new Date().toISOString().slice(0, 10);
+  return String(value).slice(0, 10);
+}
+
+function normalizeUsageQty(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? +n.toFixed(2) : 0;
+}
+
+async function getOrCreateDailyUsageReport(conn, reportDate, createdBy = null) {
+  await ensureDailyUsageTables(conn);
+  const [rows] = await conn.query(
+    `SELECT report_id, report_date, status, created_by, finalized_by, finalized_at, created_at, updated_at
+     FROM daily_usage_reports
+     WHERE report_date = ?
+     LIMIT 1`,
+    [reportDate],
+  );
+
+  if (rows.length > 0) return rows[0];
+
+  const [result] = await conn.query(
+    `INSERT INTO daily_usage_reports (report_date, created_by)
+     VALUES (?, ?)`,
+    [reportDate, Number.isFinite(Number(createdBy)) ? Number(createdBy) : null],
+  );
+
+  const [createdRows] = await conn.query(
+    `SELECT report_id, report_date, status, created_by, finalized_by, finalized_at, created_at, updated_at
+     FROM daily_usage_reports
+     WHERE report_id = ?`,
+    [result.insertId],
+  );
+  return createdRows[0];
+}
+
+async function findLatestDailyUsageReportDate(status = "") {
+  await ensureDailyUsageTables(db);
+  const normalizedStatus = String(status || "").trim().toLowerCase();
+  const filters = [];
+  const values = [];
+  if (normalizedStatus === "pending" || normalizedStatus === "finalized") {
+    filters.push("dur.status = ?");
+    values.push(normalizedStatus);
+  }
+
+  const [rows] = await db.query(
+    `SELECT DATE_FORMAT(dur.report_date, '%Y-%m-%d') AS report_date
+     FROM daily_usage_reports dur
+     INNER JOIN daily_usage_report_items duri
+       ON duri.report_id = dur.report_id
+     ${filters.length ? `WHERE ${filters.join(" AND ")}` : ""}
+     GROUP BY dur.report_id, dur.report_date
+     ORDER BY dur.report_date DESC
+     LIMIT 1`,
+    values,
+  );
+
+  return rows.length > 0 ? String(rows[0].report_date) : null;
+}
+
+async function buildDailyUsagePayload({
+  reportDate,
+  reportId = null,
+  status = "",
+}) {
+  await ensureDailyUsageTables(db);
+  const normalizedStatus = String(status || "").trim().toLowerCase();
+  const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+  const stockItemExpr = getProductItemTypeExpression(
+    hasItemTypeColumn,
+    "p",
+    "m",
+  );
+
+  const whereParts = [];
+  const values = [];
+  if (reportId != null) {
+    whereParts.push("dur.report_id = ?");
+    values.push(Number(reportId));
+  } else {
+    whereParts.push("dur.report_date = ?");
+    values.push(reportDate);
+  }
+  if (normalizedStatus === "pending" || normalizedStatus === "finalized") {
+    whereParts.push("dur.status = ?");
+    values.push(normalizedStatus);
+  }
+
+  const [reportRows] = await db.query(
+    `SELECT
+       dur.report_id,
+       dur.report_date,
+       dur.status,
+       dur.created_by,
+       cu.username AS created_by_name,
+       dur.finalized_by,
+       fu.username AS finalized_by_name,
+       dur.created_at,
+       dur.updated_at,
+       dur.finalized_at
+     FROM daily_usage_reports dur
+     LEFT JOIN users cu ON cu.id = dur.created_by
+     LEFT JOIN users fu ON fu.id = dur.finalized_by
+     WHERE ${whereParts.join(" AND ")}
+     LIMIT 1`,
+    values,
+  );
+
+  if (reportRows.length === 0) {
+    const fallbackDate = reportDate || toReportDateString(null);
+    const fallback = await getOrCreateDailyUsageReport(db, fallbackDate, null);
+    return {
+      report: {
+        report_id: Number(fallback.report_id),
+        report_date: fallback.report_date,
+        status: String(fallback.status || "pending"),
+        prepared_by: fallback.created_by == null ? null : Number(fallback.created_by),
+        prepared_by_name: null,
+        finalized_by: fallback.finalized_by == null ? null : Number(fallback.finalized_by),
+        finalized_by_name: null,
+        created_at: fallback.created_at ?? null,
+        updated_at: fallback.updated_at ?? null,
+        finalized_at: fallback.finalized_at ?? null,
+      },
+      items: [],
+    };
+  }
+
+  const report = reportRows[0];
+  const [itemRows] = await db.query(
+    `SELECT
+       duri.usage_item_id,
+       duri.product_id,
+       COALESCE(m.Product_Name, p.name, duri.product_name) AS product_name,
+       COALESCE(m.Category_Name, duri.category) AS category,
+       COALESCE(bu.unit, duri.unit, 'unit') AS unit,
+       COALESCE(inv.Daily_Withdrawn, duri.withdrawn_qty, 0) AS withdrawn_qty,
+       duri.used_qty,
+       duri.wasted_qty,
+       duri.returned_qty,
+       duri.notes
+     FROM daily_usage_report_items duri
+     LEFT JOIN products p ON p.id = duri.product_id
+     LEFT JOIN Menu m ON m.Product_ID = duri.product_id
+     LEFT JOIN Inventory inv ON inv.Product_ID = duri.product_id
+     LEFT JOIN (
+       SELECT product_id, MAX(unit) AS unit
+       FROM batches
+       GROUP BY product_id
+     ) bu ON bu.product_id = duri.product_id
+     WHERE duri.report_id = ?
+       AND ${stockItemExpr} = ?
+     ORDER BY product_name ASC, duri.usage_item_id ASC`,
+    [report.report_id, STOCK_ITEM],
+  );
+
+  return {
+    report: {
+      report_id: Number(report.report_id),
+      report_date: report.report_date,
+      status: String(report.status || "pending"),
+      prepared_by: report.created_by == null ? null : Number(report.created_by),
+      prepared_by_name: report.created_by_name || null,
+      finalized_by:
+        report.finalized_by == null ? null : Number(report.finalized_by),
+      finalized_by_name: report.finalized_by_name || null,
+      created_at: report.created_at ?? null,
+      updated_at: report.updated_at ?? null,
+      finalized_at: report.finalized_at ?? null,
+    },
+    items: itemRows.map((row) => ({
+      usage_item_id: Number(row.usage_item_id),
+      product_id: Number(row.product_id),
+      product_name: String(row.product_name || ""),
+      category: String(row.category || ""),
+      unit: String(row.unit || "unit"),
+      withdrawn_qty: normalizeUsageQty(row.withdrawn_qty),
+      used_qty: normalizeUsageQty(row.used_qty),
+      spoilage_qty: normalizeUsageQty(row.wasted_qty),
+      returned_qty: normalizeUsageQty(row.returned_qty),
+      note: row.notes ? String(row.notes) : "",
+    })),
+  };
+}
+
 // GET /api/inventory
 router.get("/", async (req, res) => {
   try {
@@ -575,6 +817,303 @@ router.post("/batches/:batchId/return", async (req, res) => {
   } catch (err) {
     console.error("Error returning batch:", err);
     res.status(500).json({ message: "DB error", error: err.message });
+  }
+});
+
+router.get("/daily-usage", async (req, res) => {
+  try {
+    const requestedDate = toReportDateString(req.query.date);
+    const requestedStatus = String(req.query.status || "").trim().toLowerCase();
+    let effectiveDate = requestedDate;
+
+    if (String(req.query.preferLatestPopulated || "") === "1") {
+      const latest = await findLatestDailyUsageReportDate(requestedStatus);
+      if (latest) effectiveDate = latest;
+    }
+
+    const payload = await buildDailyUsagePayload({
+      reportDate: effectiveDate,
+      status: requestedStatus,
+    });
+    res.json(payload);
+  } catch (err) {
+    console.error("GET /inventory/daily-usage error:", err);
+    res.status(500).json({ message: "DB error", error: err.message });
+  }
+});
+
+router.post("/daily-usage", async (req, res) => {
+  let conn;
+  try {
+    const reportDate = toReportDateString(req.body.report_date);
+    const createdBy =
+      req.body.created_by == null ? null : Number(req.body.created_by);
+    const items = Array.isArray(req.body.items) ? req.body.items : [];
+
+    conn = await db.getConnection();
+    await conn.beginTransaction();
+    await ensureDailyUsageTables(conn);
+
+    const report = await getOrCreateDailyUsageReport(conn, reportDate, createdBy);
+    if (String(report.status || "").toLowerCase() === "finalized") {
+      await conn.rollback();
+      return res.status(409).json({
+        message: "This daily usage report has already been finalized.",
+      });
+    }
+
+    const normalizedItems = items
+      .map((item) => ({
+        product_id: Number(item.product_id),
+        used_qty: normalizeUsageQty(item.used_qty),
+        wasted_qty: normalizeUsageQty(item.spoilage_qty ?? item.wasted_qty),
+        returned_qty: normalizeUsageQty(item.returned_qty),
+        note: item.note ? String(item.note).trim() : null,
+      }))
+      .filter((item) => Number.isFinite(item.product_id) && item.product_id > 0);
+
+    const uniqueProductIds = Array.from(
+      new Set(normalizedItems.map((item) => Number(item.product_id))),
+    );
+    if (uniqueProductIds.length > 0) {
+      const hasItemTypeColumn = await ensureProductsItemTypeSchema(conn);
+      const stockItemExpr = getProductItemTypeExpression(
+        hasItemTypeColumn,
+        "p",
+        "m",
+      );
+      const [productRows] = await conn.query(
+        `SELECT
+           p.id AS product_id,
+           COALESCE(m.Product_Name, p.name, CONCAT('Product #', p.id)) AS product_name,
+           COALESCE(m.Category_Name, '') AS category,
+           COALESCE(bu.unit, 'unit') AS unit,
+           COALESCE(inv.Daily_Withdrawn, 0) AS withdrawn_qty,
+           ${stockItemExpr} AS item_type
+         FROM products p
+         LEFT JOIN Menu m ON m.Product_ID = p.id
+         LEFT JOIN Inventory inv ON inv.Product_ID = p.id
+         LEFT JOIN (
+           SELECT product_id, MAX(unit) AS unit
+           FROM batches
+           GROUP BY product_id
+         ) bu ON bu.product_id = p.id
+         WHERE p.id IN (?)`,
+        [uniqueProductIds],
+      );
+
+      const productMap = new Map(
+        productRows.map((row) => [Number(row.product_id), row]),
+      );
+
+      for (const item of normalizedItems) {
+        const product = productMap.get(Number(item.product_id));
+        if (!product) {
+          throw new Error(`Daily usage product ${item.product_id} was not found.`);
+        }
+        if (String(product.item_type || STOCK_ITEM).trim().toLowerCase() !== STOCK_ITEM) {
+          throw new Error(
+            `Daily usage product ${item.product_id} must be ${STOCK_ITEM}.`,
+          );
+        }
+      }
+
+      await conn.query(
+        `UPDATE daily_usage_reports
+         SET status = 'pending',
+             created_by = COALESCE(?, created_by),
+             finalized_by = NULL,
+             finalized_at = NULL
+         WHERE report_id = ?`,
+        [Number.isFinite(createdBy) ? createdBy : null, report.report_id],
+      );
+
+      await conn.query(
+        `DELETE FROM daily_usage_report_items WHERE report_id = ?`,
+        [report.report_id],
+      );
+
+      for (const item of normalizedItems) {
+        const product = productMap.get(Number(item.product_id));
+        await conn.query(
+          `INSERT INTO daily_usage_report_items (
+             report_id,
+             product_id,
+             product_name,
+             category,
+             unit,
+             withdrawn_qty,
+             used_qty,
+             wasted_qty,
+             returned_qty,
+             notes
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            report.report_id,
+            Number(item.product_id),
+            String(product.product_name || ""),
+            String(product.category || ""),
+            String(product.unit || "unit"),
+            normalizeUsageQty(product.withdrawn_qty),
+            item.used_qty,
+            item.wasted_qty,
+            item.returned_qty,
+            item.note,
+          ],
+        );
+      }
+    } else {
+      await conn.query(
+        `UPDATE daily_usage_reports
+         SET status = 'pending',
+             created_by = COALESCE(?, created_by),
+             finalized_by = NULL,
+             finalized_at = NULL
+         WHERE report_id = ?`,
+        [Number.isFinite(createdBy) ? createdBy : null, report.report_id],
+      );
+      await conn.query(
+        `DELETE FROM daily_usage_report_items WHERE report_id = ?`,
+        [report.report_id],
+      );
+    }
+
+    await conn.commit();
+    const payload = await buildDailyUsagePayload({ reportId: report.report_id });
+    res.json(payload);
+  } catch (err) {
+    if (conn) await conn.rollback();
+    console.error("POST /inventory/daily-usage error:", err);
+    const errorMessage = String(err?.message || "Unknown error");
+    const isClientError = /must be stock_item|was not found|finalized/i.test(
+      errorMessage,
+    );
+    res
+      .status(isClientError ? 400 : 500)
+      .json({ message: isClientError ? errorMessage : "DB error", error: errorMessage });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+router.patch("/daily-usage/:id/finalize", async (req, res) => {
+  let conn;
+  try {
+    const reportId = Number(req.params.id);
+    const finalizedBy =
+      req.body.finalized_by == null ? null : Number(req.body.finalized_by);
+
+    if (!Number.isFinite(reportId) || reportId <= 0) {
+      return res.status(400).json({ message: "Invalid report id" });
+    }
+
+    conn = await db.getConnection();
+    await conn.beginTransaction();
+    await ensureDailyUsageTables(conn);
+
+    const [reportRows] = await conn.query(
+      `SELECT report_id, report_date, status
+       FROM daily_usage_reports
+       WHERE report_id = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [reportId],
+    );
+
+    if (reportRows.length === 0) {
+      await conn.rollback();
+      return res.status(404).json({ message: "Report not found" });
+    }
+
+    const report = reportRows[0];
+    if (String(report.status || "").toLowerCase() === "finalized") {
+      await conn.rollback();
+      return res.status(409).json({ message: "Report already finalized" });
+    }
+
+    const hasItemTypeColumn = await ensureProductsItemTypeSchema(conn);
+    const stockItemExpr = getProductItemTypeExpression(
+      hasItemTypeColumn,
+      "p",
+      "m",
+    );
+    const [itemRows] = await conn.query(
+      `SELECT
+         duri.usage_item_id,
+         duri.product_id,
+         duri.used_qty,
+         duri.wasted_qty,
+         duri.returned_qty,
+         COALESCE(inv.Daily_Withdrawn, 0) AS daily_withdrawn,
+         ${stockItemExpr} AS item_type,
+         EXISTS (
+           SELECT 1
+           FROM menu_item_ingredients mi
+           WHERE mi.product_id = duri.product_id
+         ) AS is_auto_usage
+       FROM daily_usage_report_items duri
+       LEFT JOIN Inventory inv ON inv.Product_ID = duri.product_id
+       LEFT JOIN products p ON p.id = duri.product_id
+       LEFT JOIN Menu m ON m.Product_ID = duri.product_id
+       WHERE duri.report_id = ?
+       ORDER BY duri.usage_item_id ASC
+       FOR UPDATE`,
+      [reportId],
+    );
+
+    for (const item of itemRows) {
+      if (String(item.item_type || STOCK_ITEM).trim().toLowerCase() !== STOCK_ITEM) {
+        throw new Error(`Daily usage product ${item.product_id} must be ${STOCK_ITEM}.`);
+      }
+
+      const usedQty = normalizeUsageQty(item.used_qty);
+      const wastedQty = normalizeUsageQty(item.wasted_qty);
+      const returnedQty = normalizeUsageQty(item.returned_qty);
+      const isAutoUsage = Number(item.is_auto_usage) === 1;
+      const deductionQty = (isAutoUsage ? 0 : usedQty) + wastedQty + returnedQty;
+      const availableQty = normalizeUsageQty(item.daily_withdrawn);
+
+      if (deductionQty > availableQty) {
+        throw new Error(
+          `Daily usage exceeds withdrawn stock for product ${item.product_id}. Required ${deductionQty}, available ${availableQty}.`,
+        );
+      }
+
+      await conn.query(
+        `UPDATE Inventory
+         SET Daily_Withdrawn = GREATEST(COALESCE(Daily_Withdrawn, 0) - ?, 0),
+             Wasted = COALESCE(Wasted, 0) + ?,
+             Returned = COALESCE(Returned, 0) + ?,
+             Last_Update = NOW()
+         WHERE Product_ID = ?`,
+        [deductionQty, wastedQty, returnedQty, item.product_id],
+      );
+    }
+
+    await conn.query(
+      `UPDATE daily_usage_reports
+       SET status = 'finalized',
+           finalized_by = ?,
+           finalized_at = NOW()
+       WHERE report_id = ?`,
+      [Number.isFinite(finalizedBy) ? finalizedBy : null, reportId],
+    );
+
+    await conn.commit();
+    const payload = await buildDailyUsagePayload({ reportId });
+    res.json(payload);
+  } catch (err) {
+    if (conn) await conn.rollback();
+    console.error("PATCH /inventory/daily-usage/:id/finalize error:", err);
+    const errorMessage = String(err?.message || "Unknown error");
+    const isClientError = /stock_item|was not found|already finalized|exceeds withdrawn stock|invalid report id/i.test(
+      errorMessage,
+    );
+    res
+      .status(isClientError ? 400 : 500)
+      .json({ message: isClientError ? errorMessage : "DB error", error: errorMessage });
+  } finally {
+    if (conn) conn.release();
   }
 });
 

@@ -384,6 +384,38 @@ CREATE TABLE IF NOT EXISTS kitchen_usage_items (
       ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS daily_usage_reports (
+    report_id INT AUTO_INCREMENT PRIMARY KEY,
+    report_date DATE NOT NULL,
+    status ENUM('pending','finalized') NOT NULL DEFAULT 'pending',
+    created_by INT NULL,
+    finalized_by INT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    finalized_at DATETIME NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_daily_usage_report_date (report_date)
+);
+
+CREATE TABLE IF NOT EXISTS daily_usage_report_items (
+    usage_item_id INT AUTO_INCREMENT PRIMARY KEY,
+    report_id INT NOT NULL,
+    product_id INT NOT NULL,
+    product_name VARCHAR(255) NOT NULL,
+    category VARCHAR(120) DEFAULT '',
+    unit VARCHAR(50) DEFAULT 'unit',
+    withdrawn_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
+    used_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
+    wasted_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
+    returned_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
+    notes TEXT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_daily_usage_report_product (report_id, product_id),
+    CONSTRAINT fk_daily_usage_items_report
+      FOREIGN KEY (report_id) REFERENCES daily_usage_reports(report_id)
+      ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS feedback (
     feedback_id INT AUTO_INCREMENT PRIMARY KEY,
     product_id INT NOT NULL,

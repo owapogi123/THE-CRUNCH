@@ -1,6 +1,24 @@
 const router = require("express").Router();
 const db = require("../config/db");
 
+async function addColumnIfMissing(tableName, columnName, definition) {
+  const [rows] = await db.query(
+    `SELECT 1
+       FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = ?
+        AND COLUMN_NAME = ?
+      LIMIT 1`,
+    [tableName, columnName],
+  );
+
+  if (rows.length === 0) {
+    await db.query(
+      `ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`,
+    );
+  }
+}
+
 async function ensureInventoryMasterTables() {
   await db.query(`
     CREATE TABLE IF NOT EXISTS inventory_categories (
@@ -24,20 +42,54 @@ async function ensureInventoryMasterTables() {
     )
   `);
 
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS system_settings (
+      setting_key VARCHAR(100) PRIMARY KEY,
+      settings_json LONGTEXT NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )
+  `);
+
+  await addColumnIfMissing(
+    "inventory_categories",
+    "type",
+    "ENUM('raw_material','ingredient','finished') NOT NULL DEFAULT 'ingredient'",
+  );
+  await addColumnIfMissing(
+    "inventory_categories",
+    "shelf_life_enabled",
+    "BOOLEAN NOT NULL DEFAULT FALSE",
+  );
+  await addColumnIfMissing(
+    "inventory_categories",
+    "default_shelf_life_days",
+    "INT NULL",
+  );
+  await addColumnIfMissing(
+    "inventory_units",
+    "base_unit",
+    "VARCHAR(100) NULL",
+  );
+  await addColumnIfMissing(
+    "inventory_units",
+    "conversion_to_base",
+    "DECIMAL(12,4) NULL",
+  );
+
   const categorySeeds = [
-    ["Raw Material", 1],
-    ["Sauces", 0],
-    ["Ingredients", 0],
-    ["Aromatics", 0],
+    ["Raw Material", 1, "raw_material"],
+    ["Sauces", 0, "ingredient"],
+    ["Ingredients", 0, "ingredient"],
+    ["Aromatics", 0, "ingredient"],
   ];
-  for (const [name, usesShelfLife] of categorySeeds) {
+  for (const [name, usesShelfLife, type] of categorySeeds) {
     await db.query(
-      `INSERT INTO inventory_categories (name, uses_shelf_life)
-       SELECT ?, ?
+      `INSERT INTO inventory_categories (name, uses_shelf_life, type, shelf_life_enabled)
+       SELECT ?, ?, ?, ?
        WHERE NOT EXISTS (
          SELECT 1 FROM inventory_categories WHERE LOWER(name) = LOWER(?)
        )`,
-      [name, usesShelfLife, name],
+      [name, usesShelfLife, type, usesShelfLife, name],
     );
   }
 
@@ -63,6 +115,21 @@ async function ensureInventoryMasterTables() {
   }
 }
 
+function normalizeNumber(value, fieldName, { allowNull = false, min = null } = {}) {
+  if (value === null || value === undefined || value === "") {
+    if (allowNull) return null;
+    throw new Error(`${fieldName} is required`);
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    throw new Error(`${fieldName} must be a valid number`);
+  }
+  if (min !== null && numeric < min) {
+    throw new Error(`${fieldName} must be at least ${min}`);
+  }
+  return numeric;
+}
+
 function normalizeName(value, fieldName) {
   const normalized = String(value ?? "").trim();
   if (!normalized) {
@@ -83,6 +150,126 @@ function normalizeBoolean(value, fallback = false) {
   return fallback;
 }
 
+function normalizeEnum(value, allowedValues, fieldName, fallback) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return fallback;
+  if (!allowedValues.includes(normalized)) {
+    throw new Error(
+      `${fieldName} must be one of: ${allowedValues.join(", ")}`,
+    );
+  }
+  return normalized;
+}
+
+function sanitizeSettingsPayload(payload) {
+  const source = payload && typeof payload === "object" ? payload : {};
+  return {
+    restaurantName: String(source.restaurantName ?? ""),
+    tagline: String(source.tagline ?? ""),
+    email: String(source.email ?? ""),
+    phone: String(source.phone ?? ""),
+    address: String(source.address ?? ""),
+    currency: String(source.currency ?? "PHP"),
+    timezone: String(source.timezone ?? "Asia/Manila"),
+    openTime: String(source.openTime ?? "08:00"),
+    closeTime: String(source.closeTime ?? "22:00"),
+    orderTypes: {
+      dineIn: normalizeBoolean(source.orderTypes?.dineIn, true),
+      takeout: normalizeBoolean(source.orderTypes?.takeout, true),
+      delivery: normalizeBoolean(source.orderTypes?.delivery, false),
+    },
+    queueManagement: normalizeBoolean(source.queueManagement, false),
+    maxTableCapacity: String(source.maxTableCapacity ?? ""),
+    requireTableNumber: normalizeBoolean(source.requireTableNumber, true),
+    allowSplitBills: normalizeBoolean(source.allowSplitBills, false),
+    enableLoyaltyPoints: normalizeBoolean(source.enableLoyaltyPoints, false),
+    lowStockThreshold: String(source.lowStockThreshold ?? ""),
+    criticalStockThreshold: String(source.criticalStockThreshold ?? ""),
+    autoReorderEnabled: normalizeBoolean(source.autoReorderEnabled, false),
+    trackExpiry: normalizeBoolean(source.trackExpiry, false),
+    wasteLogging: normalizeBoolean(source.wasteLogging, false),
+    defaultUsageType: normalizeEnum(
+      source.defaultUsageType,
+      ["manual", "auto"],
+      "defaultUsageType",
+      "manual",
+    ),
+    requireInventoryApproval: normalizeBoolean(
+      source.requireInventoryApproval,
+      true,
+    ),
+    allowNegativeStock: normalizeBoolean(source.allowNegativeStock, false),
+    nearExpiryWarningDays: String(source.nearExpiryWarningDays ?? "3"),
+    requireDailyUsageSubmission: normalizeBoolean(
+      source.requireDailyUsageSubmission,
+      true,
+    ),
+    autoFinalizeUsage: normalizeBoolean(source.autoFinalizeUsage, false),
+    outOfStockBehavior: normalizeEnum(
+      source.outOfStockBehavior,
+      ["hide", "disable"],
+      "outOfStockBehavior",
+      "disable",
+    ),
+    emailNotifications: normalizeBoolean(source.emailNotifications, true),
+    smsNotifications: normalizeBoolean(source.smsNotifications, false),
+    orderAlerts: normalizeBoolean(source.orderAlerts, true),
+    staffAlerts: normalizeBoolean(source.staffAlerts, false),
+    dailyReportTime: String(source.dailyReportTime ?? "08:00"),
+    taxRate: String(source.taxRate ?? ""),
+    serviceCharge: String(source.serviceCharge ?? ""),
+    receiptFooter: String(source.receiptFooter ?? ""),
+    printerEnabled: normalizeBoolean(source.printerEnabled, false),
+    kitchenPrinterEnabled: normalizeBoolean(source.kitchenPrinterEnabled, false),
+    maintenanceMode: normalizeBoolean(source.maintenanceMode, false),
+  };
+}
+
+router.get("/", async (_req, res) => {
+  try {
+    await ensureInventoryMasterTables();
+    const [rows] = await db.query(
+      `SELECT settings_json
+         FROM system_settings
+        WHERE setting_key = 'restaurant_settings'
+        LIMIT 1`,
+    );
+
+    if (rows.length === 0 || !rows[0].settings_json) {
+      return res.json({});
+    }
+
+    const parsed = JSON.parse(rows[0].settings_json);
+    res.json(parsed && typeof parsed === "object" ? parsed : {});
+  } catch (error) {
+    console.error("GET /api/settings error:", error);
+    res.status(500).json({
+      message: "Failed to load settings",
+      error: error.message,
+    });
+  }
+});
+
+router.post("/", async (req, res) => {
+  try {
+    await ensureInventoryMasterTables();
+    const sanitized = sanitizeSettingsPayload(req.body);
+    await db.query(
+      `INSERT INTO system_settings (setting_key, settings_json)
+       VALUES ('restaurant_settings', ?)
+       ON DUPLICATE KEY UPDATE settings_json = VALUES(settings_json)`,
+      [JSON.stringify(sanitized)],
+    );
+    res.json(sanitized);
+  } catch (error) {
+    console.error("POST /api/settings error:", error);
+    res.status(400).json({
+      message: error.message || "Failed to save settings",
+      error: error.message,
+    });
+  }
+});
+
 router.get("/inventory-categories", async (req, res) => {
   try {
     await ensureInventoryMasterTables();
@@ -92,6 +279,9 @@ router.get("/inventory-categories", async (req, res) => {
          category_id,
          name,
          uses_shelf_life,
+         type,
+         shelf_life_enabled,
+         default_shelf_life_days,
          is_active,
          created_at,
          updated_at
@@ -114,6 +304,25 @@ router.post("/inventory-categories", async (req, res) => {
     await ensureInventoryMasterTables();
     const name = normalizeName(req.body?.name, "Category name");
     const usesShelfLife = normalizeBoolean(req.body?.uses_shelf_life, false);
+    const type = normalizeEnum(
+      req.body?.type,
+      ["raw_material", "ingredient", "finished"],
+      "type",
+      usesShelfLife ? "raw_material" : "ingredient",
+    );
+    const shelfLifeEnabled = normalizeBoolean(
+      req.body?.shelf_life_enabled,
+      usesShelfLife,
+    );
+    const defaultShelfLifeDays = Object.prototype.hasOwnProperty.call(
+      req.body || {},
+      "default_shelf_life_days",
+    )
+      ? normalizeNumber(req.body?.default_shelf_life_days, "default_shelf_life_days", {
+          allowNull: true,
+          min: 0,
+        })
+      : null;
 
     const [existing] = await db.query(
       `SELECT category_id
@@ -127,13 +336,35 @@ router.post("/inventory-categories", async (req, res) => {
     }
 
     const [result] = await db.query(
-      `INSERT INTO inventory_categories (name, uses_shelf_life, is_active)
-       VALUES (?, ?, TRUE)`,
-      [name, usesShelfLife ? 1 : 0],
+      `INSERT INTO inventory_categories (
+         name,
+         uses_shelf_life,
+         type,
+         shelf_life_enabled,
+         default_shelf_life_days,
+         is_active
+       )
+       VALUES (?, ?, ?, ?, ?, TRUE)`,
+      [
+        name,
+        usesShelfLife ? 1 : 0,
+        type,
+        shelfLifeEnabled ? 1 : 0,
+        defaultShelfLifeDays,
+      ],
     );
 
     const [rows] = await db.query(
-      `SELECT category_id, name, uses_shelf_life, is_active, created_at, updated_at
+      `SELECT
+         category_id,
+         name,
+         uses_shelf_life,
+         type,
+         shelf_life_enabled,
+         default_shelf_life_days,
+         is_active,
+         created_at,
+         updated_at
        FROM inventory_categories
        WHERE category_id = ?`,
       [result.insertId],
@@ -182,6 +413,33 @@ router.patch("/inventory-categories/:id", async (req, res) => {
       values.push(normalizeBoolean(req.body.uses_shelf_life, false) ? 1 : 0);
     }
 
+    if (Object.prototype.hasOwnProperty.call(req.body, "type")) {
+      updates.push("type = ?");
+      values.push(
+        normalizeEnum(
+          req.body.type,
+          ["raw_material", "ingredient", "finished"],
+          "type",
+          "ingredient",
+        ),
+      );
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, "shelf_life_enabled")) {
+      updates.push("shelf_life_enabled = ?");
+      values.push(normalizeBoolean(req.body.shelf_life_enabled, false) ? 1 : 0);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, "default_shelf_life_days")) {
+      updates.push("default_shelf_life_days = ?");
+      values.push(
+        normalizeNumber(req.body.default_shelf_life_days, "default_shelf_life_days", {
+          allowNull: true,
+          min: 0,
+        }),
+      );
+    }
+
     if (Object.prototype.hasOwnProperty.call(req.body, "is_active")) {
       updates.push("is_active = ?");
       values.push(normalizeBoolean(req.body.is_active, true) ? 1 : 0);
@@ -204,7 +462,16 @@ router.patch("/inventory-categories/:id", async (req, res) => {
     }
 
     const [rows] = await db.query(
-      `SELECT category_id, name, uses_shelf_life, is_active, created_at, updated_at
+      `SELECT
+         category_id,
+         name,
+         uses_shelf_life,
+         type,
+         shelf_life_enabled,
+         default_shelf_life_days,
+         is_active,
+         created_at,
+         updated_at
        FROM inventory_categories
        WHERE category_id = ?`,
       [categoryId],
@@ -259,6 +526,8 @@ router.get("/inventory-units", async (req, res) => {
          unit_id,
          name,
          abbreviation,
+         base_unit,
+         conversion_to_base,
          is_active,
          created_at,
          updated_at
@@ -281,6 +550,16 @@ router.post("/inventory-units", async (req, res) => {
     await ensureInventoryMasterTables();
     const name = normalizeName(req.body?.name, "Unit name");
     const abbreviation = normalizeOptionalString(req.body?.abbreviation);
+    const baseUnit = normalizeOptionalString(req.body?.base_unit);
+    const conversionToBase = Object.prototype.hasOwnProperty.call(
+      req.body || {},
+      "conversion_to_base",
+    )
+      ? normalizeNumber(req.body?.conversion_to_base, "conversion_to_base", {
+          allowNull: true,
+          min: 0,
+        })
+      : null;
 
     const [existing] = await db.query(
       `SELECT unit_id
@@ -294,13 +573,27 @@ router.post("/inventory-units", async (req, res) => {
     }
 
     const [result] = await db.query(
-      `INSERT INTO inventory_units (name, abbreviation, is_active)
-       VALUES (?, ?, TRUE)`,
-      [name, abbreviation],
+      `INSERT INTO inventory_units (
+         name,
+         abbreviation,
+         base_unit,
+         conversion_to_base,
+         is_active
+       )
+       VALUES (?, ?, ?, ?, TRUE)`,
+      [name, abbreviation, baseUnit, conversionToBase],
     );
 
     const [rows] = await db.query(
-      `SELECT unit_id, name, abbreviation, is_active, created_at, updated_at
+      `SELECT
+         unit_id,
+         name,
+         abbreviation,
+         base_unit,
+         conversion_to_base,
+         is_active,
+         created_at,
+         updated_at
        FROM inventory_units
        WHERE unit_id = ?`,
       [result.insertId],
@@ -349,6 +642,21 @@ router.patch("/inventory-units/:id", async (req, res) => {
       values.push(normalizeOptionalString(req.body.abbreviation));
     }
 
+    if (Object.prototype.hasOwnProperty.call(req.body, "base_unit")) {
+      updates.push("base_unit = ?");
+      values.push(normalizeOptionalString(req.body.base_unit));
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, "conversion_to_base")) {
+      updates.push("conversion_to_base = ?");
+      values.push(
+        normalizeNumber(req.body.conversion_to_base, "conversion_to_base", {
+          allowNull: true,
+          min: 0,
+        }),
+      );
+    }
+
     if (Object.prototype.hasOwnProperty.call(req.body, "is_active")) {
       updates.push("is_active = ?");
       values.push(normalizeBoolean(req.body.is_active, true) ? 1 : 0);
@@ -371,7 +679,15 @@ router.patch("/inventory-units/:id", async (req, res) => {
     }
 
     const [rows] = await db.query(
-      `SELECT unit_id, name, abbreviation, is_active, created_at, updated_at
+      `SELECT
+         unit_id,
+         name,
+         abbreviation,
+         base_unit,
+         conversion_to_base,
+         is_active,
+         created_at,
+         updated_at
        FROM inventory_units
        WHERE unit_id = ?`,
       [unitId],
