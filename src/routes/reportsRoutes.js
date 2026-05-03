@@ -1,5 +1,10 @@
 const router = require("express").Router();
 const db = require("../config/db");
+const {
+  STOCK_ITEM,
+  ensureProductsItemTypeSchema,
+  getProductItemTypeExpression,
+} = require("../utils/productItemType");
 
 async function reportTypeColumn() {
   const [rows] = await db.query("SHOW COLUMNS FROM Reports");
@@ -44,6 +49,8 @@ router.get("/weekly", async (req, res) => {
   const endStr = endDate.toISOString().split("T")[0];
 
   try {
+    const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+    const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p", "m");
     const [withdrawalRows] = await db.query(
       `SELECT
         m.Product_ID                                                       AS product_id,
@@ -55,14 +62,16 @@ router.get("/weekly", async (req, res) => {
         COALESCE(SUM(CASE WHEN LOWER(ss.Type) = 'spoilage' THEN ss.Quantity ELSE 0 END), 0) AS wasted
       FROM Stock_Status ss
       JOIN Menu m ON m.Product_ID = ss.Product_ID
+      LEFT JOIN products p ON p.id = m.Product_ID
       LEFT JOIN (
         SELECT product_id, MAX(unit) AS unit
         FROM batches
         GROUP BY product_id
       ) bu ON bu.product_id = ss.Product_ID
       WHERE DATE(ss.Status_Date) >= ? AND DATE(ss.Status_Date) < ?
+        AND ${itemTypeExpr} = ?
       GROUP BY m.Product_ID, m.Product_Name, m.Category_Name, bu.unit`,
-      [startStr, endStr],
+      [startStr, endStr, STOCK_ITEM],
     );
 
     const [receivedRows] = await db.query(
@@ -70,13 +79,21 @@ router.get("/weekly", async (req, res) => {
         b.product_id,
         COALESCE(SUM(b.quantity), 0) AS received
       FROM batches b
+      LEFT JOIN products p ON p.id = b.product_id
+      LEFT JOIN Menu m ON m.Product_ID = b.product_id
       WHERE DATE(b.received_date) >= ? AND DATE(b.received_date) < ?
+        AND ${itemTypeExpr} = ?
       GROUP BY b.product_id`,
-      [startStr, endStr],
+      [startStr, endStr, STOCK_ITEM],
     );
 
     const [stockRows] = await db.query(
-      `SELECT Product_ID AS product_id, COALESCE(Stock, 0) AS remaining FROM Inventory`,
+      `SELECT i.Product_ID AS product_id, COALESCE(i.Stock, 0) AS remaining
+       FROM Inventory i
+       LEFT JOIN products p ON p.id = i.Product_ID
+       LEFT JOIN Menu m ON m.Product_ID = i.Product_ID
+       WHERE ${itemTypeExpr} = ?`,
+      [STOCK_ITEM],
     );
 
     const receivedMap = Object.fromEntries(
@@ -127,6 +144,8 @@ router.get("/monthly", async (req, res) => {
   const daysInMonth = new Date(Number(year), Number(month), 0).getDate();
 
   try {
+    const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+    const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p", "m");
     const [withdrawalRows] = await db.query(
       `SELECT
         m.Product_ID                                                       AS product_id,
@@ -138,14 +157,16 @@ router.get("/monthly", async (req, res) => {
         COALESCE(SUM(CASE WHEN LOWER(ss.Type) = 'spoilage' THEN ss.Quantity ELSE 0 END), 0) AS wasted
       FROM Stock_Status ss
       JOIN Menu m ON m.Product_ID = ss.Product_ID
+      LEFT JOIN products p ON p.id = m.Product_ID
       LEFT JOIN (
         SELECT product_id, MAX(unit) AS unit
         FROM batches
         GROUP BY product_id
       ) bu ON bu.product_id = ss.Product_ID
       WHERE DATE(ss.Status_Date) >= ? AND DATE(ss.Status_Date) < ?
+        AND ${itemTypeExpr} = ?
       GROUP BY m.Product_ID, m.Product_Name, m.Category_Name, bu.unit`,
-      [startStr, endStr],
+      [startStr, endStr, STOCK_ITEM],
     );
 
     const [receivedRows] = await db.query(
@@ -153,13 +174,21 @@ router.get("/monthly", async (req, res) => {
         b.product_id,
         COALESCE(SUM(b.quantity), 0) AS received
       FROM batches b
+      LEFT JOIN products p ON p.id = b.product_id
+      LEFT JOIN Menu m ON m.Product_ID = b.product_id
       WHERE DATE(b.received_date) >= ? AND DATE(b.received_date) < ?
+        AND ${itemTypeExpr} = ?
       GROUP BY b.product_id`,
-      [startStr, endStr],
+      [startStr, endStr, STOCK_ITEM],
     );
 
     const [stockRows] = await db.query(
-      `SELECT Product_ID AS product_id, COALESCE(Stock, 0) AS remaining FROM Inventory`,
+      `SELECT i.Product_ID AS product_id, COALESCE(i.Stock, 0) AS remaining
+       FROM Inventory i
+       LEFT JOIN products p ON p.id = i.Product_ID
+       LEFT JOIN Menu m ON m.Product_ID = i.Product_ID
+       WHERE ${itemTypeExpr} = ?`,
+      [STOCK_ITEM],
     );
 
     const receivedMap = Object.fromEntries(

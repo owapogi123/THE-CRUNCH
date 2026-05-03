@@ -1,5 +1,10 @@
 const router = require("express").Router();
 const db = require("../config/db");
+const {
+  STOCK_ITEM,
+  ensureProductsItemTypeSchema,
+  getProductItemTypeExpression,
+} = require("../utils/productItemType");
 
 async function getSuppliersColumns() {
   const [rows] = await db.query("SHOW COLUMNS FROM Suppliers");
@@ -48,6 +53,70 @@ function normalizeProductsSupplied(value) {
     .join(", ");
 
   return normalized || null;
+}
+
+async function assertProductIdIsStockItem(productId) {
+  if (productId == null) return;
+  const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+  const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p", "m");
+  const [[row]] = await db.query(
+    `SELECT ${itemTypeExpr} AS item_type
+     FROM products p
+     LEFT JOIN Menu m ON m.Product_ID = p.id
+     WHERE p.id = ?
+     LIMIT 1`,
+    [productId],
+  );
+
+  if (!row) {
+    throw new Error("Referenced product was not found");
+  }
+
+  if (String(row.item_type || STOCK_ITEM).trim().toLowerCase() !== STOCK_ITEM) {
+    throw new Error("Supplier products must reference stock_item records");
+  }
+}
+
+async function assertProductNamesAreStockItems(productNames) {
+  const normalizedNames = Array.from(
+    new Set(
+      (productNames ?? [])
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean),
+    ),
+  );
+
+  if (normalizedNames.length === 0) return;
+
+  const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+  const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p", "m");
+  const [rows] = await db.query(
+    `SELECT LOWER(TRIM(p.name)) AS normalized_name,
+            ${itemTypeExpr} AS item_type
+     FROM products p
+     LEFT JOIN Menu m ON m.Product_ID = p.id
+     WHERE LOWER(TRIM(p.name)) IN (?)`,
+    [normalizedNames.map((name) => name.toLowerCase())],
+  );
+
+  const allowedNames = new Set(
+    rows
+      .filter(
+        (row) =>
+          String(row.item_type || STOCK_ITEM).trim().toLowerCase() === STOCK_ITEM,
+      )
+      .map((row) => String(row.normalized_name || "").trim().toLowerCase()),
+  );
+
+  const invalidNames = normalizedNames.filter(
+    (name) => !allowedNames.has(name.toLowerCase()),
+  );
+
+  if (invalidNames.length > 0) {
+    throw new Error(
+      `Supplier products must be stock_item records: ${invalidNames.join(", ")}`,
+    );
+  }
 }
 
 // Helper to log supplier activity
@@ -164,6 +233,7 @@ router.put("/:supplier_id", async (req, res) => {
       Object.prototype.hasOwnProperty.call(req.body, "product_id")
     ) {
       const productId = normalizeOptionalProductId(req.body.product_id);
+      await assertProductIdIsStockItem(productId);
 
       updates.push("Product_ID = ?");
       values.push(productId);
@@ -188,6 +258,9 @@ router.put("/:supplier_id", async (req, res) => {
     ) {
       const productsSupplied = normalizeProductsSupplied(
         req.body.products_supplied,
+      );
+      await assertProductNamesAreStockItems(
+        productsSupplied ? productsSupplied.split(",") : [],
       );
       updates.push("Products_Supplied = ?");
       values.push(productsSupplied);
@@ -223,7 +296,11 @@ router.put("/:supplier_id", async (req, res) => {
     res.json(updatedRows[0]);
   } catch (err) {
     console.error("Error updating supplier:", err);
-    res.status(500).json({ message: "DB error", error: err.message });
+    const errorMessage = String(err?.message || "Unknown error");
+    const isClientError = /stock_item|not found/i.test(errorMessage);
+    res
+      .status(isClientError ? 400 : 500)
+      .json({ message: isClientError ? errorMessage : "DB error", error: errorMessage });
   }
 });
 
@@ -253,8 +330,10 @@ router.post("/", async (req, res) => {
     }
 
     if (columns.has("product_id")) {
+      const normalizedProductId = normalizeOptionalProductId(rawProductId);
+      await assertProductIdIsStockItem(normalizedProductId);
       fieldNames.push("Product_ID");
-      values.push(normalizeOptionalProductId(rawProductId));
+      values.push(normalizedProductId);
     }
 
     if (columns.has("email")) {
@@ -263,8 +342,12 @@ router.post("/", async (req, res) => {
     }
 
     if (columns.has("products_supplied")) {
+      const normalizedProductsSupplied = normalizeProductsSupplied(products_supplied);
+      await assertProductNamesAreStockItems(
+        normalizedProductsSupplied ? normalizedProductsSupplied.split(",") : [],
+      );
       fieldNames.push("Products_Supplied");
-      values.push(normalizeProductsSupplied(products_supplied));
+      values.push(normalizedProductsSupplied);
     }
 
     const placeholders = fieldNames.map(() => "?").join(", ");
@@ -298,7 +381,11 @@ router.post("/", async (req, res) => {
     res.status(201).json(createdRows[0]);
   } catch (err) {
     console.error("Error creating supplier:", err);
-    res.status(500).json({ message: "DB error", error: err.message });
+    const errorMessage = String(err?.message || "Unknown error");
+    const isClientError = /stock_item|not found/i.test(errorMessage);
+    res
+      .status(isClientError ? 400 : 500)
+      .json({ message: isClientError ? errorMessage : "DB error", error: errorMessage });
   }
 });
 
@@ -392,6 +479,7 @@ router.patch("/:supplier_id/products", async (req, res) => {
     const incomingProducts = normalizeProductsSupplied(products)
       ? normalizeProductsSupplied(products).split(", ")
       : [];
+    await assertProductNamesAreStockItems(incomingProducts);
 
     // Merge — no duplicates (case-insensitive check)
     const merged = [...existingProducts];
@@ -441,7 +529,11 @@ router.patch("/:supplier_id/products", async (req, res) => {
     res.json(updatedRows[0]);
   } catch (err) {
     console.error("PATCH /suppliers/:id/products error:", err);
-    res.status(500).json({ message: "DB error", error: err.message });
+    const errorMessage = String(err?.message || "Unknown error");
+    const isClientError = /stock_item|not found/i.test(errorMessage);
+    res
+      .status(isClientError ? 400 : 500)
+      .json({ message: isClientError ? errorMessage : "DB error", error: errorMessage });
   }
 });
 
