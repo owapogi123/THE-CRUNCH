@@ -262,8 +262,10 @@ const api = {
     }),
   postSpoilage: (body: {
     product_id: number;
+    menu_code?: string;
     quantity: number;
     recorded_by: string | null;
+    reason?: "expired" | "past_shelf_life";
   }) =>
     apiFetch<{
       success: boolean;
@@ -832,14 +834,36 @@ function getShelfLifeStatus({
     : "Usable";
 }
 
+function getProductUiStatus(
+  product: Pick<
+    Product,
+    "mainStock" | "usableUntil" | "shelfLifeDays" | "shelfLifeHours"
+  >,
+): "Out of Stock" | "Past Shelf Life" | "Usable" {
+  if (toNumber(product.mainStock) <= 0) return "Out of Stock";
+
+  const shelfLifeStatus = getShelfLifeStatus({
+    usableUntil: product.usableUntil,
+    shelfLifeDays: product.shelfLifeDays,
+    shelfLifeHours: product.shelfLifeHours,
+  });
+
+  return shelfLifeStatus === "Past Shelf Life"
+    ? "Past Shelf Life"
+    : "Usable";
+}
+
 function RawMaterialTimingCell({ product }: { product: Product }) {
+  const uiStatus = getProductUiStatus(product);
   const status = getShelfLifeStatus({
     usableUntil: product.usableUntil,
     shelfLifeDays: product.shelfLifeDays,
     shelfLifeHours: product.shelfLifeHours,
   });
   const statusClass =
-    status === "Past Shelf Life"
+    uiStatus === "Out of Stock"
+      ? "bg-slate-100 text-slate-700 border border-slate-200"
+      : status === "Past Shelf Life"
       ? "bg-red-100 text-red-600 border border-red-200"
       : status === "Near End of Shelf Life"
         ? "bg-yellow-50 text-yellow-700 border border-yellow-200"
@@ -859,7 +883,7 @@ function RawMaterialTimingCell({ product }: { product: Product }) {
       <span
         className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusClass}`}
       >
-        {status}
+        {uiStatus === "Out of Stock" ? uiStatus : status}
       </span>
     </div>
   );
@@ -4326,8 +4350,12 @@ export default function StockManager() {
   const [yesterdayReturns, setYesterdayReturns] = useState<Batch[]>([]);
   const [kitchenBatches, setKitchenBatches] = useState<KitchenBatch[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [disposingProductId, setDisposingProductId] = useState<number | null>(
+    null,
+  );
   const [dashboardSummary, setDashboardSummary] =
     useState<DashboardSummaryKey | null>(null);
   const [wdProductId, setWdProductId] = useState<number | null>(null);
@@ -4516,6 +4544,7 @@ export default function StockManager() {
 
   const fetchAll = useCallback(async () => {
     setIsLoading(true);
+    setIsRefreshing(true);
     setError(null);
     try {
       const [
@@ -4656,6 +4685,7 @@ export default function StockManager() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load data.");
     } finally {
+      setIsRefreshing(false);
       setIsLoading(false);
     }
   }, [normalizeKitchenUsagePayload]);
@@ -5749,12 +5779,14 @@ export default function StockManager() {
       return;
     }
 
-    setSubmitting(true);
+    setDisposingProductId(product.product_id);
     try {
       await api.postSpoilage({
         product_id: product.product_id,
+        menu_code: `M-${String(product.product_id).padStart(3, "0")}`,
         quantity: qty,
         recorded_by: null,
+        reason: product.isRawMaterial ? "past_shelf_life" : "expired",
       });
       await fetchAll();
       showToast("Expired stock recorded as spoilage.", "success");
@@ -5764,7 +5796,7 @@ export default function StockManager() {
         "error",
       );
     } finally {
-      setSubmitting(false);
+      setDisposingProductId(null);
     }
   }
 
@@ -5879,10 +5911,10 @@ export default function StockManager() {
               )}
               <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg">
                 <span
-                  className={`w-2 h-2 rounded-full ${isLoading ? "bg-amber-400" : "bg-emerald-400"}`}
+                  className={`w-2 h-2 rounded-full ${isLoading || isRefreshing ? "bg-amber-400" : "bg-emerald-400"}`}
                 />
                 <span className="text-xs font-medium text-slate-600">
-                  {isLoading ? "Syncing" : "Up to date"}
+                  {isLoading || isRefreshing ? "Syncing" : "Up to date"}
                 </span>
               </div>
             </div>
@@ -6201,10 +6233,11 @@ export default function StockManager() {
                                 p,
                                 activeBatches,
                               );
-                              const isPastShelfLife =
+                              const hasPastShelfLife =
                                 shelfLifeStatus === "Past Shelf Life";
+                              const uiStatus = getProductUiStatus(p);
                               const status = getStockStatus(p);
-                              const isOutOfStock = toNumber(p.mainStock) === 0;
+                              const isOutOfStock = uiStatus === "Out of Stock";
                               const statusDotClass = isOutOfStock
                                 ? "bg-slate-500"
                                 : STATUS_DOT[status];
@@ -6214,15 +6247,12 @@ export default function StockManager() {
                               const statusBadgeClass = isOutOfStock
                                 ? "bg-slate-100 text-slate-700"
                                 : p.isRawMaterial
-                                  ? shelfLifeStatus === "Past Shelf Life"
+                                  ? uiStatus === "Past Shelf Life"
                                     ? "bg-red-100 text-red-700"
-                                    : shelfLifeStatus ===
-                                        "Near End of Shelf Life"
-                                      ? "bg-yellow-100 text-yellow-700"
-                                      : "bg-emerald-100 text-emerald-700"
+                                    : "bg-emerald-100 text-emerald-700"
                                   : STATUS_BADGE[status];
                               const statusLabel = p.isRawMaterial
-                                ? shelfLifeStatus || "Usable"
+                                ? uiStatus
                                 : isOutOfStock
                                   ? "Out of Stock"
                                   : status;
@@ -6241,7 +6271,7 @@ export default function StockManager() {
                                     animationDelay: `${i * 0.04}s`,
                                   }}
                                   className={`border-b transition-colors ${
-                                    isPastShelfLife
+                                    hasPastShelfLife
                                       ? "border-red-100 bg-red-50/30 hover:bg-red-50/50 opacity-80"
                                       : "border-slate-50 hover:bg-slate-50/70"
                                   }`}
@@ -6271,7 +6301,7 @@ export default function StockManager() {
                                           {p.unit}
                                         </span>
                                       </span>
-                                      {isPastShelfLife && (
+                                      {hasPastShelfLife && (
                                         <span className="inline-flex items-center rounded-full bg-red-100 text-red-700 px-2 py-0.5 text-[10px] font-semibold">
                                           Expired
                                         </span>
@@ -6305,25 +6335,34 @@ export default function StockManager() {
                                     </span>
                                   </td>
                                   <td className="py-3.5 px-4 text-center">
-                                    {isPastShelfLife ? (
-                                      <div className="flex items-center justify-center gap-2">
+                                    {hasPastShelfLife ? (
+                                      <div className="relative z-10 flex items-center justify-center gap-2 pointer-events-auto">
                                         <button
-                                          onClick={() =>
-                                            handlePastShelfLifeDispose(p)
-                                          }
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            void handlePastShelfLifeDispose(p);
+                                          }}
                                           disabled={
-                                            submitting ||
+                                            disposingProductId ===
+                                              p.product_id ||
                                             toNumber(p.dailyWithdrawn) <= 0
                                           }
                                           className="px-2.5 py-1 rounded-lg bg-red-500 text-white text-[11px] font-semibold hover:bg-red-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                                           title={`Dispose expired ${p.product_name}`}
                                         >
-                                          Dispose
+                                          {disposingProductId === p.product_id
+                                            ? "Disposing..."
+                                            : "Dispose"}
                                         </button>
                                         <button
-                                          onClick={() =>
-                                            handlePastShelfLifeReturn(p)
-                                          }
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            void handlePastShelfLifeReturn(p);
+                                          }}
                                           disabled={submitting}
                                           className="px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-700 text-[11px] font-semibold hover:bg-emerald-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                                           title={`Return expired ${p.product_name}`}
@@ -6333,9 +6372,12 @@ export default function StockManager() {
                                       </div>
                                     ) : (
                                       <button
-                                        onClick={() =>
-                                          handleDashboardDeleteProduct(p)
-                                        }
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          void handleDashboardDeleteProduct(p);
+                                        }}
                                         className="inline-flex items-center justify-center p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
                                         title={`Delete ${p.product_name}`}
                                       >
