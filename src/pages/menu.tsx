@@ -20,6 +20,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { api, apiCall } from "../lib/api";
 import { Sidebar } from "@/components/Sidebar";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useAuth } from "../context/authcontext";
 
 // ─── FONT ─────────────────────────────────────────────────────────────────────
 if (
@@ -130,9 +131,16 @@ const isFood = (item: MenuItem) =>
   String(item.itemType ?? "menu_item").trim().toLowerCase() === "menu_item";
 
 const isUnavailableStatus = (value: unknown) =>
-  ["unavailable", "out of stock", "hidden"].includes(
+  ["unavailable", "out of stock", "hidden", "not configured"].includes(
     String(value ?? "").trim().toLowerCase(),
   );
+
+const isPaidStatus = (value?: string | null) =>
+  String(value || "").trim().toLowerCase() === "paid";
+
+function getReadyOrderActionLabel(_order?: unknown) {
+  return "Ready";
+}
 
 const fmt = (n: number) => {
   const [int, dec] = n.toFixed(2).split(".");
@@ -2190,6 +2198,7 @@ function SuccessModal({
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 export default function CashierView() {
   const isMobile = useIsMobile();
+  const { user } = useAuth();
   const isFirstPoll = useRef(true);
   const { toasts, toast, dismiss } = useToast();
 
@@ -2333,10 +2342,10 @@ export default function CashierView() {
           return next;
         });
 
-        setReadyPickupOrders(readyData ?? []);
+        setReadyPickupOrders((readyData ?? []).filter((order) => isPaidStatus(order.paymentStatus)));
 
         setDeliveryHandoverOrders((prev) => {
-          const next = deliveryData ?? [];
+          const next = (deliveryData ?? []).filter((order) => isPaidStatus(order.paymentStatus));
           if (!isFirst && next.length > prev.length && next.length > 0) {
             setDeliveryHandoverOpen(true);
           }
@@ -2353,6 +2362,10 @@ export default function CashierView() {
   }, []);
 
   const getCashierId = () => {
+    const authUserId = Number(user?.userId ?? 0);
+    if (Number.isFinite(authUserId) && authUserId > 0) {
+      return authUserId;
+    }
     const raw =
       localStorage.getItem("userId") ?? sessionStorage.getItem("userId");
     return raw ? Number(raw) : null;
@@ -2431,7 +2444,6 @@ export default function CashierView() {
       setSavingHandover(true);
       await updateQueueOrder(handoverOrder.id, {
         status: "Completed",
-        paymentStatus: "Paid",
         cashierId: getCashierId(),
         handoverTimestamp,
         riderName: riderNameInput.trim(),

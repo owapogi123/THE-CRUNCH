@@ -311,9 +311,10 @@ export default function Order() {
   };
   const handleStart  = (id: string) => patch(id, { status: "preparing" });
   const handleReady = async (order: OrderCard) => {
+    const effectiveOrderType = order.orderType || order.status;
     try {
       await api.patch(`/orders/${order.id}`, { status: "Ready for Pickup" });
-      if (order.orderType !== "delivery") {
+      if (effectiveOrderType !== "delivery" && !order.isOnlinePickup) {
         await api.patch(`/orders/${order.id}`, { status: "Completed" });
       }
       fetchAll();
@@ -789,9 +790,11 @@ export default function Order() {
                                   color: isPrep ? "#374151" : "#d1d5db",
                                   transition: "all 0.12s",
                                 }}>
-                                {order.orderType === "delivery" ? "Ready for Pickup" : "Complete"}
+                                {((order.orderType || order.status) === "delivery") || order.isOnlinePickup
+                                  ? "Ready for Pickup"
+                                  : "Complete"}
                               </button>
-                            ) : order.orderType === "delivery" ? (
+                            ) : (order.orderType || order.status) === "delivery" ? (
                               <button
                                 disabled
                                 style={{

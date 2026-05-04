@@ -72,7 +72,7 @@ const isCustomerUser = (role?: string | null) => {
 const normalizeName     = (value: unknown) => String(value ?? "").trim().toLowerCase();
 const normalizeCategory = (value: unknown) => String(value ?? "Uncategorized").trim().toUpperCase();
 const isUnavailableStatus = (value: unknown) =>
-  ["unavailable", "out of stock", "hidden"].includes(String(value ?? "").trim().toLowerCase());
+  ["unavailable", "out of stock", "hidden", "not configured"].includes(String(value ?? "").trim().toLowerCase());
 
 function mapInventoryRecipes(
   inventoryRows: InventoryMenuRow[],
@@ -957,7 +957,7 @@ export default function Delicacy() {
     let cancelled = false;
     (async () => {
       try {
-        const data = await api.get<{ paid: boolean; status: string; paymentReference: string | null }>(`/orders/paymongo/checkout/${session!.checkoutSessionId}`);
+        const data = await api.get<{ paid: boolean; status: string; paymentReference: string | null }>(`/paymongo/verify/${session!.checkoutSessionId}`);
         if (cancelled) return;
         setPaymentSession({ ...session!, ...data });
         setPaymentMessage(data.paid ? "Payment confirmed. You can now click Place Order." : "Payment still pending. Please check again.");
@@ -1080,20 +1080,13 @@ export default function Delicacy() {
     setIsSubmitting(true); setPaymentMessage(null);
     try {
       const total = cart.reduce((s, i) => s + i.recipe.price * i.quantity, 0);
-      const data  = await api.post<{ checkoutSessionId: string; checkoutUrl: string; status: string }>("/orders/paymongo/checkout", { items: buildItems(), total, customerUserId, customerName, customerEmail });
+      const data  = await api.post<{ checkoutSessionId: string; checkoutUrl: string; status: string }>("/paymongo/create-checkout", { items: buildItems(), total, customerUserId, customerName, customerEmail });
       const next: PaymentSessionState = { checkoutSessionId: data.checkoutSessionId, checkoutUrl: data.checkoutUrl, status: data.status, paid: false, paymentReference: null };
       setPaymentSession(next);
-      setPaymentMessage("GCash payment page opened. Finish payment there, then click Check Payment Status.");
-      window.open(data.checkoutUrl, "_blank", "noopener,noreferrer");
+      setPaymentMessage("Redirecting to GCash checkout. Complete payment there and you'll return here for verification.");
+      window.location.href = data.checkoutUrl;
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e ?? "");
-      if (msg.includes("PAYMONGO_SECRET_KEY is not configured")) {
-        const ref = `TEST-BYPASS-${Date.now()}`;
-        setPaymentSession({ checkoutSessionId: ref, checkoutUrl: "", status: "bypassed", paid: true, paymentReference: ref });
-        setPaymentMessage("PayMongo not configured — bypassed for now. Click Place Order.");
-      } else {
-        setPaymentMessage("Could not start GCash payment. Please try again.");
-      }
+      setPaymentMessage("Could not start GCash payment. Please try again.");
     } finally { setIsSubmitting(false); }
   };
 
@@ -1101,7 +1094,7 @@ export default function Delicacy() {
     if (isSubmitting || !paymentSession) return;
     setIsSubmitting(true);
     try {
-      const data = await api.get<{ paid: boolean; status: string; paymentReference: string | null }>(`/orders/paymongo/checkout/${paymentSession.checkoutSessionId}`);
+      const data = await api.get<{ paid: boolean; status: string; paymentReference: string | null }>(`/paymongo/verify/${paymentSession.checkoutSessionId}`);
       setPaymentSession({ ...paymentSession, ...data });
       setPaymentMessage(data.paid ? "Payment confirmed. You can now click Place Order." : "Payment still pending. Finish GCash checkout, then check again.");
     } catch { setPaymentMessage("Could not verify payment. Please try again."); }
