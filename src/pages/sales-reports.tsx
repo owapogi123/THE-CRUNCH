@@ -19,6 +19,9 @@ import {
   ChevronDown,
   Printer,
   TrendingUp,
+  Search,
+  Image as ImageIcon,
+  Loader2,
 } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { api } from "@/lib/api";
@@ -593,7 +596,7 @@ function triggerPrint(
           month: "short",
           day: "numeric",
           year: "numeric",
-        }) ?? "â€”";
+        }) ?? "—";
       const fmtHandover =
         parseDateSafe(o.handoverTimestamp)?.toLocaleString("en-US", {
           month: "short",
@@ -602,16 +605,16 @@ function triggerPrint(
           hour: "2-digit",
           minute: "2-digit",
           hour12: true,
-        }) ?? "â€”";
+        }) ?? "—";
       return `
         <tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
           <td>${o.transactionId}</td>
           <td>${fmtDate}</td>
           <td>${o.time}</td>
-          <td style="max-width:200px">${o.items.map((it) => `${it.name} Ã—${it.quantity}`).join(", ")}</td>
-          <td>${o.orderType === "delivery" ? (o.riderName ?? "â€”") : "â€”"}</td>
-          <td>${o.orderType === "delivery" ? fmtHandover : "â€”"}</td>
-          <td>${o.cashierName ?? "â€”"}</td>
+          <td style="max-width:200px">${o.items.map((it) => `${it.name} ×${it.quantity}`).join(", ")}</td>
+          <td>${o.orderType === "delivery" ? (o.riderName ?? "—") : "—"}</td>
+          <td>${o.orderType === "delivery" ? fmtHandover : "—"}</td>
+          <td>${o.cashierName ?? "—"}</td>
           <td style="text-transform:capitalize;color:#2563eb">${o.paymentCategory}</td>
           <td style="text-align:right;font-weight:700">PHP ${o.total.toLocaleString()}</td>
         </tr>
@@ -624,7 +627,7 @@ function triggerPrint(
     <html>
     <head>
       <meta charset="utf-8"/>
-      <title>Sales Report â€“ ${period}</title>
+      <title>Sales Report - ${period}</title>
       <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet"/>
       <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1341,7 +1344,7 @@ function RevenueDropdown({
 
       <div
         ref={ref}
-        style={{ position: "relative", minWidth: 280, zIndex: 100 }}
+        style={{ position: "relative", minWidth: 300, zIndex: 100 }}
       >
         <motion.div
           whileHover={{ boxShadow: "0 4px 20px rgba(0,0,0,0.08)" }}
@@ -1349,7 +1352,7 @@ function RevenueDropdown({
           style={{
             background: "#fff",
             border: "1px solid #e2e8f0",
-            borderRadius: 16,
+            borderRadius: 20,
             padding: "18px 20px",
             cursor: "pointer",
             boxShadow: "0 2px 10px rgba(0,0,0,0.05)",
@@ -1533,7 +1536,7 @@ function RevenueDropdown({
                     </div>
                   </div>
                   {period === p && (
-                    <span style={{ color: "#f97316", fontSize: 12 }}>Ã¢Å“â€œ</span>
+                    <span style={{ color: "#f97316", fontSize: 12 }}>✓</span>
                   )}
                 </motion.div>
               ))}
@@ -1559,12 +1562,15 @@ function RevenueDropdown({
                 whileHover={{ background: "#fef9f0" }}
                 onClick={handlePrint}
                 style={{
-                  padding: "12px 16px",
+                  margin: "4px 10px 10px",
+                  padding: "12px 14px",
                   cursor: "pointer",
                   display: "flex",
                   alignItems: "center",
                   gap: 12,
-                  borderTop: "1px solid #f8fafc",
+                  borderRadius: 16,
+                  border: "1px solid #f5d0a6",
+                  background: "#fffaf5",
                 }}
               >
                 <div
@@ -1598,8 +1604,9 @@ function RevenueDropdown({
                     style={{
                       margin: 0,
                       fontSize: 11,
-                      color: "#94a3b8",
+                      color: "#64748b",
                       fontFamily: "'Poppins', sans-serif",
+                      lineHeight: 1.5,
                     }}
                   >
                     {period} · ₱{revenue.toLocaleString()} · {completedCount}{" "}
@@ -1667,8 +1674,8 @@ function RefundModal({
   const product =
     log?.product ?? (order ? order.items.map((i) => i.name).join(", ") : "");
   const total = log?.total ?? order?.total ?? 0;
-  const cashierName = log?.cashierName ?? order?.cashierName ?? "Ã¢â‚¬â€";
-  const paymentMethod = log?.paymentMethod ?? order?.paymentCategory ?? "Ã¢â‚¬â€";
+  const cashierName = log?.cashierName ?? order?.cashierName ?? "—";
+  const paymentMethod = log?.paymentMethod ?? order?.paymentCategory ?? "—";
   const paymentStatus = formatPaymentStatus(
     log?.paymentStatus ?? order?.paymentStatus ?? null,
   );
@@ -2043,29 +2050,37 @@ function SummaryBar({ logs }: { logs: SaleLog[] }) {
   return (
     <>
       <div
-        style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap" }}
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
+          gap: 14,
+          marginBottom: 14,
+          alignItems: "stretch",
+        }}
       >
         {stats.map((s) => (
           <motion.div
             key={s.label}
             whileHover={{ y: -2, boxShadow: "0 4px 16px rgba(0,0,0,0.08)" }}
             style={{
-              flex: 1,
-              minWidth: 160,
+              minHeight: 122,
               background: s.bg,
               border: `1px solid ${s.border}`,
-              borderRadius: 14,
-              padding: "16px 20px",
+              borderRadius: 18,
+              padding: "18px 20px",
               boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "space-between",
             }}
           >
             <p
               style={{
                 color: "#94a3b8",
                 fontSize: 10,
-                fontWeight: 600,
-                margin: "0 0 6px",
-                letterSpacing: 1,
+                fontWeight: 700,
+                margin: "0 0 10px",
+                letterSpacing: 1.2,
                 textTransform: "uppercase",
               }}
             >
@@ -2074,24 +2089,35 @@ function SummaryBar({ logs }: { logs: SaleLog[] }) {
             <p
               style={{
                 color: s.color,
-                fontSize: 22,
+                fontSize: 24,
                 fontWeight: 700,
-                margin: "0 0 2px",
+                margin: "0 0 8px",
+                lineHeight: 1.1,
               }}
             >
               {s.value}
             </p>
-            <p style={{ color: "#94a3b8", fontSize: 11, margin: 0 }}>{s.sub}</p>
+            <p
+              style={{
+                color: "#64748b",
+                fontSize: 11,
+                margin: 0,
+                lineHeight: 1.5,
+              }}
+            >
+              {s.sub}
+            </p>
           </motion.div>
         ))}
       </div>
 
       <div
         style={{
-          display: "flex",
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(170px, max-content))",
           gap: 10,
           marginBottom: 24,
-          flexWrap: "wrap",
+          alignItems: "stretch",
         }}
       >
         {paymentBreakdown.map((item) => (
@@ -2100,9 +2126,10 @@ function SummaryBar({ logs }: { logs: SaleLog[] }) {
             style={{
               background: "#fff",
               border: "1px solid #e2e8f0",
-              borderRadius: 12,
+              borderRadius: 14,
               padding: "12px 14px",
               minWidth: 170,
+              boxShadow: "0 1px 4px rgba(15,23,42,0.04)",
             }}
           >
             <p style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", letterSpacing: 1, textTransform: "uppercase", margin: "0 0 4px" }}>
@@ -2125,6 +2152,12 @@ function SummaryBar({ logs }: { logs: SaleLog[] }) {
 
 function LogRow({ log, index }: { log: SaleLog; index: number }) {
   const [open, setOpen] = useState(false);
+  const paymentTone =
+    paymentBadgeStyle[normalizePaymentMethod(log.paymentMethod)] ?? {
+      bg: "#f8fafc",
+      text: "#475569",
+      border: "#cbd5e1",
+    };
 
   return (
     <motion.div
@@ -2165,16 +2198,30 @@ function LogRow({ log, index }: { log: SaleLog; index: number }) {
         >
           {log.product}
         </span>
-        <span
-          style={{ color: "#94a3b8", fontSize: 11, width: 80, flexShrink: 0 }}
-        >
-          {log.paymentMethod}
+        <span style={{ width: 110, flexShrink: 0 }}>
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: "5px 10px",
+              borderRadius: 999,
+              background: paymentTone.bg,
+              color: paymentTone.text,
+              border: `1px solid ${paymentTone.border}`,
+              fontSize: 11,
+              fontWeight: 700,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {normalizePaymentMethod(log.paymentMethod)}
+          </span>
         </span>
         <span
           style={{
             color: TYPE_COLOR[log.type],
             fontSize: 11,
-            fontWeight: 600,
+            fontWeight: 700,
             width: 70,
             textAlign: "center",
             flexShrink: 0,
@@ -2183,7 +2230,14 @@ function LogRow({ log, index }: { log: SaleLog; index: number }) {
           {log.type}
         </span>
         <span
-          style={{ color: "#94a3b8", fontSize: 12, width: 40, flexShrink: 0 }}
+          style={{
+            color: "#64748b",
+            fontSize: 12,
+            width: 52,
+            flexShrink: 0,
+            textAlign: "center",
+            fontWeight: 600,
+          }}
         >
           ×{log.quantity}
         </span>
@@ -2197,16 +2251,23 @@ function LogRow({ log, index }: { log: SaleLog; index: number }) {
             flexShrink: 0,
           }}
         >
-          {log.total === 0 ? "Ã¢â‚¬â€" : `₱${Math.abs(log.total).toLocaleString()}`}
+          {log.total === 0 ? "—" : `₱${Math.abs(log.total).toLocaleString()}`}
         </span>
         <span
           style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "#f0fdf4",
             color: STATUS_COLOR["Completed"],
             fontSize: 11,
-            fontWeight: 600,
-            width: 80,
-            textAlign: "right",
+            fontWeight: 700,
+            width: 96,
+            textAlign: "center",
             flexShrink: 0,
+            borderRadius: 999,
+            border: "1px solid #bbf7d0",
+            padding: "5px 10px",
           }}
         >
           Completed
@@ -2321,17 +2382,23 @@ function LogRow({ log, index }: { log: SaleLog; index: number }) {
                     type="button"
                     onClick={(e) => openProofImage(e, log.proofImageUrl)}
                     style={{
-                      color: "#2563eb",
-                      fontSize: 13,
-                      fontWeight: 600,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      color: "#1d4ed8",
+                      fontSize: 12,
+                      fontWeight: 700,
                       margin: 0,
                       textDecoration: "none",
-                      background: "transparent",
-                      border: "none",
-                      padding: 0,
+                      background: "#eff6ff",
+                      border: "1px solid #bfdbfe",
+                      borderRadius: 12,
+                      padding: "9px 13px",
                       cursor: "pointer",
+                      boxShadow: "0 1px 3px rgba(29,78,216,0.08)",
                     }}
                   >
+                    <ImageIcon size={14} />
                     View Proof
                   </button>
                 </div>
@@ -2358,7 +2425,7 @@ function LogRow({ log, index }: { log: SaleLog; index: number }) {
                       margin: 0,
                     }}
                   >
-                    Ã¢Å¡Â  {log.note}
+                    Warning: {log.note}
                   </p>
                 </div>
               )}
@@ -2377,19 +2444,91 @@ function EmptyState({ message }: { message: string }) {
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      style={{ padding: 60, textAlign: "center", color: "#cbd5e1" }}
+      style={{
+        padding: "56px 24px",
+        textAlign: "center",
+        color: "#cbd5e1",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 10,
+      }}
     >
+      <div
+        style={{
+          width: 52,
+          height: 52,
+          borderRadius: 16,
+          background: "#f8fafc",
+          border: "1px solid #e2e8f0",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "#94a3b8",
+        }}
+      >
+        <Search size={18} />
+      </div>
       <p
         style={{
-          fontSize: 14,
-          fontWeight: 600,
-          margin: "0 0 6px",
-          color: "#94a3b8",
+          fontSize: 15,
+          fontWeight: 700,
+          margin: 0,
+          color: "#475569",
         }}
       >
         No completed transactions yet
       </p>
-      <p style={{ fontSize: 12, margin: 0 }}>{message}</p>
+      <p
+        style={{
+          fontSize: 12,
+          margin: 0,
+          color: "#94a3b8",
+          maxWidth: 360,
+          lineHeight: 1.6,
+        }}
+      >
+        {message}
+      </p>
+    </motion.div>
+  );
+}
+
+function LoadingState({ label }: { label: string }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      style={{
+        padding: "56px 24px",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 12,
+        color: "#64748b",
+      }}
+    >
+      <div
+        style={{
+          width: 48,
+          height: 48,
+          borderRadius: 16,
+          background: "#f8fafc",
+          border: "1px solid #e2e8f0",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <Loader2 size={18} className="animate-spin" />
+      </div>
+      <div style={{ textAlign: "center" }}>
+        <p style={{ margin: "0 0 4px", fontSize: 14, fontWeight: 700, color: "#334155" }}>
+          Loading report data
+        </p>
+        <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>{label}</p>
+      </div>
     </motion.div>
   );
 }
@@ -2429,7 +2568,7 @@ function LogPagination({
   return (
     <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100 px-1">
       <span className="text-sm text-gray-500">
-        Showing {start}Ã¢â‚¬â€œ{end} of {totalCount} sales
+              Showing {start}–{end} of {totalCount} sales
       </span>
       <div className="flex items-center gap-2">
         <Button
@@ -2487,6 +2626,12 @@ const orderTypeStyle: Record<string, { bg: string; text: string }> = {
   "dine-in": { bg: "#fff1f2", text: "#e11d48" },
 };
 
+const paymentBadgeStyle: Record<string, { bg: string; text: string; border: string }> = {
+  Cash: { bg: "#fff7ed", text: "#c2410c", border: "#fdba74" },
+  GCash: { bg: "#eff6ff", text: "#1d4ed8", border: "#bfdbfe" },
+  "Cash on Pickup": { bg: "#f8fafc", text: "#334155", border: "#cbd5e1" },
+};
+
 function OrderRow({
   order,
   onRefund,
@@ -2510,7 +2655,7 @@ function OrderRow({
           day: "numeric",
           year: "numeric",
         })
-      : "Ã¢â‚¬â€";
+      : "—";
   };
   const fmtTime = (v?: string | null) => {
     const d = parseDateSafe(v);
@@ -2520,7 +2665,7 @@ function OrderRow({
           minute: "2-digit",
           hour12: true,
         })
-      : "Ã¢â‚¬â€";
+      : "—";
   };
 
   const totalQty = order.items.reduce((s, i) => s + i.quantity, 0);
@@ -2532,15 +2677,22 @@ function OrderRow({
       ? "Dine In"
       : order.orderType === "take-out"
         ? "Take Out"
-        : order.orderType || "Ã¢â‚¬â€";
+        : order.orderType || "—";
+
+  const paymentTone =
+    paymentBadgeStyle[normalizePaymentMethod(order.paymentCategory)] ?? {
+      bg: "#f8fafc",
+      text: "#475569",
+      border: "#cbd5e1",
+    };
 
   return (
     <>
       <TableRow
-        className="border-gray-100 hover:bg-gray-50 transition-colors cursor-pointer"
+        className="border-gray-100 hover:bg-slate-50/80 transition-colors cursor-pointer"
         onClick={() => setOpen((v) => !v)}
       >
-        <TableCell className="font-medium text-gray-900">
+        <TableCell className="font-medium text-gray-900 py-4">
           <div className="flex items-center gap-2">
             <motion.div
               animate={{ rotate: open ? 180 : 0 }}
@@ -2559,7 +2711,7 @@ function OrderRow({
             </span>
           </div>
         </TableCell>
-        <TableCell className="font-medium text-gray-700 whitespace-nowrap">
+        <TableCell className="font-medium text-gray-700 whitespace-nowrap py-4">
           <span
             style={{
               fontFamily: "'Poppins', monospace",
@@ -2569,44 +2721,63 @@ function OrderRow({
             {order.orderNumber}
           </span>
         </TableCell>
-        <TableCell className="text-gray-600 whitespace-nowrap">
+        <TableCell className="text-gray-600 whitespace-nowrap py-4">
           {fmtDate(order.date)}
         </TableCell>
-        <TableCell className="text-gray-800 font-semibold whitespace-nowrap">
+        <TableCell className="text-gray-800 font-semibold whitespace-nowrap py-4">
           {fmtTime(order.date)}
         </TableCell>
-        <TableCell>
+        <TableCell className="py-4">
           <span
             style={{
               background: otb.bg,
               color: otb.text,
               fontSize: 11,
-              fontWeight: 600,
-              padding: "3px 10px",
+              fontWeight: 700,
+              padding: "5px 10px",
               borderRadius: 99,
+              border: "1px solid rgba(148,163,184,0.18)",
+              display: "inline-flex",
             }}
           >
             {orderTypeLabel}
           </span>
         </TableCell>
-        <TableCell>
+        <TableCell className="py-4">
           <span
             style={{
               background: sc.bg,
               color: sc.text,
               fontSize: 11,
-              fontWeight: 600,
-              padding: "3px 10px",
+              fontWeight: 700,
+              padding: "5px 10px",
               borderRadius: 99,
+              border: "1px solid rgba(148,163,184,0.18)",
+              display: "inline-flex",
             }}
           >
             {order.status}
           </span>
         </TableCell>
-        <TableCell className="text-blue-600 font-medium capitalize">
-          {order.paymentCategory}
+        <TableCell className="py-4">
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "5px 10px",
+              borderRadius: 999,
+              background: paymentTone.bg,
+              color: paymentTone.text,
+              border: `1px solid ${paymentTone.border}`,
+              fontSize: 11,
+              fontWeight: 700,
+            }}
+          >
+            {normalizePaymentMethod(order.paymentCategory)}
+          </span>
         </TableCell>
-        <TableCell className="font-semibold text-gray-900 text-right">
+        <TableCell className="font-semibold text-gray-900 text-right py-4">
           ₱{order.total.toLocaleString()}
         </TableCell>
       </TableRow>
@@ -2641,15 +2812,15 @@ function OrderRow({
                       { label: "Order ID", value: order.orderNumber },
                       { label: "Date", value: fmtDate(order.date) },
                       { label: "Time", value: fmtTime(order.date) },
-                      { label: "Cashier", value: order.cashierName || "Ã¢â‚¬â€" },
+                      { label: "Cashier", value: order.cashierName || "—" },
                       ...(isDelivery
                         ? [
-                            { label: "Rider", value: order.riderName || "Ã¢â‚¬â€" },
+                            { label: "Rider", value: order.riderName || "—" },
                             {
                               label: "Handover",
                               value:
-                                fmtTime(order.handoverTimestamp) === "Ã¢â‚¬â€"
-                                  ? "Ã¢â‚¬â€"
+                                fmtTime(order.handoverTimestamp) === "—"
+                                  ? "—"
                                   : `${fmtDate(order.handoverTimestamp)} ${fmtTime(order.handoverTimestamp)}`,
                             },
                           ]
@@ -2755,18 +2926,20 @@ function OrderRow({
                         style={{
                           display: "inline-flex",
                           alignItems: "center",
-                          gap: 6,
-                          padding: "8px 12px",
-                          borderRadius: 10,
+                          gap: 8,
+                          padding: "9px 13px",
+                          borderRadius: 12,
                           border: "1px solid #bfdbfe",
                           background: "#eff6ff",
                           color: "#1d4ed8",
                           fontSize: 12,
-                          fontWeight: 600,
+                          fontWeight: 700,
                           textDecoration: "none",
                           cursor: "pointer",
+                          boxShadow: "0 1px 3px rgba(29,78,216,0.08)",
                         }}
                       >
+                        <ImageIcon size={14} />
                         View Proof
                       </button>
                     </div>
@@ -2895,9 +3068,11 @@ const statusActiveColor: Record<OrderStatusFilter, string> = {
 
 function OrdersTab({
   orders,
+  loading,
   onRefund,
 }: {
   orders: Order[];
+  loading: boolean;
   onRefund: (order: Order) => void;
 }) {
   const now = new Date();
@@ -3005,13 +3180,15 @@ function OrdersTab({
         onClose={() => setPickerOpen(false)}
       />
 
-      <Card className="bg-white rounded-2xl p-6 shadow-md border-0">
-        <div className="flex items-start justify-between mb-4 flex-wrap gap-4">
+      <Card className="bg-white rounded-[24px] p-6 shadow-md border-0">
+        <div className="flex items-start justify-between mb-5 flex-wrap gap-4">
           <div>
             <h3 className="text-base font-semibold text-gray-800">
               Order History
             </h3>
-            {(hasRange || statusFilter !== "All") && (
+            {(hasRange ||
+              statusFilter !== "All" ||
+              paymentMethodFilter !== "All") && (
               <p className="text-xs text-gray-400 mt-0.5">
                 {filtered.length} order{filtered.length !== 1 ? "s" : ""} ·{" "}
                 <span className="text-green-600 font-medium">
@@ -3060,7 +3237,11 @@ function OrdersTab({
           </div>
         </div>
 
-        <div className="flex gap-2 flex-wrap mb-4">
+        <div className="rounded-2xl border border-gray-100 bg-slate-50/80 p-4 mb-4">
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400 mb-3">
+            Quick Range
+          </p>
+          <div className="flex gap-2 flex-wrap">
           {QUICK_RANGES.map((r) => (
             <button
               key={r.key}
@@ -3074,49 +3255,63 @@ function OrdersTab({
               {r.label}
             </button>
           ))}
+          </div>
         </div>
 
-        <div className="flex gap-2 flex-wrap mb-5">
-          {ORDER_STATUS_FILTERS.map((s) => (
-            <button
-              key={s}
-              onClick={() => {
-                setStatusFilter(s);
-                setCurrentPage(1);
-              }}
-              className={`text-xs font-semibold px-3 py-1 rounded-full border transition-colors ${
-                statusFilter === s
-                  ? statusActiveColor[s]
-                  : "bg-gray-50 text-gray-500 border-gray-200 hover:border-gray-300 hover:text-gray-700"
-              }`}
-            >
-              {s}
-            </button>
-          ))}
+        <div className="grid gap-3 mb-5 md:grid-cols-2">
+          <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400 mb-3">
+              Order Status
+            </p>
+            <div className="flex gap-2 flex-wrap">
+              {ORDER_STATUS_FILTERS.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => {
+                    setStatusFilter(s);
+                    setCurrentPage(1);
+                  }}
+                  className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${
+                    statusFilter === s
+                      ? statusActiveColor[s]
+                      : "bg-gray-50 text-gray-500 border-gray-200 hover:border-gray-300 hover:text-gray-700"
+                  }`}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400 mb-3">
+              Payment Method
+            </p>
+            <div className="flex gap-2 flex-wrap">
+              {ORDER_PAYMENT_FILTERS.map((method) => (
+                <button
+                  key={method}
+                  onClick={() => {
+                    setPaymentMethodFilter(method);
+                    setCurrentPage(1);
+                  }}
+                  className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${
+                    paymentMethodFilter === method
+                      ? "bg-[#0f172a] text-white border-[#0f172a]"
+                      : "bg-gray-50 text-gray-500 border-gray-200 hover:border-gray-300 hover:text-gray-700"
+                  }`}
+                >
+                  {method}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
-        <div className="flex gap-2 flex-wrap mb-5">
-          {ORDER_PAYMENT_FILTERS.map((method) => (
-            <button
-              key={method}
-              onClick={() => {
-                setPaymentMethodFilter(method);
-                setCurrentPage(1);
-              }}
-              className={`text-xs font-semibold px-3 py-1 rounded-full border transition-colors ${
-                paymentMethodFilter === method
-                  ? "bg-[#0f172a] text-white border-[#0f172a]"
-                  : "bg-gray-50 text-gray-500 border-gray-200 hover:border-gray-300 hover:text-gray-700"
-              }`}
-            >
-              {method}
-            </button>
-          ))}
-        </div>
-
+        <div className="overflow-hidden rounded-2xl border border-gray-100">
         <Table>
           <TableHeader>
-            <TableRow className="border-gray-200 hover:bg-transparent">
+            <TableRow className="border-gray-100 bg-slate-50 hover:bg-slate-50">
               {[
                 "Transaction ID",
                 "Order ID",
@@ -3129,7 +3324,7 @@ function OrdersTab({
               ].map((h) => (
                 <TableHead
                   key={h}
-                  className={`text-gray-700 font-semibold${h === "Amount" ? " text-right" : ""}`}
+                  className={`text-[11px] uppercase tracking-[0.16em] text-slate-500 font-bold${h === "Amount" ? " text-right" : ""}`}
                 >
                   {h}
                 </TableHead>
@@ -3137,15 +3332,25 @@ function OrdersTab({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filtered.length === 0 ? (
+            {loading ? (
+              <TableRow>
+                <TableCell colSpan={8} className="p-0">
+                  <LoadingState label="Refreshing order history and payment totals." />
+                </TableCell>
+              </TableRow>
+            ) : filtered.length === 0 ? (
               <TableRow>
                 <TableCell
                   colSpan={8}
-                  className="text-center text-gray-400 py-10"
+                  className="p-0"
                 >
-                  {orders.length === 0
-                    ? "No orders yet. Orders will appear here once the cashier processes them."
-                    : "No orders found for the selected filters."}
+                  <EmptyState
+                    message={
+                      orders.length === 0
+                        ? "No orders yet. Orders will appear here once the cashier processes them."
+                        : "No orders found for the selected filters."
+                    }
+                  />
                 </TableCell>
               </TableRow>
             ) : (
@@ -3159,11 +3364,12 @@ function OrdersTab({
             )}
           </TableBody>
         </Table>
+        </div>
 
         {filtered.length > ORDER_PAGE_SIZE && (
           <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
             <span className="text-sm text-gray-500">
-              Showing {(currentPage - 1) * ORDER_PAGE_SIZE + 1}Ã¢â‚¬â€œ
+              Showing {(currentPage - 1) * ORDER_PAGE_SIZE + 1}–
               {Math.min(currentPage * ORDER_PAGE_SIZE, filtered.length)} of{" "}
               {filtered.length} orders
             </span>
@@ -3221,6 +3427,8 @@ export default function SalesReports() {
   // Ã¢â€â‚¬Ã¢â€â‚¬ Core state Ã¢â€â‚¬Ã¢â€â‚¬
   const [logs, setLogs] = useState<SaleLog[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ UI state Ã¢â€â‚¬Ã¢â€â‚¬
   const [activeTab, setActiveTab] = useState<TabKey>("logs");
@@ -3244,14 +3452,18 @@ export default function SalesReports() {
   // Ã¢â€â‚¬Ã¢â€â‚¬ Data fetching Ã¢â€â‚¬Ã¢â€â‚¬
   const fetchSalesData = useCallback(async () => {
     try {
+      if (!hasLoadedOnce) setIsLoading(true);
       const rows = await api.get<RawOrderRow[]>("/orders");
       const { logs: l, orders: o } = processRawRows(rows ?? []);
       setLogs(l);
       setOrders(o);
     } catch (err) {
       console.error("Failed to fetch sales data:", err);
+    } finally {
+      setIsLoading(false);
+      setHasLoadedOnce(true);
     }
-  }, []);
+  }, [hasLoadedOnce]);
 
   useEffect(() => {
     fetchSalesData();
@@ -3573,37 +3785,54 @@ export default function SalesReports() {
               animate={{ opacity: 1 }}
               transition={{ delay: 0.15, duration: 0.35 }}
               style={{
-                display: "flex",
-                gap: 10,
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+                gap: 14,
                 marginBottom: 20,
-                alignItems: "center",
-                flexWrap: "wrap",
+                alignItems: "stretch",
               }}
             >
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search by transaction ID, product, cashier, or payment method…"
+              <div
                 style={{
-                  flex: 1,
+                  position: "relative",
                   minWidth: 220,
-                  background: "#fff",
-                  border: "1px solid #e2e8f0",
-                  borderRadius: 99,
-                  padding: "10px 18px",
-                  fontSize: 13,
-                  color: "#1e293b",
-                  outline: "none",
-                  fontFamily: "'Poppins', sans-serif",
-                  boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
                 }}
-              />
+              >
+                <Search
+                  size={16}
+                  style={{
+                    position: "absolute",
+                    left: 16,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    color: "#94a3b8",
+                  }}
+                />
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search by transaction ID, product, cashier, or payment method..."
+                  style={{
+                    width: "100%",
+                    background: "#fff",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: 18,
+                    padding: "12px 18px 12px 42px",
+                    fontSize: 13,
+                    color: "#1e293b",
+                    outline: "none",
+                    fontFamily: "'Poppins', sans-serif",
+                    boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+                  }}
+                />
+              </div>
               <div
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: 6,
+                  gap: 8,
                   flexWrap: "wrap",
+                  justifyContent: "flex-end",
                 }}
               >
                 <CalendarDays className="w-4 h-4 text-gray-400 flex-shrink-0" />
@@ -3614,7 +3843,7 @@ export default function SalesReports() {
                     alignItems: "center",
                     gap: 6,
                     padding: "8px 12px",
-                    borderRadius: 12,
+                    borderRadius: 14,
                     border: logFromDate
                       ? "1px solid #4A1C1C"
                       : "1px solid #e5e7eb",
@@ -3636,7 +3865,7 @@ export default function SalesReports() {
                     alignItems: "center",
                     gap: 6,
                     padding: "8px 12px",
-                    borderRadius: 12,
+                    borderRadius: 14,
                     border: logToDate
                       ? "1px solid #4A1C1C"
                       : "1px solid #e5e7eb",
@@ -3666,13 +3895,14 @@ export default function SalesReports() {
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
-                  padding: "8px 14px",
+                  padding: "9px 14px",
                   borderRadius: 99,
                   background: "#f0fdf4",
                   border: "1px solid #bbf7d0",
                   fontSize: 12,
-                  fontWeight: 600,
+                  fontWeight: 700,
                   color: "#16a34a",
+                  whiteSpace: "nowrap",
                 }}
               >
                 <span
@@ -3694,7 +3924,7 @@ export default function SalesReports() {
                 display: "flex",
                 gap: 8,
                 flexWrap: "wrap",
-                marginBottom: 16,
+                marginBottom: 18,
               }}
             >
               {QUICK_RANGES.map((r) => (
@@ -3703,8 +3933,8 @@ export default function SalesReports() {
                   onClick={() => applyLogQuick(r.key)}
                   style={{
                     fontSize: 12,
-                    fontWeight: 600,
-                    padding: "6px 12px",
+                    fontWeight: 700,
+                    padding: "7px 13px",
                     borderRadius: 999,
                     border:
                       activeLogQuick === r.key
@@ -3730,7 +3960,7 @@ export default function SalesReports() {
               transition={{ delay: 0.2, duration: 0.35 }}
               style={{
                 background: "#fff",
-                borderRadius: 16,
+                borderRadius: 20,
                 border: "1px solid #e2e8f0",
                 overflow: "hidden",
                 boxShadow: "0 1px 8px rgba(0,0,0,0.05)",
@@ -3742,7 +3972,7 @@ export default function SalesReports() {
                   display: "flex",
                   alignItems: "center",
                   gap: 14,
-                  padding: "10px 20px",
+                  padding: "12px 20px",
                   borderBottom: "1px solid #f1f5f9",
                   background: "#f8fafc",
                 }}
@@ -3751,11 +3981,11 @@ export default function SalesReports() {
                 {[
                   { label: "TIME", width: 72 },
                   { label: "PRODUCT", flex: 1 },
-                  { label: "PAYMENT", width: 80 },
+                  { label: "PAYMENT", width: 110 },
                   { label: "TYPE", width: 70 },
-                  { label: "QTY", width: 40 },
+                  { label: "QTY", width: 52 },
                   { label: "AMOUNT", width: 100, align: "right" },
-                  { label: "STATUS", width: 80, align: "right" },
+                  { label: "STATUS", width: 96, align: "right" },
                 ].map((col) => (
                   <span
                     key={col.label}
@@ -3777,7 +4007,9 @@ export default function SalesReports() {
               </div>
 
               <AnimatePresence>
-                {dates.length === 0 ? (
+                {isLoading ? (
+                  <LoadingState label="Pulling paid completed sales from the latest order activity." />
+                ) : dates.length === 0 ? (
                   <EmptyState
                     key="empty"
                     message={
@@ -3867,6 +4099,7 @@ export default function SalesReports() {
           >
             <OrdersTab
               orders={orders}
+              loading={isLoading}
               onRefund={(order) => setRefundOrder(order)}
             />
           </motion.div>

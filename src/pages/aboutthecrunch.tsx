@@ -56,7 +56,7 @@ function Reveal({
 // ── Marquee ───────────────────────────────────────────────────────────────────
 const marqueeItems = [
   'Fresh Daily', '7 Bold Flavors', '250+ Branches',
-  'Since 2021', 'Quezon City', 'Boneless Fried Chicken',
+  'Since 2021 � Quezon City, PH',
   'Made with Love', 'Fast Service',
 ];
 
@@ -324,7 +324,7 @@ export default function AboutTheCrunch() {
           <motion.div style={{ y: isTablet ? 0 : txtY }}>
             <motion.p initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3, duration: 0.6 }}
               style={{ fontFamily: PP, fontSize: 10, fontWeight: 700, letterSpacing: '0.3em', textTransform: 'uppercase', color: '#f5c842', marginBottom: 20 }}>
-              Since 2021 — Quezon City, PH
+              Since 2021 � Quezon City, PH
             </motion.p>
 
             <motion.h1 initial={{ opacity: 0, y: 36 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45, duration: 0.9, ease: [0.16, 1, 0.3, 1] }}

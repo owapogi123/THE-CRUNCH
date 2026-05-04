@@ -4,6 +4,12 @@ import { motion, AnimatePresence } from "framer-motion";
 import { api } from "../lib/api";
 import { useAuth } from "../context/authcontext";
 
+const formatPHP = (value: number) =>
+  new Intl.NumberFormat("en-PH", {
+    style: "currency",
+    currency: "PHP",
+  }).format(value || 0);
+
 // ─── SPRING PRESETS ───────────────────────────────────────────────────────────
 const SP  = { type: "spring" as const, stiffness: 340, damping: 30 };
 const SPG = { type: "spring" as const, stiffness: 200, damping: 24 };
@@ -58,6 +64,10 @@ interface PaymentSessionState {
 type PaymentMethodType = "gcash" | "cash";
 
 const DEFAULT_NUTRITION: Nutrition = { calories: 0, protein: 0, fats: 0, carbs: 0 };
+const isCustomerUser = (role?: string | null) => {
+  const normalized = String(role ?? "").trim().toLowerCase();
+  return normalized === "customer" || normalized === "costumer";
+};
 
 const normalizeName     = (value: unknown) => String(value ?? "").trim().toLowerCase();
 const normalizeCategory = (value: unknown) => String(value ?? "Uncategorized").trim().toUpperCase();
@@ -95,30 +105,33 @@ function mapInventoryRecipes(
     const available = !isUnavailableStatus(row.availability_status);
 
     return {
-      id, name,
-      price:       Number(row.price ?? menuMeta?.price ?? 0),
+      id,
+      name,
+      price: Number(row.price ?? menuMeta?.price ?? 0),
       category,
-      image:       String(row.image || menuMeta?.image || "/placeholder.jpg"),
+      image: String(row.image || menuMeta?.image || "/placeholder.jpg"),
       available,
       description: menuMeta?.description || `Freshly prepared ${String(category).toLowerCase()} from The Crunch.`,
-      nutrition:   menuMeta?.nutrition ?? DEFAULT_NUTRITION,
-      maxFlavors:  menuMeta?.maxFlavors,
-      mealTypes:   menuMeta?.mealTypes && menuMeta.mealTypes.length > 0 && hasSupportedMealType
-                     ? menuMeta.mealTypes : fallbackMealTypes,
-      tag:         menuMeta?.tag,
-      note:        menuMeta?.note,
-      variant:     menuMeta?.variant,
+      nutrition: menuMeta?.nutrition ?? DEFAULT_NUTRITION,
+      maxFlavors: menuMeta?.maxFlavors,
+      mealTypes:
+        menuMeta?.mealTypes && menuMeta.mealTypes.length > 0 && hasSupportedMealType
+          ? menuMeta.mealTypes
+          : fallbackMealTypes,
+      tag: menuMeta?.tag,
+      note: menuMeta?.note,
+      variant: menuMeta?.variant,
     };
   });
 }
-
-// ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const DELIVERY_LINKS = {
   foodpanda: "https://foodpanda.go.link/9O718",
   grab:      "https://r.grab.com/g/6-20260421_220129_6e23187a089147b69736d4cacea38146_MEXMPS-2-C4A3RBCER7NFUE",
 };
 const PAYMENT_SESSION_KEY = "the-crunch-paymongo-session";
 const CASH_TERMS = "By selecting Cash as your payment method, you agree that your order will not be processed immediately and will only be prepared once full payment is made onsite. You are responsible for completing payment at the store. Delays in payment may result in longer waiting times or possible cancellation of your order. The store reserves the right to refuse or cancel orders that are not paid within a reasonable time.";
+const DEFAULT_FLAVORS = ["Original", "Spicy"];
+const DEFAULT_MEAL_FILTERS = ["Breakfast", "Lunch", "Dinner"];
 
 const TAG_COLORS: Record<string, { bg: string; text: string }> = {
   Bestseller: { bg: "rgba(245,200,66,0.15)",  text: "#f5c842" },
@@ -378,7 +391,7 @@ function TrackingPanel({ orders }: { orders: CustomerOrder[] }) {
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {order.items.map((item, i) => (
-              <span key={i} style={{ fontSize: 11, fontWeight: 600, padding: "7px 12px", borderRadius: 999, background: "rgba(240,237,232,0.05)", border: "1px solid rgba(240,237,232,0.08)", color: "rgba(240,237,232,0.55)" }}>
+              <span key={`${order.id}-${item.name}-${item.quantity}`} style={{ fontSize: 11, fontWeight: 600, padding: "7px 12px", borderRadius: 999, background: "rgba(240,237,232,0.05)", border: "1px solid rgba(240,237,232,0.08)", color: "rgba(240,237,232,0.55)" }}>
                 {item.quantity}x {item.name}
               </span>
             ))}
@@ -392,7 +405,8 @@ function TrackingPanel({ orders }: { orders: CustomerOrder[] }) {
 // ─── HISTORY DRAWER ───────────────────────────────────────────────────────────
 function HistoryDrawer({ orders, menuItems, onClose }: { orders: CustomerOrder[]; menuItems: Recipe[]; onClose: () => void }) {
   const [expanded, setExpanded] = useState<number | null>(orders[0]?.id ?? null);
-  const findImg = (name: string) => menuItems.find(r => r.name.trim().toLowerCase() === name.trim().toLowerCase())?.image ?? "/placeholder.jpg";
+  const findImg = (name: string) =>
+    menuItems.find((r) => r.name.trim().toLowerCase() === name.trim().toLowerCase())?.image ?? "/placeholder.jpg";
 
   return (
     <>
@@ -400,16 +414,44 @@ function HistoryDrawer({ orders, menuItems, onClose }: { orders: CustomerOrder[]
         style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200, backdropFilter: "blur(8px)" }} />
       <motion.div initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={SPG}
         style={{ position: "fixed", top: 0, right: 0, bottom: 0, width: "min(460px,100vw)", background: "#151210", zIndex: 300, display: "flex", flexDirection: "column", boxShadow: "-24px 0 80px rgba(0,0,0,0.5)", borderLeft: "1px solid rgba(240,237,232,0.07)" }}>
-        <div style={{ padding: "28px 28px 20px", borderBottom: "1px solid rgba(240,237,232,0.07)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div
+          style={{
+            padding: "28px 28px 20px",
+            borderBottom: "1px solid rgba(240,237,232,0.07)",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 5 }}>
               <span style={{ color: "#f5c842" }}><Icon d={receiptD} size={15} /></span>
               <h2 style={{ fontSize: 20, fontWeight: 800, color: "#f0ede8", margin: 0 }}>Order History</h2>
             </div>
-            <p style={{ fontSize: 12, color: "rgba(240,237,232,0.35)", margin: 0 }}>{orders.length} saved order{orders.length !== 1 ? "s" : ""}</p>
+            <p style={{ fontSize: 12, color: "rgba(240,237,232,0.35)", margin: 0 }}>
+              {orders.length} saved order{orders.length !== 1 ? "s" : ""}
+            </p>
           </div>
-          <motion.button onClick={onClose} whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.9 }} transition={SP}
-            style={{ background: "rgba(240,237,232,0.07)", border: "1px solid rgba(240,237,232,0.1)", color: "rgba(240,237,232,0.6)", borderRadius: "50%", width: 36, height: 36, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 700 }}>×</motion.button>
+          <motion.button
+            type="button"
+            onClick={onClose}
+            whileHover={{ scale: 1.08 }}
+            whileTap={{ scale: 0.9 }}
+            transition={SP}
+            style={{
+              background: "transparent",
+              border: "1px solid rgba(240,237,232,0.1)",
+              color: "rgba(240,237,232,0.6)",
+              borderRadius: "50%",
+              width: 36,
+              height: 36,
+              cursor: "pointer",
+              fontSize: 20,
+              lineHeight: 1,
+            }}
+          >
+            {"\u00D7"}
+          </motion.button>
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: "16px 24px 32px" }}>
           {orders.length === 0 ? (
@@ -437,7 +479,7 @@ function HistoryDrawer({ orders, menuItems, onClose }: { orders: CustomerOrder[]
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
                       {order.items.slice(0, 6).map((item, ii) => (
-                        <div key={ii} title={item.name} style={{ width: 22, height: 22, borderRadius: "50%", overflow: "hidden", border: "1.5px solid rgba(14,12,10,0.9)", flexShrink: 0, marginLeft: ii > 0 ? -6 : 0 }}>
+                        <div key={`${order.id}-thumb-${item.name}-${item.quantity}`} title={item.name} style={{ width: 22, height: 22, borderRadius: "50%", overflow: "hidden", border: "1.5px solid rgba(14,12,10,0.9)", flexShrink: 0, marginLeft: ii > 0 ? -6 : 0 }}>
                           <img src={findImg(item.name)} alt={item.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                         </div>
                       ))}
@@ -450,7 +492,7 @@ function HistoryDrawer({ orders, menuItems, onClose }: { orders: CustomerOrder[]
                     </div>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-                    <span style={{ fontSize: 15, fontWeight: 800, color: "#f5c842" }}>₱{order.total.toFixed(2)}</span>
+                    <span style={{ fontSize: 15, fontWeight: 800, color: "#f5c842" }}>{formatPHP(Number(order.total))}</span>
                     <motion.span animate={{ rotate: isOpen ? 180 : 0 }} transition={SP} style={{ color: "rgba(240,237,232,0.28)", display: "flex" }}><Icon d={chevronD} size={13} sw="2.5" /></motion.span>
                   </div>
                 </motion.button>
@@ -460,7 +502,7 @@ function HistoryDrawer({ orders, menuItems, onClose }: { orders: CustomerOrder[]
                       style={{ overflow: "hidden", background: "rgba(240,237,232,0.02)", border: "1px solid rgba(245,200,66,0.22)", borderTop: "none", borderRadius: "0 0 16px 16px" }}>
                       <div style={{ padding: "6px 0" }}>
                         {order.items.map((item, ii) => (
-                          <div key={ii} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", borderBottom: ii < order.items.length - 1 ? "1px solid rgba(240,237,232,0.05)" : "none" }}>
+                          <div key={`${order.id}-line-${item.name}-${item.quantity}`} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", borderBottom: ii < order.items.length - 1 ? "1px solid rgba(240,237,232,0.05)" : "none" }}>
                             <Avatar src={findImg(item.name)} size={38} />
                             <p style={{ fontSize: 12.5, fontWeight: 600, color: "#f0ede8", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{item.name}</p>
                             <span style={{ fontSize: 10.5, fontWeight: 700, padding: "3px 9px", borderRadius: 20, background: "rgba(240,237,232,0.06)", color: "rgba(240,237,232,0.4)", border: "1px solid rgba(240,237,232,0.09)" }}>×{item.quantity}</span>
@@ -469,7 +511,7 @@ function HistoryDrawer({ orders, menuItems, onClose }: { orders: CustomerOrder[]
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px 6px", borderTop: "1px solid rgba(240,237,232,0.07)" }}>
                           <span style={{ fontSize: 10, fontWeight: 700, color: "rgba(240,237,232,0.28)", textTransform: "uppercase", letterSpacing: "0.12em" }}>Order total</span>
                           <span style={{ fontSize: 10.5, color: "rgba(240,237,232,0.28)" }}>{order.paymentMethod.toUpperCase()} · {order.paymentStatus ?? order.trackingStatus}</span>
-                          <span style={{ fontSize: 16, fontWeight: 900, color: "#f5c842" }}>₱{order.total.toFixed(2)}</span>
+                          <span style={{ fontSize: 16, fontWeight: 900, color: "#f5c842" }}>{formatPHP(Number(order.total))}</span>
                         </div>
                       </div>
                     </motion.div>
@@ -555,8 +597,25 @@ function OrderDrawer({ cart, onClose, onRemove, onChangeQty, onClear, onSendPaym
                 </motion.button>
               )}
             </AnimatePresence>
-            <motion.button onClick={onClose} whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.9 }} transition={SP}
-              style={{ background: "rgba(240,237,232,0.07)", border: "1px solid rgba(240,237,232,0.1)", color: "rgba(240,237,232,0.6)", borderRadius: "50%", width: 36, height: 36, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 700 }}>×</motion.button>
+          <motion.button
+            onClick={onClose}
+            whileHover={{ scale: 1.08 }}
+            whileTap={{ scale: 0.9 }}
+            transition={SP}
+            style={{
+              background: "transparent",
+              border: "1px solid rgba(240,237,232,0.1)",
+              color: "rgba(240,237,232,0.6)",
+              borderRadius: "50%",
+              width: 36,
+              height: 36,
+              cursor: "pointer",
+              fontSize: 20,
+              lineHeight: 1,
+            }}
+          >
+            {"\u00D7"}
+          </motion.button>
           </div>
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: "12px 28px" }}>
@@ -571,7 +630,7 @@ function OrderDrawer({ cart, onClose, onRemove, onChangeQty, onClear, onSendPaym
                 <Avatar src={item.recipe.image} size={50} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <p style={{ fontSize: 13, fontWeight: 600, color: "#f0ede8", margin: "0 0 3px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.recipe.name}</p>
-                  {item.flavors.length > 0 && <p style={{ fontSize: 11, color: "rgba(240,237,232,0.35)", margin: "0 0 10px" }}>{item.flavors.join(" · ")}</p>}
+                  {item.flavors.length > 0 && <p style={{ fontSize: 11, color: "rgba(240,237,232,0.35)", margin: "0 0 10px" }}>{item.flavors.join(" • ")}</p>}
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(240,237,232,0.06)", borderRadius: 10, padding: "5px 12px", border: "1px solid rgba(240,237,232,0.08)" }}>
                       <motion.button whileTap={{ scale: 0.75 }} transition={SP} onClick={() => onChangeQty(item.recipe.id, -1)} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(240,237,232,0.6)", fontSize: 16, lineHeight: 1, padding: 0, fontWeight: 700 }}>−</motion.button>
@@ -582,7 +641,7 @@ function OrderDrawer({ cart, onClose, onRemove, onChangeQty, onClear, onSendPaym
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                       <AnimatePresence mode="wait">
-                        <motion.span key={item.quantity} initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 4 }} transition={SPG} style={{ fontSize: 14, fontWeight: 700, color: "#f5c842" }}>₱{(item.recipe.price * item.quantity).toFixed(2)}</motion.span>
+                        <motion.span key={item.quantity} initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 4 }} transition={SPG} style={{ fontSize: 14, fontWeight: 700, color: "#f5c842" }}>{formatPHP(Number(item.recipe.price * item.quantity))}</motion.span>
                       </AnimatePresence>
                       <motion.button whileHover={{ scale: 1.2 }} whileTap={{ scale: 0.85 }} transition={SP} onClick={() => onRemove(item.recipe.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(240,237,232,0.2)", fontSize: 16, padding: 0 }}>×</motion.button>
                     </div>
@@ -599,7 +658,7 @@ function OrderDrawer({ cart, onClose, onRemove, onChangeQty, onClear, onSendPaym
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
                 <span style={{ fontSize: 13, color: "rgba(240,237,232,0.4)" }}>Total</span>
                 <AnimatePresence mode="wait">
-                  <motion.span key={Math.round(total * 100)} initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }} transition={SPG} style={{ fontSize: 28, fontWeight: 900, color: "#f5c842", letterSpacing: "-0.03em" }}>₱{total.toFixed(2)}</motion.span>
+                  <motion.span key={Math.round(total * 100)} initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }} transition={SPG} style={{ fontSize: 28, fontWeight: 900, color: "#f5c842", letterSpacing: "-0.03em" }}>{formatPHP(Number(total))}</motion.span>
                 </AnimatePresence>
               </div>
               <PaymentMethodSelector selected={selectedPaymentMethod} onChange={onPaymentMethodChange} disabled={!isCash && !!paymentSession} />
@@ -731,7 +790,7 @@ function RecipeCard({ recipe, isFav, justAdded, flavorSel, variantSel, onToggleF
           </div>
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: 10, color: "rgba(240,237,232,0.25)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 2 }}>Price</div>
-            <div style={{ fontSize: "clamp(20px,3vw,26px)", fontWeight: 900, color: isAvailable ? "#f5c842" : "rgba(240,237,232,0.3)", letterSpacing: "-0.04em" }}>₱{recipe.price.toFixed(2)}</div>
+            <div style={{ fontSize: "clamp(20px,3vw,26px)", fontWeight: 900, color: isAvailable ? "#f5c842" : "rgba(240,237,232,0.3)", letterSpacing: "-0.04em" }}>{formatPHP(Number(recipe.price))}</div>
           </div>
         </div>
       </div>
@@ -778,9 +837,9 @@ export default function Delicacy() {
 
   // ── Auth from shared context (stays in sync with AboutTheCrunch) ──
   const { user, logout } = useAuth();
-  const customerUserId = user ? Number((user as any).id ?? (user as any).userId ?? 0) : 0;
-  const customerName   = user ? ((user as any).name ?? (user as any).userName ?? "The Crunch Customer") : "The Crunch Customer";
-  const customerEmail  = user ? ((user as any).email ?? (user as any).userEmail ?? "") : "";
+  const customerUserId = user ? Number(user.userId) : 0;
+  const customerName   = user?.username ?? "The Crunch Customer";
+  const customerEmail  = "";
 
   // ── Data from API ──
   const [menuItems,  setMenuItems]  = useState<Recipe[]>([]);
@@ -819,31 +878,32 @@ export default function Delicacy() {
     let cancelled = false;
     setLoading(true);
 
-    Promise.allSettled([
-      api.get<InventoryMenuRow[]>("/products?item_type=menu_item"),
-      api.get<Recipe[]>("/menu/items"),
-      api.get<string[]>("/menu/flavors"),
-      api.get<string[]>("/menu/meal-types"),
-    ])
-      .then(([inventoryResult, menuItemsResult, flavorListResult, mealsResult]) => {
-        if (cancelled) return;
-        const inventoryRows  = inventoryResult.status  === "fulfilled" && Array.isArray(inventoryResult.value)  ? inventoryResult.value  : [];
-        const menuItemsMeta  = menuItemsResult.status  === "fulfilled" && Array.isArray(menuItemsResult.value)  ? menuItemsResult.value  : [];
-        const flavorList     = flavorListResult.status === "fulfilled" && Array.isArray(flavorListResult.value) ? flavorListResult.value : [];
-        const meals          = mealsResult.status      === "fulfilled" && Array.isArray(mealsResult.value) && mealsResult.value.length > 0 ? mealsResult.value : ["Breakfast", "Lunch", "Dinner"];
+    const loadMenuData = async () => {
+      try {
+        const inventoryRows = await api.get<InventoryMenuRow[]>("/products?item_type=menu_item");
+        const menuItemsMeta: Recipe[] = [];
+        const flavorList = DEFAULT_FLAVORS;
+        const meals = DEFAULT_MEAL_FILTERS;
 
-        const allMeals       = meals.length > 0 ? meals : ["Breakfast", "Lunch", "Dinner"];
-        const mergedRecipes  = mapInventoryRecipes(inventoryRows, menuItemsMeta, allMeals);
-        const allCats        = ["All", ...Array.from(new Set(mergedRecipes.map((item) => item.category)))];
+        if (cancelled) return;
+
+        const allMeals = meals.length > 0 ? meals : DEFAULT_MEAL_FILTERS;
+        const mergedRecipes = mapInventoryRecipes(inventoryRows, menuItemsMeta, allMeals);
+        const allCats = ["All", ...Array.from(new Set(mergedRecipes.map((item) => item.category)))];
 
         setMenuItems(mergedRecipes);
         setFlavors(flavorList);
         setCategories(allCats);
         setMealTypes(allMeals);
-        setActiveMeal(allMeals.includes("Lunch") ? "Lunch" : allMeals[0] ?? "Lunch");
-      })
-      .catch(err => { console.error("Failed to load menu:", err); })
-      .finally(() => { if (!cancelled) setLoading(false); });
+        setActiveMeal(allMeals.includes("Lunch") ? "Lunch" : (allMeals[0] ?? "Lunch"));
+      } catch (err) {
+        console.error("Failed to load menu:", err);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    loadMenuData();
 
     return () => { cancelled = true; };
   }, []);
@@ -917,12 +977,13 @@ export default function Delicacy() {
     if (!itemSlug || menuItems.length === 0) return;
 
     const needle = decodeURIComponent(itemSlug).trim().toLowerCase();
-    const match  = menuItems.find(r => r.name.trim().toLowerCase() === needle)
-                ?? menuItems.find(r => r.name.toLowerCase().includes(needle) || needle.includes(r.name.toLowerCase()));
+    const match =
+      menuItems.find(r => r.name.trim().toLowerCase() === needle) ??
+      menuItems.find(r => r.name.toLowerCase().includes(needle) || needle.includes(r.name.toLowerCase()));
     if (!match) return;
 
-    setActiveCategory(match.category ?? "All");
-    setActiveMeal(match.mealTypes[0] ?? activeMeal);
+    setActiveCategory(match.category ? "All" : "All");
+    setActiveMeal(match.mealTypes[0] ? activeMeal : activeMeal);
     setTimeout(() => {
       const el = cardRefs.current[match.id];
       if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - window.innerHeight / 2 + el.getBoundingClientRect().height / 2, behavior: "smooth" });
@@ -935,8 +996,8 @@ export default function Delicacy() {
     if (!customerUserId) return;
     try {
       const data = await api.get<{ activeOrders: CustomerOrder[]; historyOrders: CustomerOrder[] }>(`/orders/customer/${customerUserId}`);
-      setActiveOrders(data.activeOrders  ?? []);
-      setOrderHistory(data.historyOrders ?? []);
+      setActiveOrders(data.activeOrders ? data.activeOrders : []);
+      setOrderHistory(data.historyOrders ? data.historyOrders : []);
     } catch (e) { console.error("Failed to load orders:", e); }
   }, [customerUserId]);
 
@@ -960,7 +1021,7 @@ export default function Delicacy() {
 
   const addToCart = (recipe: Recipe) => {
     if (!recipe.available) return;
-    const recFlavors = flavorSels[recipe.id] ?? [];
+    const recFlavors = flavorSels[recipe.id] ? flavorSels[recipe.id] : [];
     clearPayment();
     setCart(prev => {
       const found = prev.find(c => c.recipe.id === recipe.id);
@@ -982,7 +1043,14 @@ export default function Delicacy() {
   // ── Order actions ──
   const handleRequestCashTerms = () => {
     if (isSubmitting || !cart.length) return;
-    if (!customerUserId) { setPaymentMessage("Please log in as a customer first."); return; }
+    if (!user) {
+      setPaymentMessage("Please log in first before placing an order.");
+      return;
+    }
+    if (user.role && !isCustomerUser(user.role)) {
+      setPaymentMessage("Please log in using a customer account to place an order.");
+      return;
+    }
     setShowCashTerms(true);
   };
 
@@ -1001,7 +1069,14 @@ export default function Delicacy() {
 
   const handleSendPayment = async () => {
     if (isSubmitting || !cart.length) return;
-    if (!customerUserId) { setPaymentMessage("Please log in as a customer first."); return; }
+    if (!user) {
+      setPaymentMessage("Please log in first before placing an order.");
+      return;
+    }
+    if (user.role && !isCustomerUser(user.role)) {
+      setPaymentMessage("Please log in using a customer account to place an order.");
+      return;
+    }
     setIsSubmitting(true); setPaymentMessage(null);
     try {
       const total = cart.reduce((s, i) => s + i.recipe.price * i.quantity, 0);
@@ -1227,7 +1302,7 @@ export default function Delicacy() {
                               style={{ position: "absolute", inset: -4, borderRadius: 28, border: "2px solid rgba(245,200,66,0.8)", boxShadow: "0 0 0 4px rgba(245,200,66,0.15),0 0 48px rgba(245,200,66,0.3)", pointerEvents: "none", zIndex: 10 }} />
                             <motion.div initial={{ opacity: 0, y: -12, scale: 0.85 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -8 }} transition={{ type: "spring", stiffness: 300, damping: 22, delay: 0.2 }}
                               style={{ position: "absolute", top: -14, left: "50%", transform: "translateX(-50%)", background: "#f5c842", color: "#111", fontSize: 11, fontWeight: 800, padding: "5px 16px", borderRadius: 30, whiteSpace: "nowrap", boxShadow: "0 4px 20px rgba(245,200,66,0.5)", zIndex: 20, pointerEvents: "none" }}>
-                              ✦ Tap to Order
+                              Tap to Order
                             </motion.div>
                           </>
                         )}
@@ -1236,8 +1311,8 @@ export default function Delicacy() {
                         recipe={recipe}
                         isFav={favorites.includes(recipe.id)}
                         justAdded={justAdded === recipe.id}
-                        flavorSel={flavorSels[recipe.id] ?? []}
-                        variantSel={variantSels[recipe.id] ?? "original"}
+                        flavorSel={flavorSels[recipe.id] ? flavorSels[recipe.id] : []}
+                        variantSel={variantSels[recipe.id] ? variantSels[recipe.id] : "original"}
                         onToggleFav={() => setFavorites(p => p.includes(recipe.id) ? p.filter(f => f !== recipe.id) : [...p, recipe.id])}
                         onAddToCart={() => addToCart(recipe)}
                         onFlavorChange={f => setFlavorSels(p => ({ ...p, [recipe.id]: f }))}
@@ -1277,3 +1352,5 @@ export default function Delicacy() {
     </div>
   );
 }
+
+

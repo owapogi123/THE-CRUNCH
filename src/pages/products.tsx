@@ -3,6 +3,12 @@ import { motion, AnimatePresence, useScroll, useTransform, useInView } from 'fra
 import { Search, Flame, Crown, Clock, ChevronDown, Droplets, MapPin, Star, X, CalendarDays, MessageSquare, Send, CheckCircle } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 
+const formatPHP = (value: number) =>
+  new Intl.NumberFormat("en-PH", {
+    style: "currency",
+    currency: "PHP",
+  }).format(value || 0)
+
 // ── Constants ──────────────────────────────────────────────────────────────
 const NAV_H = 64
 const BANNER_H = 40
@@ -206,14 +212,28 @@ function ProductCard({ product:p, index, onOrder }: { product:Product; index:num
         {isDrink && (
           <div style={{ display:'flex', gap:6, marginBottom:14 }}>
             {[{s:'16oz',p:50},{s:'22oz',p:60}].map(sz => (
-              <span key={sz.s} style={{ fontSize:10, fontWeight:600, padding:'3px 10px', borderRadius:999, background:'rgba(99,179,237,0.07)', color:'#93c5fd', border:'1px solid rgba(99,179,237,0.16)', fontFamily:'var(--sans)' }}>{sz.s} — ₱{sz.p}</span>
+              <span
+                key={sz.s}
+                style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  padding: "3px 10px",
+                  borderRadius: 999,
+                  background: "rgba(99,179,237,0.07)",
+                  color: "#93c5fd",
+                  border: "1px solid rgba(99,179,237,0.16)",
+                  fontFamily: "var(--sans)",
+                }}
+              >
+                {sz.s} � {formatPHP(Number(sz.p))}
+              </span>
             ))}
           </div>
         )}
 
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
           {!isDrink
-            ? <span style={{ fontFamily:'var(--serif)', fontSize:24, fontWeight:700, color:'var(--gold)' }}>₱{p.price}</span>
+            ? <span style={{ fontFamily:'var(--serif)', fontSize:24, fontWeight:700, color:'var(--gold)' }}>{formatPHP(Number(p.price))}</span>
             : <div />}
           <motion.button
             whileHover={{ scale:1.05 }} whileTap={{ scale:.95 }}
@@ -247,7 +267,7 @@ function MenuRow({ item, index }: { item:MenuItem; index:number }) {
         <span style={{ fontSize:13, color:'var(--text-muted)', fontFamily:'var(--sans)', fontWeight:400 }}>{item.name}</span>
         {item.tag && <span style={{ fontSize:9, fontWeight:700, padding:'2px 7px', borderRadius:999, background:'var(--gold-dim)', color:'var(--gold)', border:'1px solid var(--gold-border)', letterSpacing:'0.07em', textTransform:'uppercase', fontFamily:'var(--sans)' }}>{item.tag}</span>}
       </div>
-      <span style={{ fontSize:13.5, fontWeight:700, color:'var(--gold)', flexShrink:0, fontFamily:'var(--serif)' }}>₱{item.price}</span>
+      <span style={{ fontSize:13.5, fontWeight:700, color:'var(--gold)', flexShrink:0, fontFamily:'var(--serif)' }}>{formatPHP(Number(item.price))}</span>
     </motion.div>
   )
 }
@@ -284,17 +304,17 @@ function MenuCard({ section, delay }: { section:MenuSection; delay:number }) {
 
       {isDrink && (
         <div style={{ display:'flex', gap:6, marginBottom:12 }}>
-          {[{l:'16oz',p:'₱50'},{l:'22oz',p:'₱60'}].map(s => (
+          {[{l:'16oz',p:50},{l:'22oz',p:60}].map(s => (
             <div key={s.l} style={{ display:'flex', alignItems:'center', gap:5, background:'rgba(99,179,237,0.07)', border:'1px solid rgba(147,210,255,0.15)', borderRadius:999, padding:'4px 10px' }}>
               <Droplets size={9} color="#93c5fd" />
               <span style={{ fontSize:11, fontWeight:600, color:'#93c5fd', fontFamily:'var(--sans)' }}>{s.l}</span>
-              <span style={{ fontSize:11, color:'var(--text-dim)', fontFamily:'var(--sans)' }}>{s.p}</span>
+              <span style={{ fontSize:11, color:'var(--text-dim)', fontFamily:'var(--sans)' }}>{formatPHP(Number(s.p))}</span>
             </div>
           ))}
         </div>
       )}
 
-      {section.items.map((item, idx) => <MenuRow key={`${item.name}-${idx}`} item={item} index={idx} />)}
+      {section.items.map((item, idx) => <MenuRow key={`${section.id}-${item.name}-${item.price}`} item={item} index={idx} />)}
     </motion.div>
   )
 }
@@ -618,7 +638,9 @@ export default function Products({ isAuthenticated=false, onLogout }: ProductsPr
     return () => { cancelled = true }
   }
 
-  useEffect(() => fetchData<Product>('/api/products', setProducts, setLoadingP), [])
+  useEffect(() => {
+    fetchData<Product>('/api/products?item_type=menu_item', setProducts, setLoadingP)
+  }, [])
   useEffect(() => fetchData<FlavorItem>('/api/flavors', setFlavors, setLoadingF), [])
   useEffect(() => fetchData<MenuSection>('/api/menu-sections', setMenuSections, setLoadingM), [])
   useEffect(() => fetchData<Promo>('/api/promos', setPromos, setLoadingR), [])
@@ -822,7 +844,7 @@ export default function Products({ isAuthenticated=false, onLogout }: ProductsPr
             <div className="pad" style={{ paddingTop:10, paddingBottom:10, display:'flex', alignItems:'center', gap:10 }}>
               <Droplets size={12} color="var(--gold)" />
               <span style={{ fontSize:12, color:'var(--text-muted)', fontFamily:'var(--sans)' }}>
-                Fruit Soda available in <strong style={{ color:'var(--gold)' }}>16oz (₱50)</strong> and <strong style={{ color:'var(--gold)' }}>22oz (₱60)</strong>.
+                Fruit Soda available in <strong style={{ color:'var(--gold)' }}>16oz ({formatPHP(50)})</strong> and <strong style={{ color:'var(--gold)' }}>22oz ({formatPHP(60)})</strong>.
               </span>
             </div>
           </motion.div>
@@ -860,7 +882,7 @@ export default function Products({ isAuthenticated=false, onLogout }: ProductsPr
                 </p>
                 <div style={{ display:'flex', alignItems:'center', gap:16, flexWrap:'wrap' }}>
                   <span style={{ color:'var(--text-dim)', fontSize:12, fontFamily:'var(--sans)' }}>{topPick.category}</span>
-                  <span style={{ fontFamily:'var(--serif)', fontSize:'clamp(20px,2.5vw,28px)', fontWeight:700, color:'var(--gold)' }}>₱{topPick.price}</span>
+                  <span style={{ fontFamily:'var(--serif)', fontSize:'clamp(20px,2.5vw,28px)', fontWeight:700, color:'var(--gold)' }}>{formatPHP(Number(topPick.price))}</span>
                   <motion.button whileHover={{ scale:1.04 }} whileTap={{ scale:.96 }} onClick={handleOrder}
                     style={{ marginLeft:'auto', background:'var(--gold)', border:'none', borderRadius:13, padding:'clamp(10px,1.2vw,13px) clamp(20px,2vw,32px)', fontSize:12, fontWeight:700, color:'#111', cursor:'pointer', fontFamily:'var(--sans)', letterSpacing:'0.03em' }}>
                     Order Now
