@@ -162,6 +162,11 @@ function resolveAvailabilityStatus(row, ingredients) {
         return (availableServings ?? 0) > 0 ? "Available" : "Out of Stock";
     }
 
+    const itemType = String(row.item_type ?? "").trim().toLowerCase();
+    if (itemType === MENU_ITEM) {
+        return "Not Configured";
+    }
+
     const fallback = String(row.availability_status ?? "Available")
         .trim()
         .toLowerCase();
@@ -181,11 +186,14 @@ async function attachIngredientAvailability(rows) {
             (ingredient) => String(ingredient.item_type || STOCK_ITEM) === STOCK_ITEM,
         );
         const availableServings = computeAvailableServings(ingredients);
+        const availabilityStatus = resolveAvailabilityStatus(row, ingredients);
         return {
             ...row,
             ingredient_count: ingredients.length,
             available_servings: availableServings,
-            availability_status: resolveAvailabilityStatus(row, ingredients),
+            availability_status: availabilityStatus,
+            available: availabilityStatus === "Available",
+            remainingStock: availabilityStatus === "Not Configured" ? 0 : Number(row.remainingStock ?? 0),
             ingredients,
         };
     });

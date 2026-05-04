@@ -60,6 +60,8 @@ const settingsRoutes = require("./routes/settingsRoutes");
 app.use("/api/settings", settingsRoutes);
 const contentRoutes = require("./routes/contentRoutes");
 app.use("/api", contentRoutes);
+const paymongoRoutes = require("./routes/paymongoRoutes");
+app.use("/api/paymongo", paymongoRoutes);
 
 // order endpoints (used by POS & dashboard)
 const orderRoutes = require("./routes/orderRoutes");

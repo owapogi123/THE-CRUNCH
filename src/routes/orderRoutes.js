@@ -576,14 +576,16 @@ router.get("/queue", async (req, res) => {
         !isFinishedStatus(normalizedStatus);
 
       if (!grouped[r.id]) {
+        const normalizedOrderType = normalizeOrderType(r.orderType);
         grouped[r.id] = {
           id: String(r.id),
           orderNumber: `#${r.id}`,
           tableNumber: 0,
-          status: normalizeOrderType(r.orderType),
+          status: normalizedOrderType,
+          orderType: normalizedOrderType,
           isOnlinePickup:
             Number(r.customerUserId) > 0 &&
-            normalizeOrderType(r.orderType) === "take-out",
+            normalizedOrderType === "take-out",
           items: [],
           currentStatus: normalizedStatus,
           paymentStatus: normalizePaymentStatus(
@@ -793,6 +795,15 @@ router.get("/delivery-handover", async (req, res) => {
          o.Total_Amount      AS total,
          o.Order_Date        AS createdAt,
          o.Order_Type        AS orderType,
+         o.payment_status    AS paymentStatus,
+         o.payment_method    AS paymentMethod,
+         (
+           SELECT p.Payment_Status
+           FROM payments p
+           WHERE p.Order_ID = o.Order_ID
+           ORDER BY p.Payment_ID DESC
+           LIMIT 1
+         ) AS paymentRecordStatus,
          o.handoverTimestamp AS handoverTimestamp,
          o.riderName         AS riderName,
          oi.Quantity         AS quantity,
@@ -803,7 +814,7 @@ router.get("/delivery-handover", async (req, res) => {
        LEFT JOIN products  pr ON pr.id          = oi.Product_ID
        WHERE o.customer_user_id IS NULL
          AND LOWER(COALESCE(o.Order_Type, '')) = 'delivery'
-         AND LOWER(COALESCE(o.Status, '')) IN ('ready', 'completed', 'ready for pickup')
+         AND LOWER(COALESCE(o.Status, '')) IN ('ready', 'ready for pickup')
          AND COALESCE(o.handoverTimestamp, NULL) IS NULL
        ORDER BY o.Order_ID DESC`
     );
@@ -818,6 +829,10 @@ router.get("/delivery-handover", async (req, res) => {
           createdAt: r.createdAt,
           orderType: normalizeOrderType(r.orderType),
           trackingStatus: r.status || "Ready",
+          paymentStatus: normalizePaymentStatus(
+            r.paymentStatus || r.paymentRecordStatus || "Pending",
+          ),
+          paymentMethod: r.paymentMethod || null,
           handoverTimestamp: r.handoverTimestamp,
           riderName: r.riderName,
           items: [],
@@ -1355,6 +1370,8 @@ router.patch("/:id", async (req, res) => {
     const [existingRows] = await conn.query(
       `SELECT
          Status AS status,
+         Order_Type AS orderType,
+         customer_user_id AS customerUserId,
          queuedAt AS queuedAt,
          prepStartedAt AS prepStartedAt,
          dueAt AS dueAt,
@@ -1380,6 +1397,10 @@ router.patch("/:id", async (req, res) => {
 
     const currentRawStatus = existingRows[0].status;
     const currentStatus = normalizeKitchenStatus(currentRawStatus);
+    const currentOrderType = normalizeOrderType(existingRows[0].orderType);
+    const isOnlinePickupCompletion =
+      Number(existingRows[0].customerUserId) > 0 &&
+      currentOrderType === "take-out";
     const hasTimerUpdate = estimatedPrepMinutes !== undefined;
     const hasStatusUpdate = status !== undefined && status !== null && String(status).trim() !== "";
     const submittedPaymentStatus = payment_status ?? paymentStatus;
@@ -1428,6 +1449,17 @@ router.patch("/:id", async (req, res) => {
     ) {
       return res.status(400).json({
         message: "Orders cannot move to the cook queue until payment is confirmed as paid",
+      });
+    }
+
+    if (
+      hasStatusUpdate &&
+      nextStatus === "Completed" &&
+      persistedCashierId == null &&
+      isOnlinePickupCompletion
+    ) {
+      return res.status(400).json({
+        message: "Only cashier-confirmed pickup or handover can complete an order",
       });
     }
 
