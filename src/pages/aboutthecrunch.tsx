@@ -161,9 +161,7 @@ export default function AboutTheCrunch() {
           onClick={() => navigate('/products')}
           style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}
         >
-          <div style={{ width: 32, height: 32, borderRadius: 8, background: '#f5c842', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <span style={{ fontFamily: PP, fontSize: 12, fontWeight: 900, color: '#1a0a00', letterSpacing: '-0.04em' }}>TC</span>
-          </div>
+          <img src="/src/assets/img/logo24.png" alt="The Crunch logo" style={{ width: 32, height: 32, borderRadius: 8, objectFit: 'contain' }} />
           {!isMobile && (
             <span style={{ fontFamily: PP, fontSize: 15, fontWeight: 800, color: '#ede9e2', letterSpacing: '-0.02em' }}>
               The <span style={{ color: '#f5c842' }}>Crunch</span>
@@ -592,9 +590,7 @@ export default function AboutTheCrunch() {
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : isTablet ? '1fr 1fr' : '2fr 1fr 1fr', gap: isMobile ? 36 : 48, marginBottom: 40 }}>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-                <div style={{ width: 34, height: 34, borderRadius: 9, background: '#f5c842', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <span style={{ fontFamily: PP, fontSize: 13, fontWeight: 900, color: '#1a0a00', letterSpacing: '-0.04em' }}>TC</span>
-                </div>
+                <img src="/src/assets/img/logo24.png" alt="The Crunch logo" style={{ width: 34, height: 34, borderRadius: 9, objectFit: 'contain' }} />
                 <span style={{ fontFamily: PP, fontSize: 16, fontWeight: 800, color: '#ede9e2' }}>
                   The <span style={{ color: '#f5c842' }}>Crunch</span>
                 </span>

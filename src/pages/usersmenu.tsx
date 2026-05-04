@@ -1073,9 +1073,10 @@ export default function Delicacy() {
         transition={{ duration: 0.65, ease: EASE }}
         style={{ position: "sticky", top: 0, zIndex: 100, background: scrolled ? "rgba(14,12,10,0.96)" : "rgba(14,12,10,0.80)", backdropFilter: "blur(24px)", borderBottom: "1px solid rgba(240,237,232,0.07)", padding: "0 clamp(16px,4vw,40px)", height: 68, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
 
-        <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} transition={SP} onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}>
-          <span style={{ fontSize: 20, fontWeight: 900, color: "#f0ede8" }}>The <span style={{ color: "#f5c842" }}>Crunch</span></span>
-        </motion.button>
+        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+  <img src="/src/assets/img/logo24.png" alt="The Crunch logo" style={{ width:32, height:32, objectFit:'contain' }} />
+  <span style={{ fontSize: 20, fontWeight: 900, color: "#f0ede8" }}>The <span style={{ color: "#f5c842" }}>Crunch</span></span>
+</div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
           {NAV_LINKS.map(item => (

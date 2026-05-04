@@ -650,9 +650,12 @@ export default function Products({ isAuthenticated=false, onLogout }: ProductsPr
         style={{ position:'sticky', top:0, zIndex:200, height:NAV_H, background:'rgba(8,7,5,0.92)', backdropFilter:'blur(28px)', WebkitBackdropFilter:'blur(28px)', borderBottom:'1px solid var(--border)', display:'flex', alignItems:'center' }}>
         <div className="pad" style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
           <button onClick={() => window.scrollTo({ top:0, behavior:'smooth' })} style={{ background:'none', border:'none', cursor:'pointer', padding:0 }}>
-            <span style={{ fontFamily:'var(--serif)', fontWeight:700, fontSize:22, color:'var(--text)', letterSpacing:'-0.02em' }}>
-              The <span style={{ color:'var(--gold)' }}>Crunch</span>
-            </span>
+            <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+  <img src="/src/assets/img/logo24.png" alt="The Crunch logo" style={{ width:32, height:32, objectFit:'contain' }} />
+  <span style={{ fontFamily:'var(--serif)', fontWeight:700, fontSize:22, color:'var(--text)', letterSpacing:'-0.02em' }}>
+    The <span style={{ color:'var(--gold)' }}>Crunch</span>
+  </span>
+</div>
           </button>
 
           <nav className="dn768" style={{ display:'flex', gap:4, alignItems:'center' }}>
@@ -978,9 +981,7 @@ export default function Products({ isAuthenticated=false, onLogout }: ProductsPr
         <div className="pad">
           <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', flexWrap:'wrap', gap:32, marginBottom:40 }}>
             <div>
-              <button onClick={() => window.scrollTo({ top:0, behavior:'smooth' })} style={{ background:'none', border:'none', cursor:'pointer', padding:0, marginBottom:12, display:'block' }}>
-                <span style={{ fontFamily:'var(--serif)', fontWeight:700, fontSize:18, color:'var(--text)' }}>The <span style={{ color:'var(--gold)' }}>Crunch</span></span>
-              </button>
+              <span style={{ fontFamily:'var(--serif)', fontWeight:700, fontSize:18, color:'var(--text)' }}>The <span style={{ color:'var(--gold)' }}>Crunch</span></span>
               <p style={{ fontSize:13, color:'var(--text-dim)', marginBottom:14, lineHeight:1.7, maxWidth:200, fontWeight:300, fontFamily:'var(--sans)' }}>
                 6 Falcon St., cor Dahlia Fairview,<br />Quezon City, Philippines
               </p>
