@@ -594,11 +594,11 @@ const TYPE_BADGE: Record<WithdrawalType, string> = {
   supplementary: "bg-sky-50 text-sky-600",
   return: "bg-emerald-50 text-emerald-600",
 };
-const KPI_ACCENT: Record<string, { border: string; value: string }> = {
-  slate: { border: "border-t-slate-800", value: "text-slate-500" },
-  indigo: { border: "border-t-indigo-400", value: "text-indigo-600" },
-  rose: { border: "border-t-rose-400", value: "text-rose-500" },
-  emerald: { border: "border-t-emerald-400", value: "text-emerald-600" },
+const KPI_ACCENT: Record<string, { border: string; value: string; bg: string; borderColor: string }> = {
+  slate: { border: "border-t-slate-700", value: "text-slate-700", bg: "bg-slate-50", borderColor: "border-slate-200" },
+  indigo: { border: "border-t-indigo-500", value: "text-indigo-600", bg: "bg-indigo-50", borderColor: "border-indigo-200" },
+  rose: { border: "border-t-rose-500", value: "text-rose-500", bg: "bg-rose-50", borderColor: "border-rose-200" },
+  emerald: { border: "border-t-emerald-500", value: "text-emerald-600", bg: "bg-emerald-50", borderColor: "border-emerald-200" },
 };
 const ease: Transition = { duration: 0.38, ease: [0.25, 0.46, 0.45, 0.94] };
 const pageVariants: Variants = {
@@ -1110,7 +1110,7 @@ function KPICard({
   return (
     <motion.div
       variants={itemVariants}
-      className={`bg-white rounded-2xl p-5 shadow-sm border border-slate-100 border-t-4 ${KPI_ACCENT[accent].border} ${interactive ? "cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md" : ""}`}
+     className={`rounded-2xl p-5 shadow-sm border-2 border-t-4 ${KPI_ACCENT[accent].bg} ${KPI_ACCENT[accent].borderColor} ${KPI_ACCENT[accent].border} ${interactive ? "cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md" : ""}`}
       onClick={onClick}
       role={interactive ? "button" : undefined}
       tabIndex={interactive ? 0 : undefined}
@@ -7574,34 +7574,38 @@ export default function StockManager() {
                     className="space-y-4"
                   >
                     <motion.div
-                      variants={itemVariants}
-                      className="grid grid-cols-3 gap-4"
-                    >
-                      <div className="bg-white rounded-2xl p-5 border border-t-4 border-slate-400 shadow-sm">
-                        <p className="text-xs text-slate-400 font-medium">
-                          Out of Stock
-                        </p>
-                        <p className="text-3xl font-bold text-slate-700 mt-1">
-                          {outOfStockItems.length}
-                        </p>
-                      </div>
-                      <div className="bg-white rounded-2xl p-5 border border-t-4 border-red-300 shadow-sm">
-                        <p className="text-xs text-slate-400 font-medium">
-                          Critical Items
-                        </p>
-                        <p className="text-3xl font-bold text-red-500 mt-1">
-                          {alertCriticalStock.length}
-                        </p>
-                      </div>
-                      <div className="bg-white rounded-2xl p-5 border border-t-4 border-amber-300 shadow-sm">
-                        <p className="text-xs text-slate-400 font-medium">
-                          Warning Items
-                        </p>
-                        <p className="text-3xl font-bold text-amber-500 mt-1">
-                          {lowStock.length}
-                        </p>
-                      </div>
-                    </motion.div>
+  variants={itemVariants}
+  className="grid grid-cols-4 gap-4"
+>
+  <div className="bg-green-50 rounded-2xl p-5 border-2 border-t-4 border-green-200 border-t-green-500 shadow-sm">
+    <p className="text-xs text-green-600 font-medium">Normal</p>
+    <p className="text-3xl font-bold text-green-600 mt-1">
+      {products.filter(p => !isMenuFoodProduct(p) && getStockStatus(p) === "normal" && toNumber(p.mainStock) > 0).length}
+    </p>
+    <p className="text-xs text-green-500 mt-1">items in safe range</p>
+  </div>
+  <div className="bg-amber-50 rounded-2xl p-5 border-2 border-t-4 border-amber-200 border-t-amber-500 shadow-sm">
+    <p className="text-xs text-amber-600 font-medium">Warning Items</p>
+    <p className="text-3xl font-bold text-amber-500 mt-1">
+      {lowStock.length}
+    </p>
+    <p className="text-xs text-amber-500 mt-1">need reordering soon</p>
+  </div>
+  <div className="bg-red-50 rounded-2xl p-5 border-2 border-t-4 border-red-200 border-t-red-500 shadow-sm">
+    <p className="text-xs text-red-500 font-medium">Critical Items</p>
+    <p className="text-3xl font-bold text-red-500 mt-1">
+      {alertCriticalStock.length}
+    </p>
+    <p className="text-xs text-red-400 mt-1">order immediately</p>
+  </div>
+  <div className="bg-slate-200 rounded-2xl p-5 border-2 border-t-4 border-slate-400 border-t-slate-700 shadow-sm">
+    <p className="text-xs text-slate-700 font-medium">Out of Stock</p>
+    <p className="text-3xl font-bold text-slate-800 mt-1">
+      {outOfStockItems.length}
+    </p>
+    <p className="text-xs text-slate-600 mt-1">no stock remaining</p>
+  </div>
+</motion.div>
                     {lowStock.length === 0 &&
                     alertCriticalStock.length === 0 &&
                     outOfStockItems.length === 0 ? (
