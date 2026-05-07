@@ -140,7 +140,7 @@ const DEFAULT_ROLE_PERMISSIONS = {
   },
   cashier: {
     overview: false,
-    orders: false,
+    orders: true,
     menuManagement: false,
     menus: true,
     stockManager: false,
@@ -172,6 +172,12 @@ const DEFAULT_ROLE_PERMISSIONS = {
 
 const VALID_PERMISSION_ROLES = Object.keys(DEFAULT_ROLE_PERMISSIONS);
 const VALID_PERMISSION_KEYS = Object.keys(DEFAULT_ROLE_PERMISSIONS.administrator);
+const DEFAULT_PERMISSION_ROLE_LOCKS = {
+  administrator: false,
+  cashier: false,
+  cook: false,
+  inventory_manager: false,
+};
 
 function normalizePermissionsPayload(payload) {
   const source = payload && typeof payload === "object" ? payload : {};
@@ -191,6 +197,20 @@ function normalizePermissionsPayload(payload) {
 
   next.administrator.userAccounts = true;
   next.administrator.settings = true;
+
+  return next;
+}
+
+function normalizePermissionRoleLocks(payload) {
+  const source = payload && typeof payload === "object" ? payload : {};
+  const next = {};
+
+  for (const role of VALID_PERMISSION_ROLES) {
+    next[role] = normalizeBoolean(
+      source[role],
+      DEFAULT_PERMISSION_ROLE_LOCKS[role],
+    );
+  }
 
   return next;
 }
@@ -215,7 +235,28 @@ async function loadRolePermissions() {
   merged.administrator.userAccounts = true;
   merged.administrator.settings = true;
 
-  return merged;
+  const [lockRows] = await db.query(
+    `SELECT settings_json
+       FROM system_settings
+      WHERE setting_key = 'role_permission_locks'
+      LIMIT 1`,
+  );
+
+  let roleLocks = normalizePermissionRoleLocks(DEFAULT_PERMISSION_ROLE_LOCKS);
+  if (lockRows.length > 0 && lockRows[0].settings_json) {
+    try {
+      roleLocks = normalizePermissionRoleLocks(
+        JSON.parse(lockRows[0].settings_json),
+      );
+    } catch {
+      roleLocks = normalizePermissionRoleLocks(DEFAULT_PERMISSION_ROLE_LOCKS);
+    }
+  }
+
+  return {
+    permissions: merged,
+    roleLocks,
+  };
 }
 
 function normalizeNumber(value, fieldName, { allowNull = false, min = null } = {}) {
@@ -388,7 +429,12 @@ router.get("/permissions", async (_req, res) => {
 
 router.put("/permissions", async (req, res) => {
   try {
-    const permissions = normalizePermissionsPayload(req.body);
+    const permissions = normalizePermissionsPayload(
+      req.body?.permissions ?? req.body,
+    );
+    const roleLocks = normalizePermissionRoleLocks(
+      req.body?.roleLocks ?? DEFAULT_PERMISSION_ROLE_LOCKS,
+    );
     await ensureInventoryMasterTables();
 
     for (const role of VALID_PERMISSION_ROLES) {
@@ -405,6 +451,13 @@ router.put("/permissions", async (req, res) => {
         );
       }
     }
+
+    await db.query(
+      `INSERT INTO system_settings (setting_key, settings_json)
+       VALUES ('role_permission_locks', ?)
+       ON DUPLICATE KEY UPDATE settings_json = VALUES(settings_json)`,
+      [JSON.stringify(roleLocks)],
+    );
 
     const savedPermissions = await loadRolePermissions();
     res.json(savedPermissions);
