@@ -10,6 +10,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useAuth } from "../context/authcontext";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { cachePermissions, normalizeRole } from "@/lib/permissions";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -157,19 +158,19 @@ const ROLE_LABELS: Record<NonNullRole | "customer", string> = {
 interface SidebarItem {
   label: string;
   path: string;
-  roles: NonNullRole[];
+  permissionKey: PermissionKey;
   icon: React.ElementType;
 }
 
 const SIDEBAR_ITEMS: SidebarItem[] = [
-  { label: "Overview",        path: "/dashboard",     roles: ["administrator", "inventory_manager"], icon: LayoutDashboard },
-  { label: "Orders",          path: "/orders",        roles: ["administrator", "cashier", "cook"],   icon: ShoppingCart },
-  { label: "Menu Management", path: "/inventory",     roles: ["administrator", "inventory_manager"], icon: UtensilsCrossed },
-  { label: "Menus",           path: "/menu",          roles: ["administrator", "cashier"],           icon: BookOpen },
-  { label: "Stock Manager",   path: "/stockmanager",  roles: ["administrator", "inventory_manager"], icon: Package },
-  { label: "User Accounts",   path: "/users",         roles: ["administrator"],                      icon: Users },
-  { label: "Sales & Reports", path: "/sales-reports", roles: ["administrator", "cashier"],           icon: BarChart2 },
-  { label: "Settings",        path: "/settings",      roles: ["administrator", "cashier"],           icon: Settings },
+  { label: "Overview",        path: "/dashboard",     permissionKey: "overview",       icon: LayoutDashboard },
+  { label: "Orders",          path: "/orders",        permissionKey: "orders",         icon: ShoppingCart },
+  { label: "Menu Management", path: "/inventory",     permissionKey: "menuManagement", icon: UtensilsCrossed },
+  { label: "Menus",           path: "/menu",          permissionKey: "menus",          icon: BookOpen },
+  { label: "Stock Manager",   path: "/stockmanager",  permissionKey: "stockManager",   icon: Package },
+  { label: "User Accounts",   path: "/users",         permissionKey: "userAccounts",   icon: Users },
+  { label: "Sales & Reports", path: "/sales-reports", permissionKey: "salesReports",   icon: BarChart2 },
+  { label: "Settings",        path: "/settings",      permissionKey: "settings",       icon: Settings },
 ];
 
 const CONFIG_TABS: { key: TabKey; label: string }[] = [
@@ -191,7 +192,7 @@ const TAB_META: Record<TabKey, { title: string; desc: string }> = {
   billing:       { title: "Billing",           desc: "Tax rates, service charges, and printing configuration." },
   system:        { title: "System",            desc: "Maintenance controls and live configuration preview." },
   feedback:      { title: "Feedback",          desc: "Customer reviews and ratings submitted from the menu page." },
-  permissions:   { title: "User Permissions",  desc: "Control which roles can access each page and feature. Administrator always has full access." },
+  permissions:   { title: "User Permissions",  desc: "Control which roles can access each page and feature, including administrator operational access." },
 };
 
 const CURRENCIES = [
@@ -235,24 +236,39 @@ const PERMISSION_FEATURES: PermissionFeature[] = [
   { key: "settings",       label: "Settings",          icon: Settings,        description: "Access and modify system settings" },
 ];
 
-const EDITABLE_ROLES: { key: NonNullRole; label: string; color: string }[] = [
+const PERMISSION_ROLES: { key: NonNullRole; label: string; color: string }[] = [
+  { key: "administrator",     label: "Admin",             color: ACCENT },
   { key: "cashier",           label: "Cashier",           color: "#4b7cf3" },
   { key: "cook",              label: "Cook",              color: "#0a9261" },
   { key: "inventory_manager", label: "Inventory Manager", color: "#7c3aed" },
 ];
 
+const LOCKED_ADMIN_PERMISSION_KEYS: PermissionKey[] = ["userAccounts", "settings"];
+
+function normalizePermissionsMap(input?: Partial<PermissionsMap> | null): PermissionsMap {
+  const next: PermissionsMap = {
+    administrator: { ...DEFAULT_PERMISSIONS.administrator, ...(input?.administrator ?? {}) },
+    cashier: { ...DEFAULT_PERMISSIONS.cashier, ...(input?.cashier ?? {}) },
+    cook: { ...DEFAULT_PERMISSIONS.cook, ...(input?.cook ?? {}) },
+    inventory_manager: { ...DEFAULT_PERMISSIONS.inventory_manager, ...(input?.inventory_manager ?? {}) },
+  };
+  next.administrator.userAccounts = true;
+  next.administrator.settings = true;
+  return next;
+}
+
 const DEFAULT_PERMISSIONS: PermissionsMap = {
   administrator: {
-    overview: true, orders: true, menuManagement: true, menus: true,
-    stockManager: true, userAccounts: true, salesReports: true, settings: true,
+    overview: true, orders: false, menuManagement: true, menus: false,
+    stockManager: false, userAccounts: true, salesReports: true, settings: true,
   },
   cashier: {
-    overview: false, orders: true, menuManagement: false, menus: true,
-    stockManager: false, userAccounts: false, salesReports: true, settings: true,
+    overview: false, orders: false, menuManagement: false, menus: true,
+    stockManager: false, userAccounts: false, salesReports: true, settings: false,
   },
   cook: {
     overview: false, orders: true, menuManagement: false, menus: false,
-    stockManager: false, userAccounts: false, salesReports: false, settings: true,
+    stockManager: false, userAccounts: false, salesReports: false, settings: false,
   },
   inventory_manager: {
     overview: true, orders: false, menuManagement: true, menus: false,
@@ -594,30 +610,22 @@ function PermissionsTab({
       >
         <Shield size={15} color={ACCENT} style={{ flexShrink: 0, marginTop: 1 }} />
         <p style={{ fontFamily: FONT, fontSize: "0.78rem", color: "#7a3510", margin: 0 }}>
-          <strong>Administrator</strong> always has full access to all features and cannot be restricted. Changes here only affect Cashier, Cook, and Inventory Manager roles.
+          This matrix controls page access per role. <strong>Administrator</strong> is editable for operational pages, but <strong>Settings</strong> and <strong>User Accounts</strong> always stay enabled.
         </p>
       </motion.div>
 
       {/* Role overview cards */}
       <SettingsCard title="Role Summary" delay={0.04}>
         <div style={{ padding: "14px 22px", display: "flex", gap: 10, flexWrap: "wrap" }}>
-          {/* Admin card */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(212,77,20,0.06)", border: "1px solid rgba(212,77,20,0.18)", borderRadius: 10, padding: "10px 16px", flex: "1 1 160px" }}>
-            <Shield size={18} color={ACCENT} />
-            <div>
-              <p style={{ fontFamily: FONT, fontSize: "0.75rem", fontWeight: 700, color: ACCENT, margin: 0 }}>Administrator</p>
-              <p style={{ fontFamily: FONT, fontSize: "0.67rem", color: "#b0aaa3", margin: "2px 0 0" }}>All 8 features — locked</p>
-            </div>
-          </div>
-          {EDITABLE_ROLES.map((r) => {
+          {PERMISSION_ROLES.map((r) => {
             const count = Object.values(permissions[r.key]).filter(Boolean).length;
             return (
-              <div key={r.key} style={{ display: "flex", alignItems: "center", gap: 10, background: "#fafaf9", border: "1px solid #e4e1dc", borderRadius: 10, padding: "10px 16px", flex: "1 1 160px" }}>
+              <div key={r.key} style={{ display: "flex", alignItems: "center", gap: 10, background: r.key === "administrator" ? "rgba(212,77,20,0.06)" : "#fafaf9", border: r.key === "administrator" ? "1px solid rgba(212,77,20,0.18)" : "1px solid #e4e1dc", borderRadius: 10, padding: "10px 16px", flex: "1 1 160px" }}>
                 <div style={{ width: 34, height: 34, borderRadius: "50%", background: `${r.color}18`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                   <span style={{ fontFamily: FONT, fontSize: "0.7rem", fontWeight: 700, color: r.color }}>{count}</span>
                 </div>
                 <div>
-                  <p style={{ fontFamily: FONT, fontSize: "0.75rem", fontWeight: 700, color: "#1c1a18", margin: 0 }}>{r.label}</p>
+                  <p style={{ fontFamily: FONT, fontSize: "0.75rem", fontWeight: 700, color: r.key === "administrator" ? ACCENT : "#1c1a18", margin: 0 }}>{ROLE_LABELS[r.key]}</p>
                   <p style={{ fontFamily: FONT, fontSize: "0.67rem", color: "#b0aaa3", margin: "2px 0 0" }}>{count} of 8 features enabled</p>
                 </div>
               </div>
@@ -629,11 +637,11 @@ function PermissionsTab({
       {/* Permissions matrix */}
       <SettingsCard title="Page & Feature Access" delay={0.08}>
         {/* Column headers */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 80px 80px 110px", gap: 0, padding: "8px 22px", borderBottom: "1px solid #f0ede8", background: "#fdfcfb" }}>
-          <span style={{ fontFamily: FONT, fontSize: "0.67rem", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#b0aaa3" }}>Feature</span>
-          {EDITABLE_ROLES.map((r) => (
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(220px,1.2fr) repeat(4, 96px)", gap: 0, padding: "8px 22px", borderBottom: "1px solid #f0ede8", background: "#fdfcfb" }}>
+          <span style={{ fontFamily: FONT, fontSize: "0.67rem", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#b0aaa3" }}>Page</span>
+          {PERMISSION_ROLES.map((r) => (
             <span key={r.key} style={{ fontFamily: FONT, fontSize: "0.67rem", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: r.color, textAlign: "center" }}>
-              {r.label.split(" ")[0]}
+              {r.label}
             </span>
           ))}
         </div>
@@ -644,7 +652,7 @@ function PermissionsTab({
           return (
             <div
               key={feature.key}
-              style={{ display: "grid", gridTemplateColumns: "1fr 80px 80px 110px", alignItems: "center", gap: 0, padding: "10px 22px", borderBottom: isLast ? "none" : "1px solid #f0ede8" }}
+              style={{ display: "grid", gridTemplateColumns: "minmax(220px,1.2fr) repeat(4, 96px)", alignItems: "center", gap: 0, padding: "10px 22px", borderBottom: isLast ? "none" : "1px solid #f0ede8" }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <div style={{ width: 28, height: 28, borderRadius: 7, background: "#f4f2ef", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -652,17 +660,25 @@ function PermissionsTab({
                 </div>
                 <div>
                   <p style={{ fontFamily: FONT, fontSize: "0.8rem", fontWeight: 500, color: "#1c1a18", margin: 0 }}>{feature.label}</p>
-                  <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#b0aaa3", margin: "1px 0 0" }}>{feature.description}</p>
+                  <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#b0aaa3", margin: "1px 0 0" }}>{SIDEBAR_ITEMS.find((item) => item.permissionKey === feature.key)?.path ?? feature.description}</p>
                 </div>
               </div>
-              {EDITABLE_ROLES.map((r) => (
-                <div key={r.key} style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
+              {PERMISSION_ROLES.map((r) => {
+                const locked = r.key === "administrator" && LOCKED_ADMIN_PERMISSION_KEYS.includes(feature.key);
+                return (
+                <div key={r.key} style={{ display: "flex", justifyContent: "center", alignItems: "center", flexDirection: "column", gap: 4 }}>
                   <Toggle
                     value={permissions[r.key][feature.key]}
                     onChange={() => onToggle(r.key, feature.key)}
+                    disabled={locked}
                   />
+                  {locked && (
+                    <span style={{ fontFamily: FONT, fontSize: "0.58rem", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "#b0aaa3" }}>
+                      Locked
+                    </span>
+                  )}
                 </div>
-              ))}
+              )})}
             </div>
           );
         })}
@@ -673,7 +689,7 @@ function PermissionsTab({
         <div style={{ padding: "14px 22px", display: "flex", flexDirection: "column", gap: 10 }}>
           <p style={{ fontFamily: FONT, fontSize: "0.75rem", color: "#7a7470", margin: 0 }}>Apply a preset to quickly configure permissions for a role. This will overwrite any existing toggles for that role.</p>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
-            {EDITABLE_ROLES.map((r) => (
+            {PERMISSION_ROLES.map((r) => (
               <button
                 key={r.key}
                 onClick={() => {
@@ -965,7 +981,7 @@ export default function SettingsPage() {
   const [inventoryMastersError, setInventoryMastersError] = useState<string | null>(null);
 
   // Permissions state
-  const [permissions, setPermissions] = useState<PermissionsMap>(DEFAULT_PERMISSIONS);
+  const [permissions, setPermissions] = useState<PermissionsMap>(normalizePermissionsMap(DEFAULT_PERMISSIONS));
   const [permSaveStatus, setPermSaveStatus] = useState<SaveStatus>("idle");
 
   const initialized = useRef(false);
@@ -974,11 +990,14 @@ export default function SettingsPage() {
   const { user, logout, isOnline } = useAuth();
   const isMobile = useIsMobile();
 
-  const userRole = user?.role as Role;
+  const userRole = normalizeRole(user?.role) as Role;
   const isAdministrator = userRole === "administrator";
 
   const visibleItems = SIDEBAR_ITEMS.filter(
-    (item) => userRole && item.roles.includes(userRole as NonNullRole)
+    (item) =>
+      !!userRole &&
+      userRole !== "customer" &&
+      permissions[userRole as NonNullRole]?.[item.permissionKey]
   );
 
   // Filter out the permissions tab for non-administrators
@@ -1013,7 +1032,9 @@ export default function SettingsPage() {
         if (!res.ok) return;
         const data = await res.json().catch(() => null);
         if (data && typeof data === "object") {
-          setPermissions((prev) => ({ ...prev, ...data }));
+          const next = normalizePermissionsMap(data as Partial<PermissionsMap>);
+          setPermissions(next);
+          cachePermissions(next);
         }
       } catch { /* keep defaults */ }
     };
@@ -1097,26 +1118,37 @@ export default function SettingsPage() {
   const setOrderType = useCallback((key: keyof OrderTypes, v: boolean) => setSettings((p) => ({ ...p, orderTypes: { ...p.orderTypes, [key]: v } })), []);
 
   const handleTogglePermission = useCallback((role: NonNullRole, key: PermissionKey) => {
-    if (role === "administrator") return; // admin is always locked
-    setPermissions((prev) => ({
+    if (role === "administrator" && LOCKED_ADMIN_PERMISSION_KEYS.includes(key)) return;
+    setPermissions((prev) => normalizePermissionsMap({
       ...prev,
       [role]: { ...prev[role], [key]: !prev[role][key] },
     }));
   }, []);
 
   const handleResetPermissions = useCallback(() => {
-    setPermissions(DEFAULT_PERMISSIONS);
+    setPermissions(normalizePermissionsMap(DEFAULT_PERMISSIONS));
   }, []);
 
   const handleSavePermissions = async () => {
     setPermSaveStatus("saving");
     try {
+      const updatedPermissions = normalizePermissionsMap(permissions);
+      console.log("[Settings] saving permissions", updatedPermissions);
+
       const res = await fetch("/api/settings/permissions", {
-        method: "POST",
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(permissions),
+        body: JSON.stringify(updatedPermissions),
       });
+
       if (!res.ok) throw new Error("Save failed");
+      const savedPermissions = normalizePermissionsMap(
+        (await res.json().catch(() => updatedPermissions)) as Partial<PermissionsMap>,
+      );
+      setPermissions(savedPermissions);
+      cachePermissions(savedPermissions);
+      window.dispatchEvent(new Event("permissionsChange"));
+      console.log("[Settings] cached permissions", savedPermissions);
       setPermSaveStatus("saved");
       setTimeout(() => setPermSaveStatus("idle"), 2400);
     } catch {
