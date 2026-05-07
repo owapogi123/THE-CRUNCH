@@ -252,7 +252,7 @@ const DEFAULT_PERMISSIONS: PermissionsMap = {
   },
   cook: {
     overview: false, orders: true, menuManagement: false, menus: false,
-    stockManager: false, userAccounts: false, salesReports: false, settings: false,
+    stockManager: false, userAccounts: false, salesReports: false, settings: true,
   },
   inventory_manager: {
     overview: true, orders: false, menuManagement: true, menus: false,
@@ -1351,7 +1351,7 @@ export default function SettingsPage() {
                   onSave={handleSavePermissions}
                 />
               )}
-              {tab === "permissions" && !isAdministrator && (
+              {tab === "permissions" && !isAdministrator&& (
                 <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} style={{ background: "#fff", border: "1px solid #eae7e2", borderRadius: 12, padding: "56px 24px", textAlign: "center" }}>
                   <Shield size={32} color="#d1cdc7" style={{ marginBottom: 10 }} />
                   <p style={{ fontFamily: FONT, fontSize: "0.9rem", fontWeight: 600, color: "#b0aaa3", marginBottom: 4 }}>Access restricted</p>
