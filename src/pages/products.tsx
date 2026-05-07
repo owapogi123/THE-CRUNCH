@@ -36,6 +36,37 @@ interface Promo { id:string; title:string; subtitle?:string; description:string;
 interface FeedbackPayload { product_id:number; customer_user_id:number|null; rating:number; comment:string }
 interface FeedbackProductOption { id:number; name:string }
 
+const normalizeProductCategory = (value: unknown): Category => {
+  const raw = String(value ?? '').trim().toLowerCase()
+  if (raw.includes('drink') || raw.includes('beverage') || raw.includes('fruit soda')) return 'Drinks'
+  if (raw.includes('side')) return 'Sides'
+  if (raw.includes('combo')) return 'Combos'
+  if (raw.includes('chicken') || raw.includes('rice meal') || raw.includes('menu food')) return 'Chicken'
+  return 'All'
+}
+
+const normalizeProductImage = (value: unknown) =>
+  typeof value === 'string' && value.trim() ? value.trim() : PLACEHOLDER
+
+const mapProducts = (data: unknown[]): Product[] =>
+  Array.isArray(data)
+    ? data
+        .map((row: any) => ({
+          id: Number(row?.id ?? row?.product_id ?? 0),
+          name: String(row?.name ?? row?.product_name ?? '').trim(),
+          menuName: String(row?.menuName ?? row?.name ?? row?.product_name ?? '').trim(),
+          category: normalizeProductCategory(row?.category),
+          rating: Number(row?.rating ?? 0),
+          badge: String(row?.badge ?? '').trim(),
+          description: String(row?.description ?? '').trim(),
+          price: Number(row?.price ?? 0),
+          spicy: Boolean(row?.spicy),
+          img: normalizeProductImage(row?.image ?? row?.img),
+          isDrink: normalizeProductCategory(row?.category) === 'Drinks',
+        }))
+        .filter((row) => row.id > 0 && row.name)
+    : []
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 const getCountdown = (d: string) => {
   const diff = new Date(d).getTime() - Date.now()
@@ -629,17 +660,28 @@ export default function Products({ isAuthenticated=false, onLogout }: ProductsPr
   }, [])
 
   // fetch helper
-  const fetchData = <T,>(url: string, set: (d:T[])=>void, setLoading: (v:boolean)=>void) => {
+  const fetchData = <T,>(
+    url: string,
+    set: (d:T[])=>void,
+    setLoading: (v:boolean)=>void,
+    map?: (d: unknown[]) => T[],
+  ) => {
     let cancelled = false
     setLoading(true)
     fetch(url).then(r => { if(!r.ok) throw new Error(); return r.json() })
-      .then((d:T[]) => { if(!cancelled) { set(Array.isArray(d)?d:[]); setLoading(false) } })
+      .then((d:unknown) => {
+        if (!cancelled) {
+          const rows = Array.isArray(d) ? d : []
+          set(map ? map(rows) : (rows as T[]))
+          setLoading(false)
+        }
+      })
       .catch(() => { if(!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }
 
   useEffect(() => {
-    fetchData<Product>('/api/products?item_type=menu_item', setProducts, setLoadingP)
+    fetchData<Product>('/api/products?item_type=menu_item', setProducts, setLoadingP, mapProducts)
   }, [])
   useEffect(() => fetchData<FlavorItem>('/api/flavors', setFlavors, setLoadingF), [])
   useEffect(() => fetchData<MenuSection>('/api/menu-sections', setMenuSections, setLoadingM), [])
