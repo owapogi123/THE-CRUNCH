@@ -1923,7 +1923,6 @@ function MenuManagementTab() {
   const [fCat, setFCat] = useState("");
   const [fPrice, setFPrice] = useState("");
   const [fUnit, setFUnit] = useState<string>(UNIT_OPTIONS[0]);
-  const [fStock, setFStock] = useState("");
   const [fDesc, setFDesc] = useState("");
   const [fAvailabilityStatus, setFAvailabilityStatus] = useState<string>(
     AVAILABILITY_OPTIONS[0],
@@ -2039,7 +2038,7 @@ function MenuManagementTab() {
 
   function resetAddForm() {
     setFName(""); setFCat(""); setFPrice("");
-    setFStock(""); setFDesc("");
+    setFDesc("");
     setFAvailabilityStatus(AVAILABILITY_OPTIONS[0]);
     setFIsPromotional(false);
     setFPromoPrice("");
@@ -2073,7 +2072,7 @@ function MenuManagementTab() {
       await api.post("/products", {
         name: fName.trim(), category: fCat.trim(),
         price: parseFloat(fPrice), unit: UNIT_OPTIONS[0],
-        quantity: parseFloat(fStock) || 0,
+        quantity: 0,
         description: fDesc.trim() || null,
         image: imageUrl,
         availability_status: fAvailabilityStatus,
@@ -2352,7 +2351,6 @@ function MenuManagementTab() {
             <FormInput label="Price (₱) *" type="number" placeholder="0.00" value={fPrice} onChange={(e) => setFPrice(e.target.value)} />
             <FormGroup label="Unit"><select className={inputClass} value={fUnit} onChange={(e) => setFUnit(e.target.value)}>{UNIT_OPTIONS.map((u) => <option key={u}>{u}</option>)}</select></FormGroup>
           </div>
-          <FormInput label="Initial Stock" type="number" placeholder="0" value={fStock} onChange={(e) => setFStock(e.target.value)} />
           <FormGroup label="Description (optional)"><textarea className={`${inputClass} resize-none`} rows={2} placeholder="Brief description…" value={fDesc} onChange={(e) => setFDesc(e.target.value)} /></FormGroup>
           <FormGroup label="Menu Item Image (optional)">
             <label className="flex flex-col items-center justify-center w-full border-[1.5px] border-dashed border-gray-200 rounded-lg cursor-pointer hover:border-gray-400 hover:bg-gray-50 transition-all overflow-hidden" style={{minHeight: fImagePreview ? "auto" : "80px"}}>
@@ -2458,7 +2456,6 @@ function MenuAdminTab() {
   const [fName, setFName] = useState("");
   const [fCat, setFCat] = useState("");
   const [fPrice, setFPrice] = useState("");
-  const [fStock, setFStock] = useState("");
   const [fDesc, setFDesc] = useState("");
   const [fOverrideMode, setFOverrideMode] = useState<ManualOverrideMode>(
     OVERRIDE_MODE_OPTIONS[0],
@@ -2792,7 +2789,6 @@ function MenuAdminTab() {
     setFName("");
     setFCat("");
     setFPrice("");
-    setFStock("");
     setFDesc("");
     setFOverrideMode(OVERRIDE_MODE_OPTIONS[0]);
     setFIngredients([]);
@@ -2846,7 +2842,7 @@ function MenuAdminTab() {
         item_type: "menu_item",
         price: parseFloat(fPrice),
         unit: UNIT_OPTIONS[0],
-        quantity: parseFloat(fStock) || 0,
+        quantity: 0,
         description: fDesc.trim() || null,
         image: imageUrl,
         ...manualOverridePayload,
@@ -3267,13 +3263,6 @@ function MenuAdminTab() {
             placeholder="0.00"
             value={fPrice}
             onChange={(e) => setFPrice(e.target.value)}
-          />
-          <FormInput
-            label="Initial Stock"
-            type="number"
-            placeholder="0"
-            value={fStock}
-            onChange={(e) => setFStock(e.target.value)}
           />
           <FormGroup label="Availability Mode">
             {renderOverrideButtons(fOverrideMode, setFOverrideMode)}
