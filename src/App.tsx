@@ -141,7 +141,7 @@ export default function App() {
       />
       <Route
         path="/menu"
-        element={protect(<Menu />, ["administrator", "cashier"])}
+        element={protect(<Menu />, ["cashier"])}
       />
       <Route
         path="/users"
