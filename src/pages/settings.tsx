@@ -252,7 +252,7 @@ const DEFAULT_PERMISSIONS: PermissionsMap = {
   },
   cook: {
     overview: false, orders: true, menuManagement: false, menus: false,
-    stockManager: false, userAccounts: false, salesReports: false, settings: true,
+    stockManager: false, userAccounts: false, salesReports: false, settings: false,
   },
   inventory_manager: {
     overview: true, orders: false, menuManagement: true, menus: false,
