@@ -50,6 +50,18 @@ async function ensureInventoryMasterTables() {
     )
   `);
 
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS role_permissions (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      role VARCHAR(50) NOT NULL,
+      permission_key VARCHAR(80) NOT NULL,
+      enabled TINYINT(1) NOT NULL DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY unique_role_permission (role, permission_key)
+    )
+  `);
+
   await addColumnIfMissing(
     "inventory_categories",
     "type",
@@ -113,6 +125,97 @@ async function ensureInventoryMasterTables() {
       [name, abbreviation, name],
     );
   }
+}
+
+const DEFAULT_ROLE_PERMISSIONS = {
+  administrator: {
+    overview: true,
+    orders: false,
+    menuManagement: true,
+    menus: false,
+    stockManager: false,
+    userAccounts: true,
+    salesReports: true,
+    settings: true,
+  },
+  cashier: {
+    overview: false,
+    orders: false,
+    menuManagement: false,
+    menus: true,
+    stockManager: false,
+    userAccounts: false,
+    salesReports: true,
+    settings: false,
+  },
+  cook: {
+    overview: false,
+    orders: true,
+    menuManagement: false,
+    menus: false,
+    stockManager: false,
+    userAccounts: false,
+    salesReports: false,
+    settings: false,
+  },
+  inventory_manager: {
+    overview: true,
+    orders: false,
+    menuManagement: true,
+    menus: false,
+    stockManager: true,
+    userAccounts: false,
+    salesReports: false,
+    settings: false,
+  },
+};
+
+const VALID_PERMISSION_ROLES = Object.keys(DEFAULT_ROLE_PERMISSIONS);
+const VALID_PERMISSION_KEYS = Object.keys(DEFAULT_ROLE_PERMISSIONS.administrator);
+
+function normalizePermissionsPayload(payload) {
+  const source = payload && typeof payload === "object" ? payload : {};
+  const next = {};
+
+  for (const role of VALID_PERMISSION_ROLES) {
+    const roleSource =
+      source[role] && typeof source[role] === "object" ? source[role] : {};
+    next[role] = {};
+    for (const permissionKey of VALID_PERMISSION_KEYS) {
+      next[role][permissionKey] = normalizeBoolean(
+        roleSource[permissionKey],
+        DEFAULT_ROLE_PERMISSIONS[role][permissionKey],
+      );
+    }
+  }
+
+  next.administrator.userAccounts = true;
+  next.administrator.settings = true;
+
+  return next;
+}
+
+async function loadRolePermissions() {
+  await ensureInventoryMasterTables();
+  const [rows] = await db.query(
+    `SELECT role, permission_key, enabled
+       FROM role_permissions`,
+  );
+
+  const merged = normalizePermissionsPayload(DEFAULT_ROLE_PERMISSIONS);
+
+  for (const row of rows) {
+    const role = String(row.role || "").trim().toLowerCase();
+    const permissionKey = String(row.permission_key || "").trim();
+    if (!VALID_PERMISSION_ROLES.includes(role)) continue;
+    if (!VALID_PERMISSION_KEYS.includes(permissionKey)) continue;
+    merged[role][permissionKey] = normalizeBoolean(row.enabled, false);
+  }
+
+  merged.administrator.userAccounts = true;
+  merged.administrator.settings = true;
+
+  return merged;
 }
 
 function normalizeNumber(value, fieldName, { allowNull = false, min = null } = {}) {
@@ -265,6 +368,50 @@ router.post("/", async (req, res) => {
     console.error("POST /api/settings error:", error);
     res.status(400).json({
       message: error.message || "Failed to save settings",
+      error: error.message,
+    });
+  }
+});
+
+router.get("/permissions", async (_req, res) => {
+  try {
+    const permissions = await loadRolePermissions();
+    res.json(permissions);
+  } catch (error) {
+    console.error("GET /api/settings/permissions error:", error);
+    res.status(500).json({
+      message: "Failed to load permissions",
+      error: error.message,
+    });
+  }
+});
+
+router.put("/permissions", async (req, res) => {
+  try {
+    const permissions = normalizePermissionsPayload(req.body);
+    await ensureInventoryMasterTables();
+
+    for (const role of VALID_PERMISSION_ROLES) {
+      for (const permissionKey of VALID_PERMISSION_KEYS) {
+        await db.query(
+          `INSERT INTO role_permissions (role, permission_key, enabled)
+           VALUES (?, ?, ?)
+           ON DUPLICATE KEY UPDATE enabled = VALUES(enabled)`,
+          [
+            role,
+            permissionKey,
+            permissions[role][permissionKey] ? 1 : 0,
+          ],
+        );
+      }
+    }
+
+    const savedPermissions = await loadRolePermissions();
+    res.json(savedPermissions);
+  } catch (error) {
+    console.error("PUT /api/settings/permissions error:", error);
+    res.status(400).json({
+      message: error.message || "Failed to save permissions",
       error: error.message,
     });
   }
