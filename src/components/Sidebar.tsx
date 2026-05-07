@@ -35,6 +35,8 @@ type Role =
   | "customer"
   | null;
 
+type StaffRole = Exclude<Role, "customer" | null>;
+
 interface SidebarItem {
   label: string;
   path: string;
@@ -131,7 +133,11 @@ export function Sidebar() {
         if (!res.ok) return;
         const data = await res.json().catch(() => null);
         if (cancelled || !data || typeof data !== "object") return;
-        const next = normalizePermissionsMap(data as Partial<PermissionsMap>);
+        const next = normalizePermissionsMap(
+          "permissions" in data
+            ? (data.permissions as Partial<PermissionsMap> | null | undefined) ?? null
+            : (data as Partial<PermissionsMap>),
+        );
         console.log("[Sidebar] loaded permissions", next);
         setPermissions(next);
         cachePermissions(next);
@@ -154,10 +160,11 @@ export function Sidebar() {
 
   const visibleItems = useMemo(() => {
     if (!userRole || userRole === "customer") return [];
+    const staffRole = userRole as StaffRole;
     const items = SIDEBAR_ITEMS.filter((item) =>
-      permissions[userRole as Exclude<Role, null>]?.[item.permissionKey] === true,
+      permissions[staffRole]?.[item.permissionKey] === true,
     );
-    console.log("[Sidebar] permissions for role", permissions[userRole as Exclude<Role, null>]);
+    console.log("[Sidebar] permissions for role", permissions[staffRole]);
     console.log("[Sidebar] visibleItems", items.map((item) => item.label));
     return items;
   }, [permissions, userRole]);

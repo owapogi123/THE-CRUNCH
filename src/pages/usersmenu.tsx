@@ -61,6 +61,11 @@ interface PaymentSessionState {
   checkoutSessionId: string; checkoutUrl: string; status: string;
   paid: boolean; paymentReference: string | null;
 }
+interface PersistedCartItem {
+  recipeId: number;
+  quantity: number;
+  flavors: string[];
+}
 type PaymentMethodType = "gcash" | "cash";
 
 const DEFAULT_NUTRITION: Nutrition = { calories: 0, protein: 0, fats: 0, carbs: 0 };
@@ -128,6 +133,7 @@ const DELIVERY_LINKS = {
   foodpanda: "https://foodpanda.go.link/9O718",
   grab:      "https://r.grab.com/g/6-20260421_220129_6e23187a089147b69736d4cacea38146_MEXMPS-2-C4A3RBCER7NFUE",
 };
+const CART_STORAGE_KEY = "the-crunch-cart";
 const PAYMENT_SESSION_KEY = "the-crunch-paymongo-session";
 const CASH_TERMS = "By selecting Cash as your payment method, you agree that your order will not be processed immediately and will only be prepared once full payment is made onsite. You are responsible for completing payment at the store. Delays in payment may result in longer waiting times or possible cancellation of your order. The store reserves the right to refuse or cancel orders that are not paid within a reasonable time.";
 const DEFAULT_FLAVORS = ["Original", "Spicy"];
@@ -872,6 +878,7 @@ export default function Delicacy() {
   const [showCashTerms,  setShowCashTerms]  = useState(false);
 
   const cardRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const cartHydrated = useRef(false);
 
   // ── Fetch all menu data from backend ──
   useEffect(() => {
@@ -926,6 +933,63 @@ export default function Delicacy() {
     if (paymentSession) localStorage.setItem(PAYMENT_SESSION_KEY, JSON.stringify(paymentSession));
     else localStorage.removeItem(PAYMENT_SESSION_KEY);
   }, [paymentSession]);
+
+  useEffect(() => {
+    if (menuItems.length === 0 || cartHydrated.current) return;
+
+    const raw = localStorage.getItem(CART_STORAGE_KEY);
+    if (!raw) {
+      cartHydrated.current = true;
+      return;
+    }
+
+    try {
+      const persisted = JSON.parse(raw) as PersistedCartItem[];
+      if (!Array.isArray(persisted)) {
+        localStorage.removeItem(CART_STORAGE_KEY);
+        cartHydrated.current = true;
+        return;
+      }
+
+      const menuById = new Map(menuItems.map((item) => [item.id, item]));
+      const restoredCart = persisted
+        .map((item) => {
+          const recipe = menuById.get(Number(item.recipeId));
+          if (!recipe) return null;
+          return {
+            recipe,
+            quantity: Math.max(1, Number(item.quantity) || 1),
+            flavors: Array.isArray(item.flavors)
+              ? item.flavors.map((flavor) => String(flavor))
+              : [],
+          };
+        })
+        .filter((item): item is CartItem => item !== null);
+
+      setCart(restoredCart);
+    } catch {
+      localStorage.removeItem(CART_STORAGE_KEY);
+    } finally {
+      cartHydrated.current = true;
+    }
+  }, [menuItems]);
+
+  useEffect(() => {
+    if (!cartHydrated.current) return;
+
+    if (cart.length === 0) {
+      localStorage.removeItem(CART_STORAGE_KEY);
+      return;
+    }
+
+    const persisted: PersistedCartItem[] = cart.map((item) => ({
+      recipeId: item.recipe.id,
+      quantity: item.quantity,
+      flavors: item.flavors,
+    }));
+
+    localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(persisted));
+  }, [cart]);
 
   // ── Handle GCash return URL ──
   useEffect(() => {

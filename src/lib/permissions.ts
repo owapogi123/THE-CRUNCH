@@ -30,7 +30,7 @@ export const DEFAULT_PERMISSIONS: PermissionsMap = {
   },
   cashier: {
     overview: false,
-    orders: false,
+    orders: true,
     menuManagement: false,
     menus: true,
     stockManager: false,

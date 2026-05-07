@@ -47,12 +47,55 @@ const ROLE_MAP: Record<string, string> = {
   customer: "/products",
 };
 
+const PERMISSION_ROUTE_MAP: Partial<Record<PermissionKey, string>> = {
+  overview: "/dashboard",
+  orders: "/orders",
+  menuManagement: "/inventory",
+  menus: "/menu",
+  stockManager: "/stockmanager",
+  userAccounts: "/users",
+  salesReports: "/sales-reports",
+  settings: "/settings",
+};
+
+function getHomePathForRole(
+  role: Role,
+  permissions: PermissionsMap,
+): string {
+  if (!role) return "/login";
+  if (role === "customer") return ROLE_MAP.customer;
+
+  const fallback = ROLE_MAP[role] ?? "/unauthorized";
+  const rolePermissions = permissions[role];
+  if (!rolePermissions) return fallback;
+
+  const fallbackPermission = (
+    Object.entries(PERMISSION_ROUTE_MAP) as [PermissionKey, string][]
+  ).find(([, path]) => path === fallback)?.[0];
+
+  if (!fallbackPermission || rolePermissions[fallbackPermission]) {
+    return fallback;
+  }
+
+  const firstAllowedRoute = (
+    Object.entries(PERMISSION_ROUTE_MAP) as [PermissionKey, string][]
+  ).find(([permissionKey]) => rolePermissions[permissionKey])?.[1];
+
+  return firstAllowedRoute ?? "/unauthorized";
+}
+
 // ── Redirects already-logged-in users away from /login ──────────────────────
-function PublicOnlyRoute({ element }: { element: React.ReactElement }) {
+function PublicOnlyRoute({
+  element,
+  redirectTo,
+}: {
+  element: React.ReactElement;
+  redirectTo: string;
+}) {
   const { user } = useAuth();
   if (user) {
     // Already logged in — send them to their home page instead of /login
-    return <Navigate to={ROLE_MAP[user.role] ?? "/"} replace />;
+    return <Navigate to={redirectTo} replace />;
   }
   return element;
 }
@@ -88,6 +131,10 @@ function ProtectedRoute({
 
 function Unauthorized() {
   const { user } = useAuth();
+  const redirectTo = getHomePathForRole(
+    normalizeRole(user?.role) as Role,
+    readCachedPermissions(),
+  );
 
   return (
     <div
@@ -97,9 +144,7 @@ function Unauthorized() {
       <h1 className="text-4xl font-bold text-red-500">403</h1>
       <p className="text-gray-600">You don't have permission to view this page.</p>
       <button
-        onClick={() =>
-          (window.location.href = ROLE_MAP[user?.role ?? ""] || "/login")
-        }
+        onClick={() => (window.location.href = redirectTo)}
         className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-black"
       >
         Go to my dashboard
@@ -118,6 +163,10 @@ export default function App() {
   );
   const isAuth = !!user;
   const userRole = normalizeRole(user?.role) as Role;
+  const homePath = React.useMemo(
+    () => getHomePathForRole(userRole, permissions),
+    [permissions, userRole],
+  );
 
   React.useEffect(() => {
     if (!userRole || userRole === "customer") {
@@ -141,7 +190,11 @@ export default function App() {
         if (!res.ok) return;
         const data = await res.json().catch(() => null);
         if (cancelled || !data || typeof data !== "object") return;
-        const next = normalizePermissionsMap(data as Partial<PermissionsMap>);
+        const next = normalizePermissionsMap(
+          "permissions" in data
+            ? (data.permissions as Partial<PermissionsMap> | null | undefined) ?? null
+            : (data as Partial<PermissionsMap>),
+        );
         console.log("[App] loaded permissions", next);
         setPermissions(next);
         cachePermissions(next);
@@ -188,7 +241,7 @@ export default function App() {
       {/* /login is only for guests — logged-in users are redirected to their home */}
       <Route
         path="/login"
-        element={<PublicOnlyRoute element={<Login />} />}
+        element={<PublicOnlyRoute element={<Login />} redirectTo={homePath} />}
       />
 
       <Route path="/aboutthecrunch" element={<AboutTheCrunch />} />
