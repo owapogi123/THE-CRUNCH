@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import {
   Menu,
@@ -18,6 +18,14 @@ import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "../context/authcontext";
 import { useIsMobile } from "@/hooks/use-mobile";
+import {
+  PermissionKey,
+  PermissionsMap,
+  readCachedPermissions,
+  normalizePermissionsMap,
+  cachePermissions,
+  normalizeRole,
+} from "@/lib/permissions";
 
 type Role =
   | "administrator"
@@ -27,10 +35,12 @@ type Role =
   | "customer"
   | null;
 
+type StaffRole = Exclude<Role, "customer" | null>;
+
 interface SidebarItem {
   label: string;
   path: string;
-  roles: Exclude<Role, null>[];
+  permissionKey: PermissionKey;
   icon: React.ElementType;
 }
 
@@ -46,67 +56,118 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
   {
     label: "Overview",
     path: "/dashboard",
-    roles: ["administrator", "inventory_manager"],
+    permissionKey: "overview",
     icon: LayoutDashboard,
   },
   {
     label: "Order",
     path: "/orders",
-    roles: ["administrator", "cashier", "cook"],
+    permissionKey: "orders",
     icon: ShoppingCart,
   },
   {
     label: "Menu Management",
     path: "/inventory",
-    roles: ["administrator", "inventory_manager"],
+    permissionKey: "menuManagement",
     icon: UtensilsCrossed,
   },
   {
     label: "Menus",
     path: "/menu",
-    roles: ["administrator", "cashier"],
+    permissionKey: "menus",
     icon: BookOpen,
   },
   {
     label: "Stock Manager",
     path: "/stockmanager",
-    roles: ["administrator", "inventory_manager"],
+    permissionKey: "stockManager",
     icon: Package,
   },
   {
     label: "User Accounts",
     path: "/users",
-    roles: ["administrator"],
+    permissionKey: "userAccounts",
     icon: Users,
   },
   {
     label: "Sales & Reports",
     path: "/sales-reports",
-    roles: ["administrator", "cashier"],
+    permissionKey: "salesReports",
     icon: BarChart2,
   },
   {
     label: "Settings",
     path: "/settings",
-    roles: ["administrator", "cashier"],
+    permissionKey: "settings",
     icon: Settings,
   },
 ];
 
 export function Sidebar() {
   const [isOpen, setIsOpen] = useState(false);
+  const [permissions, setPermissions] = useState<PermissionsMap>(() =>
+    readCachedPermissions(),
+  );
   const navigate = useNavigate();
   const { user, logout, isOnline } = useAuth();
   const isMobile = useIsMobile();
 
-  const userRole = user?.role as Role;
+  const normalizedRole = String(user?.role || "").trim().toLowerCase();
+  const userRole = normalizeRole(normalizedRole) as Role;
+
+  React.useEffect(() => {
+    if (!userRole || userRole === "customer") return undefined;
+
+    let cancelled = false;
+
+    const syncPermissions = () => {
+      const cached = readCachedPermissions();
+      console.log("[Sidebar] cached permissions", cached);
+      console.log("[Sidebar] role", normalizedRole);
+      setPermissions(cached);
+    };
+
+    const loadPermissions = async () => {
+      try {
+        const res = await fetch("/api/settings/permissions");
+        if (!res.ok) return;
+        const data = await res.json().catch(() => null);
+        if (cancelled || !data || typeof data !== "object") return;
+        const next = normalizePermissionsMap(
+          "permissions" in data
+            ? (data.permissions as Partial<PermissionsMap> | null | undefined) ?? null
+            : (data as Partial<PermissionsMap>),
+        );
+        console.log("[Sidebar] loaded permissions", next);
+        setPermissions(next);
+        cachePermissions(next);
+      } catch {
+        syncPermissions();
+      }
+    };
+
+    syncPermissions();
+    void loadPermissions();
+    window.addEventListener("permissionsChange", syncPermissions);
+    window.addEventListener("storage", syncPermissions);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("permissionsChange", syncPermissions);
+      window.removeEventListener("storage", syncPermissions);
+    };
+  }, [normalizedRole, userRole]);
 
   const visibleItems = useMemo(() => {
-    if (!userRole) return [];
-    return SIDEBAR_ITEMS.filter((item) =>
-      item.roles.includes(userRole as Exclude<Role, null>),
+    if (!userRole || userRole === "customer") return [];
+    const staffRole = userRole as StaffRole;
+    const items = SIDEBAR_ITEMS.filter((item) =>
+      permissions[staffRole]?.[item.permissionKey] === true,
     );
-  }, [userRole]);
+    console.log("[Sidebar] permissions for role", permissions[staffRole]);
+    console.log("[Sidebar] visibleItems", items.map((item) => item.label));
+    return items;
+  }, [permissions, userRole]);
 
   return (
     <>

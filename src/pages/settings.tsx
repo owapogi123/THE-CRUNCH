@@ -10,6 +10,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useAuth } from "../context/authcontext";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { cachePermissions, normalizeRole } from "@/lib/permissions";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -132,6 +133,12 @@ type PermissionKey =
 
 type RolePermissions = Record<PermissionKey, boolean>;
 type PermissionsMap = Record<NonNullRole, RolePermissions>;
+type PermissionRoleLocks = Record<NonNullRole, boolean>;
+
+interface PermissionsApiPayload {
+  permissions?: Partial<PermissionsMap> | null;
+  roleLocks?: Partial<PermissionRoleLocks> | null;
+}
 
 interface PermissionFeature {
   key: PermissionKey;
@@ -157,19 +164,19 @@ const ROLE_LABELS: Record<NonNullRole | "customer", string> = {
 interface SidebarItem {
   label: string;
   path: string;
-  roles: NonNullRole[];
+  permissionKey: PermissionKey;
   icon: React.ElementType;
 }
 
 const SIDEBAR_ITEMS: SidebarItem[] = [
-  { label: "Overview",        path: "/dashboard",     roles: ["administrator", "inventory_manager"], icon: LayoutDashboard },
-  { label: "Orders",          path: "/orders",        roles: ["administrator", "cashier", "cook"],   icon: ShoppingCart },
-  { label: "Menu Management", path: "/inventory",     roles: ["administrator", "inventory_manager"], icon: UtensilsCrossed },
-  { label: "Menus",           path: "/menu",          roles: ["administrator", "cashier"],           icon: BookOpen },
-  { label: "Stock Manager",   path: "/stockmanager",  roles: ["administrator", "inventory_manager"], icon: Package },
-  { label: "User Accounts",   path: "/users",         roles: ["administrator"],                      icon: Users },
-  { label: "Sales & Reports", path: "/sales-reports", roles: ["administrator", "cashier"],           icon: BarChart2 },
-  { label: "Settings",        path: "/settings",      roles: ["administrator", "cashier"],           icon: Settings },
+  { label: "Overview",        path: "/dashboard",     permissionKey: "overview",       icon: LayoutDashboard },
+  { label: "Orders",          path: "/orders",        permissionKey: "orders",         icon: ShoppingCart },
+  { label: "Menu Management", path: "/inventory",     permissionKey: "menuManagement", icon: UtensilsCrossed },
+  { label: "Menus",           path: "/menu",          permissionKey: "menus",          icon: BookOpen },
+  { label: "Stock Manager",   path: "/stockmanager",  permissionKey: "stockManager",   icon: Package },
+  { label: "User Accounts",   path: "/users",         permissionKey: "userAccounts",   icon: Users },
+  { label: "Sales & Reports", path: "/sales-reports", permissionKey: "salesReports",   icon: BarChart2 },
+  { label: "Settings",        path: "/settings",      permissionKey: "settings",       icon: Settings },
 ];
 
 const CONFIG_TABS: { key: TabKey; label: string }[] = [
@@ -191,7 +198,7 @@ const TAB_META: Record<TabKey, { title: string; desc: string }> = {
   billing:       { title: "Billing",           desc: "Tax rates, service charges, and printing configuration." },
   system:        { title: "System",            desc: "Maintenance controls and live configuration preview." },
   feedback:      { title: "Feedback",          desc: "Customer reviews and ratings submitted from the menu page." },
-  permissions:   { title: "User Permissions",  desc: "Control which roles can access each page and feature. Administrator always has full access." },
+  permissions:   { title: "User Permissions",  desc: "Control which roles can access each page and feature, including administrator operational access." },
 };
 
 const CURRENCIES = [
@@ -235,20 +242,51 @@ const PERMISSION_FEATURES: PermissionFeature[] = [
   { key: "settings",       label: "Settings",          icon: Settings,        description: "Access and modify system settings" },
 ];
 
-const EDITABLE_ROLES: { key: NonNullRole; label: string; color: string }[] = [
+const PERMISSION_ROLES: { key: NonNullRole; label: string; color: string }[] = [
+  { key: "administrator",     label: "Admin",             color: ACCENT },
   { key: "cashier",           label: "Cashier",           color: "#4b7cf3" },
   { key: "cook",              label: "Cook",              color: "#0a9261" },
   { key: "inventory_manager", label: "Inventory Manager", color: "#7c3aed" },
 ];
 
+const LOCKED_ADMIN_PERMISSION_KEYS: PermissionKey[] = ["userAccounts", "settings"];
+
+const DEFAULT_PERMISSION_ROLE_LOCKS: PermissionRoleLocks = {
+  administrator: false,
+  cashier: false,
+  cook: false,
+  inventory_manager: false,
+};
+
+function normalizePermissionRoleLocks(input?: Partial<PermissionRoleLocks> | null): PermissionRoleLocks {
+  return {
+    administrator: input?.administrator === true,
+    cashier: input?.cashier === true,
+    cook: input?.cook === true,
+    inventory_manager: input?.inventory_manager === true,
+  };
+}
+
+function normalizePermissionsMap(input?: Partial<PermissionsMap> | null): PermissionsMap {
+  const next: PermissionsMap = {
+    administrator: { ...DEFAULT_PERMISSIONS.administrator, ...(input?.administrator ?? {}) },
+    cashier: { ...DEFAULT_PERMISSIONS.cashier, ...(input?.cashier ?? {}) },
+    cook: { ...DEFAULT_PERMISSIONS.cook, ...(input?.cook ?? {}) },
+    inventory_manager: { ...DEFAULT_PERMISSIONS.inventory_manager, ...(input?.inventory_manager ?? {}) },
+  };
+  next.administrator.userAccounts = true;
+  next.administrator.settings = true;
+  return next;
+}
+
 const DEFAULT_PERMISSIONS: PermissionsMap = {
   administrator: {
-    overview: true, orders: true, menuManagement: true, menus: true,
-    stockManager: true, userAccounts: true, salesReports: true, settings: true,
+    overview: true, orders: false, menuManagement: true, menus: false,
+    stockManager: false, userAccounts: true, salesReports: true, settings: true,
   },
   cashier: {
-    overview: false, orders: true, menuManagement: false, menus: true,
-    stockManager: false, userAccounts: false, salesReports: true, settings: true,
+    overview: false, orders: false, menuManagement: false, menus: true,
+    stockManager: false, userAccounts: false, salesReports: true, settings: false,
   },
   cook: {
     overview: false, orders: true, menuManagement: false, menus: false,
@@ -309,15 +347,50 @@ function asBool(value: boolean | number | null | undefined): boolean {
 
 const inputBase: React.CSSProperties = {
   fontFamily: FONT,
-  fontSize: "0.8rem",
+  fontSize: "0.82rem",
   color: "#1c1a18",
-  background: "#fafaf9",
-  border: "1px solid #e4e1dc",
-  borderRadius: 8,
-  padding: "8px 12px",
+  background: "#fcfbfa",
+  border: "1px solid #e7e2db",
+  borderRadius: 12,
+  padding: "12px 14px",
   width: "100%",
   outline: "none",
-  transition: "border-color 0.15s, box-shadow 0.15s, background 0.15s",
+  transition: "border-color 0.18s, box-shadow 0.18s, background 0.18s",
+};
+
+const secondaryActionButton: React.CSSProperties = {
+  fontFamily: FONT,
+  fontSize: "0.8rem",
+  fontWeight: 600,
+  color: "#6b655f",
+  background: "#fff",
+  border: "1px solid #e8e1d8",
+  borderRadius: 12,
+  padding: "10px 16px",
+  cursor: "pointer",
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  boxShadow: "0 6px 18px rgba(28,26,24,0.04)",
+};
+
+const primaryActionButton: React.CSSProperties = {
+  fontFamily: FONT,
+  fontSize: "0.8rem",
+  fontWeight: 700,
+  color: "#fff",
+  background: ACCENT,
+  border: "none",
+  borderRadius: 12,
+  padding: "10px 18px",
+  cursor: "pointer",
+  minWidth: 132,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 8,
+  boxShadow: "0 10px 24px rgba(212,77,20,0.24)",
+  transition: "background 0.2s, transform 0.2s, box-shadow 0.2s",
 };
 
 function StyledInput({
@@ -331,7 +404,7 @@ function StyledInput({
       style={{
         ...inputBase,
         borderColor: focused ? ACCENT : "#e4e1dc",
-        boxShadow: focused ? `0 0 0 3px rgba(212,77,20,0.1)` : "none",
+        boxShadow: focused ? `0 0 0 4px rgba(212,77,20,0.10)` : "0 1px 2px rgba(28,26,24,0.03)",
         background: focused ? "#fff" : "#fafaf9",
       }}
       type={type} value={value} placeholder={placeholder}
@@ -352,7 +425,7 @@ function StyledSelect({
       style={{
         ...inputBase, cursor: "pointer",
         borderColor: focused ? ACCENT : "#e4e1dc",
-        boxShadow: focused ? `0 0 0 3px rgba(212,77,20,0.1)` : "none",
+        boxShadow: focused ? `0 0 0 4px rgba(212,77,20,0.10)` : "0 1px 2px rgba(28,26,24,0.03)",
         background: focused ? "#fff" : "#fafaf9",
       }}
       value={value} onChange={(e) => onChange(e.target.value)}
@@ -390,20 +463,22 @@ function Toggle({ value, onChange, danger = false, disabled = false }: { value: 
 // ─── Layout components ────────────────────────────────────────────────────────
 
 function FieldRow({ label, last = false, children }: { label: string; last?: boolean; children: React.ReactNode }) {
+  const isMobile = useIsMobile();
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "176px 1fr", alignItems: "center", gap: 16, padding: "11px 22px", borderBottom: last ? "none" : "1px solid #f0ede8" }}>
-      <p style={{ fontFamily: FONT, fontSize: "0.8rem", fontWeight: 500, color: "#5a5652", margin: 0 }}>{label}</p>
+    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "200px minmax(0,1fr)", alignItems: "center", gap: isMobile ? 10 : 20, padding: isMobile ? "16px 18px" : "16px 28px", borderBottom: last ? "none" : "1px solid rgba(28,26,24,0.06)" }}>
+      <p style={{ fontFamily: FONT, fontSize: "0.8rem", fontWeight: 600, color: "#5a5652", margin: 0 }}>{label}</p>
       {children}
     </div>
   );
 }
 
 function ToggleRow({ label, desc, value, onChange, last = false, danger = false }: { label: string; desc?: string; value: boolean; onChange: (v: boolean) => void; last?: boolean; danger?: boolean }) {
+  const isMobile = useIsMobile();
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 22px", borderBottom: last ? "none" : "1px solid #f0ede8", gap: 16 }}>
+    <div style={{ display: "flex", alignItems: isMobile ? "flex-start" : "center", justifyContent: "space-between", flexDirection: isMobile ? "column" : "row", padding: isMobile ? "16px 18px" : "16px 28px", borderBottom: last ? "none" : "1px solid rgba(28,26,24,0.06)", gap: 16 }}>
       <div>
-        <p style={{ fontFamily: FONT, fontSize: "0.8rem", fontWeight: 500, color: "#5a5652", margin: 0 }}>{label}</p>
-        {desc && <p style={{ fontFamily: FONT, fontSize: "0.72rem", color: "#b0aaa3", margin: "2px 0 0" }}>{desc}</p>}
+        <p style={{ fontFamily: FONT, fontSize: "0.8rem", fontWeight: 600, color: "#5a5652", margin: 0 }}>{label}</p>
+        {desc && <p style={{ fontFamily: FONT, fontSize: "0.73rem", color: "#9e9891", margin: "4px 0 0", lineHeight: 1.6 }}>{desc}</p>}
       </div>
       <Toggle value={value} onChange={onChange} danger={danger} />
     </div>
@@ -415,9 +490,9 @@ function SettingsCard({ title, delay = 0, children }: { title: string; delay?: n
     <motion.div
       initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.22, ease: "easeOut", delay }}
-      style={{ background: "#fff", border: "1px solid #eae7e2", borderRadius: 12, overflow: "hidden", marginBottom: 12 }}
+      style={{ background: "#fff", border: "1px solid rgba(28,26,24,0.04)", borderRadius: 18, overflow: "hidden", marginBottom: 18, boxShadow: "0 10px 24px rgba(28,26,24,0.05)" }}
     >
-      <div style={{ padding: "9px 22px", borderBottom: "1px solid #f0ede8", background: "#faf8f5" }}>
+      <div style={{ padding: "16px 28px", borderBottom: "1px solid rgba(28,26,24,0.06)", background: "#fff" }}>
         <p style={{ fontFamily: FONT, fontSize: "0.67rem", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "#b0aaa3", margin: 0 }}>
           {title}
         </p>
@@ -574,131 +649,30 @@ function FeedbackCard({ entry }: { entry: FeedbackEntry }) {
 
 function PermissionsTab({
   permissions,
+  roleLocks,
   onToggle,
-  onReset,
-  permSaveStatus,
-  onSave,
+  onResetRoleToDefault,
+  onUnlockRole,
 }: {
   permissions: PermissionsMap;
+  roleLocks: PermissionRoleLocks;
   onToggle: (role: NonNullRole, key: PermissionKey) => void;
-  onReset: () => void;
-  permSaveStatus: SaveStatus;
-  onSave: () => void;
+  onResetRoleToDefault: (role: NonNullRole) => void;
+  onUnlockRole: (role: NonNullRole) => void;
 }) {
   return (
     <>
-      {/* Admin lock notice */}
+      <div style={{ marginBottom: 12 }}>
+      {/*
       <motion.div
-        initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
-        style={{ display: "flex", alignItems: "flex-start", gap: 10, background: "rgba(212,77,20,0.05)", border: "1px solid rgba(212,77,20,0.18)", borderRadius: 10, padding: "12px 16px", marginBottom: 12 }}
-      >
-        <Shield size={15} color={ACCENT} style={{ flexShrink: 0, marginTop: 1 }} />
-        <p style={{ fontFamily: FONT, fontSize: "0.78rem", color: "#7a3510", margin: 0 }}>
-          <strong>Administrator</strong> always has full access to all features and cannot be restricted. Changes here only affect Cashier, Cook, and Inventory Manager roles.
-        </p>
-      </motion.div>
-
-      {/* Role overview cards */}
-      <SettingsCard title="Role Summary" delay={0.04}>
-        <div style={{ padding: "14px 22px", display: "flex", gap: 10, flexWrap: "wrap" }}>
-          {/* Admin card */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(212,77,20,0.06)", border: "1px solid rgba(212,77,20,0.18)", borderRadius: 10, padding: "10px 16px", flex: "1 1 160px" }}>
-            <Shield size={18} color={ACCENT} />
-            <div>
-              <p style={{ fontFamily: FONT, fontSize: "0.75rem", fontWeight: 700, color: ACCENT, margin: 0 }}>Administrator</p>
-              <p style={{ fontFamily: FONT, fontSize: "0.67rem", color: "#b0aaa3", margin: "2px 0 0" }}>All 8 features — locked</p>
-            </div>
-          </div>
-          {EDITABLE_ROLES.map((r) => {
-            const count = Object.values(permissions[r.key]).filter(Boolean).length;
-            return (
-              <div key={r.key} style={{ display: "flex", alignItems: "center", gap: 10, background: "#fafaf9", border: "1px solid #e4e1dc", borderRadius: 10, padding: "10px 16px", flex: "1 1 160px" }}>
-                <div style={{ width: 34, height: 34, borderRadius: "50%", background: `${r.color}18`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <span style={{ fontFamily: FONT, fontSize: "0.7rem", fontWeight: 700, color: r.color }}>{count}</span>
-                </div>
-                <div>
-                  <p style={{ fontFamily: FONT, fontSize: "0.75rem", fontWeight: 700, color: "#1c1a18", margin: 0 }}>{r.label}</p>
-                  <p style={{ fontFamily: FONT, fontSize: "0.67rem", color: "#b0aaa3", margin: "2px 0 0" }}>{count} of 8 features enabled</p>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </SettingsCard>
-
-      {/* Permissions matrix */}
-      <SettingsCard title="Page & Feature Access" delay={0.08}>
-        {/* Column headers */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 80px 80px 110px", gap: 0, padding: "8px 22px", borderBottom: "1px solid #f0ede8", background: "#fdfcfb" }}>
-          <span style={{ fontFamily: FONT, fontSize: "0.67rem", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#b0aaa3" }}>Feature</span>
-          {EDITABLE_ROLES.map((r) => (
-            <span key={r.key} style={{ fontFamily: FONT, fontSize: "0.67rem", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: r.color, textAlign: "center" }}>
-              {r.label.split(" ")[0]}
-            </span>
-          ))}
-        </div>
-
-        {PERMISSION_FEATURES.map((feature, idx) => {
-          const Icon = feature.icon;
-          const isLast = idx === PERMISSION_FEATURES.length - 1;
-          return (
-            <div
-              key={feature.key}
-              style={{ display: "grid", gridTemplateColumns: "1fr 80px 80px 110px", alignItems: "center", gap: 0, padding: "10px 22px", borderBottom: isLast ? "none" : "1px solid #f0ede8" }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <div style={{ width: 28, height: 28, borderRadius: 7, background: "#f4f2ef", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <Icon size={13} color="#7a7470" />
-                </div>
-                <div>
-                  <p style={{ fontFamily: FONT, fontSize: "0.8rem", fontWeight: 500, color: "#1c1a18", margin: 0 }}>{feature.label}</p>
-                  <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#b0aaa3", margin: "1px 0 0" }}>{feature.description}</p>
-                </div>
-              </div>
-              {EDITABLE_ROLES.map((r) => (
-                <div key={r.key} style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
-                  <Toggle
-                    value={permissions[r.key][feature.key]}
-                    onChange={() => onToggle(r.key, feature.key)}
-                  />
-                </div>
-              ))}
-            </div>
-          );
-        })}
-      </SettingsCard>
-
-      {/* Quick presets */}
-      <SettingsCard title="Quick Presets" delay={0.12}>
-        <div style={{ padding: "14px 22px", display: "flex", flexDirection: "column", gap: 10 }}>
-          <p style={{ fontFamily: FONT, fontSize: "0.75rem", color: "#7a7470", margin: 0 }}>Apply a preset to quickly configure permissions for a role. This will overwrite any existing toggles for that role.</p>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
-            {EDITABLE_ROLES.map((r) => (
-              <button
-                key={r.key}
-                onClick={() => {
-                  PERMISSION_FEATURES.forEach((f) => {
-                    const shouldEnable = DEFAULT_PERMISSIONS[r.key][f.key];
-                    if (permissions[r.key][f.key] !== shouldEnable) onToggle(r.key, f.key);
-                  });
-                }}
-                style={{ fontFamily: FONT, fontSize: "0.74rem", fontWeight: 600, color: r.color, background: `${r.color}10`, border: `1px solid ${r.color}30`, borderRadius: 8, padding: "7px 14px", cursor: "pointer" }}
-              >
-                Reset {r.label} to default
-              </button>
-            ))}
-          </div>
-        </div>
-      </SettingsCard>
-
-      {/* Save bar */}
-      <motion.div
-        initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.16 }}
-        style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, background: "#fff", border: "1px solid #eae7e2", borderRadius: 12, padding: "14px 22px" }}
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.02 }}
+        style={{ display: "none", justifyContent: "flex-end", gap: 8, flex: "0 0 auto" }}
       >
         <button
           onClick={onReset}
-          style={{ fontFamily: FONT, fontSize: "0.79rem", fontWeight: 500, color: "#7a7470", background: "transparent", border: "1px solid #e0dcd6", borderRadius: 8, padding: "7px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+          style={{ fontFamily: FONT, fontSize: "0.79rem", fontWeight: 500, color: "#7a7470", background: "#fff", border: "1px solid #e0dcd6", borderRadius: 8, padding: "7px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
         >
           <ShieldOff size={13} /> Reset all to defaults
         </button>
@@ -712,6 +686,148 @@ function PermissionsTab({
           {permSaveStatus === "saving" ? "Saving…" : permSaveStatus === "saved" ? "✓  Saved" : permSaveStatus === "error" ? "Failed" : <><Save size={13} /> Save permissions</>}
         </motion.button>
       </motion.div>
+      */}
+
+      {/* Admin lock notice */}
+      <motion.div
+        initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+        style={{ display: "flex", alignItems: "flex-start", gap: 12, background: "#fff", border: "none", borderRadius: 16, padding: "16px 18px", flex: "1 1 420px", boxShadow: "0 12px 28px rgba(28,26,24,0.06)" }}
+      >
+        <div style={{ width: 32, height: 32, borderRadius: 12, background: "rgba(212,77,20,0.10)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <Shield size={15} color={ACCENT} />
+        </div>
+        <p style={{ fontFamily: FONT, fontSize: "0.8rem", color: "#5a5652", margin: 0, lineHeight: 1.7 }}>
+          This matrix controls page access per role. <strong>Administrator</strong> is editable for operational pages, but <strong>Settings</strong> and <strong>User Accounts</strong> always stay enabled.
+        </p>
+      </motion.div>
+      <p style={{ fontFamily: FONT, fontSize: "0.73rem", color: "#9a9490", margin: "10px 4px 0" }}>
+        Using a role reset button will restore that role&apos;s default access and lock its toggles.
+      </p>
+      </div>
+
+      {/* Role overview cards */}
+      <SettingsCard title="Role Summary" delay={0.04}>
+        <div style={{ padding: "18px 22px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 }}>
+          {PERMISSION_ROLES.map((r) => {
+            const count = Object.values(permissions[r.key]).filter(Boolean).length;
+            return (
+              <motion.div
+                key={r.key}
+                whileHover={{ y: -2 }}
+                style={{ display: "flex", alignItems: "center", gap: 12, background: "#fff", border: "none", borderRadius: 16, padding: "16px 18px", boxShadow: "0 10px 24px rgba(28,26,24,0.06)" }}
+              >
+                <div style={{ width: 42, height: 42, borderRadius: 14, background: `${r.color}14`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <span style={{ fontFamily: FONT, fontSize: "0.82rem", fontWeight: 700, color: r.color }}>{count}</span>
+                </div>
+                <div>
+                  <p style={{ fontFamily: FONT, fontSize: "0.88rem", fontWeight: 700, color: "#1c1a18", margin: 0 }}>{ROLE_LABELS[r.key]}</p>
+                  <p style={{ fontFamily: FONT, fontSize: "0.72rem", color: "#9a9490", margin: "3px 0 0" }}>{count} of 8 features enabled</p>
+                </div>
+                {roleLocks[r.key] && (
+                  <span style={{ marginLeft: "auto", fontFamily: FONT, fontSize: "0.58rem", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "#b0aaa3", background: "#f6f3ef", borderRadius: 999, padding: "5px 8px" }}>
+                    Locked
+                  </span>
+                )}
+              </motion.div>
+            );
+          })}
+        </div>
+      </SettingsCard>
+
+      {/* Permissions matrix */}
+      <SettingsCard title="Page & Feature Access" delay={0.08}>
+        {/* Column headers */}
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(220px,1.2fr) repeat(4, 96px)", gap: 0, padding: "8px 22px", borderBottom: "1px solid #f0ede8", background: "#fdfcfb" }}>
+          <span style={{ fontFamily: FONT, fontSize: "0.67rem", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#b0aaa3" }}>Page</span>
+          {PERMISSION_ROLES.map((r) => (
+            <span key={r.key} style={{ fontFamily: FONT, fontSize: "0.67rem", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: r.color, textAlign: "center" }}>
+              {r.label}
+            </span>
+          ))}
+        </div>
+
+        {PERMISSION_FEATURES.map((feature, idx) => {
+          const Icon = feature.icon;
+          const isLast = idx === PERMISSION_FEATURES.length - 1;
+          return (
+            <div
+              key={feature.key}
+              style={{ display: "grid", gridTemplateColumns: "minmax(220px,1.2fr) repeat(4, 96px)", alignItems: "center", gap: 0, padding: "10px 22px", borderBottom: isLast ? "none" : "1px solid #f0ede8" }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ width: 28, height: 28, borderRadius: 7, background: "#f4f2ef", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <Icon size={13} color="#7a7470" />
+                </div>
+                <div>
+                  <p style={{ fontFamily: FONT, fontSize: "0.8rem", fontWeight: 500, color: "#1c1a18", margin: 0 }}>{feature.label}</p>
+                  <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#b0aaa3", margin: "1px 0 0" }}>{SIDEBAR_ITEMS.find((item) => item.permissionKey === feature.key)?.path ?? feature.description}</p>
+                </div>
+              </div>
+              {PERMISSION_ROLES.map((r) => {
+                const locked =
+                  roleLocks[r.key] ||
+                  (r.key === "administrator" && LOCKED_ADMIN_PERMISSION_KEYS.includes(feature.key));
+                return (
+                <div key={r.key} style={{ display: "flex", justifyContent: "center", alignItems: "center", flexDirection: "column", gap: 4 }}>
+                  <Toggle
+                    value={permissions[r.key][feature.key]}
+                    onChange={() => onToggle(r.key, feature.key)}
+                    disabled={locked}
+                  />
+                  {locked && (
+                    <span style={{ fontFamily: FONT, fontSize: "0.58rem", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "#b0aaa3" }}>
+                      Locked
+                    </span>
+                  )}
+                </div>
+              )})}
+            </div>
+          );
+        })}
+      </SettingsCard>
+
+      {/* Quick presets */}
+      <SettingsCard title="Quick Presets" delay={0.12}>
+        <div style={{ padding: "18px 22px", display: "flex", flexDirection: "column", gap: 14 }}>
+          <p style={{ fontFamily: FONT, fontSize: "0.78rem", color: "#7a7470", margin: 0, lineHeight: 1.7 }}>Apply a preset to quickly configure permissions for a role. This will overwrite any existing toggles for that role.</p>
+          <div style={{ background: "#fff", borderRadius: 16, boxShadow: "0 10px 24px rgba(28,26,24,0.06)", padding: 14 }}>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {PERMISSION_ROLES.map((r) => (
+              <div key={r.key} style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  onClick={() => onResetRoleToDefault(r.key)}
+                  style={{ fontFamily: FONT, fontSize: "0.78rem", fontWeight: 600, color: "#2f2a27", background: "#fff", border: "none", borderRadius: 12, padding: "12px 16px", cursor: "pointer", boxShadow: "0 8px 20px rgba(28,26,24,0.08)" }}
+                >
+                  Reset {r.label} to default and lock
+                </button>
+                <button
+                  onClick={() => onUnlockRole(r.key)}
+                  disabled={!roleLocks[r.key]}
+                  style={{
+                    fontFamily: FONT,
+                    fontSize: "0.72rem",
+                    fontWeight: 700,
+                    color: roleLocks[r.key] ? "#166534" : "#a8a29e",
+                    background: roleLocks[r.key] ? "#dcfce7" : "#f5f5f4",
+                    border: roleLocks[r.key] ? "1px solid #86efac" : "1px solid #e7e5e4",
+                    borderRadius: 999,
+                    padding: "9px 16px",
+                    minWidth: 108,
+                    cursor: roleLocks[r.key] ? "pointer" : "not-allowed",
+                    opacity: roleLocks[r.key] ? 1 : 0.7,
+                    boxShadow: roleLocks[r.key] ? "inset 0 0 0 1px rgba(255,255,255,0.45)" : "none",
+                    transition: "background 0.18s ease, border-color 0.18s ease, color 0.18s ease",
+                  }}
+                >
+                  Unlock {r.label}
+                </button>
+              </div>
+            ))}
+            </div>
+          </div>
+        </div>
+      </SettingsCard>
+
     </>
   );
 }
@@ -965,7 +1081,8 @@ export default function SettingsPage() {
   const [inventoryMastersError, setInventoryMastersError] = useState<string | null>(null);
 
   // Permissions state
-  const [permissions, setPermissions] = useState<PermissionsMap>(DEFAULT_PERMISSIONS);
+  const [permissions, setPermissions] = useState<PermissionsMap>(normalizePermissionsMap(DEFAULT_PERMISSIONS));
+  const [permissionRoleLocks, setPermissionRoleLocks] = useState<PermissionRoleLocks>(DEFAULT_PERMISSION_ROLE_LOCKS);
   const [permSaveStatus, setPermSaveStatus] = useState<SaveStatus>("idle");
 
   const initialized = useRef(false);
@@ -973,12 +1090,18 @@ export default function SettingsPage() {
   const navigate = useNavigate();
   const { user, logout, isOnline } = useAuth();
   const isMobile = useIsMobile();
+  const shellPadX = isMobile ? 18 : 36;
+  const shellLeftInset = isMobile ? 96 : 132;
+  const contentMaxWidth = 1120;
 
-  const userRole = user?.role as Role;
+  const userRole = normalizeRole(user?.role) as Role;
   const isAdministrator = userRole === "administrator";
 
   const visibleItems = SIDEBAR_ITEMS.filter(
-    (item) => userRole && item.roles.includes(userRole as NonNullRole)
+    (item) =>
+      !!userRole &&
+      userRole !== "customer" &&
+      permissions[userRole as NonNullRole]?.[item.permissionKey]
   );
 
   // Filter out the permissions tab for non-administrators
@@ -1011,9 +1134,17 @@ export default function SettingsPage() {
       try {
         const res = await fetch("/api/settings/permissions");
         if (!res.ok) return;
-        const data = await res.json().catch(() => null);
+        const data = await res.json().catch(() => null) as PermissionsApiPayload | Partial<PermissionsMap> | null;
         if (data && typeof data === "object") {
-          setPermissions((prev) => ({ ...prev, ...data }));
+          const next = normalizePermissionsMap(
+            "permissions" in data ? data.permissions ?? null : data as Partial<PermissionsMap>,
+          );
+          const nextLocks = normalizePermissionRoleLocks(
+            "roleLocks" in data ? data.roleLocks ?? null : null,
+          );
+          setPermissions(next);
+          setPermissionRoleLocks(nextLocks);
+          cachePermissions(next);
         }
       } catch { /* keep defaults */ }
     };
@@ -1097,26 +1228,78 @@ export default function SettingsPage() {
   const setOrderType = useCallback((key: keyof OrderTypes, v: boolean) => setSettings((p) => ({ ...p, orderTypes: { ...p.orderTypes, [key]: v } })), []);
 
   const handleTogglePermission = useCallback((role: NonNullRole, key: PermissionKey) => {
-    if (role === "administrator") return; // admin is always locked
-    setPermissions((prev) => ({
+    if (permissionRoleLocks[role]) return;
+    if (role === "administrator" && LOCKED_ADMIN_PERMISSION_KEYS.includes(key)) return;
+    setPermissions((prev) => normalizePermissionsMap({
       ...prev,
       [role]: { ...prev[role], [key]: !prev[role][key] },
+    }));
+  }, [permissionRoleLocks]);
+
+  const handleResetRolePermissions = useCallback((role: NonNullRole) => {
+    setPermissions((prev) => normalizePermissionsMap({
+      ...prev,
+      [role]: { ...DEFAULT_PERMISSIONS[role] },
+    }));
+    setPermissionRoleLocks((prev) => ({
+      ...prev,
+      [role]: true,
+    }));
+  }, []);
+
+  const handleUnlockRolePermissions = useCallback((role: NonNullRole) => {
+    setPermissionRoleLocks((prev) => ({
+      ...prev,
+      [role]: false,
     }));
   }, []);
 
   const handleResetPermissions = useCallback(() => {
-    setPermissions(DEFAULT_PERMISSIONS);
+    setPermissions(normalizePermissionsMap(DEFAULT_PERMISSIONS));
+    setPermissionRoleLocks({
+      administrator: true,
+      cashier: true,
+      cook: true,
+      inventory_manager: true,
+    });
+  }, []);
+
+  const handleUnlockAllPermissions = useCallback(() => {
+    setPermissionRoleLocks(DEFAULT_PERMISSION_ROLE_LOCKS);
   }, []);
 
   const handleSavePermissions = async () => {
     setPermSaveStatus("saving");
     try {
+      const updatedPermissions = normalizePermissionsMap(permissions);
+      const updatedRoleLocks = normalizePermissionRoleLocks(permissionRoleLocks);
+      console.log("[Settings] saving permissions", updatedPermissions);
+
       const res = await fetch("/api/settings/permissions", {
-        method: "POST",
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(permissions),
+        body: JSON.stringify({
+          permissions: updatedPermissions,
+          roleLocks: updatedRoleLocks,
+        }),
       });
+
       if (!res.ok) throw new Error("Save failed");
+      const saved = await res.json().catch(() => ({
+        permissions: updatedPermissions,
+        roleLocks: updatedRoleLocks,
+      })) as PermissionsApiPayload;
+      const savedPermissions = normalizePermissionsMap(
+        saved.permissions ?? updatedPermissions,
+      );
+      const savedRoleLocks = normalizePermissionRoleLocks(
+        saved.roleLocks ?? updatedRoleLocks,
+      );
+      setPermissions(savedPermissions);
+      setPermissionRoleLocks(savedRoleLocks);
+      cachePermissions(savedPermissions);
+      window.dispatchEvent(new Event("permissionsChange"));
+      console.log("[Settings] cached permissions", savedPermissions);
       setPermSaveStatus("saved");
       setTimeout(() => setPermSaveStatus("idle"), 2400);
     } catch {
@@ -1150,21 +1333,33 @@ export default function SettingsPage() {
         .hide-scroll { scrollbar-width: none; -ms-overflow-style: none; }
         .tab-btn {
           position: relative; background: transparent; border: none; cursor: pointer;
-          font-family: 'DM Sans', sans-serif; font-size: 0.8rem; font-weight: 500;
-          color: #9a9490; padding: 10px 14px; border-radius: 0;
-          transition: color 0.18s; white-space: nowrap;
+          font-family: 'DM Sans', sans-serif; font-size: 0.82rem; font-weight: 600;
+          color: #908983; padding: 14px 16px; border-radius: 0;
+          transition: color 0.18s ease; white-space: nowrap;
         }
         .tab-btn:hover { color: #484340; }
         .tab-btn.active { color: #1c1a18; font-weight: 600; }
         select option { font-family: 'DM Sans', sans-serif; }
       `}</style>
 
-      <div style={{ fontFamily: FONT, background: "#f4f2ef", minHeight: "100vh", color: "#1c1a18" }}>
+      <div style={{ fontFamily: FONT, background: "linear-gradient(180deg, #f7f4f0 0%, #f3efea 100%)", minHeight: "100vh", color: "#1c1a18" }}>
 
         {/* ── Hamburger ── */}
         <motion.button
           onClick={() => setIsOpen(!isOpen)}
-          className={cn("fixed z-50 p-3 bg-white rounded-xl shadow-lg", isMobile ? "top-4 left-4" : "top-5 left-5")}
+          className={cn("fixed z-50", isMobile ? "top-4 left-4" : "top-5 left-6")}
+          style={{
+            width: isMobile ? 54 : 56,
+            height: isMobile ? 54 : 56,
+            borderRadius: 18,
+            background: "#fff",
+            border: "1px solid rgba(28,26,24,0.04)",
+            boxShadow: "0 8px 20px rgba(15,23,42,0.08)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 0,
+          }}
           whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
         >
           <AnimatePresence mode="wait">
@@ -1189,28 +1384,28 @@ export default function SettingsPage() {
             <motion.aside
               initial={{ x: -288, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -288, opacity: 0 }}
               transition={{ type: "spring", damping: 26, stiffness: 220 }}
-              style={{ position: "fixed", top: 0, left: 0, height: "100%", background: "#fff", boxShadow: "4px 0 32px rgba(0,0,0,0.09)", zIndex: 50, fontFamily: FONT, width: isMobile ? "85vw" : "272px", maxWidth: "85vw", display: "flex", flexDirection: "column" }}
+              style={{ position: "fixed", top: 0, left: 0, height: "100%", background: "#fff", boxShadow: "12px 0 36px rgba(15,23,42,0.08)", zIndex: 50, fontFamily: FONT, width: isMobile ? "85vw" : "272px", maxWidth: "85vw", display: "flex", flexDirection: "column" }}
             >
               <motion.div initial={{ y: -16, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.08 }}
-                style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "26px 24px 18px" }}>
-                <span style={{ fontWeight: 700, color: "#000", fontSize: isMobile ? "1.2rem" : "1.3rem" }}>The Crunch</span>
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "38px 24px 22px" }}>
+                <span style={{ fontWeight: 700, color: "#111827", fontSize: isMobile ? "1.95rem" : "1.9rem", letterSpacing: "-0.04em" }}>The Crunch</span>
               </motion.div>
               {user && (
                 <motion.div initial={{ y: -10, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.14 }}
-                  style={{ padding: "0 20px 14px" }}>
+                  style={{ padding: "0 24px 18px" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: isOnline ? "#4ade80" : "#d1d5db" }} />
-                    <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user.username}</span>
+                    <span style={{ width: 11, height: 11, borderRadius: "50%", flexShrink: 0, background: isOnline ? "#22c55e" : "#d1d5db" }} />
+                    <span style={{ fontSize: "1rem", fontWeight: 700, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user.username}</span>
                   </div>
-                  <span style={{ fontSize: "0.72rem", color: "#9ca3af", display: "block", paddingLeft: 15, marginTop: 2 }}>
+                  <span style={{ fontSize: "0.72rem", color: "#98a2b3", display: "block", paddingLeft: 18, marginTop: 6, fontWeight: 500 }}>
                     {ROLE_LABELS[user.role as NonNullRole] ?? user.role}
                   </span>
                 </motion.div>
               )}
-              <div style={{ height: 1, background: "#f3f4f6", margin: "0 0 6px" }} />
-              <div style={{ flex: 1, overflowY: "auto", padding: "0 12px" }} className="hide-scroll">
-                <p style={{ fontSize: "0.67rem", color: "#9ca3af", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", margin: "10px 0 6px", padding: "0 4px" }}>Navigation</p>
-                <nav style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <div style={{ height: 1, background: "#eef2f6", margin: "0 0 10px" }} />
+              <div style={{ flex: 1, overflowY: "auto", padding: "0 18px" }} className="hide-scroll">
+                <p style={{ fontSize: "0.68rem", color: "#98a2b3", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", margin: "12px 0 14px", padding: "0 6px" }}>Navigation</p>
+                <nav style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   {visibleItems.map((item, i) => {
                     const Icon = item.icon;
                     return (
@@ -1218,11 +1413,11 @@ export default function SettingsPage() {
                         <NavLink to={item.path} end onClick={() => setIsOpen(false)}>
                           {({ isActive }) => (
                             <div
-                              style={{ display: "flex", alignItems: "center", gap: 10, borderRadius: 12, padding: isMobile ? "13px 14px" : "10px 14px", fontSize: isMobile ? "1rem" : "0.88rem", fontFamily: FONT, fontWeight: isActive ? 600 : 400, cursor: "pointer", textDecoration: "none", color: isActive ? "#111827" : "#6b7280", background: isActive ? "#f3f4f6" : "transparent", transition: "all 0.15s" }}
-                              onMouseEnter={(e) => { if (!isActive) { (e.currentTarget as HTMLDivElement).style.background = "#f9fafb"; (e.currentTarget as HTMLDivElement).style.color = "#111827"; } }}
-                              onMouseLeave={(e) => { if (!isActive) { (e.currentTarget as HTMLDivElement).style.background = "transparent"; (e.currentTarget as HTMLDivElement).style.color = "#6b7280"; } }}
+                              style={{ display: "flex", alignItems: "center", gap: 12, borderRadius: 16, padding: isMobile ? "14px 16px" : "13px 16px", fontSize: isMobile ? "1rem" : "0.9rem", fontFamily: FONT, fontWeight: isActive ? 700 : 500, cursor: "pointer", textDecoration: "none", color: isActive ? "#111827" : "#667085", background: isActive ? "#f3f4f8" : "transparent", transition: "all 0.18s ease" }}
+                              onMouseEnter={(e) => { if (!isActive) { (e.currentTarget as HTMLDivElement).style.background = "#f8fafc"; (e.currentTarget as HTMLDivElement).style.color = "#111827"; } }}
+                              onMouseLeave={(e) => { if (!isActive) { (e.currentTarget as HTMLDivElement).style.background = "transparent"; (e.currentTarget as HTMLDivElement).style.color = "#667085"; } }}
                             >
-                              <Icon size={isMobile ? 18 : 15} strokeWidth={isActive ? 2.2 : 1.8} style={{ flexShrink: 0, color: isActive ? "#111827" : "#9ca3af", transition: "color 0.15s" }} />
+                              <Icon size={isMobile ? 18 : 16} strokeWidth={isActive ? 2.2 : 1.9} style={{ flexShrink: 0, color: isActive ? "#111827" : "#98a2b3", transition: "color 0.15s" }} />
                               <span>{item.label}</span>
                             </div>
                           )}
@@ -1232,14 +1427,14 @@ export default function SettingsPage() {
                   })}
                 </nav>
               </div>
-              <div style={{ padding: "10px 12px 22px", borderTop: "1px solid #f3f4f6", flexShrink: 0 }}>
+              <div style={{ padding: "14px 18px 24px", borderTop: "1px solid #eef2f6", flexShrink: 0 }}>
                 <div
-                  style={{ display: "flex", alignItems: "center", gap: 10, borderRadius: 12, padding: isMobile ? "13px 14px" : "10px 14px", fontSize: isMobile ? "1rem" : "0.88rem", fontFamily: FONT, fontWeight: 400, cursor: "pointer", color: "#6b7280", transition: "all 0.15s" }}
+                  style={{ display: "flex", alignItems: "center", gap: 12, borderRadius: 16, padding: isMobile ? "14px 16px" : "13px 16px", fontSize: isMobile ? "1rem" : "0.9rem", fontFamily: FONT, fontWeight: 500, cursor: "pointer", color: "#667085", transition: "all 0.18s ease" }}
                   onClick={() => { logout(); setIsOpen(false); navigate("/login"); }}
-                  onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "#fef2f2"; (e.currentTarget as HTMLDivElement).style.color = "#dc2626"; const icon = e.currentTarget.querySelector("svg"); if (icon) icon.style.color = "#dc2626"; }}
-                  onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "transparent"; (e.currentTarget as HTMLDivElement).style.color = "#6b7280"; const icon = e.currentTarget.querySelector("svg"); if (icon) icon.style.color = "#9ca3af"; }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "#fff5f5"; (e.currentTarget as HTMLDivElement).style.color = "#dc2626"; const icon = e.currentTarget.querySelector("svg"); if (icon) icon.style.color = "#dc2626"; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "transparent"; (e.currentTarget as HTMLDivElement).style.color = "#667085"; const icon = e.currentTarget.querySelector("svg"); if (icon) icon.style.color = "#98a2b3"; }}
                 >
-                  <LogOut size={isMobile ? 18 : 15} strokeWidth={1.8} style={{ flexShrink: 0, color: "#9ca3af", transition: "color 0.15s" }} />
+                  <LogOut size={isMobile ? 18 : 16} strokeWidth={1.8} style={{ flexShrink: 0, color: "#98a2b3", transition: "color 0.15s" }} />
                   <span>Log out</span>
                 </div>
               </div>
@@ -1248,16 +1443,26 @@ export default function SettingsPage() {
         </AnimatePresence>
 
         {/* ── Topbar ── */}
-        <div style={{ position: "sticky", top: 0, zIndex: 30, height: TOPBAR_H, background: "#fff", borderBottom: "1px solid #eae7e2", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 24px 0 68px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ position: "sticky", top: 0, zIndex: 30, minHeight: TOPBAR_H + 20, background: "rgba(255,255,255,0.92)", backdropFilter: "blur(12px)", borderBottom: "1px solid rgba(28,26,24,0.06)", padding: `14px ${shellPadX}px 14px ${shellLeftInset}px` }}>
+          <div style={{ width: "100%", maxWidth: contentMaxWidth, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ fontFamily: FONT, fontSize: "0.73rem", color: "#b0aaa3", fontWeight: 400, letterSpacing: "0.06em", textTransform: "uppercase" }}>The Crunch</span>
             <ChevronRight size={13} color="#d0ccc6" />
             <span style={{ fontFamily: FONT, fontSize: "0.73rem", color: "#7a7470", fontWeight: 500 }}>Settings</span>
             <ChevronRight size={13} color="#d0ccc6" />
             <span style={{ fontFamily: FONT, fontSize: "0.73rem", color: ACCENT, fontWeight: 600 }}>{TAB_META[tab].title}</span>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {tab !== "permissions" && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            {tab === "permissions" ? (
+              <>
+                <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.96 }} onClick={handleResetPermissions} style={secondaryActionButton}><ShieldOff size={13} /> Reset all to defaults</motion.button>
+                <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.96 }} onClick={handleUnlockAllPermissions} style={secondaryActionButton}><Shield size={13} /> Unlock all</motion.button>
+                <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} onClick={handleSavePermissions} disabled={permSaveStatus === "saving"} style={{ ...primaryActionButton, background: permSaveStatus === "saved" ? "#2e7d52" : permSaveStatus === "error" ? "#b91c1c" : ACCENT }}>
+                  {permSaveStatus === "saving" && <span style={{ width: 13, height: 13, border: "2px solid rgba(255,255,255,.4)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />}
+                  {permSaveStatus === "saving" ? "Saving..." : permSaveStatus === "saved" ? "Saved" : permSaveStatus === "error" ? "Failed" : <><Save size={13} /> Save permissions</>}
+                </motion.button>
+              </>
+            ) : (
               <>
                 <AnimatePresence>
                   {unsaved && tab !== "feedback" && (
@@ -1265,14 +1470,14 @@ export default function SettingsPage() {
                   )}
                 </AnimatePresence>
                 {tab === "feedback" ? (
-                  <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }} onClick={fetchFeedback} disabled={feedbackLoading} style={{ fontFamily: FONT, fontSize: "0.79rem", fontWeight: 500, color: "#7a7470", background: "transparent", border: "1px solid #e0dcd6", borderRadius: 8, padding: "7px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                  <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }} onClick={fetchFeedback} disabled={feedbackLoading} style={secondaryActionButton}>
                     <motion.span animate={feedbackLoading ? { rotate: 360 } : { rotate: 0 }} transition={{ duration: 0.6, repeat: feedbackLoading ? Infinity : 0, ease: "linear" }}><RefreshCw size={13} /></motion.span>
                     Refresh
                   </motion.button>
                 ) : (
                   <>
-                    <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.96 }} onClick={() => { setSettings(DEFAULT); setUnsaved(false); setSaveStatus("idle"); }} style={{ fontFamily: FONT, fontSize: "0.79rem", fontWeight: 500, color: "#7a7470", background: "transparent", border: "1px solid #e0dcd6", borderRadius: 8, padding: "7px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}><RotateCcw size={13} /> Reset</motion.button>
-                    <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} onClick={handleSave} disabled={saveStatus === "saving"} style={{ fontFamily: FONT, fontSize: "0.79rem", fontWeight: 600, color: "#fff", background: saveStatus === "saved" ? "#2e7d52" : saveStatus === "error" ? "#b91c1c" : ACCENT, border: "none", borderRadius: 8, padding: "7px 18px", cursor: "pointer", minWidth: 118, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, transition: "background 0.2s" }}>
+                    <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.96 }} onClick={() => { setSettings(DEFAULT); setUnsaved(false); setSaveStatus("idle"); }} style={secondaryActionButton}><RotateCcw size={13} /> Reset</motion.button>
+                    <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} onClick={handleSave} disabled={saveStatus === "saving"} style={{ ...primaryActionButton, minWidth: 124, background: saveStatus === "saved" ? "#2e7d52" : saveStatus === "error" ? "#b91c1c" : ACCENT }}>
                       {saveStatus === "saving" && <span style={{ width: 13, height: 13, border: "2px solid rgba(255,255,255,.4)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />}
                       {saveStatus === "saving" ? "Saving…" : saveStatus === "saved" ? "✓  Saved" : saveStatus === "error" ? "Failed" : <><Save size={13} /> Save changes</>}
                     </motion.button>
@@ -1282,9 +1487,11 @@ export default function SettingsPage() {
             )}
           </div>
         </div>
+        </div>
 
         {/* ── Tab bar ── */}
-        <div style={{ position: "sticky", top: TOPBAR_H, zIndex: 20, background: "#fff", borderBottom: "1px solid #eae7e2", padding: "0 24px 0 68px", display: "flex", alignItems: "flex-end", gap: 0, overflowX: "auto" }} className="hide-scroll">
+        <div style={{ position: "sticky", top: TOPBAR_H + 20, zIndex: 20, background: "rgba(255,255,255,0.94)", backdropFilter: "blur(10px)", borderBottom: "1px solid rgba(28,26,24,0.06)", padding: `0 ${shellPadX}px 0 ${shellLeftInset}px`, overflowX: "auto" }} className="hide-scroll">
+          <div style={{ width: "100%", maxWidth: contentMaxWidth, display: "flex", alignItems: "flex-end", gap: 0 }}>
           {visibleTabs.map((t) => (
             <button key={t.key} className={`tab-btn${tab === t.key ? " active" : ""}`} onClick={() => setTab(t.key)}>
               {t.key === "feedback" && feedback.length > 0 && (
@@ -1301,10 +1508,11 @@ export default function SettingsPage() {
               )}
             </button>
           ))}
+          </div>
         </div>
 
         {/* ── Page heading ── */}
-        <div style={{ padding: "28px 28px 0 68px", maxWidth: 820 }}>
+        <div style={{ padding: `42px ${shellPadX}px 0 ${shellLeftInset}px`, maxWidth: contentMaxWidth, width: "100%" }}>
           <AnimatePresence mode="wait">
             <motion.div key={`heading-${tab}`} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.16 }} style={{ marginBottom: 20 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
@@ -1319,7 +1527,7 @@ export default function SettingsPage() {
         </div>
 
         {/* ── Content ── */}
-        <main style={{ padding: "0 28px 48px 68px", maxWidth: 820 }}>
+        <main style={{ padding: `0 ${shellPadX}px 72px ${shellLeftInset}px`, maxWidth: contentMaxWidth, width: "100%" }}>
           <AnimatePresence mode="wait">
             <motion.div key={`content-${tab}`} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.2, ease: "easeOut" }}>
               {tab === "general"       && <GeneralTab       {...sharedProps} />}
@@ -1345,10 +1553,10 @@ export default function SettingsPage() {
               {tab === "permissions"   && isAdministrator && (
                 <PermissionsTab
                   permissions={permissions}
+                  roleLocks={permissionRoleLocks}
                   onToggle={handleTogglePermission}
-                  onReset={handleResetPermissions}
-                  permSaveStatus={permSaveStatus}
-                  onSave={handleSavePermissions}
+                  onResetRoleToDefault={handleResetRolePermissions}
+                  onUnlockRole={handleUnlockRolePermissions}
                 />
               )}
               {tab === "permissions" && !isAdministrator&& (
