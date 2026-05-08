@@ -1,9 +1,9 @@
 const router = require("express").Router();
 
 const fetchFn = (...args) =>
-  (typeof fetch === "function"
+  typeof fetch === "function"
     ? fetch(...args)
-    : import("node-fetch").then(({ default: nodeFetch }) => nodeFetch(...args)));
+    : import("node-fetch").then(({ default: nodeFetch }) => nodeFetch(...args));
 
 function getPayMongoSecretKey() {
   return String(process.env.PAYMONGO_SECRET_KEY || "").trim();
@@ -18,11 +18,15 @@ function getPayMongoCancelUrl() {
 }
 
 function getPayMongoBaseUrl() {
-  return String(process.env.PAYMONGO_API_BASE_URL || "https://api.paymongo.com/v1").replace(/\/+$/, "");
+  return String(
+    process.env.PAYMONGO_API_BASE_URL || "https://api.paymongo.com/v1",
+  ).replace(/\/+$/, "");
 }
 
 function hasPaidCheckout(attributes) {
-  const checkoutStatus = String(attributes?.status || "").toLowerCase().trim();
+  const checkoutStatus = String(attributes?.status || "")
+    .toLowerCase()
+    .trim();
   const paymentStatus = String(
     attributes?.payments?.[0]?.attributes?.status ||
       attributes?.payments?.[0]?.status ||
@@ -85,7 +89,8 @@ async function payMongoRequest(path, options = {}) {
 
 router.post("/create-checkout", async (req, res) => {
   try {
-    const { items, total, customerUserId, customerName, customerEmail } = req.body || {};
+    const { items, total, customerUserId, customerName, customerEmail } =
+      req.body || {};
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: "Order items are required" });
@@ -95,14 +100,34 @@ router.post("/create-checkout", async (req, res) => {
     const cancelUrl = getPayMongoCancelUrl();
     if (!successUrl || !cancelUrl) {
       return res.status(500).json({
-        message: "PAYMONGO_SUCCESS_URL and PAYMONGO_CANCEL_URL must be configured",
+        message:
+          "PAYMONGO_SUCCESS_URL and PAYMONGO_CANCEL_URL must be configured",
       });
     }
 
-    const totalAmount = Math.round(Number(total || 0) * 100);
+    const totalPesos = Number(total || 0);
+    const totalAmount = Math.round(totalPesos * 100);
     if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
-      return res.status(400).json({ message: "A valid total amount is required" });
+      return res
+        .status(400)
+        .json({ message: "A valid total amount is required" });
     }
+
+    if (totalPesos < 1) {
+      return res.status(400).json({
+        message:
+          "PayMongo QRPh minimum test amount is ₱20. Please use at least ₱20 for online payment testing.",
+      });
+    }
+
+    items.forEach((item) => {
+      console.log("PAYMONGO DEBUG", {
+        itemName: item.name,
+        itemPricePesos: Number(item.price),
+        amountSentCentavos: Math.round(Number(item.price) * 100),
+        quantity: Number(item.qty || item.quantity || 1),
+      });
+    });
 
     const lineItems = items.map((item) => ({
       amount: Math.max(10000, Math.round(Number(item.price || 0) * 100)),
@@ -124,7 +149,7 @@ router.post("/create-checkout", async (req, res) => {
           show_line_items: true,
           description: "The Crunch pickup order",
           line_items: lineItems,
-      payment_method_types: ["qrph"],
+          payment_method_types: ["qrph"],
           success_url: process.env.PAYMONGO_SUCCESS_URL,
           cancel_url: process.env.PAYMONGO_CANCEL_URL,
         },
@@ -161,9 +186,12 @@ router.get("/verify/:checkoutSessionId", async (req, res) => {
       return res.status(400).json({ message: "checkoutSessionId is required" });
     }
 
-    const session = await payMongoRequest(`/checkout_sessions/${checkoutSessionId}`, {
-      method: "GET",
-    });
+    const session = await payMongoRequest(
+      `/checkout_sessions/${checkoutSessionId}`,
+      {
+        method: "GET",
+      },
+    );
     const attributes = session?.data?.attributes || {};
     const paid = hasPaidCheckout(attributes);
 
@@ -178,7 +206,10 @@ router.get("/verify/:checkoutSessionId", async (req, res) => {
       checkoutUrl: attributes.checkout_url || null,
     });
   } catch (err) {
-    console.error("GET /api/paymongo/verify/:checkoutSessionId error:", err.message);
+    console.error(
+      "GET /api/paymongo/verify/:checkoutSessionId error:",
+      err.message,
+    );
     return res.status(err.statusCode || 500).json({
       message: err.message || "Failed to verify PayMongo checkout session",
       error: err.payload || null,
