@@ -126,6 +126,9 @@ CREATE TABLE IF NOT EXISTS users (
     email VARCHAR(150) NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
     role ENUM('administrator','cashier','cook','inventory_manager','customer') NOT NULL DEFAULT 'customer',
+    email_verified TINYINT(1) NOT NULL DEFAULT 0,
+    email_verification_code VARCHAR(10) NULL,
+    email_verification_expires DATETIME NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -662,6 +665,24 @@ END
       "Menu",
       "manual_status",
       "`manual_status` VARCHAR(20) NOT NULL DEFAULT 'Available'",
+    );
+    await ensureColumn(
+      connection,
+      "users",
+      "email_verified",
+      "`email_verified` TINYINT(1) NOT NULL DEFAULT 0",
+    );
+    await ensureColumn(
+      connection,
+      "users",
+      "email_verification_code",
+      "`email_verification_code` VARCHAR(10) NULL",
+    );
+    await ensureColumn(
+      connection,
+      "users",
+      "email_verification_expires",
+      "`email_verification_expires` DATETIME NULL",
     );
 
     await ensureColumn(

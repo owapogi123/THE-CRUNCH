@@ -4,6 +4,7 @@ const fs = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
+const { sendCustomerOrderReceiptEmail } = require("../services/emailService");
 const {
   deductSalesStockForCompletedOrder,
 } = require("../services/inventoryService");
@@ -204,6 +205,13 @@ function getPaymentProofExtension(mimeType) {
   if (normalized === "image/webp") return ".webp";
   if (normalized === "image/jpg" || normalized === "image/jpeg") return ".jpg";
   return null;
+}
+
+function buildCustomerReceiptNote(paymentStatus) {
+  if (normalizePaymentStatus(paymentStatus) === "Pending Payment") {
+    return "Your order will be prepared once payment is confirmed onsite.";
+  }
+  return "Your payment has been verified. We are preparing your order.";
 }
 
 async function ensurePaymentProofDirectory() {
@@ -1126,6 +1134,10 @@ router.post("/", async (req, res) => {
       payment_status,
       proofImageUrl,
       proof_image_url,
+      customerName,
+      customer_name,
+      customerEmail,
+      customer_email,
     } = req.body;
 
     // Online orders from usersmenu.tsx send NO cashierId — that's intentional.
@@ -1145,6 +1157,10 @@ router.post("/", async (req, res) => {
     ).trim() || null;
     const submittedProofImageUrl =
       String(proof_image_url || proofImageUrl || "").trim() || null;
+    const submittedCustomerName =
+      String(customer_name || customerName || "").trim() || null;
+    const submittedCustomerEmail =
+      String(customer_email || customerEmail || "").trim().toLowerCase() || null;
     const resolvedCustomerUserId = Number(customerUserId) > 0 ? Number(customerUserId) : null;
     const isOnlinePickupOrder =
       resolvedCustomerUserId && resolvedCashierId == null && finalOrderType === "take-out";
@@ -1216,7 +1232,32 @@ router.post("/", async (req, res) => {
       initialStatus = "Awaiting Cashier Review";
     }
 
+    let onlineCustomerProfile = null;
+
     if (resolvedCustomerUserId && resolvedCashierId == null && finalOrderType === "take-out") {
+      const [customerRows] = await db.query(
+        `SELECT role, email_verified, username, email
+         FROM users
+         WHERE id = ?
+         LIMIT 1`,
+        [resolvedCustomerUserId],
+      );
+
+      if (customerRows.length === 0) {
+        return res.status(404).json({ message: "Customer account not found" });
+      }
+
+      const customer = customerRows[0];
+      onlineCustomerProfile = customer;
+      if (
+        String(customer.role || "").trim().toLowerCase() === "customer" &&
+        Number(customer.email_verified) !== 1
+      ) {
+        return res.status(403).json({
+          message: "Please verify your email before placing an order.",
+        });
+      }
+
       if (normalizedPaymentMethod !== "gcash" && normalizedPaymentMethod !== "cash" && normalizedPaymentMethod !== "cash_on_pickup") {
         return res.status(400).json({ message: "Online pickup orders must use GCash or cash payment" });
       }
@@ -1316,6 +1357,35 @@ router.post("/", async (req, res) => {
 
     await conn.commit();
     txStarted = false;
+
+    if (isOnlinePickupOrder) {
+      const receiptEmail = submittedCustomerEmail || String(onlineCustomerProfile?.email || "").trim().toLowerCase();
+      const receiptCustomerName = submittedCustomerName || String(onlineCustomerProfile?.username || "").trim() || "Customer";
+
+      if (receiptEmail) {
+        try {
+          await sendCustomerOrderReceiptEmail({
+            to: receiptEmail,
+            customerName: receiptCustomerName,
+            order: {
+              orderNumber: `#${orderId}`,
+              orderType: finalOrderType,
+              paymentMethod: storedPaymentMethod,
+              paymentStatus: effectivePaymentStatus,
+              total,
+              items,
+              note: buildCustomerReceiptNote(effectivePaymentStatus),
+            },
+          });
+        } catch (emailError) {
+          console.error(
+            "Customer receipt email failed",
+            emailError && emailError.message ? emailError.message : emailError,
+          );
+        }
+      }
+    }
+
     res.json({
       message: "Order placed",
       orderId,
