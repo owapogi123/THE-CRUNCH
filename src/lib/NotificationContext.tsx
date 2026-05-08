@@ -4,6 +4,7 @@ import {
   useState,
   useEffect,
   useCallback,
+  useMemo,
 } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -46,6 +47,19 @@ interface ConfirmState extends ConfirmOptions {
   resolve: (value: boolean) => void;
 }
 
+type ToastPosition =
+  | "top-right"
+  | "top-left"
+  | "bottom-right"
+  | "bottom-left";
+
+interface NotificationSettings {
+  enableToastNotifications: boolean;
+  toastPosition: ToastPosition;
+  toastDuration: number;
+  enableConfirmDialogs: boolean;
+}
+
 /* ================= CONTEXT ================= */
 
 const NotificationContext =
@@ -76,16 +90,86 @@ const TYPE_CONFIG = {
   },
 };
 
+const NOTIFICATION_SETTINGS_STORAGE_KEY = "the-crunch.notification-settings";
+const NOTIFICATION_SETTINGS_UPDATED_EVENT =
+  "the-crunch:notification-settings-updated";
+
+const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
+  enableToastNotifications: true,
+  toastPosition: "top-right",
+  toastDuration: 4000,
+  enableConfirmDialogs: true,
+};
+
+function normalizeNotificationSettings(
+  source: Record<string, unknown> | null | undefined,
+): NotificationSettings {
+  const toastPosition =
+    source?.toastPosition === "top-left" ||
+    source?.toastPosition === "bottom-right" ||
+    source?.toastPosition === "bottom-left"
+      ? source.toastPosition
+      : "top-right";
+  const toastDuration = Number(source?.toastDuration);
+
+  return {
+    enableToastNotifications:
+      source?.enableToastNotifications === undefined
+        ? DEFAULT_NOTIFICATION_SETTINGS.enableToastNotifications
+        : source.enableToastNotifications === true ||
+          source.enableToastNotifications === 1 ||
+          String(source.enableToastNotifications).trim().toLowerCase() ===
+            "true",
+    toastPosition,
+    toastDuration:
+      Number.isFinite(toastDuration) && toastDuration > 0
+        ? toastDuration
+        : DEFAULT_NOTIFICATION_SETTINGS.toastDuration,
+    enableConfirmDialogs:
+      source?.enableConfirmDialogs === undefined
+        ? DEFAULT_NOTIFICATION_SETTINGS.enableConfirmDialogs
+        : source.enableConfirmDialogs === true ||
+          source.enableConfirmDialogs === 1 ||
+          String(source.enableConfirmDialogs).trim().toLowerCase() === "true",
+  };
+}
+
+function readCachedNotificationSettings(): NotificationSettings {
+  if (typeof window === "undefined") return DEFAULT_NOTIFICATION_SETTINGS;
+  try {
+    const raw = window.localStorage.getItem(NOTIFICATION_SETTINGS_STORAGE_KEY);
+    if (!raw) return DEFAULT_NOTIFICATION_SETTINGS;
+    return normalizeNotificationSettings(JSON.parse(raw));
+  } catch {
+    return DEFAULT_NOTIFICATION_SETTINGS;
+  }
+}
+
+function cacheNotificationSettings(settings: NotificationSettings) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      NOTIFICATION_SETTINGS_STORAGE_KEY,
+      JSON.stringify(settings),
+    );
+  } catch {
+    /* ignore cache write issues */
+  }
+}
+
 /* ================= TOAST ================= */
 
 function ToastItem({
   notification,
   onRemove,
+  defaultDuration,
 }: {
   notification: Notification;
   onRemove: (id: string) => void;
+  defaultDuration: number;
 }) {
-  const { id, label, type, duration = 4000 } = notification;
+  const { id, label, type } = notification;
+  const duration = notification.duration ?? defaultDuration;
   const cfg = TYPE_CONFIG[type];
 
   useEffect(() => {
@@ -132,19 +216,34 @@ function ToastItem({
   );
 }
 
-function ToastContainer() {
+function ToastContainer({
+  settings,
+}: {
+  settings: NotificationSettings;
+}) {
   const { notifications, removeNotification } = useNotifications();
+  if (!settings.enableToastNotifications) return null;
+  const positionStyle = useMemo(() => {
+    const isTop = settings.toastPosition.startsWith("top");
+    const isRight = settings.toastPosition.endsWith("right");
+    return {
+      top: isTop ? 24 : "auto",
+      bottom: isTop ? "auto" : 24,
+      right: isRight ? 24 : "auto",
+      left: isRight ? "auto" : 24,
+      alignItems: isRight ? "flex-end" : "flex-start",
+    } as const;
+  }, [settings.toastPosition]);
 
   return createPortal(
     <div
       style={{
         position: "fixed",
-        top: 24,
-        right: 24,
         display: "flex",
         flexDirection: "column",
         gap: 10,
         zIndex: 9999,
+        ...positionStyle,
       }}
     >
       <AnimatePresence>
@@ -153,6 +252,7 @@ function ToastContainer() {
             key={n.id}
             notification={n}
             onRemove={removeNotification}
+            defaultDuration={settings.toastDuration}
           />
         ))}
       </AnimatePresence>
@@ -289,10 +389,73 @@ export function NotificationProvider({
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [confirmState, setConfirmState] =
     useState<ConfirmState | null>(null);
+  const [settings, setSettings] = useState<NotificationSettings>(() =>
+    readCachedNotificationSettings(),
+  );
+
+  useEffect(() => {
+    if (!settings.enableToastNotifications) {
+      setNotifications([]);
+    }
+  }, [settings.enableToastNotifications]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const applySettings = (next: Record<string, unknown> | null | undefined) => {
+      const normalized = normalizeNotificationSettings(next);
+      if (cancelled) return;
+      setSettings(normalized);
+      cacheNotificationSettings(normalized);
+    };
+
+    const loadSettings = async () => {
+      try {
+        const res = await fetch("/api/settings");
+        if (!res.ok) return;
+        const data = await res.json().catch(() => ({}));
+        applySettings(data && typeof data === "object" ? data : null);
+      } catch {
+        /* keep cached defaults */
+      }
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== NOTIFICATION_SETTINGS_STORAGE_KEY) return;
+      try {
+        applySettings(event.newValue ? JSON.parse(event.newValue) : null);
+      } catch {
+        applySettings(null);
+      }
+    };
+
+    const handleSettingsUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<Record<string, unknown> | undefined>)
+        .detail;
+      applySettings(detail ?? null);
+    };
+
+    void loadSettings();
+    window.addEventListener("storage", handleStorage);
+    window.addEventListener(
+      NOTIFICATION_SETTINGS_UPDATED_EVENT,
+      handleSettingsUpdated,
+    );
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener(
+        NOTIFICATION_SETTINGS_UPDATED_EVENT,
+        handleSettingsUpdated,
+      );
+    };
+  }, []);
 
   const addNotification = useCallback((n: Notification) => {
+    if (!settings.enableToastNotifications) return;
     setNotifications((prev) => [...prev, n]);
-  }, []);
+  }, [settings.enableToastNotifications]);
 
   const removeNotification = useCallback((id: string) => {
     setNotifications((prev) => prev.filter((n) => n.id !== id));
@@ -301,10 +464,24 @@ export function NotificationProvider({
   const clearAll = useCallback(() => setNotifications([]), []);
 
   const confirm = useCallback((opts: ConfirmOptions) => {
+    if (!settings.enableConfirmDialogs) {
+      const fallbackMessage =
+        typeof opts.message === "string" || typeof opts.message === "number"
+          ? String(opts.message)
+          : "Are you sure you want to continue?";
+      if (typeof window !== "undefined" && typeof window.confirm === "function") {
+        return Promise.resolve(
+          window.confirm(
+            [opts.title, fallbackMessage].filter(Boolean).join("\n\n"),
+          ),
+        );
+      }
+      return Promise.resolve(true);
+    }
     return new Promise<boolean>((resolve) => {
       setConfirmState({ ...opts, resolve });
     });
-  }, []);
+  }, [settings.enableConfirmDialogs]);
 
   const handleConfirmResponse = (value: boolean) => {
     confirmState?.resolve(value);
@@ -317,7 +494,7 @@ export function NotificationProvider({
     >
       <ConfirmContext.Provider value={{ confirm }}>
         {children}
-        <ToastContainer />
+        <ToastContainer settings={settings} />
         {confirmState && (
           <ConfirmDialog
             state={confirmState}

@@ -2,6 +2,10 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { api, authApi } from "../lib/api";
+import {
+  fetchGeneralSettings,
+  GENERAL_SETTINGS_DEFAULTS,
+} from "../lib/restaurantSettings";
 import { useAuth } from "../context/authcontext";
 import { useViewport } from "@/hooks/use-tablet";
 
@@ -61,6 +65,24 @@ interface CustomerOrder {
 interface PaymentSessionState {
   checkoutSessionId: string; checkoutUrl: string; status: string;
   paid: boolean; paymentReference: string | null;
+}
+interface BillingSettings {
+  taxRate: number;
+  serviceCharge: number;
+}
+interface StoreStatusSettings {
+  weekdayOpenTime: string;
+  weekdayCloseTime: string;
+  weekendOpenTime: string;
+  weekendCloseTime: string;
+  storeStatusMode: "auto" | "manual_open" | "manual_closed";
+  timezone: string;
+}
+interface BillingBreakdown {
+  subtotal: number;
+  taxAmount: number;
+  serviceChargeAmount: number;
+  grandTotal: number;
 }
 interface PersistedCartItem {
   recipeId: number;
@@ -139,6 +161,106 @@ const PAYMENT_SESSION_KEY = "the-crunch-paymongo-session";
 const CASH_TERMS = "By selecting Cash as your payment method, you agree that your order will not be processed immediately and will only be prepared once full payment is made onsite. You are responsible for completing payment at the store. Delays in payment may result in longer waiting times or possible cancellation of your order. The store reserves the right to refuse or cancel orders that are not paid within a reasonable time.";
 const DEFAULT_FLAVORS = ["Original", "Spicy"];
 const DEFAULT_MEAL_FILTERS = ["Breakfast", "Lunch", "Dinner"];
+const DEFAULT_BILLING_SETTINGS: BillingSettings = {
+  taxRate: 0,
+  serviceCharge: 0,
+};
+
+const DEFAULT_STORE_STATUS_SETTINGS: StoreStatusSettings = {
+  weekdayOpenTime: "10:00",
+  weekdayCloseTime: "22:00",
+  weekendOpenTime: "11:00",
+  weekendCloseTime: "20:30",
+  storeStatusMode: "auto",
+  timezone: "Asia/Manila",
+};
+
+const parseTimeMinutes = (value: string) => {
+  const match = /^(\d{2}):(\d{2})$/.exec(String(value || "").trim());
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (
+    !Number.isInteger(hours) ||
+    !Number.isInteger(minutes) ||
+    hours < 0 ||
+    hours > 23 ||
+    minutes < 0 ||
+    minutes > 59
+  ) {
+    return null;
+  }
+  return hours * 60 + minutes;
+};
+
+const getComputedStoreOpen = (settings: StoreStatusSettings) => {
+  if (settings.storeStatusMode === "manual_open") return true;
+  if (settings.storeStatusMode === "manual_closed") return false;
+
+  const timezone = settings.timezone || "Asia/Manila";
+  const now = new Date();
+  const weekday = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    weekday: "short",
+  }).format(now);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+  const hour = Number(parts.find((part) => part.type === "hour")?.value || "0");
+  const minute = Number(
+    parts.find((part) => part.type === "minute")?.value || "0",
+  );
+  const currentMinutes = hour * 60 + minute;
+  const isWeekend = weekday === "Sat" || weekday === "Sun";
+  const openMinutes = parseTimeMinutes(
+    isWeekend ? settings.weekendOpenTime : settings.weekdayOpenTime,
+  );
+  const closeMinutes = parseTimeMinutes(
+    isWeekend ? settings.weekendCloseTime : settings.weekdayCloseTime,
+  );
+
+  if (openMinutes === null || closeMinutes === null) return false;
+  if (closeMinutes <= openMinutes) {
+    return currentMinutes >= openMinutes || currentMinutes < closeMinutes;
+  }
+  return currentMinutes >= openMinutes && currentMinutes < closeMinutes;
+};
+
+const getStoreHoursLabel = (settings: StoreStatusSettings) => {
+  if (settings.storeStatusMode === "manual_open") return "Mode: Manual Open";
+  if (settings.storeStatusMode === "manual_closed")
+    return "Mode: Manual Closed";
+
+  const timezone = settings.timezone || "Asia/Manila";
+  const weekday = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    weekday: "short",
+  }).format(new Date());
+  const isWeekend = weekday === "Sat" || weekday === "Sun";
+  return `Today: ${
+    isWeekend ? settings.weekendOpenTime : settings.weekdayOpenTime
+  } - ${
+    isWeekend ? settings.weekendCloseTime : settings.weekdayCloseTime
+  }`;
+};
+
+const calculateBillingBreakdown = (
+  subtotal: number,
+  settings: BillingSettings,
+): BillingBreakdown => {
+  const safeSubtotal = Number(subtotal || 0);
+  const taxAmount = safeSubtotal * (settings.taxRate / 100);
+  const serviceChargeAmount = safeSubtotal * (settings.serviceCharge / 100);
+  return {
+    subtotal: safeSubtotal,
+    taxAmount,
+    serviceChargeAmount,
+    grandTotal: safeSubtotal + taxAmount + serviceChargeAmount,
+  };
+};
 
 const TAG_COLORS: Record<string, { bg: string; text: string }> = {
   Bestseller: { bg: "rgba(245,200,66,0.15)",  text: "#f5c842" },
@@ -586,14 +708,16 @@ function VariantToggle({ selected, onChange }: { selected: "original" | "spicy";
 }
 
 // ─── ORDER DRAWER ─────────────────────────────────────────────────────────────
-function OrderDrawer({ cart, onClose, onRemove, onChangeQty, onClear, onSendPayment, onVerifyPayment, onPlaceOrder, paymentSession, paymentMessage, isSubmitting, selectedPaymentMethod, onPaymentMethodChange, onRequestCashTerms }: {
+function OrderDrawer({ cart, billing, storeOpen, storeClosedMessage, onClose, onRemove, onChangeQty, onClear, onSendPayment, onVerifyPayment, onPlaceOrder, paymentSession, paymentMessage, isSubmitting, selectedPaymentMethod, onPaymentMethodChange, onRequestCashTerms }: {
   cart: CartItem[]; onClose: () => void; onRemove: (id: number) => void; onChangeQty: (id: number, delta: number) => void; onClear: () => void;
+  billing: BillingBreakdown;
+  storeOpen: boolean;
+  storeClosedMessage: string;
   onSendPayment: () => void; onVerifyPayment: () => void; onPlaceOrder: () => void;
   paymentSession: PaymentSessionState | null; paymentMessage: string | null; isSubmitting: boolean;
   selectedPaymentMethod: PaymentMethodType; onPaymentMethodChange: (m: PaymentMethodType) => void; onRequestCashTerms: () => void;
 }) {
   const { isMobile, isPhone, isShortViewport } = useViewport();
-  const total    = cart.reduce((s, i) => s + i.recipe.price * i.quantity, 0);
   const totalQty = cart.reduce((s, i) => s + i.quantity, 0);
   const isCash   = selectedPaymentMethod === "cash";
   const primaryLabel  = isCash ? "Place Order" : (paymentSession?.paid ? "Place Order" : paymentSession ? "Check Payment Status" : "Send Payment");
@@ -677,16 +801,33 @@ function OrderDrawer({ cart, onClose, onRemove, onChangeQty, onClear, onSendPaym
           {cart.length > 0 && (
             <motion.div key="footer" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }} transition={SPG}
               style={{ padding: isPhone ? "18px 16px 24px" : isMobile ? "20px 18px 26px" : "20px 28px 32px", borderTop: "1px solid rgba(240,237,232,0.07)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: isPhone ? "flex-start" : "center", flexDirection: isPhone ? "column" : "row", gap: isPhone ? 8 : 12, marginBottom: 18 }}>
-                <span style={{ fontSize: 13, color: "rgba(240,237,232,0.4)" }}>Total</span>
-                <AnimatePresence mode="wait">
-                  <motion.span key={Math.round(total * 100)} initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }} transition={SPG} style={{ fontSize: 28, fontWeight: 900, color: "#f5c842", letterSpacing: "-0.03em" }}>{formatPHP(Number(total))}</motion.span>
-                </AnimatePresence>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 18 }}>
+                {[
+                  ["Subtotal", billing.subtotal],
+                  ["Tax", billing.taxAmount],
+                  ["Service Charge", billing.serviceChargeAmount],
+                ].map(([label, value]) => (
+                  <div key={String(label)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                    <span style={{ fontSize: 13, color: "rgba(240,237,232,0.4)" }}>{label}</span>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: "#f0ede8" }}>{formatPHP(Number(value))}</span>
+                  </div>
+                ))}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: isPhone ? "flex-start" : "center", flexDirection: isPhone ? "column" : "row", gap: isPhone ? 8 : 12, paddingTop: 8, borderTop: "1px solid rgba(240,237,232,0.06)" }}>
+                  <span style={{ fontSize: 13, color: "rgba(240,237,232,0.4)" }}>Total</span>
+                  <AnimatePresence mode="wait">
+                    <motion.span key={Math.round(billing.grandTotal * 100)} initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }} transition={SPG} style={{ fontSize: 28, fontWeight: 900, color: "#f5c842", letterSpacing: "-0.03em" }}>{formatPHP(Number(billing.grandTotal))}</motion.span>
+                  </AnimatePresence>
+                </div>
               </div>
               <PaymentMethodSelector selected={selectedPaymentMethod} onChange={onPaymentMethodChange} disabled={!isCash && !!paymentSession} />
               <div style={{ height: 1, background: "rgba(240,237,232,0.06)", margin: "0 0 14px" }} />
               {paymentMessage && !isCash && (
                 <p style={{ fontSize: 11.5, color: paymentSession?.paid ? "#4ade80" : "rgba(240,237,232,0.4)", lineHeight: 1.6, margin: "0 0 12px" }}>{paymentMessage}</p>
+              )}
+              {!storeOpen && (
+                <p style={{ fontSize: 11.5, color: "#fca5a5", lineHeight: 1.6, margin: "0 0 12px" }}>
+                  {storeClosedMessage}
+                </p>
               )}
               {!isCash && paymentSession?.checkoutUrl && !paymentSession.paid && (
                 <motion.a whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }} transition={SP} href={paymentSession.checkoutUrl} target="_blank" rel="noopener noreferrer"
@@ -694,8 +835,8 @@ function OrderDrawer({ cart, onClose, onRemove, onChangeQty, onClear, onSendPaym
                   Open GCash Payment
                 </motion.a>
               )}
-              <motion.button onClick={primaryAction} disabled={isSubmitting} whileHover={{ scale: 1.02, backgroundColor: "#e6b800" }} whileTap={{ scale: 0.97 }} transition={SP}
-                style={{ width: "100%", background: "#f5c842", color: "#111", border: "none", borderRadius: 14, padding: "16px", fontSize: 15, fontWeight: 700, cursor: isSubmitting ? "wait" : "pointer", fontFamily: "inherit", opacity: isSubmitting ? 0.75 : 1 }}>
+              <motion.button onClick={primaryAction} disabled={isSubmitting || !storeOpen} whileHover={{ scale: storeOpen && !isSubmitting ? 1.02 : 1, backgroundColor: storeOpen && !isSubmitting ? "#e6b800" : "#f5c842" }} whileTap={{ scale: storeOpen && !isSubmitting ? 0.97 : 1 }} transition={SP}
+                style={{ width: "100%", background: "#f5c842", color: "#111", border: "none", borderRadius: 14, padding: "16px", fontSize: 15, fontWeight: 700, cursor: isSubmitting ? "wait" : !storeOpen ? "not-allowed" : "pointer", fontFamily: "inherit", opacity: isSubmitting || !storeOpen ? 0.55 : 1 }}>
                 {isSubmitting ? "Please wait..." : primaryLabel}
               </motion.button>
               <p style={{ textAlign: "center", fontSize: 11, color: "rgba(240,237,232,0.22)", marginTop: 12 }}>
@@ -1008,6 +1149,12 @@ export default function Delicacy() {
   const [paymentMessage, setPaymentMessage] = useState<string | null>(null);
   const [paymentMethod,  setPaymentMethod]  = useState<PaymentMethodType>("gcash");
   const [showCashTerms,  setShowCashTerms]  = useState(false);
+  const [billingSettings, setBillingSettings] =
+    useState<BillingSettings>(DEFAULT_BILLING_SETTINGS);
+  const [storeStatusSettings, setStoreStatusSettings] =
+    useState<StoreStatusSettings>(DEFAULT_STORE_STATUS_SETTINGS);
+  const [restaurantSettings, setRestaurantSettings] =
+    useState(GENERAL_SETTINGS_DEFAULTS);
   const [verificationCode, setVerificationCode] = useState("");
   const [verificationError, setVerificationError] = useState<string | null>(null);
   const [verificationSuccess, setVerificationSuccess] = useState<string | null>(null);
@@ -1028,6 +1175,53 @@ export default function Delicacy() {
       document.body.style.overflow = previousOverflow;
     };
   }, [orderTypeOpen, showCashTerms]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadBillingSettings = async () => {
+      try {
+        const data = await api.get<Record<string, unknown>>("/settings");
+        if (cancelled) return;
+        setBillingSettings({
+          taxRate: Math.max(0, Number(data?.taxRate || 0) || 0),
+          serviceCharge: Math.max(0, Number(data?.serviceCharge || 0) || 0),
+        });
+        setStoreStatusSettings({
+          weekdayOpenTime: String(data?.weekdayOpenTime || "10:00"),
+          weekdayCloseTime: String(data?.weekdayCloseTime || "22:00"),
+          weekendOpenTime: String(data?.weekendOpenTime || "11:00"),
+          weekendCloseTime: String(data?.weekendCloseTime || "20:30"),
+          storeStatusMode:
+            data?.storeStatusMode === "manual_open" ||
+            data?.storeStatusMode === "manual_closed"
+              ? data.storeStatusMode
+              : "auto",
+          timezone: String(data?.timezone || "Asia/Manila"),
+        });
+      } catch {
+        if (!cancelled) {
+          setBillingSettings(DEFAULT_BILLING_SETTINGS);
+          setStoreStatusSettings(DEFAULT_STORE_STATUS_SETTINGS);
+        }
+      }
+    };
+    void loadBillingSettings();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchGeneralSettings().then((data) => {
+      if (!cancelled) {
+        setRestaurantSettings(data);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // ── Fetch all menu data from backend ──
   useEffect(() => {
@@ -1228,6 +1422,13 @@ export default function Delicacy() {
   );
 
   const totalItems = cart.reduce((s, i) => s + i.quantity, 0);
+  const billing = calculateBillingBreakdown(
+    cart.reduce((s, i) => s + i.recipe.price * i.quantity, 0),
+    billingSettings,
+  );
+  const storeOpen = getComputedStoreOpen(storeStatusSettings);
+  const storeClosedMessage =
+    "The store is currently closed. Please come back during business hours.";
 
   // ── Cart helpers ──
   const clearPayment = () => { setPaymentSession(null); setPaymentMessage(null); };
@@ -1267,6 +1468,10 @@ export default function Delicacy() {
       setVerificationSuccess(null);
       return false;
     }
+    if (!storeOpen) {
+      setPaymentMessage(storeClosedMessage);
+      return false;
+    }
     return true;
   };
 
@@ -1280,8 +1485,7 @@ export default function Delicacy() {
   const handlePlaceCashOrder = async () => {
     setIsSubmitting(true);
     try {
-      const total = cart.reduce((s, i) => s + i.recipe.price * i.quantity, 0);
-      const res   = await api.post<{ orderId: number; orderNumber: string }>("/orders", { items: buildItems(), total, customerUserId, customer_name: customerName, customer_email: customerEmail, order_type: "take-out", payment_method: "cash_on_pickup", payment_status: "Pending Payment" });
+      const res   = await api.post<{ orderId: number; orderNumber: string }>("/orders", { items: buildItems(), total: billing.grandTotal, customerUserId, customer_name: customerName, customer_email: customerEmail, order_type: "take-out", payment_method: "cash_on_pickup", payment_status: "Pending Payment" });
       await fetchOrders();
       setLastOrderNum(res.orderNumber || `#${res.orderId}`);
       setDrawerOpen(false);
@@ -1295,8 +1499,7 @@ export default function Delicacy() {
     if (!ensureCustomerCanPlaceOrder()) return;
     setIsSubmitting(true); setPaymentMessage(null);
     try {
-      const total = cart.reduce((s, i) => s + i.recipe.price * i.quantity, 0);
-      const data  = await api.post<{ checkoutSessionId: string; checkoutUrl: string; status: string }>("/paymongo/create-checkout", { items: buildItems(), total, customerUserId, customerName, customerEmail });
+      const data  = await api.post<{ checkoutSessionId: string; checkoutUrl: string; status: string }>("/paymongo/create-checkout", { items: buildItems(), total: billing.grandTotal, customerUserId, customerName, customerEmail });
       const next: PaymentSessionState = { checkoutSessionId: data.checkoutSessionId, checkoutUrl: data.checkoutUrl, status: data.status, paid: false, paymentReference: null };
       setPaymentSession(next);
       setPaymentMessage("Redirecting to GCash checkout. Complete payment there and you'll return here for verification.");
@@ -1322,8 +1525,7 @@ export default function Delicacy() {
     if (isSubmitting || !paymentSession?.paid) { setPaymentMessage("Please complete and verify your GCash payment first."); return; }
     setIsSubmitting(true);
     try {
-      const total = cart.reduce((s, i) => s + i.recipe.price * i.quantity, 0);
-      const res   = await api.post<{ orderId: number; orderNumber: string }>("/orders", { items: buildItems(), total, customerUserId, customer_name: customerName, customer_email: customerEmail, order_type: "take-out", payment_method: "gcash", checkout_session_id: paymentSession.checkoutSessionId, payment_reference: paymentSession.paymentReference || paymentSession.checkoutSessionId, payment_status: "Paid" });
+      const res   = await api.post<{ orderId: number; orderNumber: string }>("/orders", { items: buildItems(), total: billing.grandTotal, customerUserId, customer_name: customerName, customer_email: customerEmail, order_type: "take-out", payment_method: "gcash", checkout_session_id: paymentSession.checkoutSessionId, payment_reference: paymentSession.paymentReference || paymentSession.checkoutSessionId, payment_status: "Paid" });
       await fetchOrders();
       setLastOrderNum(res.orderNumber || `#${res.orderId}`);
       clearPayment();
@@ -1403,8 +1605,8 @@ export default function Delicacy() {
         style={{ position: "sticky", top: 0, zIndex: 100, background: scrolled ? "rgba(14,12,10,0.96)" : "rgba(14,12,10,0.80)", backdropFilter: "blur(24px)", borderBottom: "1px solid rgba(240,237,232,0.07)", padding: isNarrowPhone ? "10px 14px" : "0 clamp(16px,4vw,40px)", minHeight: 68, display: "flex", justifyContent: "space-between", alignItems: "center", gap: isNarrowPhone ? 10 : 12, flexWrap: isNarrow ? "wrap" : "nowrap", paddingTop: isNarrow && !isNarrowPhone ? 12 : undefined, paddingBottom: isNarrow && !isNarrowPhone ? 12 : undefined }}>
 
         <div style={{ display:'flex', alignItems:'center', gap:8, minWidth: 0 }}>
-  <img src="/src/assets/img/logo24.png" alt="The Crunch logo" style={{ width:32, height:32, objectFit:'contain' }} />
-  {!isNarrowPhone && <span style={{ fontSize: 20, fontWeight: 900, color: "#f0ede8" }}>The <span style={{ color: "#f5c842" }}>Crunch</span></span>}
+  <img src="/src/assets/img/logo24.png" alt={`${restaurantSettings.restaurantName} logo`} style={{ width:32, height:32, objectFit:'contain' }} />
+  {!isNarrowPhone && <span style={{ fontSize: 20, fontWeight: 900, color: "#f0ede8" }}>{restaurantSettings.restaurantName}</span>}
 </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: isNarrowPhone ? 6 : 4, flexWrap: "wrap", justifyContent: isNarrow ? "flex-start" : "flex-end", width: isNarrow ? "100%" : "auto" }}>
@@ -1483,7 +1685,24 @@ export default function Delicacy() {
         <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1, duration: 0.75, ease: EASE }} style={{ marginBottom: 36 }}>
           <div style={{ display: "inline-flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
             <div style={{ width: 28, height: 1, background: "#f5c842" }} />
-            <span style={{ fontSize: 11, fontWeight: 600, color: "#f5c842", letterSpacing: "0.25em", textTransform: "uppercase" }}>The Crunch Fairview</span>
+            <span style={{ fontSize: 11, fontWeight: 600, color: "#f5c842", letterSpacing: "0.25em", textTransform: "uppercase" }}>{restaurantSettings.restaurantName}</span>
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 800,
+                letterSpacing: "0.12em",
+                textTransform: "uppercase",
+                padding: "6px 10px",
+                borderRadius: 999,
+                border: `1px solid ${storeOpen ? "rgba(34,197,94,0.24)" : "rgba(239,68,68,0.24)"}`,
+                background: storeOpen
+                  ? "rgba(34,197,94,0.08)"
+                  : "rgba(239,68,68,0.08)",
+                color: storeOpen ? "#4ade80" : "#fca5a5",
+              }}
+            >
+              {storeOpen ? "Open" : "Closed"}
+            </span>
           </div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
             <h1 style={{ fontSize: "clamp(36px,6vw,68px)", fontWeight: 900, color: "#f0ede8", margin: 0, letterSpacing: "-0.025em", lineHeight: 1.02 }}>
@@ -1507,6 +1726,28 @@ export default function Delicacy() {
                 </motion.div>
               )}
             </AnimatePresence>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 14 }}>
+            {!storeOpen ? (
+              <span style={{ fontSize: 12, color: "#fca5a5" }}>
+                {storeClosedMessage}
+              </span>
+            ) : null}
+            {restaurantSettings.tagline ? (
+              <span style={{ fontSize: 13, color: "rgba(240,237,232,0.68)" }}>{restaurantSettings.tagline}</span>
+            ) : null}
+            {restaurantSettings.phone ? (
+              <span style={{ fontSize: 12, color: "rgba(240,237,232,0.48)" }}>{restaurantSettings.phone}</span>
+            ) : null}
+            {restaurantSettings.email ? (
+              <span style={{ fontSize: 12, color: "rgba(240,237,232,0.48)" }}>{restaurantSettings.email}</span>
+            ) : null}
+            {restaurantSettings.address ? (
+              <span style={{ fontSize: 12, color: "rgba(240,237,232,0.48)" }}>{restaurantSettings.address}</span>
+            ) : null}
+            <span style={{ fontSize: 12, color: "rgba(240,237,232,0.48)" }}>
+              {getStoreHoursLabel(storeStatusSettings)}
+            </span>
           </div>
         </motion.div>
 
@@ -1609,6 +1850,9 @@ export default function Delicacy() {
       <AnimatePresence>
         {drawerOpen && (
           <OrderDrawer
+            billing={billing}
+            storeOpen={storeOpen}
+            storeClosedMessage={storeClosedMessage}
             cart={cart} onClose={() => setDrawerOpen(false)} onRemove={removeFromCart} onChangeQty={changeQty} onClear={clearCart}
             onSendPayment={handleSendPayment} onVerifyPayment={handleVerifyPayment} onPlaceOrder={handlePlaceOrder}
             paymentSession={paymentSession} paymentMessage={paymentMessage} isSubmitting={isSubmitting}

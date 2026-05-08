@@ -23,6 +23,11 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { api, apiCall } from "../lib/api";
+import {
+  fetchGeneralSettings,
+  GENERAL_SETTINGS_DEFAULTS,
+  type GeneralRestaurantSettings,
+} from "../lib/restaurantSettings";
 import { Sidebar } from "@/components/Sidebar";
 import { useViewport } from "@/hooks/use-tablet";
 import { useAuth } from "../context/authcontext";
@@ -44,12 +49,19 @@ const F = "'Poppins', sans-serif";
 const SP = { type: "spring" as const, stiffness: 400, damping: 28 };
 
 // ─── CONSTANTS & TYPES ────────────────────────────────────────────────────────
-const VAT_RATE = 0.12;
-const DISCOUNT_RATE = 0.2;
-
-type CustomerType = "regular" | "pwd" | "senior";
+type CustomerType = string;
 type PaymentMethod = "cash" | "gcash_onsite";
 type ToastType = "success" | "error" | "info";
+interface BillingSettings {
+  taxRate: number;
+  serviceCharge: number;
+}
+interface DiscountType {
+  discount_id: number;
+  name: string;
+  percentage: number;
+  is_active?: boolean | number;
+}
 
 interface ToastItem {
   id: string;
@@ -107,6 +119,8 @@ interface OrderPayload {
   payment_status?: "Paid";
   proof_image_url?: string;
   customer_type: CustomerType;
+  discount_name?: string;
+  discount_rate?: number;
   discount_amount: number;
   vat_amount: number;
   vat_exempt_amount: number;
@@ -121,14 +135,18 @@ interface ReceiptData {
   date: string;
   time: string;
   items: CartItem[];
+  subtotal: number;
+  discountName: string;
+  discountAmount: number;
+  taxAmount: number;
+  serviceChargeAmount: number;
   paidAmount: number;
   cashTendered: number;
   changeAmount: number;
   orderType: string;
   paymentMethod: string;
   customerType: CustomerType;
-  discountAmount: number;
-  vatAmount: number;
+  restaurantSettings: GeneralRestaurantSettings;
 }
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
@@ -175,25 +193,33 @@ const getNow = () => {
   };
 };
 
-const computePricing = (gross: number, ct: CustomerType) => {
-  if (ct === "regular") {
-    const vatAmount = gross * (VAT_RATE / (1 + VAT_RATE));
-    return {
-      gross,
-      vatExemptAmount: 0,
-      vatAmount,
-      discountAmount: 0,
-      amountDue: gross,
-    };
-  }
-  const base = gross / (1 + VAT_RATE);
-  const disc = base * DISCOUNT_RATE;
+const DEFAULT_BILLING_SETTINGS: BillingSettings = {
+  taxRate: 0,
+  serviceCharge: 0,
+};
+
+const DEFAULT_DISCOUNT_TYPES: DiscountType[] = [
+  { discount_id: 1, name: "Regular customer", percentage: 0, is_active: true },
+  { discount_id: 2, name: "PWD", percentage: 20, is_active: true },
+  { discount_id: 3, name: "Senior Citizen", percentage: 20, is_active: true },
+];
+
+const computePricing = (
+  subtotal: number,
+  billing: BillingSettings,
+  discountRate: number,
+) => {
+  const safeSubtotal = Number(subtotal || 0);
+  const safeDiscountRate = Math.max(0, Number(discountRate || 0));
+  const discountAmount = safeSubtotal * (safeDiscountRate / 100);
+  const taxAmount = safeSubtotal * (billing.taxRate / 100);
+  const serviceChargeAmount = safeSubtotal * (billing.serviceCharge / 100);
   return {
-    gross,
-    vatExemptAmount: base,
-    vatAmount: 0,
-    discountAmount: disc,
-    amountDue: base - disc,
+    subtotal: safeSubtotal,
+    discountAmount,
+    taxAmount,
+    serviceChargeAmount,
+    amountDue: safeSubtotal - discountAmount + taxAmount + serviceChargeAmount,
   };
 };
 
@@ -262,16 +288,14 @@ const formatPaymentMethodLabel = (paymentMethod?: string | null) => {
 
 const buildReceiptHtml = ({
   orderNumber, date, time, items, paidAmount, cashTendered,
-  changeAmount, orderType, paymentMethod, customerType, discountAmount, vatAmount,
+  changeAmount, orderType, paymentMethod, customerType, subtotal, discountName, discountAmount, taxAmount, serviceChargeAmount,
+  restaurantSettings,
 }: ReceiptData) => {
+  const currency = restaurantSettings.currency || "PHP";
   const paymentMethodLabel =
     paymentMethod === "cash" ? "Cash"
     : paymentMethod === "gcash_onsite" ? "Onsite E-Payment"
     : paymentMethod;
-
-  const customerLabel: Record<CustomerType, string> = {
-    regular: "Regular", pwd: "PWD", senior: "Senior Citizen",
-  };
 
   const itemRows = items.map((item) => `
     <tr>
@@ -282,15 +306,27 @@ const buildReceiptHtml = ({
     </tr>
   `).join("");
 
-  const pricingRows = customerType !== "regular"
-    ? `<div class="line"><span>Discount</span><strong>-PHP ${fmt(discountAmount)}</strong></div>
-       <div class="line"><span>VAT Exempt</span><strong>PHP ${fmt(vatAmount)}</strong></div>`
-    : `<div class="line"><span>VAT (12% incl.)</span><strong>PHP ${fmt(vatAmount)}</strong></div>`;
+  const pricingRows = `
+    <div class="line"><span>Subtotal</span><strong>${currency} ${fmt(subtotal)}</strong></div>
+    <div class="line"><span>Discount${discountName ? ` (${escapeHtml(discountName)})` : ""}</span><strong>-${currency} ${fmt(discountAmount)}</strong></div>
+    <div class="line"><span>Tax</span><strong>${currency} ${fmt(taxAmount)}</strong></div>
+    <div class="line"><span>Service Charge</span><strong>${currency} ${fmt(serviceChargeAmount)}</strong></div>
+  `;
 
   const cashRows = paymentMethod === "cash"
-    ? `<div class="line"><span>Cash Tendered</span><strong>PHP ${fmt(cashTendered)}</strong></div>
-       <div class="line"><span>Change</span><strong>PHP ${fmt(changeAmount)}</strong></div>`
+    ? `<div class="line"><span>Cash Tendered</span><strong>${currency} ${fmt(cashTendered)}</strong></div>
+       <div class="line"><span>Change</span><strong>${currency} ${fmt(changeAmount)}</strong></div>`
     : "";
+
+  const headerMeta = [
+    restaurantSettings.tagline,
+    restaurantSettings.address,
+    restaurantSettings.phone,
+    restaurantSettings.email,
+  ]
+    .filter(Boolean)
+    .map((line) => `<p>${escapeHtml(line)}</p>`)
+    .join("");
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -320,8 +356,9 @@ const buildReceiptHtml = ({
 <body>
   <main class="receipt">
     <section class="header">
-      <h1>The Crunch</h1>
+      <h1>${escapeHtml(restaurantSettings.restaurantName)}</h1>
       <p>Official Sales Receipt</p>
+      ${headerMeta}
       <div class="txn-badge">
         <span class="txn-label">Transaction ID</span>
         <span class="txn-value">${escapeHtml(orderNumber)}</span>
@@ -332,7 +369,7 @@ const buildReceiptHtml = ({
       <div class="line"><span>Time</span><strong>${escapeHtml(time)}</strong></div>
       <div class="line"><span>Order Type</span><strong>${escapeHtml(orderType)}</strong></div>
       <div class="line"><span>Payment</span><strong>${escapeHtml(paymentMethodLabel)}</strong></div>
-      <div class="line"><span>Customer</span><strong>${escapeHtml(customerLabel[customerType])}</strong></div>
+      <div class="line"><span>Discount Type</span><strong>${escapeHtml(customerType || discountName || "Regular customer")}</strong></div>
     </section>
     <table>
       <thead>
@@ -345,7 +382,7 @@ const buildReceiptHtml = ({
     <section class="summary">
       ${pricingRows}
       ${cashRows}
-      <div class="line total"><span>Total Paid</span><strong>PHP ${fmt(paidAmount)}</strong></div>
+      <div class="line total"><span>Total Paid</span><strong>${currency} ${fmt(paidAmount)}</strong></div>
     </section>
     <section class="footer">
       <p>Thank you for your order.</p>
@@ -963,15 +1000,15 @@ function AmountEntryModal({ show, amountDue, paymentMethod, onConfirm, onCancel 
 // ─── SUCCESS MODAL ────────────────────────────────────────────────────────────
 function SuccessModal({
   show, onClose, orderNumber, savedCart, paidAmount, cashTendered, changeAmount,
-  orderType, paymentMethod, customerType, discountAmount, vatAmount,
+  orderType, paymentMethod, customerType, subtotal, discountAmount, taxAmount, serviceChargeAmount, restaurantSettings,
 }: {
   show: boolean; onClose: () => void; orderNumber: string; savedCart: CartItem[];
   paidAmount: number; cashTendered: number; changeAmount: number; orderType: string;
-  paymentMethod: string; customerType: CustomerType; discountAmount: number; vatAmount: number;
+  paymentMethod: string; customerType: CustomerType; subtotal: number; discountAmount: number; taxAmount: number; serviceChargeAmount: number;
+  restaurantSettings: GeneralRestaurantSettings;
 }) {
   const { date, time } = getNow();
-  const label: Record<CustomerType, string> = { regular: "Regular", pwd: "PWD", senior: "Senior Citizen" };
-  const receiptHtml = buildReceiptHtml({ orderNumber, date, time, items: savedCart, paidAmount, cashTendered, changeAmount, orderType, paymentMethod, customerType, discountAmount, vatAmount });
+  const receiptHtml = buildReceiptHtml({ orderNumber, date, time, items: savedCart, subtotal, discountName: customerType, discountAmount, taxAmount, serviceChargeAmount, paidAmount, cashTendered, changeAmount, orderType, paymentMethod, customerType, restaurantSettings });
 
   const handlePrintReceipt = () => {
     if (typeof window === "undefined") return;
@@ -1033,7 +1070,7 @@ function SuccessModal({
               </motion.div>
               <div style={{ borderTop: "1px solid #f5f5f5" }} />
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.28 }} style={{ padding: "10px 16px 4px", display: "flex", gap: 5, flexWrap: "wrap" }}>
-                {[orderType, paymentMethod, ...(customerType !== "regular" ? [label[customerType]] : [])].map((b) => (
+                {[orderType, paymentMethod, customerType].filter(Boolean).map((b) => (
                   <span key={b} style={{ fontSize: 10, fontWeight: 500, padding: "3px 10px", borderRadius: 20, background: "#f5f5f5", color: "#777", textTransform: "capitalize" }}>{b}</span>
                 ))}
               </motion.div>
@@ -1049,23 +1086,17 @@ function SuccessModal({
                 ))}
               </motion.div>
               <div style={{ margin: "0 16px 14px", border: "1px solid #f5f5f5", borderRadius: 12, overflow: "hidden" }}>
-                {customerType !== "regular" ? (
-                  <>
-                    <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 14px", borderBottom: "1px dashed #f5f5f5" }}>
-                      <span style={{ fontSize: 11, color: "#bbb" }}>VAT exempt</span>
-                      <span style={{ fontSize: 11, fontWeight: 500, color: "#bbb" }}>₱{fmt(vatAmount)} exempt</span>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 14px", borderBottom: "1px dashed #f5f5f5" }}>
-                      <span style={{ fontSize: 11, color: "#bbb" }}>Discount (20% {label[customerType]})</span>
-                      <span style={{ fontSize: 11, fontWeight: 500, color: "#22c55e" }}>−₱{fmt(discountAmount)}</span>
-                    </div>
-                  </>
-                ) : (
-                  <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 14px", borderBottom: "1px dashed #f5f5f5" }}>
-                    <span style={{ fontSize: 11, color: "#bbb" }}>VAT (12% incl.)</span>
-                    <span style={{ fontSize: 11, fontWeight: 500, color: "#bbb" }}>₱{fmt(vatAmount)}</span>
+                {[
+                  ["Subtotal", subtotal],
+                  ["Discount", discountAmount],
+                  ["Tax", taxAmount],
+                  ["Service Charge", serviceChargeAmount],
+                ].map(([labelText, value]) => (
+                  <div key={String(labelText)} style={{ display: "flex", justifyContent: "space-between", padding: "8px 14px", borderBottom: "1px dashed #f5f5f5" }}>
+                    <span style={{ fontSize: 11, color: "#bbb" }}>{labelText}</span>
+                    <span style={{ fontSize: 11, fontWeight: 500, color: "#bbb" }}>₱{fmt(Number(value))}</span>
                   </div>
-                )}
+                ))}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: "#f9f9f9" }}>
                   <span style={{ fontSize: 12, fontWeight: 500, color: "#777" }}>Total Paid</span>
                   <span style={{ fontSize: 18, fontWeight: 600, color: "#111" }}>₱{fmt(paidAmount)}</span>
@@ -1107,15 +1138,27 @@ export default function CashierView() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [orderType, setOrderType] = useState<"dine-in" | "take-out" | "delivery">("dine-in");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
-  const [customerType, setCustomerType] = useState<CustomerType>("regular");
+  const [customerType, setCustomerType] = useState<CustomerType>("Regular customer");
+  const [billingSettings, setBillingSettings] =
+    useState<BillingSettings>(DEFAULT_BILLING_SETTINGS);
+  const [discountTypes, setDiscountTypes] =
+    useState<DiscountType[]>(DEFAULT_DISCOUNT_TYPES);
+  const [restaurantSettings, setRestaurantSettings] =
+    useState<GeneralRestaurantSettings>(GENERAL_SETTINGS_DEFAULTS);
   const [tables, setTables] = useState<TableItem[]>([]);
   const [selectedTable, setSelectedTable] = useState<number | null>(null);
   const [tablesSupported, setTablesSupported] = useState(true);
   const [showAmountEntry, setShowAmountEntry] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [savedCart, setSavedCart] = useState<CartItem[]>([]);
-  const [savedMeta, setSavedMeta] = useState({ orderType: "dine-in", paymentMethod: "cash", customerType: "regular" as CustomerType });
-  const [savedPricing, setSavedPricing] = useState({ amountDue: 0, discountAmount: 0, vatAmount: 0 });
+  const [savedMeta, setSavedMeta] = useState({ orderType: "dine-in", paymentMethod: "cash", customerType: "Regular customer" as CustomerType });
+  const [savedPricing, setSavedPricing] = useState({
+    subtotal: 0,
+    discountAmount: 0,
+    taxAmount: 0,
+    serviceChargeAmount: 0,
+    amountDue: 0,
+  });
   const [savedCash, setSavedCash] = useState({ tendered: 0, change: 0 });
   const [orderNumber, setOrderNumber] = useState("");
   const [placing, setPlacing] = useState(false);
@@ -1149,6 +1192,64 @@ export default function CashierView() {
       .then((d) => { setProducts(mapProducts(d ?? [])); setProductsError(""); })
       .catch(() => setProductsError("Failed to load menu items."))
       .finally(() => setLoadingProducts(false));
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.get<Record<string, unknown>>("/settings")
+      .then((data) => {
+        if (cancelled) return;
+        setBillingSettings({
+          taxRate: Math.max(0, Number(data?.taxRate || 0) || 0),
+          serviceCharge: Math.max(0, Number(data?.serviceCharge || 0) || 0),
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setBillingSettings(DEFAULT_BILLING_SETTINGS);
+        }
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get<DiscountType[]>("/settings/discount-types")
+      .then((data) => {
+        if (cancelled) return;
+        const next =
+          Array.isArray(data) && data.length > 0 ? data : DEFAULT_DISCOUNT_TYPES;
+        setDiscountTypes(next);
+        setCustomerType((prev) =>
+          next.some((item) => item.name === prev) ? prev : next[0].name,
+        );
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDiscountTypes(DEFAULT_DISCOUNT_TYPES);
+          setCustomerType((prev) =>
+            DEFAULT_DISCOUNT_TYPES.some((item) => item.name === prev)
+              ? prev
+              : DEFAULT_DISCOUNT_TYPES[0].name,
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchGeneralSettings().then((data) => {
+      if (!cancelled) {
+        setRestaurantSettings(data);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // ── Load tables ──
@@ -1300,7 +1401,14 @@ export default function CashierView() {
 
   const totalQty = cart.reduce((s, i) => s + i.quantity, 0);
   const gross = cart.reduce((s, i) => s + i.price * i.quantity, 0);
-  const pricing = computePricing(gross, customerType);
+  const selectedDiscount =
+    discountTypes.find((item) => item.name === customerType) ||
+    DEFAULT_DISCOUNT_TYPES[0];
+  const pricing = computePricing(
+    gross,
+    billingSettings,
+    Number(selectedDiscount?.percentage || 0),
+  );
 
   const addToCart = useCallback((item: MenuItem) => {
     if (isUnavailableStatus(item.availabilityStatus)) return;
@@ -1332,7 +1440,8 @@ export default function CashierView() {
   const handleAmountConfirmed = async ({ tendered, selectedImage, proofFileName }: { tendered: number; selectedImage?: File; proofFileName?: string }) => {
     setShowAmountEntry(false);
     setPlacing(true);
-    const { vatExemptAmount, vatAmount, discountAmount, amountDue } = computePricing(gross, customerType);
+    const discountRate = Number(selectedDiscount?.percentage || 0);
+    const { subtotal, discountAmount, taxAmount, serviceChargeAmount, amountDue } = computePricing(gross, billingSettings, discountRate);
     const change = Math.max(0, tendered - amountDue);
     let proofImageUrl: string | undefined;
 
@@ -1357,9 +1466,11 @@ export default function CashierView() {
       payment_method: paymentMethod,
       ...(paymentMethod === "gcash_onsite" && { payment_status: "Paid" as const, proof_image_url: proofImageUrl }),
       customer_type: customerType,
+      discount_name: customerType,
+      discount_rate: discountRate,
       discount_amount: discountAmount,
-      vat_amount: vatAmount,
-      vat_exempt_amount: vatExemptAmount,
+      vat_amount: taxAmount,
+      vat_exempt_amount: 0,
       cashierId: getCashierId(),
       table_id: orderType === "dine-in" ? selectedTable : null,
       ...(paymentMethod === "cash" && { cash_tendered: tendered, change_amount: change }),
@@ -1369,7 +1480,7 @@ export default function CashierView() {
       const res = await api.post<{ orderNumber?: string }>("/orders", payload);
       const num = res?.orderNumber ?? `#${Math.floor(10000 + Math.random() * 90000)}`;
       setSavedCart([...cart]); setSavedMeta({ orderType, paymentMethod, customerType });
-      setSavedPricing({ amountDue, discountAmount, vatAmount }); setSavedCash({ tendered, change });
+      setSavedPricing({ subtotal, discountAmount, taxAmount, serviceChargeAmount, amountDue }); setSavedCash({ tendered, change });
       setOrderNumber(num); setShowSuccess(true);
       if (selectedTable !== null) {
         setTables((prev) => prev.map((t) => (t.id === selectedTable ? { ...t, status: "occupied" } : t)));
@@ -1384,7 +1495,7 @@ export default function CashierView() {
 
   const resetOrder = () => {
     setShowSuccess(false); setCart([]); setSavedCart([]);
-    setOrderType("dine-in"); setPaymentMethod("cash"); setCustomerType("regular");
+    setOrderType("dine-in"); setPaymentMethod("cash"); setCustomerType(discountTypes[0]?.name || "Regular customer");
     setSelectedTable(null); setSavedCash({ tendered: 0, change: 0 });
   };
 
@@ -1703,24 +1814,15 @@ export default function CashierView() {
                 <div style={{ background: "#fafafa", border: "1px solid #f0f0f0", borderRadius: 12, overflow: "hidden", marginBottom: 10 }}>
                   {[
                     { label: "Subtotal", val: fmt(gross), color: "#999" },
-                    customerType === "regular"
-                      ? { label: "VAT (12% incl.)", val: fmt(pricing.vatAmount), color: "#999" }
-                      : { label: "VAT exempt", val: `-₱${fmt(gross - pricing.vatExemptAmount)}`, color: "#999" },
-                  ].map(({ label, val, color }) => (
+                    { label: `Discount (${fmt(Number(selectedDiscount?.percentage || 0))}%)`, val: fmt(pricing.discountAmount), color: "#16a34a", prefix: "-₱" },
+                    { label: `Tax (${fmt(billingSettings.taxRate)}%)`, val: fmt(pricing.taxAmount), color: "#999" },
+                    { label: `Service Charge (${fmt(billingSettings.serviceCharge)}%)`, val: fmt(pricing.serviceChargeAmount), color: "#999" },
+                  ].map(({ label, val, color, prefix }) => (
                     <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", borderBottom: "1px dashed #f0f0f0" }}>
                       <span style={{ fontSize: 11, color: "#bbb" }}>{label}</span>
-                      <span style={{ fontSize: 11, fontWeight: 500, color }}>₱{val}</span>
+                      <span style={{ fontSize: 11, fontWeight: 500, color }}>{prefix ?? "₱"}{val}</span>
                     </div>
                   ))}
-                  <AnimatePresence>
-                    {customerType !== "regular" && (
-                      <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.18 }}
-                        style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", borderBottom: "1px dashed #f0f0f0", overflow: "hidden" }}>
-                        <span style={{ fontSize: 11, color: "#22c55e", fontWeight: 500 }}>20% discount</span>
-                        <span style={{ fontSize: 11, fontWeight: 600, color: "#22c55e" }}>−₱{fmt(pricing.discountAmount)}</span>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 12px", background: "#f5f5f5" }}>
                     <span style={{ fontSize: 12, fontWeight: 500, color: "#777" }}>Total</span>
                     <motion.span key={pricing.amountDue} initial={{ scale: 0.95, opacity: 0.6 }} animate={{ scale: 1, opacity: 1 }} transition={{ duration: 0.15 }}
@@ -1735,7 +1837,14 @@ export default function CashierView() {
                   <CustomSelect value={paymentMethod} onChange={(v) => setPaymentMethod(v as typeof paymentMethod)} options={[{ value: "cash", label: "Cash" }, { value: "gcash_onsite", label: "Onsite GCash / E-Payment" }]} />
                 </div>
                 <div style={{ marginBottom: 8 }}>
-                  <CustomSelect value={customerType} onChange={(v) => setCustomerType(v as CustomerType)} options={[{ value: "regular", label: "Regular customer" }, { value: "pwd", label: "PWD (20% off, VAT exempt)" }, { value: "senior", label: "Senior Citizen (20% off, VAT exempt)" }]} />
+                  <CustomSelect
+                    value={customerType}
+                    onChange={(v) => setCustomerType(v as CustomerType)}
+                    options={discountTypes.map((discountType) => ({
+                      value: discountType.name,
+                      label: `${discountType.name} (${fmt(Number(discountType.percentage || 0))}%)`,
+                    }))}
+                  />
                 </div>
 
                 {orderType === "dine-in" && tables.length > 0 && (
@@ -1795,8 +1904,11 @@ export default function CashierView() {
         orderType={savedMeta.orderType}
         paymentMethod={savedMeta.paymentMethod}
         customerType={savedMeta.customerType}
+        subtotal={savedPricing.subtotal}
         discountAmount={savedPricing.discountAmount}
-        vatAmount={savedPricing.vatAmount}
+        taxAmount={savedPricing.taxAmount}
+        serviceChargeAmount={savedPricing.serviceChargeAmount}
+        restaurantSettings={restaurantSettings}
       />
 
       <ToastContainer toasts={toasts} onDismiss={dismiss} />

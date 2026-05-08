@@ -25,6 +25,11 @@ import {
 } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { api } from "@/lib/api";
+import {
+  fetchGeneralSettings,
+  GENERAL_SETTINGS_DEFAULTS,
+  type GeneralRestaurantSettings,
+} from "@/lib/restaurantSettings";
 import { useViewport } from "@/hooks/use-tablet";
 
 // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Types Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
@@ -557,7 +562,9 @@ function triggerPrint(
   period: Period,
   logs: SaleLog[],
   orders: Order[],
+  restaurantSettings: GeneralRestaurantSettings,
 ) {
+  const currency = restaurantSettings.currency || "PHP";
   const paidCompleted = logs.filter(
     (l) => l.status === "Completed" && isPaidPaymentStatus(l.paymentStatus),
   );
@@ -673,9 +680,20 @@ function triggerPrint(
     <body>
       <div class="header">
         <div>
-          <p class="header-brand">The Crunch</p>
+          <p class="header-brand">${restaurantSettings.restaurantName}</p>
           <p class="header-title">Sales Report</p>
+          ${
+            restaurantSettings.tagline
+              ? `<p class="header-period">${restaurantSettings.tagline}</p>`
+              : ""
+          }
           <p class="header-period">Period: ${period}</p>
+          ${
+            [restaurantSettings.address, restaurantSettings.phone, restaurantSettings.email]
+              .filter(Boolean)
+              .map((line) => `<p class="header-period">${line}</p>`)
+              .join("")
+          }
         </div>
         <div class="header-meta">
           <p>Generated</p>
@@ -686,19 +704,19 @@ function triggerPrint(
       <div class="revenue-hero">
         <div>
           <p class="revenue-label">Total Revenue</p>
-          <p class="revenue-amount">PHP ${revenue.toLocaleString()}</p>
+          <p class="revenue-amount">${currency} ${revenue.toLocaleString()}</p>
         </div>
         <div class="revenue-stats">
           <div class="stat-item"><p class="stat-number" style="color:#4ade80">${paidCompleted.length}</p><p class="stat-label">Paid Orders</p></div>
-          <div class="stat-item"><p class="stat-number" style="color:#60a5fa">PHP ${gcashSales.reduce((sum, log) => sum + log.total, 0).toLocaleString()}</p><p class="stat-label">GCash Sales</p></div>
-          <div class="stat-item"><p class="stat-number" style="color:#f59e0b">PHP ${cashSales.reduce((sum, log) => sum + log.total, 0).toLocaleString()}</p><p class="stat-label">Cash Sales</p></div>
+          <div class="stat-item"><p class="stat-number" style="color:#60a5fa">${currency} ${gcashSales.reduce((sum, log) => sum + log.total, 0).toLocaleString()}</p><p class="stat-label">GCash Sales</p></div>
+          <div class="stat-item"><p class="stat-number" style="color:#f59e0b">${currency} ${cashSales.reduce((sum, log) => sum + log.total, 0).toLocaleString()}</p><p class="stat-label">Cash Sales</p></div>
           <div class="stat-item"><p class="stat-number" style="color:#0f172a">${cashOnPickupSales.length}</p><p class="stat-label">Pickup Cash</p></div>
         </div>
       </div>
       <div class="summary-grid">
         <div class="summary-card" style="background:#f0fdf4;border:1px solid #bbf7d0">
           <p class="summary-card-label">Total Sales</p>
-          <p class="summary-card-value" style="color:#16a34a">PHP ${paidCompleted.reduce((sum, log) => sum + log.total, 0).toLocaleString()}</p>
+          <p class="summary-card-value" style="color:#16a34a">${currency} ${paidCompleted.reduce((sum, log) => sum + log.total, 0).toLocaleString()}</p>
           <p class="summary-card-sub">Completed + paid only</p>
         </div>
         <div class="summary-card" style="background:#f8fafc;border:1px solid #cbd5e1">
@@ -708,12 +726,12 @@ function triggerPrint(
         </div>
         <div class="summary-card" style="background:#eff6ff;border:1px solid #bfdbfe">
           <p class="summary-card-label">GCash Sales</p>
-          <p class="summary-card-value" style="color:#2563eb">PHP ${gcashSales.reduce((sum, log) => sum + log.total, 0).toLocaleString()}</p>
+          <p class="summary-card-value" style="color:#2563eb">${currency} ${gcashSales.reduce((sum, log) => sum + log.total, 0).toLocaleString()}</p>
           <p class="summary-card-sub">${gcashSales.length} orders</p>
         </div>
         <div class="summary-card" style="background:#fff7ed;border:1px solid #fdba74">
           <p class="summary-card-label">Cash Sales</p>
-          <p class="summary-card-value" style="color:#d97706">PHP ${cashSales.reduce((sum, log) => sum + log.total, 0).toLocaleString()}</p>
+          <p class="summary-card-value" style="color:#d97706">${currency} ${cashSales.reduce((sum, log) => sum + log.total, 0).toLocaleString()}</p>
           <p class="summary-card-sub">${cashOnPickupSales.length > 0 ? `${cashSales.length} cash · ${cashOnPickupSales.length} pickup cash` : `${cashSales.length} orders`}</p>
         </div>
       </div>
@@ -735,7 +753,7 @@ function triggerPrint(
           </tr>
         </tfoot>
       </table>
-      <p class="footer">Auto-generated by The Crunch POS System · Confidential</p>
+      <p class="footer">Auto-generated by ${restaurantSettings.restaurantName} POS System · Confidential</p>
     </body>
     </html>
   `;
@@ -1246,6 +1264,7 @@ interface RevenueDropdownProps {
   setPeriod: (p: Period) => void;
   logs: SaleLog[];
   orders: Order[];
+  restaurantSettings: GeneralRestaurantSettings;
 }
 
 function RevenueDropdown({
@@ -1253,6 +1272,7 @@ function RevenueDropdown({
   setPeriod,
   logs,
   orders,
+  restaurantSettings,
 }: RevenueDropdownProps) {
   const [open, setOpen] = useState(false);
   const [printToast, setPrintToast] = useState(false);
@@ -1303,7 +1323,7 @@ function RevenueDropdown({
 
   function handlePrint() {
     setOpen(false);
-    triggerPrint(revenue, period, logs, orders);
+    triggerPrint(revenue, period, logs, orders, restaurantSettings);
     setPrintToast(true);
     setTimeout(() => setPrintToast(false), 3000);
   }
@@ -3430,6 +3450,8 @@ export default function SalesReports() {
   // Ã¢â€â‚¬Ã¢â€â‚¬ Core state Ã¢â€â‚¬Ã¢â€â‚¬
   const [logs, setLogs] = useState<SaleLog[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [restaurantSettings, setRestaurantSettings] =
+    useState<GeneralRestaurantSettings>(GENERAL_SETTINGS_DEFAULTS);
   const [isLoading, setIsLoading] = useState(true);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
 
@@ -3473,6 +3495,18 @@ export default function SalesReports() {
     const interval = setInterval(fetchSalesData, POLL_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [fetchSalesData]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchGeneralSettings().then((data) => {
+      if (!cancelled) {
+        setRestaurantSettings(data);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Reset log page when search/date filters change
   useEffect(() => {
@@ -3701,6 +3735,7 @@ export default function SalesReports() {
               setPeriod={setPeriod}
               logs={logs}
               orders={orders}
+              restaurantSettings={restaurantSettings}
             />
           </div>
         </motion.div>

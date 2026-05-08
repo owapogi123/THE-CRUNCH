@@ -237,8 +237,6 @@ interface InventoryUnitMaster {
 interface StockAlertSettings {
   defaultLowStockThreshold: number;
   defaultCriticalStockThreshold: number;
-  outOfStockBehavior: "hide" | "disable";
-  autoReorderEnabled: boolean;
 }
 
 // ─── API ──────────────────────────────────────────────────────────────────────
@@ -621,8 +619,6 @@ const TYPE_BADGE: Record<WithdrawalType, string> = {
 const DEFAULT_STOCK_ALERT_SETTINGS: StockAlertSettings = {
   defaultLowStockThreshold: 10,
   defaultCriticalStockThreshold: 5,
-  outOfStockBehavior: "disable",
-  autoReorderEnabled: false,
 };
 const KPI_ACCENT: Record<string, { border: string; value: string; bg: string; borderColor: string }> = {
   slate: { border: "border-t-slate-700", value: "text-slate-700", bg: "bg-slate-50", borderColor: "border-slate-200" },
@@ -775,12 +771,6 @@ const normalizeStockAlertSettings = (
   return {
     defaultLowStockThreshold,
     defaultCriticalStockThreshold,
-    outOfStockBehavior:
-      source?.outOfStockBehavior === "hide" ? "hide" : "disable",
-    autoReorderEnabled:
-      typeof source?.autoReorderEnabled === "boolean"
-        ? source.autoReorderEnabled
-        : String(source?.autoReorderEnabled).trim().toLowerCase() === "true",
   };
 };
 const getAlertSeverity = (
@@ -7897,22 +7887,6 @@ export default function StockManager() {
                           Critical threshold:{" "}
                           <strong className="text-slate-800">
                             {stockAlertSettings.defaultCriticalStockThreshold}
-                          </strong>
-                        </span>
-                        <span>
-                          Out-of-stock behavior:{" "}
-                          <strong className="text-slate-800">
-                            {stockAlertSettings.outOfStockBehavior === "hide"
-                              ? "Hide item"
-                              : "Disable item"}
-                          </strong>
-                        </span>
-                        <span>
-                          Auto-reorder:{" "}
-                          <strong className="text-slate-800">
-                            {stockAlertSettings.autoReorderEnabled
-                              ? "Enabled"
-                              : "Disabled"}
                           </strong>
                         </span>
                       </div>
