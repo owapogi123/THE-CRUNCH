@@ -1870,6 +1870,13 @@ interface IngredientOption {
   stock: number;
 }
 
+interface MenuCategoryRecord {
+  category_id: number;
+  name: string;
+  display_order: number;
+  is_active: boolean | number;
+}
+
 type ManualOverrideMode =
   | "Auto"
   | "Force Available"
@@ -2443,6 +2450,7 @@ function MenuManagementTab() {
 function MenuAdminTab() {
   const { addNotification } = useNotifications();
   const [products, setProducts] = useState<MgmtProduct[]>([]);
+  const [menuCategories, setMenuCategories] = useState<MenuCategoryRecord[]>([]);
   const [ingredientOptions, setIngredientOptions] = useState<IngredientOption[]>(
     [],
   );
@@ -2481,6 +2489,32 @@ function MenuAdminTab() {
   const [ePromoLabel, setEPromoLabel] = useState("");
   const [eImageFile, setEImageFile] = useState<File | null>(null);
   const [eImagePreview, setEImagePreview] = useState("");
+
+  const menuCategoryOptions = (() => {
+    const apiOptions = menuCategories
+      .filter((category) => category.is_active === true || category.is_active === 1)
+      .sort(
+        (a, b) =>
+          Number(a.display_order ?? 0) - Number(b.display_order ?? 0) ||
+          a.name.localeCompare(b.name),
+      )
+      .map((category) => category.name.trim())
+      .filter(Boolean);
+    if (apiOptions.length > 0) return apiOptions;
+
+    const fallback = new Set<string>([
+      "Chicken",
+      "Sides",
+      "Drinks",
+      "Combos",
+      "Promo",
+      "Meals",
+      ...products.map((product) => product.category).filter(Boolean),
+      fCat.trim(),
+      eCat.trim(),
+    ]);
+    return Array.from(fallback).filter(Boolean).sort((a, b) => a.localeCompare(b));
+  })();
 
   function toBase64(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -2706,8 +2740,12 @@ function MenuAdminTab() {
         apiCall("/products?item_type=menu_item", { method: "GET" }),
         apiCall("/inventory", { method: "GET" }),
       ]);
+      const menuCategoryData = await apiCall("/settings/menu-categories?activeOnly=1", {
+        method: "GET",
+      }).catch(() => []);
       const productData = Array.isArray(menuData) ? (menuData as ApiInventoryRow[]) : [];
       const inventoryData = Array.isArray(stockData) ? (stockData as ApiInventoryRow[]) : [];
+      setMenuCategories(Array.isArray(menuCategoryData) ? (menuCategoryData as MenuCategoryRecord[]) : []);
 
       const allOptions = inventoryData
         .filter(
@@ -3251,12 +3289,20 @@ function MenuAdminTab() {
             value={fName}
             onChange={(e) => setFName(e.target.value)}
           />
-          <FormInput
-            label="Category *"
-            placeholder="e.g. Menu Food"
-            value={fCat}
-            onChange={(e) => setFCat(e.target.value)}
-          />
+          <FormGroup label="Category *">
+            <select
+              className={inputClass}
+              value={fCat}
+              onChange={(e) => setFCat(e.target.value)}
+            >
+              <option value="">Select category</option>
+              {menuCategoryOptions.map((category) => (
+                <option key={category} value={category}>
+                  {category}
+                </option>
+              ))}
+            </select>
+          </FormGroup>
           <FormInput
             label="Price (P) *"
             type="number"
@@ -3373,12 +3419,20 @@ function MenuAdminTab() {
             value={eName}
             onChange={(e) => setEName(e.target.value)}
           />
-          <FormInput
-            label="Category *"
-            placeholder="e.g. Menu Food"
-            value={eCat}
-            onChange={(e) => setECat(e.target.value)}
-          />
+          <FormGroup label="Category *">
+            <select
+              className={inputClass}
+              value={eCat}
+              onChange={(e) => setECat(e.target.value)}
+            >
+              <option value="">Select category</option>
+              {menuCategoryOptions.map((category) => (
+                <option key={category} value={category}>
+                  {category}
+                </option>
+              ))}
+            </select>
+          </FormGroup>
           <div className="grid grid-cols-2 gap-[10px]">
             <FormInput
               label="Price (P) *"

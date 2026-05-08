@@ -85,10 +85,8 @@ interface FeedbackApiEntry {
 interface InventoryCategoryRecord {
   category_id: number;
   name: string;
-  uses_shelf_life: boolean | number;
-  type?: "raw_material" | "ingredient" | "finished";
-  shelf_life_enabled?: boolean | number;
-  default_shelf_life_days?: number | null;
+  type: "raw_material" | "ingredient" | "finished";
+  date_tracking_type: "none" | "expiry" | "shelf_life";
   is_active: boolean | number;
   created_at?: string;
   updated_at?: string;
@@ -100,6 +98,15 @@ interface InventoryUnitRecord {
   abbreviation?: string | null;
   base_unit?: string | null;
   conversion_to_base?: number | null;
+  is_active: boolean | number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface MenuCategoryRecord {
+  category_id: number;
+  name: string;
+  display_order: number;
   is_active: boolean | number;
   created_at?: string;
   updated_at?: string;
@@ -230,6 +237,12 @@ const CATEGORY_TYPE_OPTIONS = [
   { value: "raw_material", label: "Raw Material" },
   { value: "ingredient",   label: "Ingredient" },
   { value: "finished",     label: "Finished" },
+] as const;
+
+const DATE_TRACKING_OPTIONS = [
+  { value: "none", label: "None" },
+  { value: "expiry", label: "Expiry Date" },
+  { value: "shelf_life", label: "Shelf Life" },
 ] as const;
 
 const PERMISSION_FEATURES: PermissionFeature[] = [
@@ -505,38 +518,60 @@ function SettingsCard({ title, delay = 0, children }: { title: string; delay?: n
 
 function InventoryCategoryEditor({ category, busy, onSave, onDisable }: {
   category: InventoryCategoryRecord; busy: boolean;
-  onSave: (id: number, payload: { name?: string; uses_shelf_life?: boolean; type?: "raw_material" | "ingredient" | "finished"; shelf_life_enabled?: boolean; default_shelf_life_days?: number | null; is_active?: boolean }) => Promise<void>;
+  onSave: (id: number, payload: { name?: string; type?: "raw_material" | "ingredient" | "finished"; date_tracking_type?: "none" | "expiry" | "shelf_life"; is_active?: boolean }) => Promise<void>;
   onDisable: (id: number) => Promise<void>;
 }) {
   const [name, setName] = useState(category.name);
-  const [usesShelfLife, setUsesShelfLife] = useState(asBool(category.uses_shelf_life));
-  const [categoryType, setCategoryType] = useState<"raw_material" | "ingredient" | "finished">(category.type ?? (asBool(category.uses_shelf_life) ? "raw_material" : "ingredient"));
-  const [shelfLifeEnabled, setShelfLifeEnabled] = useState(asBool(category.shelf_life_enabled ?? category.uses_shelf_life));
-  const [defaultShelfLifeDays, setDefaultShelfLifeDays] = useState(category.default_shelf_life_days != null ? String(category.default_shelf_life_days) : "");
+  const [categoryType, setCategoryType] = useState<"raw_material" | "ingredient" | "finished">(category.type);
+  const [dateTrackingType, setDateTrackingType] = useState<"none" | "expiry" | "shelf_life">(category.date_tracking_type);
 
   useEffect(() => {
     setName(category.name);
-    setUsesShelfLife(asBool(category.uses_shelf_life));
-    setCategoryType(category.type ?? (asBool(category.uses_shelf_life) ? "raw_material" : "ingredient"));
-    setShelfLifeEnabled(asBool(category.shelf_life_enabled ?? category.uses_shelf_life));
-    setDefaultShelfLifeDays(category.default_shelf_life_days != null ? String(category.default_shelf_life_days) : "");
+    setCategoryType(category.type);
+    setDateTrackingType(category.date_tracking_type);
   }, [category]);
 
   return (
     <div style={{ border: "1px solid #ece8e2", borderRadius: 10, padding: "12px 14px", background: asBool(category.is_active) ? "#fff" : "#faf7f4", opacity: asBool(category.is_active) ? 1 : 0.75 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,170px) minmax(0,170px) minmax(0,150px) auto", gap: 10, alignItems: "end" }}>
-        <div><p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Category</p><StyledInput value={name} onChange={setName} placeholder="Category name" /></div>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,170px) minmax(0,170px) minmax(0,110px) auto", gap: 10, alignItems: "end" }}>
+        <div><p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Category Name</p><StyledInput value={name} onChange={setName} placeholder="Category name" /></div>
         <div><p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Type</p><StyledSelect value={categoryType} onChange={(v) => setCategoryType(v as "raw_material" | "ingredient" | "finished")} options={[...CATEGORY_TYPE_OPTIONS]} /></div>
-        <div style={{ minWidth: 130 }}>
-          <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Shelf life</p>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, border: "1px solid #e4e1dc", borderRadius: 8, background: "#fafaf9", padding: "8px 10px" }}>
-            <span style={{ fontFamily: FONT, fontSize: "0.74rem", color: "#5a5652" }}>{shelfLifeEnabled ? "Enabled" : "Disabled"}</span>
-            <Toggle value={shelfLifeEnabled} onChange={(v) => { setShelfLifeEnabled(v); setUsesShelfLife(v); }} />
-          </div>
-        </div>
-        <div><p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Default shelf life days</p><StyledInput value={defaultShelfLifeDays} onChange={setDefaultShelfLifeDays} type="number" placeholder="optional" /></div>
+        <div><p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Date Tracking</p><StyledSelect value={dateTrackingType} onChange={(v) => setDateTrackingType(v as "none" | "expiry" | "shelf_life")} options={[...DATE_TRACKING_OPTIONS]} /></div>
+        <div><p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Status</p><div style={{ ...inputBase, background: asBool(category.is_active) ? "#eefbf3" : "#f4f4f5", color: asBool(category.is_active) ? "#166534" : "#71717a", borderColor: asBool(category.is_active) ? "#bbf7d0" : "#e4e4e7", fontSize: "0.74rem", fontWeight: 600, display: "flex", alignItems: "center" }}>{asBool(category.is_active) ? "Active" : "Disabled"}</div></div>
         <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={async () => { try { await onSave(category.category_id, { name, uses_shelf_life: usesShelfLife, type: categoryType, shelf_life_enabled: shelfLifeEnabled, default_shelf_life_days: defaultShelfLifeDays.trim() === "" ? null : Number(defaultShelfLifeDays) }); } catch { /* handled by parent */ } }} disabled={busy} style={{ fontFamily: FONT, fontSize: "0.73rem", fontWeight: 600, color: "#fff", background: "#1f2937", border: "none", borderRadius: 8, padding: "8px 12px", cursor: "pointer", opacity: busy ? 0.65 : 1 }}>Save</button>
+          <button onClick={async () => { try { await onSave(category.category_id, { name, type: categoryType, date_tracking_type: dateTrackingType }); } catch { /* handled by parent */ } }} disabled={busy} style={{ fontFamily: FONT, fontSize: "0.73rem", fontWeight: 600, color: "#fff", background: "#1f2937", border: "none", borderRadius: 8, padding: "8px 12px", cursor: "pointer", opacity: busy ? 0.65 : 1 }}>Save</button>
+          {asBool(category.is_active) ? (
+            <button onClick={async () => { try { await onDisable(category.category_id); } catch { /* handled by parent */ } }} disabled={busy} style={{ fontFamily: FONT, fontSize: "0.73rem", fontWeight: 600, color: "#b91c1c", background: "#fff5f5", border: "1px solid rgba(185,28,28,0.16)", borderRadius: 8, padding: "8px 12px", cursor: "pointer", opacity: busy ? 0.65 : 1 }}>Disable</button>
+          ) : (
+            <span style={{ fontFamily: FONT, fontSize: "0.72rem", fontWeight: 600, color: "#b0aaa3", alignSelf: "center" }}>Disabled</span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MenuCategoryEditor({ category, busy, onSave, onDisable }: {
+  category: MenuCategoryRecord; busy: boolean;
+  onSave: (id: number, payload: { name?: string; display_order?: number; is_active?: boolean }) => Promise<void>;
+  onDisable: (id: number) => Promise<void>;
+}) {
+  const [name, setName] = useState(category.name);
+  const [displayOrder, setDisplayOrder] = useState(String(category.display_order ?? 0));
+
+  useEffect(() => {
+    setName(category.name);
+    setDisplayOrder(String(category.display_order ?? 0));
+  }, [category]);
+
+  return (
+    <div style={{ border: "1px solid #ece8e2", borderRadius: 10, padding: "12px 14px", background: asBool(category.is_active) ? "#fff" : "#faf7f4", opacity: asBool(category.is_active) ? 1 : 0.75 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,140px) minmax(0,110px) auto", gap: 10, alignItems: "end" }}>
+        <div><p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Category Name</p><StyledInput value={name} onChange={setName} placeholder="Category name" /></div>
+        <div><p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Display Order</p><StyledInput value={displayOrder} onChange={setDisplayOrder} type="number" placeholder="0" /></div>
+        <div><p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Status</p><div style={{ ...inputBase, background: asBool(category.is_active) ? "#eefbf3" : "#f4f4f5", color: asBool(category.is_active) ? "#166534" : "#71717a", borderColor: asBool(category.is_active) ? "#bbf7d0" : "#e4e4e7", fontSize: "0.74rem", fontWeight: 600, display: "flex", alignItems: "center" }}>{asBool(category.is_active) ? "Active" : "Disabled"}</div></div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={async () => { try { await onSave(category.category_id, { name, display_order: Number(displayOrder) || 0 }); } catch { /* handled by parent */ } }} disabled={busy} style={{ fontFamily: FONT, fontSize: "0.73rem", fontWeight: 600, color: "#fff", background: "#1f2937", border: "none", borderRadius: 8, padding: "8px 12px", cursor: "pointer", opacity: busy ? 0.65 : 1 }}>Save</button>
           {asBool(category.is_active) ? (
             <button onClick={async () => { try { await onDisable(category.category_id); } catch { /* handled by parent */ } }} disabled={busy} style={{ fontFamily: FONT, fontSize: "0.73rem", fontWeight: 600, color: "#b91c1c", background: "#fff5f5", border: "1px solid rgba(185,28,28,0.16)", borderRadius: 8, padding: "8px 12px", cursor: "pointer", opacity: busy ? 0.65 : 1 }}>Disable</button>
           ) : (
@@ -880,20 +915,24 @@ function OperationsTab({ settings, setStr, setBool, setOrderType }: { settings: 
   );
 }
 
-function InventoryTab({ settings, setStr, setBool, categories, units, mastersLoading, mastersError, onReloadMasters, onAddCategory, onUpdateCategory, onDisableCategory, onAddUnit, onUpdateUnit, onDisableUnit }: {
+function InventoryTab({ settings, setStr, setBool, categories, menuCategories, units, mastersLoading, mastersError, onReloadMasters, onAddCategory, onUpdateCategory, onDisableCategory, onAddMenuCategory, onUpdateMenuCategory, onDisableMenuCategory, onAddUnit, onUpdateUnit, onDisableUnit }: {
   settings: RestaurantSettings; setStr: (k: keyof RestaurantSettings, v: string) => void; setBool: (k: keyof RestaurantSettings, v: boolean) => void;
-  categories: InventoryCategoryRecord[]; units: InventoryUnitRecord[]; mastersLoading: boolean; mastersError: string | null; onReloadMasters: () => void;
-  onAddCategory: (payload: { name: string; uses_shelf_life: boolean; type: "raw_material" | "ingredient" | "finished"; shelf_life_enabled: boolean; default_shelf_life_days?: number | null }) => Promise<void>;
-  onUpdateCategory: (id: number, payload: { name?: string; uses_shelf_life?: boolean; type?: "raw_material" | "ingredient" | "finished"; shelf_life_enabled?: boolean; default_shelf_life_days?: number | null; is_active?: boolean }) => Promise<void>;
+  categories: InventoryCategoryRecord[]; menuCategories: MenuCategoryRecord[]; units: InventoryUnitRecord[]; mastersLoading: boolean; mastersError: string | null; onReloadMasters: () => void;
+  onAddCategory: (payload: { name: string; type: "raw_material" | "ingredient" | "finished"; date_tracking_type: "none" | "expiry" | "shelf_life" }) => Promise<void>;
+  onUpdateCategory: (id: number, payload: { name?: string; type?: "raw_material" | "ingredient" | "finished"; date_tracking_type?: "none" | "expiry" | "shelf_life"; is_active?: boolean }) => Promise<void>;
   onDisableCategory: (id: number) => Promise<void>;
+  onAddMenuCategory: (payload: { name: string; display_order?: number }) => Promise<void>;
+  onUpdateMenuCategory: (id: number, payload: { name?: string; display_order?: number; is_active?: boolean }) => Promise<void>;
+  onDisableMenuCategory: (id: number) => Promise<void>;
   onAddUnit: (payload: { name: string; abbreviation?: string | null; base_unit?: string | null; conversion_to_base?: number | null }) => Promise<void>;
   onUpdateUnit: (id: number, payload: { name?: string; abbreviation?: string | null; base_unit?: string | null; conversion_to_base?: number | null; is_active?: boolean }) => Promise<void>;
   onDisableUnit: (id: number) => Promise<void>;
 }) {
   const [newCategoryName, setNewCategoryName] = useState("");
-  const [newCategoryShelfLife, setNewCategoryShelfLife] = useState(false);
   const [newCategoryType, setNewCategoryType] = useState<"raw_material" | "ingredient" | "finished">("ingredient");
-  const [newCategoryShelfLifeDays, setNewCategoryShelfLifeDays] = useState("");
+  const [newCategoryDateTracking, setNewCategoryDateTracking] = useState<"none" | "expiry" | "shelf_life">("none");
+  const [newMenuCategoryName, setNewMenuCategoryName] = useState("");
+  const [newMenuCategoryOrder, setNewMenuCategoryOrder] = useState("");
   const [newUnitName, setNewUnitName] = useState("");
   const [newUnitAbbreviation, setNewUnitAbbreviation] = useState("");
   const [newUnitBase, setNewUnitBase] = useState("");
@@ -930,22 +969,28 @@ function InventoryTab({ settings, setStr, setBool, categories, units, mastersLoa
               <button onClick={onReloadMasters} style={{ fontFamily: FONT, fontSize: "0.72rem", fontWeight: 600, color: ACCENT, background: "#fff", border: "1px solid #fed7aa", borderRadius: 8, padding: "5px 10px", cursor: "pointer" }}>Reload</button>
             </div>
           )}
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,150px) auto minmax(0,170px) auto", gap: 10, alignItems: "end" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,150px) minmax(0,170px) auto", gap: 10, alignItems: "end" }}>
             <div><p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Category name</p><StyledInput value={newCategoryName} onChange={setNewCategoryName} placeholder="e.g. Dry Goods" /></div>
             <div><p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Type</p><StyledSelect value={newCategoryType} onChange={(v) => setNewCategoryType(v as "raw_material" | "ingredient" | "finished")} options={[...CATEGORY_TYPE_OPTIONS]} /></div>
-            <div style={{ minWidth: 130 }}>
-              <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Shelf life</p>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, border: "1px solid #e4e1dc", borderRadius: 8, background: "#fafaf9", padding: "8px 10px" }}>
-                <span style={{ fontFamily: FONT, fontSize: "0.76rem", color: "#5a5652" }}>Uses shelf life</span>
-                <Toggle value={newCategoryShelfLife} onChange={setNewCategoryShelfLife} />
-              </div>
-            </div>
-            <div><p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Default shelf life days</p><StyledInput value={newCategoryShelfLifeDays} onChange={setNewCategoryShelfLifeDays} type="number" placeholder="optional" /></div>
-            <button onClick={async () => { try { await onAddCategory({ name: newCategoryName, uses_shelf_life: newCategoryShelfLife, type: newCategoryType, shelf_life_enabled: newCategoryShelfLife, default_shelf_life_days: newCategoryShelfLifeDays.trim() === "" ? null : Number(newCategoryShelfLifeDays) }); setNewCategoryName(""); setNewCategoryShelfLife(false); setNewCategoryType("ingredient"); setNewCategoryShelfLifeDays(""); } catch { /* handled by parent */ } }} disabled={mastersLoading} style={{ fontFamily: FONT, fontSize: "0.75rem", fontWeight: 600, color: "#fff", background: ACCENT, border: "none", borderRadius: 8, padding: "9px 14px", cursor: "pointer", opacity: mastersLoading ? 0.65 : 1 }}>Add category</button>
+            <div><p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Date Tracking</p><StyledSelect value={newCategoryDateTracking} onChange={(v) => setNewCategoryDateTracking(v as "none" | "expiry" | "shelf_life")} options={[...DATE_TRACKING_OPTIONS]} /></div>
+            <button onClick={async () => { try { await onAddCategory({ name: newCategoryName, type: newCategoryType, date_tracking_type: newCategoryDateTracking }); setNewCategoryName(""); setNewCategoryType("ingredient"); setNewCategoryDateTracking("none"); } catch { /* handled by parent */ } }} disabled={mastersLoading} style={{ fontFamily: FONT, fontSize: "0.75rem", fontWeight: 600, color: "#fff", background: ACCENT, border: "none", borderRadius: 8, padding: "9px 14px", cursor: "pointer", opacity: mastersLoading ? 0.65 : 1 }}>Add category</button>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {categories.map((c) => <InventoryCategoryEditor key={c.category_id} category={c} busy={mastersLoading} onSave={onUpdateCategory} onDisable={onDisableCategory} />)}
             {categories.length === 0 && <div style={{ textAlign: "center", padding: "18px 0", fontFamily: FONT, fontSize: "0.77rem", color: "#b0aaa3" }}>No inventory categories found.</div>}
+          </div>
+        </div>
+      </SettingsCard>
+      <SettingsCard title="Menu Categories" delay={0.18}>
+        <div style={{ padding: "14px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,140px) auto", gap: 10, alignItems: "end" }}>
+            <div><p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Category name</p><StyledInput value={newMenuCategoryName} onChange={setNewMenuCategoryName} placeholder="e.g. Chicken" /></div>
+            <div><p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Display order</p><StyledInput value={newMenuCategoryOrder} onChange={setNewMenuCategoryOrder} type="number" placeholder="0" /></div>
+            <button onClick={async () => { try { await onAddMenuCategory({ name: newMenuCategoryName, display_order: newMenuCategoryOrder.trim() === "" ? 0 : Number(newMenuCategoryOrder) }); setNewMenuCategoryName(""); setNewMenuCategoryOrder(""); } catch { /* handled by parent */ } }} disabled={mastersLoading} style={{ fontFamily: FONT, fontSize: "0.75rem", fontWeight: 600, color: "#fff", background: ACCENT, border: "none", borderRadius: 8, padding: "9px 14px", cursor: "pointer", opacity: mastersLoading ? 0.65 : 1 }}>Add menu category</button>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {menuCategories.map((c) => <MenuCategoryEditor key={c.category_id} category={c} busy={mastersLoading} onSave={onUpdateMenuCategory} onDisable={onDisableMenuCategory} />)}
+            {menuCategories.length === 0 && <div style={{ textAlign: "center", padding: "18px 0", fontFamily: FONT, fontSize: "0.77rem", color: "#b0aaa3" }}>No menu categories found.</div>}
           </div>
         </div>
       </SettingsCard>
@@ -1077,6 +1122,7 @@ export default function SettingsPage() {
   const [feedbackLoading, setFeedbackLoading] = useState(false);
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const [inventoryCategories, setInventoryCategories] = useState<InventoryCategoryRecord[]>([]);
+  const [menuCategories, setMenuCategories] = useState<MenuCategoryRecord[]>([]);
   const [inventoryUnits, setInventoryUnits] = useState<InventoryUnitRecord[]>([]);
   const [inventoryMastersLoading, setInventoryMastersLoading] = useState(false);
   const [inventoryMastersError, setInventoryMastersError] = useState<string | null>(null);
@@ -1173,22 +1219,23 @@ export default function SettingsPage() {
   const fetchInventoryMasters = useCallback(async () => {
     setInventoryMastersLoading(true); setInventoryMastersError(null);
     try {
-      const [categoriesRes, unitsRes] = await Promise.all([fetch("/api/settings/inventory-categories"), fetch("/api/settings/inventory-units")]);
-      if (!categoriesRes.ok || !unitsRes.ok) throw new Error("Could not load inventory master lists.");
-      const [categoriesData, unitsData] = await Promise.all([categoriesRes.json(), unitsRes.json()]);
+      const [categoriesRes, menuCategoriesRes, unitsRes] = await Promise.all([fetch("/api/settings/inventory-categories"), fetch("/api/settings/menu-categories?activeOnly=0"), fetch("/api/settings/inventory-units")]);
+      if (!categoriesRes.ok || !menuCategoriesRes.ok || !unitsRes.ok) throw new Error("Could not load inventory master lists.");
+      const [categoriesData, menuCategoriesData, unitsData] = await Promise.all([categoriesRes.json(), menuCategoriesRes.json(), unitsRes.json()]);
       setInventoryCategories(Array.isArray(categoriesData) ? categoriesData : []);
+      setMenuCategories(Array.isArray(menuCategoriesData) ? menuCategoriesData : []);
       setInventoryUnits(Array.isArray(unitsData) ? unitsData : []);
     } catch (err) { setInventoryMastersError(err instanceof Error && err.message ? err.message : "Could not load inventory master lists."); } finally { setInventoryMastersLoading(false); }
   }, []);
 
-  const addInventoryCategory = useCallback(async (payload: { name: string; uses_shelf_life: boolean; type: "raw_material" | "ingredient" | "finished"; shelf_life_enabled: boolean; default_shelf_life_days?: number | null }) => {
+  const addInventoryCategory = useCallback(async (payload: { name: string; type: "raw_material" | "ingredient" | "finished"; date_tracking_type: "none" | "expiry" | "shelf_life" }) => {
     const res = await fetch("/api/settings/inventory-categories", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new Error(data?.message || "Failed to create category");
     setInventoryCategories((prev) => [data, ...prev]);
   }, []);
 
-  const updateInventoryCategory = useCallback(async (categoryId: number, payload: { name?: string; uses_shelf_life?: boolean; type?: "raw_material" | "ingredient" | "finished"; shelf_life_enabled?: boolean; default_shelf_life_days?: number | null; is_active?: boolean }) => {
+  const updateInventoryCategory = useCallback(async (categoryId: number, payload: { name?: string; type?: "raw_material" | "ingredient" | "finished"; date_tracking_type?: "none" | "expiry" | "shelf_life"; is_active?: boolean }) => {
     const res = await fetch(`/api/settings/inventory-categories/${categoryId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new Error(data?.message || "Failed to update category");
@@ -1196,10 +1243,31 @@ export default function SettingsPage() {
   }, []);
 
   const disableInventoryCategory = useCallback(async (categoryId: number) => {
-    const res = await fetch(`/api/settings/inventory-categories/${categoryId}`, { method: "DELETE" });
+    const res = await fetch(`/api/settings/inventory-categories/${categoryId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ is_active: false }) });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new Error(data?.message || "Failed to disable category");
-    setInventoryCategories((prev) => prev.map((item) => item.category_id === categoryId ? { ...item, is_active: false } : item));
+    setInventoryCategories((prev) => prev.map((item) => item.category_id === categoryId ? data : item));
+  }, []);
+
+  const addMenuCategory = useCallback(async (payload: { name: string; display_order?: number }) => {
+    const res = await fetch("/api/settings/menu-categories", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(data?.message || "Failed to create menu category");
+    setMenuCategories((prev) => [...prev, data].sort((a, b) => Number(a.display_order) - Number(b.display_order) || a.name.localeCompare(b.name)));
+  }, []);
+
+  const updateMenuCategory = useCallback(async (categoryId: number, payload: { name?: string; display_order?: number; is_active?: boolean }) => {
+    const res = await fetch(`/api/settings/menu-categories/${categoryId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(data?.message || "Failed to update menu category");
+    setMenuCategories((prev) => prev.map((item) => (item.category_id === categoryId ? data : item)).sort((a, b) => Number(a.display_order) - Number(b.display_order) || a.name.localeCompare(b.name)));
+  }, []);
+
+  const disableMenuCategory = useCallback(async (categoryId: number) => {
+    const res = await fetch(`/api/settings/menu-categories/${categoryId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ is_active: false }) });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(data?.message || "Failed to disable menu category");
+    setMenuCategories((prev) => prev.map((item) => item.category_id === categoryId ? data : item).sort((a, b) => Number(a.display_order) - Number(b.display_order) || a.name.localeCompare(b.name)));
   }, []);
 
   const addInventoryUnit = useCallback(async (payload: { name: string; abbreviation?: string | null; base_unit?: string | null; conversion_to_base?: number | null }) => {
@@ -1217,10 +1285,10 @@ export default function SettingsPage() {
   }, []);
 
   const disableInventoryUnit = useCallback(async (unitId: number) => {
-    const res = await fetch(`/api/settings/inventory-units/${unitId}`, { method: "DELETE" });
+    const res = await fetch(`/api/settings/inventory-units/${unitId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ is_active: false }) });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new Error(data?.message || "Failed to disable unit");
-    setInventoryUnits((prev) => prev.map((item) => item.unit_id === unitId ? { ...item, is_active: false } : item));
+    setInventoryUnits((prev) => prev.map((item) => item.unit_id === unitId ? data : item));
   }, []);
 
   useEffect(() => { if (tab === "feedback") fetchFeedback(); }, [tab, fetchFeedback]);
@@ -1538,12 +1606,15 @@ export default function SettingsPage() {
               {tab === "inventory"     && (
                 <InventoryTab
                   {...sharedProps}
-                  categories={inventoryCategories} units={inventoryUnits}
+                  categories={inventoryCategories} menuCategories={menuCategories} units={inventoryUnits}
                   mastersLoading={inventoryMastersLoading} mastersError={inventoryMastersError}
                   onReloadMasters={fetchInventoryMasters}
                   onAddCategory={async (p) => { try { await addInventoryCategory(p); setInventoryMastersError(null); } catch (err) { setInventoryMastersError(err instanceof Error ? err.message : "Failed to add category"); throw err; } }}
                   onUpdateCategory={async (id, p) => { try { await updateInventoryCategory(id, p); setInventoryMastersError(null); } catch (err) { setInventoryMastersError(err instanceof Error ? err.message : "Failed to update category"); throw err; } }}
                   onDisableCategory={async (id) => { try { await disableInventoryCategory(id); setInventoryMastersError(null); } catch (err) { setInventoryMastersError(err instanceof Error ? err.message : "Failed to disable category"); throw err; } }}
+                  onAddMenuCategory={async (p) => { try { await addMenuCategory(p); setInventoryMastersError(null); } catch (err) { setInventoryMastersError(err instanceof Error ? err.message : "Failed to add menu category"); throw err; } }}
+                  onUpdateMenuCategory={async (id, p) => { try { await updateMenuCategory(id, p); setInventoryMastersError(null); } catch (err) { setInventoryMastersError(err instanceof Error ? err.message : "Failed to update menu category"); throw err; } }}
+                  onDisableMenuCategory={async (id) => { try { await disableMenuCategory(id); setInventoryMastersError(null); } catch (err) { setInventoryMastersError(err instanceof Error ? err.message : "Failed to disable menu category"); throw err; } }}
                   onAddUnit={async (p) => { try { await addInventoryUnit(p); setInventoryMastersError(null); } catch (err) { setInventoryMastersError(err instanceof Error ? err.message : "Failed to add unit"); throw err; } }}
                   onUpdateUnit={async (id, p) => { try { await updateInventoryUnit(id, p); setInventoryMastersError(null); } catch (err) { setInventoryMastersError(err instanceof Error ? err.message : "Failed to update unit"); throw err; } }}
                   onDisableUnit={async (id) => { try { await disableInventoryUnit(id); setInventoryMastersError(null); } catch (err) { setInventoryMastersError(err instanceof Error ? err.message : "Failed to disable unit"); throw err; } }}

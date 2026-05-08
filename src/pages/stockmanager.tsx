@@ -216,7 +216,8 @@ interface KitchenUsagePayload {
 interface InventoryCategoryMaster {
   category_id: number;
   name: string;
-  uses_shelf_life: boolean | number;
+  type?: "raw_material" | "ingredient" | "finished";
+  date_tracking_type: "none" | "expiry" | "shelf_life";
   is_active: boolean | number;
 }
 
@@ -622,12 +623,60 @@ const itemVariants: Variants = {
   },
 };
 
-const inventoryCategoryShelfLifeLookup = new Map<string, boolean>();
+const INVENTORY_CATEGORY_FALLBACK_TRACKING: Record<string, "none" | "expiry" | "shelf_life"> = {
+  "raw material": "shelf_life",
+  "raw materials": "shelf_life",
+  ingredients: "shelf_life",
+  sauces: "expiry",
+  aromatics: "expiry",
+  packaging: "none",
+};
+
+const INVENTORY_CATEGORY_FALLBACK_TYPE: Record<
+  string,
+  "raw_material" | "ingredient" | "finished"
+> = {
+  "raw material": "raw_material",
+  "raw materials": "raw_material",
+  ingredients: "ingredient",
+  sauces: "ingredient",
+  aromatics: "ingredient",
+  packaging: "finished",
+};
+
+const inventoryCategoryTypeLookup = new Map<
+  string,
+  "raw_material" | "ingredient" | "finished"
+>();
+const inventoryCategoryDateTrackingLookup = new Map<
+  string,
+  "none" | "expiry" | "shelf_life"
+>();
 
 function normalizeInventoryCategoryName(value?: string | null): string {
   return String(value ?? "")
     .trim()
     .toLowerCase();
+}
+
+function getInventoryCategoryDateTrackingType(
+  value?: string | null,
+): "none" | "expiry" | "shelf_life" {
+  const normalized = normalizeInventoryCategoryName(value);
+  if (inventoryCategoryDateTrackingLookup.has(normalized)) {
+    return inventoryCategoryDateTrackingLookup.get(normalized) ?? "none";
+  }
+  return INVENTORY_CATEGORY_FALLBACK_TRACKING[normalized] ?? "none";
+}
+
+function getInventoryCategoryType(
+  value?: string | null,
+): "raw_material" | "ingredient" | "finished" {
+  const normalized = normalizeInventoryCategoryName(value);
+  if (inventoryCategoryTypeLookup.has(normalized)) {
+    return inventoryCategoryTypeLookup.get(normalized) ?? "ingredient";
+  }
+  return INVENTORY_CATEGORY_FALLBACK_TYPE[normalized] ?? "ingredient";
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -715,16 +764,12 @@ function mergeSupplierProducts(existing: string, incoming: string[]): string {
   return merged.join(", ");
 }
 function isStrictRawMaterialCategory(value?: string | null): boolean {
-  const normalized = normalizeInventoryCategoryName(value);
-  if (inventoryCategoryShelfLifeLookup.has(normalized)) {
-    return inventoryCategoryShelfLifeLookup.get(normalized) === true;
-  }
-  return normalized === "raw material" || normalized === "raw materials";
+  return getInventoryCategoryType(value) === "raw_material";
 }
 
 function isStockManagerCategory(value?: string | null): boolean {
   const normalized = normalizeInventoryCategoryName(value);
-  if (inventoryCategoryShelfLifeLookup.has(normalized)) return true;
+  if (inventoryCategoryDateTrackingLookup.has(normalized)) return true;
   return (
     normalized.includes("suppl") ||
     normalized.includes("menu food") ||
@@ -741,7 +786,7 @@ function isStockManagerCategory(value?: string | null): boolean {
 
 function isMainStockDashboardCategory(value?: string | null): boolean {
   const normalized = normalizeInventoryCategoryName(value);
-  if (inventoryCategoryShelfLifeLookup.has(normalized)) return true;
+  if (inventoryCategoryDateTrackingLookup.has(normalized)) return true;
   return (
     normalized.includes("sauces") ||
     normalized === "raw material" ||
@@ -760,7 +805,11 @@ function isCountedInTotalProducts(value?: string | null): boolean {
 }
 
 function isRawMaterialPOItem(item: POItem): boolean {
-  return isStrictRawMaterialCategory(item.category);
+  return getPOItemDateTrackingType(item) === "shelf_life";
+}
+
+function getPOItemDateTrackingType(item: POItem): "none" | "expiry" | "shelf_life" {
+  return getInventoryCategoryDateTrackingType(item.category);
 }
 
 function formatShelfLife(days?: number | null, hours?: number | null): string {
@@ -1799,8 +1848,10 @@ function PODetailDrawer({
           </p>
           <div className="space-y-2">
             {order.items.map((item) => {
-              const rawMaterial = isRawMaterialPOItem(item);
-              const usableUntil = rawMaterial
+              const trackingType = getPOItemDateTrackingType(item);
+              const usesShelfLife = trackingType === "shelf_life";
+              const usesExpiry = trackingType === "expiry";
+              const usableUntil = usesShelfLife
                 ? getPOItemUsableUntil(order, item)
                 : null;
 
@@ -1819,11 +1870,11 @@ function PODetailDrawer({
                       </p>
                       <div className="mt-2 space-y-1">
                         <span
-                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${rawMaterial ? "bg-emerald-50 border border-emerald-200 text-emerald-700" : "bg-sky-50 border border-sky-200 text-sky-700"}`}
+                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${usesShelfLife ? "bg-emerald-50 border border-emerald-200 text-emerald-700" : usesExpiry ? "bg-sky-50 border border-sky-200 text-sky-700" : "bg-slate-100 border border-slate-200 text-slate-600"}`}
                         >
-                          {rawMaterial ? "Shelf Life Based" : "Expiry Based"}
+                          {usesShelfLife ? "Shelf Life Based" : usesExpiry ? "Expiry Based" : "No Date Tracking"}
                         </span>
-                        {rawMaterial ? (
+                        {usesShelfLife ? (
                           <>
                             <p className="text-xs text-slate-500">
                               Shelf Life:{" "}
@@ -1841,12 +1892,16 @@ function PODetailDrawer({
                               </span>
                             </p>
                           </>
-                        ) : (
+                        ) : usesExpiry ? (
                           <p className="text-xs text-slate-500">
                             Expiry Date:{" "}
                             <span className="font-medium text-slate-700">
                               {fmtDate(item.expectedExpiryDate ?? null)}
                             </span>
+                          </p>
+                        ) : (
+                          <p className="text-xs text-slate-500">
+                            No expiry or shelf life required for this category.
                           </p>
                         )}
                       </div>
@@ -1996,7 +2051,8 @@ function ReceivePOModal({
       return;
     }
     const missing = order.items.filter((item) => {
-      if (isRawMaterialPOItem(item)) {
+      const trackingType = getPOItemDateTrackingType(item);
+      if (trackingType === "shelf_life") {
         const shelfLife = itemShelfLife[item.id] || {
           shelfLifeDays: "",
           shelfLifeHours: "",
@@ -2006,11 +2062,14 @@ function ReceivePOModal({
           toNumber(shelfLife.shelfLifeHours) <= 0
         );
       }
-      return !itemExpiryDates[item.id]?.trim();
+      if (trackingType === "expiry") {
+        return !itemExpiryDates[item.id]?.trim();
+      }
+      return false;
     });
     if (missing.length > 0) {
       onShowToast(
-        "Please complete Shelf Life for raw materials and Expiry Date for non-raw materials before marking the order as received.",
+        "Please complete the required date tracking fields before marking the order as received.",
         "error",
       );
       return;
@@ -2057,8 +2116,7 @@ function ReceivePOModal({
               Receive Purchase Order
             </h2>
             <p className="text-xs text-gray-400 mt-0.5">
-              Use Shelf Life for raw materials and Expiry Date for non-raw
-              materials before completing the receipt.
+              Date fields follow each inventory category's tracking rule.
             </p>
           </div>
           <CloseBtn onClick={onClose} />
@@ -2097,7 +2155,9 @@ function ReceivePOModal({
             </div>
           </div>
           {order.items.map((item) => {
-            const rawMaterial = isRawMaterialPOItem(item);
+            const trackingType = getPOItemDateTrackingType(item);
+            const usesShelfLife = trackingType === "shelf_life";
+            const usesExpiry = trackingType === "expiry";
             const currentExpiryDate = itemExpiryDates[item.id] || "";
             const currentShelfLife = itemShelfLife[item.id] || {
               shelfLifeDays: "",
@@ -2105,12 +2165,12 @@ function ReceivePOModal({
             };
             const dayCount = daysUntilExpiry(currentExpiryDate);
             const warn =
-              !rawMaterial &&
+              usesExpiry &&
               currentExpiryDate &&
               dayCount !== null &&
               dayCount <= 7;
             const usableUntilPreview =
-              rawMaterial &&
+              usesShelfLife &&
               (toNumber(currentShelfLife.shelfLifeDays) > 0 ||
                 toNumber(currentShelfLife.shelfLifeHours) > 0)
                 ? new Date(
@@ -2137,19 +2197,19 @@ function ReceivePOModal({
                   </div>
                   <div className="flex items-center gap-2">
                     <span
-                      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${rawMaterial ? "bg-emerald-50 border border-emerald-200 text-emerald-700" : "bg-sky-50 border border-sky-200 text-sky-700"}`}
+                      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${usesShelfLife ? "bg-emerald-50 border border-emerald-200 text-emerald-700" : usesExpiry ? "bg-sky-50 border border-sky-200 text-sky-700" : "bg-slate-100 border border-slate-200 text-slate-600"}`}
                     >
-                      {rawMaterial ? "Shelf Life Based" : "Expiry Based"}
+                      {usesShelfLife ? "Shelf Life Based" : usesExpiry ? "Expiry Based" : "No Date Tracking"}
                     </span>
-                    {!rawMaterial && currentExpiryDate ? (
+                    {usesExpiry && currentExpiryDate ? (
                       <ExpiryChip dateStr={currentExpiryDate} />
                     ) : null}
                   </div>
                 </div>
-                {rawMaterial ? (
+                {usesShelfLife ? (
                   <div className="rounded-xl border border-emerald-100 bg-emerald-50/40 p-4">
                     <p className="text-xs font-semibold text-emerald-700 mb-3">
-                      Shelf Life (Raw Material)
+                      Shelf Life
                     </p>
                     <div className="grid gap-3 md:grid-cols-2">
                       <div>
@@ -2204,7 +2264,7 @@ function ReceivePOModal({
                       </div>
                     </div>
                   </div>
-                ) : (
+                ) : usesExpiry ? (
                   <div className="rounded-xl border border-sky-100 bg-sky-50/40 p-4">
                     <label className="block text-xs font-semibold text-sky-700 mb-3">
                       Expiry Date
@@ -2221,8 +2281,14 @@ function ReceivePOModal({
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200"
                     />
                   </div>
+                ) : (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-xs font-semibold text-slate-600">
+                      No date tracking is required for this category.
+                    </p>
+                  </div>
                 )}
-                {rawMaterial && (
+                {usesShelfLife && (
                   <p className="text-[11px] text-emerald-600 font-medium mt-2">
                     Usable Until: {fmtDateTime(usableUntilPreview)}
                   </p>
@@ -4581,11 +4647,16 @@ export default function StockManager() {
       const categoryList =
         categoryRes.status === "fulfilled" ? categoryRes.value : [];
       const unitList = unitRes.status === "fulfilled" ? unitRes.value : [];
-      inventoryCategoryShelfLifeLookup.clear();
+      inventoryCategoryTypeLookup.clear();
+      inventoryCategoryDateTrackingLookup.clear();
       for (const category of categoryList) {
-        inventoryCategoryShelfLifeLookup.set(
+        inventoryCategoryTypeLookup.set(
           normalizeInventoryCategoryName(category.name),
-          category.uses_shelf_life === true || category.uses_shelf_life === 1,
+          category.type ?? "ingredient",
+        );
+        inventoryCategoryDateTrackingLookup.set(
+          normalizeInventoryCategoryName(category.name),
+          category.date_tracking_type ?? "none",
         );
       }
       setInventoryCategories(categoryList);
