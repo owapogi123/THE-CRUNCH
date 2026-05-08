@@ -623,31 +623,7 @@ const itemVariants: Variants = {
   },
 };
 
-const INVENTORY_CATEGORY_FALLBACK_TRACKING: Record<string, "none" | "expiry" | "shelf_life"> = {
-  "raw material": "shelf_life",
-  "raw materials": "shelf_life",
-  ingredients: "shelf_life",
-  sauces: "expiry",
-  aromatics: "expiry",
-  packaging: "none",
-};
-
-const INVENTORY_CATEGORY_FALLBACK_TYPE: Record<
-  string,
-  "raw_material" | "ingredient" | "finished"
-> = {
-  "raw material": "raw_material",
-  "raw materials": "raw_material",
-  ingredients: "ingredient",
-  sauces: "ingredient",
-  aromatics: "ingredient",
-  packaging: "finished",
-};
-
-const inventoryCategoryTypeLookup = new Map<
-  string,
-  "raw_material" | "ingredient" | "finished"
->();
+const inventoryCategoryNameLookup = new Map<string, string>();
 const inventoryCategoryDateTrackingLookup = new Map<
   string,
   "none" | "expiry" | "shelf_life"
@@ -666,17 +642,7 @@ function getInventoryCategoryDateTrackingType(
   if (inventoryCategoryDateTrackingLookup.has(normalized)) {
     return inventoryCategoryDateTrackingLookup.get(normalized) ?? "none";
   }
-  return INVENTORY_CATEGORY_FALLBACK_TRACKING[normalized] ?? "none";
-}
-
-function getInventoryCategoryType(
-  value?: string | null,
-): "raw_material" | "ingredient" | "finished" {
-  const normalized = normalizeInventoryCategoryName(value);
-  if (inventoryCategoryTypeLookup.has(normalized)) {
-    return inventoryCategoryTypeLookup.get(normalized) ?? "ingredient";
-  }
-  return INVENTORY_CATEGORY_FALLBACK_TYPE[normalized] ?? "ingredient";
+  return "none";
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -764,7 +730,7 @@ function mergeSupplierProducts(existing: string, incoming: string[]): string {
   return merged.join(", ");
 }
 function isStrictRawMaterialCategory(value?: string | null): boolean {
-  return getInventoryCategoryType(value) === "raw_material";
+  return getInventoryCategoryDateTrackingType(value) === "shelf_life";
 }
 
 function isStockManagerCategory(value?: string | null): boolean {
@@ -809,7 +775,17 @@ function isRawMaterialPOItem(item: POItem): boolean {
 }
 
 function getPOItemDateTrackingType(item: POItem): "none" | "expiry" | "shelf_life" {
-  return getInventoryCategoryDateTrackingType(item.category);
+  const itemCategory = String(item.category ?? "");
+  const normalizedCategory = normalizeInventoryCategoryName(itemCategory);
+  const matchedCategory = inventoryCategoryNameLookup.get(normalizedCategory) ?? null;
+  const dateTrackingType = inventoryCategoryDateTrackingLookup.get(normalizedCategory) ?? "none";
+  console.log("PO DATE TRACKING DEBUG", {
+    itemName: item.name,
+    itemCategory,
+    matchedCategory,
+    dateTrackingType,
+  });
+  return dateTrackingType;
 }
 
 function formatShelfLife(days?: number | null, hours?: number | null): string {
@@ -4647,12 +4623,12 @@ export default function StockManager() {
       const categoryList =
         categoryRes.status === "fulfilled" ? categoryRes.value : [];
       const unitList = unitRes.status === "fulfilled" ? unitRes.value : [];
-      inventoryCategoryTypeLookup.clear();
+      inventoryCategoryNameLookup.clear();
       inventoryCategoryDateTrackingLookup.clear();
       for (const category of categoryList) {
-        inventoryCategoryTypeLookup.set(
+        inventoryCategoryNameLookup.set(
           normalizeInventoryCategoryName(category.name),
-          category.type ?? "ingredient",
+          category.name,
         );
         inventoryCategoryDateTrackingLookup.set(
           normalizeInventoryCategoryName(category.name),
