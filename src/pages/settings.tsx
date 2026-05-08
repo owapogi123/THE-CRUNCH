@@ -37,8 +37,8 @@ interface RestaurantSettings {
   requireTableNumber: boolean;
   allowSplitBills: boolean;
   enableLoyaltyPoints: boolean;
-  lowStockThreshold: string;
-  criticalStockThreshold: string;
+  defaultLowStockThreshold: string;
+  defaultCriticalStockThreshold: string;
   autoReorderEnabled: boolean;
   trackExpiry: boolean;
   wasteLogging: boolean;
@@ -321,8 +321,8 @@ const DEFAULT: RestaurantSettings = {
   requireTableNumber: true,
   allowSplitBills: false,
   enableLoyaltyPoints: false,
-  lowStockThreshold: "",
-  criticalStockThreshold: "",
+  defaultLowStockThreshold: "",
+  defaultCriticalStockThreshold: "",
   autoReorderEnabled: false,
   trackExpiry: false,
   wasteLogging: false,
@@ -930,8 +930,8 @@ function InventoryTab({ settings, setStr, setBool, categories, menuCategories, u
   return (
     <>
       <SettingsCard title="Stock Alerts" delay={0}>
-        <FieldRow label="Low stock threshold"><StyledInput value={settings.lowStockThreshold} onChange={(v) => setStr("lowStockThreshold", v)} type="number" placeholder="e.g. 10 units" /></FieldRow>
-        <FieldRow label="Critical stock threshold"><StyledInput value={settings.criticalStockThreshold} onChange={(v) => setStr("criticalStockThreshold", v)} type="number" placeholder="e.g. 5 units" /></FieldRow>
+        <FieldRow label="Default low stock threshold"><StyledInput value={settings.defaultLowStockThreshold} onChange={(v) => setStr("defaultLowStockThreshold", v)} type="number" placeholder="e.g. 10 units" /></FieldRow>
+        <FieldRow label="Default critical stock threshold"><StyledInput value={settings.defaultCriticalStockThreshold} onChange={(v) => setStr("defaultCriticalStockThreshold", v)} type="number" placeholder="e.g. 5 units" /></FieldRow>
         <FieldRow label="Out-of-stock behavior"><StyledSelect value={settings.outOfStockBehavior} onChange={(v) => setStr("outOfStockBehavior", v)} options={[...OUT_OF_STOCK_BEHAVIOR_OPTIONS]} /></FieldRow>
         <ToggleRow label="Auto-reorder" desc="Trigger reorders automatically when stock falls below threshold" value={settings.autoReorderEnabled} onChange={(v) => setBool("autoReorderEnabled", v)} last />
       </SettingsCard>

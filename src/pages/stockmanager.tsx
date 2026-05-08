@@ -65,6 +65,9 @@ interface Product {
   last_update: string;
   reorderPoint: number;
   criticalPoint: number;
+  useDefaultThresholds?: boolean | number;
+  lowStockThreshold?: number | null;
+  criticalStockThreshold?: number | null;
   supplier_name: string;
   dailyWithdrawn: number;
   returned: number;
@@ -162,6 +165,9 @@ interface RawMaterialForm {
   unit: string;
   price: string;
   description: string;
+  useDefaultThresholds: boolean;
+  lowStockThreshold: string;
+  criticalStockThreshold: string;
 }
 interface ReportLineItem {
   product_id: number;
@@ -228,6 +234,13 @@ interface InventoryUnitMaster {
   is_active: boolean | number;
 }
 
+interface StockAlertSettings {
+  defaultLowStockThreshold: number;
+  defaultCriticalStockThreshold: number;
+  outOfStockBehavior: "hide" | "disable";
+  autoReorderEnabled: boolean;
+}
+
 // ─── API ──────────────────────────────────────────────────────────────────────
 
 const API_BASE = "/api";
@@ -252,6 +265,7 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
 
 const api = {
   getInventory: () => apiFetch<Product[]>("/inventory"),
+  getSettings: () => apiFetch<Record<string, unknown>>("/settings"),
   getWithdrawals: () => apiFetch<StockStatusRecord[]>("/stock-status/today"),
   postWithdrawal: (body: {
     product_id: number;
@@ -307,6 +321,9 @@ const api = {
     description?: string;
     raw_material?: boolean;
     item_type?: "stock_item" | "menu_item";
+    use_default_thresholds?: boolean;
+    low_stock_threshold?: number | null;
+    critical_stock_threshold?: number | null;
   }) =>
     apiFetch<{ message: string; id: number }>("/products", {
       method: "POST",
@@ -362,6 +379,9 @@ const api = {
       wasted?: number;
       reorderPoint?: number;
       criticalPoint?: number;
+      useDefaultThresholds?: boolean;
+      lowStockThreshold?: number | null;
+      criticalStockThreshold?: number | null;
     },
   ) =>
     apiFetch<Product>(`/inventory/${inventory_id}`, {
@@ -541,6 +561,9 @@ const BLANK_RAW_MATERIAL: RawMaterialForm = {
   unit: "liter",
   price: "",
   description: "",
+  useDefaultThresholds: true,
+  lowStockThreshold: "",
+  criticalStockThreshold: "",
 };
 const SUPPLIER_FIELDS: {
   key: keyof Omit<Supplier, "supplier_id">;
@@ -576,24 +599,30 @@ const RAW_MATERIAL_CATEGORIES = [
   "Aromatics",
 ] as const;
 const STATUS_BADGE: Record<StockStatus, string> = {
-  critical: "bg-red-100 text-red-600",
-  low: "bg-amber-100 text-amber-600",
+  critical: "bg-orange-100 text-orange-600",
+  low: "bg-yellow-100 text-yellow-700",
   normal: "bg-emerald-100 text-emerald-600",
 };
 const STATUS_BAR: Record<StockStatus, string> = {
-  critical: "bg-red-400",
-  low: "bg-amber-400",
+  critical: "bg-orange-400",
+  low: "bg-yellow-400",
   normal: "bg-emerald-400",
 };
 const STATUS_DOT: Record<StockStatus, string> = {
-  critical: "bg-red-500",
-  low: "bg-amber-400",
+  critical: "bg-orange-500",
+  low: "bg-yellow-400",
   normal: "bg-emerald-500",
 };
 const TYPE_BADGE: Record<WithdrawalType, string> = {
   initial: "bg-indigo-50 text-indigo-600",
   supplementary: "bg-sky-50 text-sky-600",
   return: "bg-emerald-50 text-emerald-600",
+};
+const DEFAULT_STOCK_ALERT_SETTINGS: StockAlertSettings = {
+  defaultLowStockThreshold: 10,
+  defaultCriticalStockThreshold: 5,
+  outOfStockBehavior: "disable",
+  autoReorderEnabled: false,
 };
 const KPI_ACCENT: Record<string, { border: string; value: string; bg: string; borderColor: string }> = {
   slate: { border: "border-t-slate-700", value: "text-slate-700", bg: "bg-slate-50", borderColor: "border-slate-200" },
@@ -725,10 +754,85 @@ const isMenuFoodProduct = (p: Pick<Product, "item_type">) =>
     .toLowerCase() === "menu_item";
 const isReconcilable = (p: Product) =>
   !/(sauce|bottle|beverage|condiment|drink)/.test(p.category.toLowerCase());
-const getStockStatus = (p: Product): StockStatus =>
-  p.mainStock <= p.criticalPoint
+const normalizeStockAlertSettings = (
+  source: Record<string, unknown> | null | undefined,
+): StockAlertSettings => {
+  const defaultCriticalStockThreshold = Math.max(
+    0,
+    toNumber(
+      source?.defaultCriticalStockThreshold ?? source?.criticalStockThreshold,
+      DEFAULT_STOCK_ALERT_SETTINGS.defaultCriticalStockThreshold,
+    ),
+  );
+  const defaultLowStockThreshold = Math.max(
+    defaultCriticalStockThreshold,
+    toNumber(
+      source?.defaultLowStockThreshold ?? source?.lowStockThreshold,
+      DEFAULT_STOCK_ALERT_SETTINGS.defaultLowStockThreshold,
+    ),
+  );
+
+  return {
+    defaultLowStockThreshold,
+    defaultCriticalStockThreshold,
+    outOfStockBehavior:
+      source?.outOfStockBehavior === "hide" ? "hide" : "disable",
+    autoReorderEnabled:
+      typeof source?.autoReorderEnabled === "boolean"
+        ? source.autoReorderEnabled
+        : String(source?.autoReorderEnabled).trim().toLowerCase() === "true",
+  };
+};
+const getAlertSeverity = (
+  p: Product,
+  settings: StockAlertSettings,
+): "out" | "critical" | "low" | "normal" => {
+  const stock = toNumber(p.mainStock);
+  const appliedThresholds = getAppliedThresholds(p, settings);
+
+  if (stock <= 0) return "out";
+  if (stock <= appliedThresholds.critical) return "critical";
+  if (stock <= appliedThresholds.low) return "low";
+  return "normal";
+};
+const getAppliedThresholds = (
+  p: Pick<
+    Product,
+    "useDefaultThresholds" | "lowStockThreshold" | "criticalStockThreshold"
+  >,
+  settings: StockAlertSettings,
+) => {
+  const useDefaultThresholds =
+    p.useDefaultThresholds === undefined ||
+    p.useDefaultThresholds === null ||
+    p.useDefaultThresholds === true ||
+    p.useDefaultThresholds === 1;
+  const low = useDefaultThresholds
+    ? settings.defaultLowStockThreshold
+    : toNumber(
+        p.lowStockThreshold,
+        settings.defaultLowStockThreshold,
+      );
+  const critical = useDefaultThresholds
+    ? settings.defaultCriticalStockThreshold
+    : toNumber(
+        p.criticalStockThreshold,
+        settings.defaultCriticalStockThreshold,
+      );
+
+  return {
+    useDefaultThresholds,
+    low: Math.max(critical, low),
+    critical: Math.max(0, critical),
+  };
+};
+const getStockStatus = (
+  p: Product,
+  settings: StockAlertSettings,
+): StockStatus =>
+  getAlertSeverity(p, settings) === "critical"
     ? "critical"
-    : p.mainStock <= p.reorderPoint
+    : getAlertSeverity(p, settings) === "low"
       ? "low"
       : "normal";
 const isExpiringSoon = (e?: string | null) => {
@@ -4493,6 +4597,8 @@ export default function StockManager() {
   const [inventoryUnits, setInventoryUnits] = useState<InventoryUnitMaster[]>(
     [],
   );
+  const [stockAlertSettings, setStockAlertSettings] =
+    useState<StockAlertSettings>(DEFAULT_STOCK_ALERT_SETTINGS);
   const [showReconcile, setShowReconcile] = useState(false);
   const [reconcileItems, setReconcileItems] = useState<ReconcileRow[]>([]);
   const [cookReport, setCookReport] = useState<KitchenUsagePayload | null>(null);
@@ -4665,12 +4771,14 @@ export default function StockManager() {
         supRes,
         categoryRes,
         unitRes,
+        settingsRes,
       ] = await Promise.allSettled([
         api.getInventory(),
         api.getWithdrawals(),
         api.getSuppliers(),
         api.getInventoryCategories(),
         api.getInventoryUnits(),
+        api.getSettings(),
       ]);
 
       if (
@@ -4688,6 +4796,10 @@ export default function StockManager() {
       const categoryList =
         categoryRes.status === "fulfilled" ? categoryRes.value : [];
       const unitList = unitRes.status === "fulfilled" ? unitRes.value : [];
+      const nextStockAlertSettings =
+        settingsRes.status === "fulfilled"
+          ? normalizeStockAlertSettings(settingsRes.value)
+          : DEFAULT_STOCK_ALERT_SETTINGS;
       inventoryCategoryNameLookup.clear();
       inventoryCategoryDateTrackingLookup.clear();
       for (const category of categoryList) {
@@ -4702,6 +4814,7 @@ export default function StockManager() {
       }
       setInventoryCategories(categoryList);
       setInventoryUnits(unitList);
+      setStockAlertSettings(nextStockAlertSettings);
 
       const [batchesRes, returnsRes, kitchenRes, poRes, cookReportRes] =
         await Promise.allSettled([
@@ -4722,6 +4835,36 @@ export default function StockManager() {
           item_purchased: toNumber(p.item_purchased),
           reorderPoint: toNumber(p.reorderPoint),
           criticalPoint: toNumber(p.criticalPoint),
+          useDefaultThresholds:
+            (p as { useDefaultThresholds?: unknown }).useDefaultThresholds ===
+              undefined ||
+            (p as { useDefaultThresholds?: unknown }).useDefaultThresholds ===
+              null
+              ? true
+              : Boolean(
+                  Number(
+                    (p as { useDefaultThresholds?: unknown })
+                      .useDefaultThresholds,
+                  ),
+                ),
+          lowStockThreshold:
+            (p as { lowStockThreshold?: unknown }).lowStockThreshold ===
+              undefined ||
+            (p as { lowStockThreshold?: unknown }).lowStockThreshold === null
+              ? null
+              : toNumber(
+                  (p as { lowStockThreshold?: unknown }).lowStockThreshold,
+                ),
+          criticalStockThreshold:
+            (p as { criticalStockThreshold?: unknown })
+              .criticalStockThreshold === undefined ||
+            (p as { criticalStockThreshold?: unknown })
+              .criticalStockThreshold === null
+              ? null
+              : toNumber(
+                  (p as { criticalStockThreshold?: unknown })
+                    .criticalStockThreshold,
+                ),
           dailyWithdrawn: toNumber(p.dailyWithdrawn),
           returned: toNumber(p.returned),
           wasted: toNumber(p.wasted),
@@ -4878,17 +5021,23 @@ export default function StockManager() {
   // ── Derived data ──────────────────────────────────────────────────────────
 
   const lowStock = products.filter(
-    (p) => !isMenuFoodProduct(p) && getStockStatus(p) === "low",
+    (p) =>
+      !isMenuFoodProduct(p) &&
+      getAlertSeverity(p, stockAlertSettings) === "low",
   );
   const criticalStock = products.filter(
-    (p) => !isMenuFoodProduct(p) && getStockStatus(p) === "critical",
+    (p) =>
+      !isMenuFoodProduct(p) &&
+      getAlertSeverity(p, stockAlertSettings) === "critical",
   );
   const outOfStockItems = useMemo(
     () =>
       products.filter(
-        (p) => !isMenuFoodProduct(p) && toNumber(p.mainStock) === 0,
+        (p) =>
+          !isMenuFoodProduct(p) &&
+          getAlertSeverity(p, stockAlertSettings) === "out",
       ),
-    [products],
+    [products, stockAlertSettings],
   );
   const alertCriticalStock = useMemo(
     () => criticalStock.filter((p) => toNumber(p.mainStock) > 0),
@@ -4897,9 +5046,11 @@ export default function StockManager() {
   const attentionItems = useMemo(
     () =>
       products.filter(
-        (p) => !isMenuFoodProduct(p) && getStockStatus(p) !== "normal",
+        (p) =>
+          !isMenuFoodProduct(p) &&
+          getAlertSeverity(p, stockAlertSettings) !== "normal",
       ),
-    [products],
+    [products, stockAlertSettings],
   );
   const poQuickOrderProducts = useMemo(() => {
     const m = new Map<number, Product>();
@@ -5094,7 +5245,7 @@ export default function StockManager() {
     [mainStockProducts, wdProductId],
   );
   const selectedWithdrawalStatus = selectedWithdrawalProduct
-    ? getStockStatus(selectedWithdrawalProduct)
+    ? getStockStatus(selectedWithdrawalProduct, stockAlertSettings)
     : "normal";
   const selectedWithdrawalPct = selectedWithdrawalProduct
     ? Math.min(
@@ -5800,6 +5951,14 @@ export default function StockManager() {
   async function addRawMaterial() {
     const name = rawMaterialForm.name.trim();
     const price = Number(rawMaterialForm.price || 0);
+    const customLowStockThreshold =
+      rawMaterialForm.lowStockThreshold.trim() === ""
+        ? null
+        : Number(rawMaterialForm.lowStockThreshold);
+    const customCriticalStockThreshold =
+      rawMaterialForm.criticalStockThreshold.trim() === ""
+        ? null
+        : Number(rawMaterialForm.criticalStockThreshold);
     if (!name) {
       showToast("Please enter a raw material name.", "error");
       return;
@@ -5811,6 +5970,34 @@ export default function StockManager() {
       showToast("This material already exists in inventory.", "error");
       return;
     }
+    if (!rawMaterialForm.useDefaultThresholds) {
+      if (
+        customLowStockThreshold === null ||
+        !Number.isFinite(customLowStockThreshold) ||
+        customLowStockThreshold < 0
+      ) {
+        showToast("Please enter a valid custom low stock threshold.", "error");
+        return;
+      }
+      if (
+        customCriticalStockThreshold === null ||
+        !Number.isFinite(customCriticalStockThreshold) ||
+        customCriticalStockThreshold < 0
+      ) {
+        showToast(
+          "Please enter a valid custom critical stock threshold.",
+          "error",
+        );
+        return;
+      }
+      if (customCriticalStockThreshold > customLowStockThreshold) {
+        showToast(
+          "Critical threshold cannot be greater than warning threshold.",
+          "error",
+        );
+        return;
+      }
+    }
     setSubmitting(true);
     try {
       await api.createProduct({
@@ -5821,6 +6008,13 @@ export default function StockManager() {
         description: rawMaterialForm.description.trim() || undefined,
         raw_material: isStrictRawMaterialCategory(rawMaterialForm.category),
         item_type: "stock_item",
+        use_default_thresholds: rawMaterialForm.useDefaultThresholds,
+        low_stock_threshold: rawMaterialForm.useDefaultThresholds
+          ? null
+          : customLowStockThreshold,
+        critical_stock_threshold: rawMaterialForm.useDefaultThresholds
+          ? null
+          : customCriticalStockThreshold,
       });
       await fetchAll();
       setRawMaterialForm(BLANK_RAW_MATERIAL);
@@ -6354,7 +6548,10 @@ export default function StockManager() {
                               const hasPastShelfLife =
                                 shelfLifeStatus === "Past Shelf Life";
                               const uiStatus = getProductUiStatus(p);
-                              const status = getStockStatus(p);
+                              const status = getStockStatus(
+                                p,
+                                stockAlertSettings,
+                              );
                               const isOutOfStock = uiStatus === "Out of Stock";
                               const statusDotClass = isOutOfStock
                                 ? "bg-slate-500"
@@ -7686,36 +7883,71 @@ export default function StockManager() {
                     className="space-y-4"
                   >
                     <motion.div
+                      variants={itemVariants}
+                      className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm"
+                    >
+                      <div className="flex flex-col gap-2 text-sm text-slate-600 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
+                        <span>
+                          Warning threshold:{" "}
+                          <strong className="text-slate-800">
+                            {stockAlertSettings.defaultLowStockThreshold}
+                          </strong>
+                        </span>
+                        <span>
+                          Critical threshold:{" "}
+                          <strong className="text-slate-800">
+                            {stockAlertSettings.defaultCriticalStockThreshold}
+                          </strong>
+                        </span>
+                        <span>
+                          Out-of-stock behavior:{" "}
+                          <strong className="text-slate-800">
+                            {stockAlertSettings.outOfStockBehavior === "hide"
+                              ? "Hide item"
+                              : "Disable item"}
+                          </strong>
+                        </span>
+                        <span>
+                          Auto-reorder:{" "}
+                          <strong className="text-slate-800">
+                            {stockAlertSettings.autoReorderEnabled
+                              ? "Enabled"
+                              : "Disabled"}
+                          </strong>
+                        </span>
+                      </div>
+                    </motion.div>
+                    <motion.div
   variants={itemVariants}
   className="grid grid-cols-4 gap-4"
 >
   <div className="bg-green-50 rounded-2xl p-5 border-2 border-t-4 border-green-200 border-t-green-500 shadow-sm">
     <p className="text-xs text-green-600 font-medium">Normal</p>
     <p className="text-3xl font-bold text-green-600 mt-1">
-      {products.filter(p => !isMenuFoodProduct(p) && getStockStatus(p) === "normal" && toNumber(p.mainStock) > 0).length}
+      {products.filter((p) => !isMenuFoodProduct(p) && getAlertSeverity(p, stockAlertSettings) === "normal").length}
     </p>
     <p className="text-xs text-green-500 mt-1">items in safe range</p>
   </div>
-  <div className="bg-amber-50 rounded-2xl p-5 border-2 border-t-4 border-amber-200 border-t-amber-500 shadow-sm">
-    <p className="text-xs text-amber-600 font-medium">Warning Items</p>
-    <p className="text-3xl font-bold text-amber-500 mt-1">
+  <div className="bg-yellow-50 rounded-2xl p-5 border-2 border-t-4 border-yellow-200 border-t-yellow-500 shadow-sm">
+    <p className="text-xs text-yellow-700 font-medium">Warning Items</p>
+    <p className="text-3xl font-bold text-yellow-600 mt-1">
       {lowStock.length}
     </p>
-    <p className="text-xs text-amber-500 mt-1">need reordering soon</p>
+    <p className="text-xs text-yellow-700/80 mt-1">need reordering soon</p>
   </div>
-  <div className="bg-red-50 rounded-2xl p-5 border-2 border-t-4 border-red-200 border-t-red-500 shadow-sm">
-    <p className="text-xs text-red-500 font-medium">Critical Items</p>
-    <p className="text-3xl font-bold text-red-500 mt-1">
+  <div className="bg-orange-50 rounded-2xl p-5 border-2 border-t-4 border-orange-200 border-t-orange-500 shadow-sm">
+    <p className="text-xs text-orange-600 font-medium">Critical Items</p>
+    <p className="text-3xl font-bold text-orange-600 mt-1">
       {alertCriticalStock.length}
     </p>
-    <p className="text-xs text-red-400 mt-1">order immediately</p>
+    <p className="text-xs text-orange-500 mt-1">order immediately</p>
   </div>
-  <div className="bg-slate-200 rounded-2xl p-5 border-2 border-t-4 border-slate-400 border-t-slate-700 shadow-sm">
-    <p className="text-xs text-slate-700 font-medium">Out of Stock</p>
-    <p className="text-3xl font-bold text-slate-800 mt-1">
+  <div className="bg-red-50 rounded-2xl p-5 border-2 border-t-4 border-red-200 border-t-red-500 shadow-sm">
+    <p className="text-xs text-red-600 font-medium">Out of Stock</p>
+    <p className="text-3xl font-bold text-red-600 mt-1">
       {outOfStockItems.length}
     </p>
-    <p className="text-xs text-slate-600 mt-1">no stock remaining</p>
+    <p className="text-xs text-red-500 mt-1">no stock remaining</p>
   </div>
 </motion.div>
                     {lowStock.length === 0 &&
@@ -7729,19 +7961,19 @@ export default function StockManager() {
                         {
                           items: outOfStockItems,
                           label: "Out of Stock",
-                          color: "slate",
+                          color: "red",
                           severity: "out" as const,
                         },
                         {
                           items: alertCriticalStock,
                           label: "Critical",
-                          color: "red",
+                          color: "orange",
                           severity: "critical" as const,
                         },
                         {
                           items: lowStock,
                           label: "Warning",
-                          color: "amber",
+                          color: "yellow",
                           severity: "low" as const,
                         },
                       ].map(({ items, label, color, severity }) =>
@@ -7758,23 +7990,37 @@ export default function StockManager() {
                               </p>
                             </motion.div>
                             {items.map((p, i) => {
-                              const status = getStockStatus(p);
-                              const deficit = Math.round(
-                                p.reorderPoint - p.mainStock,
+                              const status = getStockStatus(
+                                p,
+                                stockAlertSettings,
+                              );
+                              const appliedThresholds = getAppliedThresholds(
+                                p,
+                                stockAlertSettings,
+                              );
+                              const thresholdTarget =
+                                severity === "critical"
+                                  ? appliedThresholds.critical
+                                  : appliedThresholds.low;
+                              const deficit = Math.max(
+                                0,
+                                Math.round(
+                                  thresholdTarget - toNumber(p.mainStock),
+                                ),
                               );
                               return (
                                 <motion.div
                                   key={p.inventory_id}
                                   variants={itemVariants}
                                   transition={{ delay: i * 0.06 }}
-                                  className={`bg-white rounded-2xl border border-t-4 p-5 flex items-center justify-between shadow-sm mb-3 ${severity === "out" ? "border-slate-200 border-t-slate-400" : status === "critical" ? "border-red-200 border-t-red-400" : "border-amber-200 border-t-amber-400"}`}
+                                  className={`bg-white rounded-2xl border border-t-4 p-5 flex items-center justify-between shadow-sm mb-3 ${severity === "out" ? "border-red-200 border-t-red-400" : status === "critical" ? "border-orange-200 border-t-orange-400" : "border-yellow-200 border-t-yellow-400"}`}
                                 >
                                   <div className="flex items-center gap-4">
                                     <div
-                                      className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${severity === "out" ? "bg-slate-100" : status === "critical" ? "bg-red-50" : "bg-amber-50"}`}
+                                      className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${severity === "out" ? "bg-red-50" : status === "critical" ? "bg-orange-50" : "bg-yellow-50"}`}
                                     >
                                       <span
-                                        className={`text-sm font-bold ${severity === "out" ? "text-slate-600" : status === "critical" ? "text-red-500" : "text-amber-500"}`}
+                                        className={`text-sm font-bold ${severity === "out" ? "text-red-600" : status === "critical" ? "text-orange-500" : "text-yellow-600"}`}
                                       >
                                         !
                                       </span>
@@ -7794,12 +8040,12 @@ export default function StockManager() {
                                         {p.supplier_name}
                                       </p>
                                       <p
-                                        className={`text-xs font-medium mt-1 ${severity === "out" ? "text-slate-600" : status === "critical" ? "text-red-500" : "text-amber-500"}`}
+                                        className={`text-xs font-medium mt-1 ${severity === "out" ? "text-red-600" : status === "critical" ? "text-orange-500" : "text-yellow-700"}`}
                                       >
                                         {severity === "out"
-                                          ? `No stock left. Need ${Math.max(0, deficit)} ${p.unit} to reach reorder point`
+                                          ? `No stock left. Need ${Math.max(0, appliedThresholds.low)} ${p.unit} to reach warning threshold`
                                           : deficit > 0
-                                            ? `Need ${deficit} ${p.unit} to reach reorder point`
+                                            ? `Need ${deficit} ${p.unit} to reach ${status === "critical" ? "critical" : "warning"} threshold`
                                             : "Below critical threshold"}
                                       </p>
                                     </div>
@@ -7807,58 +8053,22 @@ export default function StockManager() {
                                   <div className="flex items-center gap-4">
                                     <div className="text-right">
                                       <p
-                                        className={`text-2xl font-bold ${severity === "out" ? "text-slate-700" : status === "critical" ? "text-red-500" : "text-amber-500"}`}
+                                        className={`text-2xl font-bold ${severity === "out" ? "text-red-600" : status === "critical" ? "text-orange-500" : "text-yellow-700"}`}
                                       >
                                         {p.mainStock}{" "}
                                         <span className="text-sm font-normal text-slate-400">
                                           {p.unit}
                                         </span>
                                       </p>
-                                      <div className="flex items-center gap-2 mt-1 text-xs text-slate-400">
-                                        <span>Reorder:</span>
-                                        <input
-                                          type="number"
-                                          defaultValue={p.reorderPoint}
-                                          className="w-16 border border-slate-200 rounded-lg px-2 py-0.5 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
-                                          onBlur={(e) => {
-                                            const val = Number(e.target.value);
-                                            if (
-                                              val > 0 &&
-                                              val !== p.reorderPoint
-                                            )
-                                              api
-                                                .updateStock(p.inventory_id, {
-                                                  stock: p.mainStock,
-                                                  reorderPoint: val,
-                                                  criticalPoint:
-                                                    p.criticalPoint,
-                                                })
-                                                .then(fetchAll);
-                                          }}
-                                        />
-                                        <span>Critical:</span>
-                                        <input
-                                          type="number"
-                                          defaultValue={p.criticalPoint}
-                                          className="w-16 border border-slate-200 rounded-lg px-2 py-0.5 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
-                                          onBlur={(e) => {
-                                            const val = Number(e.target.value);
-                                            if (
-                                              val > 0 &&
-                                              val !== p.criticalPoint
-                                            )
-                                              api
-                                                .updateStock(p.inventory_id, {
-                                                  stock: p.mainStock,
-                                                  reorderPoint: p.reorderPoint,
-                                                  criticalPoint: val,
-                                                })
-                                                .then(fetchAll);
-                                          }}
-                                        />
-                                      </div>
+                                      <p className="mt-1 text-xs text-slate-400">
+                                        {appliedThresholds.useDefaultThresholds
+                                          ? "Using defaults"
+                                          : "Custom thresholds"}{" "}
+                                        · Warning at {appliedThresholds.low} ·
+                                        Critical at {appliedThresholds.critical}
+                                      </p>
                                       <span
-                                        className={`inline-block mt-2 text-xs font-semibold px-3 py-1 rounded-full ${severity === "out" ? "bg-slate-100 text-slate-700" : STATUS_BADGE[status]}`}
+                                        className={`inline-block mt-2 text-xs font-semibold px-3 py-1 rounded-full ${severity === "out" ? "bg-red-100 text-red-700" : STATUS_BADGE[status]}`}
                                       >
                                         {severity === "out"
                                           ? "Out of Stock"
@@ -7872,7 +8082,7 @@ export default function StockManager() {
                                         setTab("purchases");
                                         handleOrderNow(p);
                                       }}
-                                      className={`flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-white text-xs font-bold transition-all shadow-sm ${severity === "out" ? "bg-slate-700 hover:bg-slate-800 shadow-slate-500/25" : status === "critical" ? "bg-red-500 hover:bg-red-600 shadow-red-500/25" : "bg-amber-500 hover:bg-amber-600 shadow-amber-500/25"}`}
+                                      className={`flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-white text-xs font-bold transition-all shadow-sm ${severity === "out" ? "bg-red-600 hover:bg-red-700 shadow-red-500/25" : status === "critical" ? "bg-orange-500 hover:bg-orange-600 shadow-orange-500/25" : "bg-yellow-500 hover:bg-yellow-600 shadow-yellow-500/25"}`}
                                     >
                                       <CartIcon />
                                       Order Now
@@ -8502,7 +8712,10 @@ export default function StockManager() {
                           {products
                             .filter((p) => !isMenuFoodProduct(p))
                             .map((p, i) => {
-                              const status = getStockStatus(p);
+                              const status = getStockStatus(
+                                p,
+                                stockAlertSettings,
+                              );
                               const pct = Math.min(
                                 100,
                                 (p.mainStock / Math.max(1, p.reorderPoint)) *
@@ -9316,6 +9529,71 @@ export default function StockManager() {
                         placeholder="Optional notes"
                       />
                     </FormField>
+                  </div>
+                  <div className="col-span-2 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-700">
+                          Use default alert thresholds
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Turn this off to set custom warning and critical
+                          levels for this material.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setRawMaterialForm((p) => ({
+                            ...p,
+                            useDefaultThresholds: !p.useDefaultThresholds,
+                          }))
+                        }
+                        className={`relative inline-flex h-7 w-12 flex-shrink-0 items-center rounded-full transition-colors ${
+                          rawMaterialForm.useDefaultThresholds
+                            ? "bg-emerald-500"
+                            : "bg-slate-300"
+                        }`}
+                      >
+                        <span
+                          className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
+                            rawMaterialForm.useDefaultThresholds
+                              ? "translate-x-6"
+                              : "translate-x-1"
+                          }`}
+                        />
+                      </button>
+                    </div>
+                    {!rawMaterialForm.useDefaultThresholds && (
+                      <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                        <FormField label="Custom low stock threshold">
+                          <StyledInput
+                            type="number"
+                            value={rawMaterialForm.lowStockThreshold}
+                            onChange={(v) =>
+                              setRawMaterialForm((p) => ({
+                                ...p,
+                                lowStockThreshold: v,
+                              }))
+                            }
+                            placeholder="e.g. 10"
+                          />
+                        </FormField>
+                        <FormField label="Custom critical stock threshold">
+                          <StyledInput
+                            type="number"
+                            value={rawMaterialForm.criticalStockThreshold}
+                            onChange={(v) =>
+                              setRawMaterialForm((p) => ({
+                                ...p,
+                                criticalStockThreshold: v,
+                              }))
+                            }
+                            placeholder="e.g. 5"
+                          />
+                        </FormField>
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-end gap-3">
