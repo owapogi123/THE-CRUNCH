@@ -1714,7 +1714,7 @@ function PODetailDrawer({
       animate={{ x: 0 }}
       exit={{ x: "100%" }}
       transition={{ type: "spring", stiffness: 300, damping: 30 }}
-      className="fixed right-0 top-0 h-full w-[440px] bg-white shadow-2xl z-50 flex flex-col"
+      className="fixed right-0 top-0 h-full w-full max-w-[440px] bg-white shadow-2xl z-50 flex flex-col"
     >
       <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100">
         <div>
@@ -5876,7 +5876,7 @@ export default function StockManager() {
 
         {/* ── Header ── */}
         <header className="bg-white border-b border-slate-100 sticky top-0 z-30 shadow-sm">
-          <div className="pl-25 pr-8 py-4 flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-4 px-4 py-4 pt-20 md:px-6 md:pt-24 lg:px-8 lg:pt-4 lg:pl-24">
             <div>
               <h2 className="text-base font-semibold text-slate-800">
                 Stock Manager
@@ -5890,7 +5890,7 @@ export default function StockManager() {
                 })}
               </p>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               {yesterdayReturns.length > 0 && (
                 <button
                   onClick={() => setTab("withdrawal")}
@@ -5925,7 +5925,7 @@ export default function StockManager() {
               </div>
             </div>
           </div>
-          <div className="pb-3 flex items-center justify-center gap-2">
+          <div className="flex items-center justify-start gap-2 overflow-x-auto px-4 pb-3 md:px-6 lg:justify-center lg:px-8 lg:pl-24">
             {TABS.map((t) => {
               const badge =
                 t.id === "alerts"

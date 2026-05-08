@@ -5,6 +5,7 @@ import { staffApi } from "../lib/api";
 import type { StaffMember } from "../lib/api";
 import { useNotifications, useConfirm } from "../lib/NotificationContext";
 import { useAuth } from "../context/authcontext";
+import { useViewport } from "@/hooks/use-tablet";
 
 type Role = "administrator" | "cashier" | "cook" | "inventory_manager";
 
@@ -83,6 +84,7 @@ export default function StaffAccounts() {
   const { addNotification } = useNotifications();
   const confirm = useConfirm();
   const { user, logout } = useAuth();
+  const { isMobile, isTablet } = useViewport();
 
   const [employees, setEmployees] = useState<StaffMember[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -201,7 +203,7 @@ export default function StaffAccounts() {
     <div style={{ minHeight: "100vh", background: "#fff", fontFamily: "'Poppins', sans-serif", color: "#1a202c" }}>
       <Sidebar />
 
-      <div style={{ padding: "32px 36px 32px 88px" }}>
+      <div style={{ padding: isMobile ? "78px 14px 22px" : isTablet ? "84px 18px 28px" : "32px 36px 32px 88px" }}>
         <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 
         {/* Header */}
@@ -212,18 +214,18 @@ export default function StaffAccounts() {
           </div>
           <button
             onClick={() => setShowModal(true)}
-            style={{ display: "flex", alignItems: "center", gap: 6, background: "#1a202c", color: "#fff", border: "none", borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 600, fontFamily: "'Poppins', sans-serif", cursor: "pointer" }}
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: "#1a202c", color: "#fff", border: "none", borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 600, fontFamily: "'Poppins', sans-serif", cursor: "pointer", width: isTablet ? "100%" : "auto" }}
           >
             + Add Employee
           </button>
         </div>
 
         {/* Stats */}
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 28, marginBottom: 24, paddingBottom: 20, borderBottom: "1px solid #f0f4f8" }}>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,minmax(0,1fr))" : "repeat(auto-fit,minmax(140px,1fr))", gap: isMobile ? 16 : 28, marginBottom: 24, paddingBottom: 20, borderBottom: "1px solid #f0f4f8" }}>
           {stats.map((s, i) => (
             <motion.div
               key={s.label}
-              style={{ display: "flex", flexDirection: "column", gap: 4 }}
+              style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.22, delay: i * 0.04 }}
@@ -235,7 +237,7 @@ export default function StaffAccounts() {
         </div>
 
         {/* Staff Table */}
-        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #e2e8f0", overflow: "hidden", marginBottom: 40 }}>
+        <div className="responsive-table-wrap" style={{ background: "#fff", borderRadius: 14, border: "1px solid #e2e8f0", marginBottom: 40 }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr>
@@ -319,7 +321,7 @@ export default function StaffAccounts() {
               onClick={(e) => { if (e.target === e.currentTarget) closeModal(); }}
             >
               <motion.div
-                style={{ background: "#fff", borderRadius: 16, padding: 28, width: "100%", maxWidth: 360, boxShadow: "0 8px 40px rgba(0,0,0,0.10)", border: "1px solid #e2e8f0" }}
+                style={{ background: "#fff", borderRadius: 16, padding: isMobile ? 20 : 28, width: "100%", maxWidth: 360, boxShadow: "0 8px 40px rgba(0,0,0,0.10)", border: "1px solid #e2e8f0" }}
                 initial={{ opacity: 0, scale: 0.97, y: 8 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.97, y: 8 }} transition={{ duration: 0.18 }}
               >
                 <div style={{ fontSize: 16, fontWeight: 700, color: "#1a202c", marginBottom: 20 }}>Add Employee</div>
@@ -354,7 +356,7 @@ export default function StaffAccounts() {
 
                 {error && <p style={{ fontSize: 11, color: "#e53e3e", margin: "4px 0 6px" }}>{error}</p>}
 
-                <div style={{ display: "flex", gap: 8, marginTop: 20 }}>
+                <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 8, marginTop: 20 }}>
                   <button
                     onClick={closeModal}
                     style={{ flex: 1, background: "#f8f9fa", color: "#718096", border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, fontSize: 13, fontWeight: 600, fontFamily: "'Poppins', sans-serif", cursor: "pointer" }}

@@ -24,7 +24,7 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import { api, apiCall } from "../lib/api";
 import { Sidebar } from "@/components/Sidebar";
-import { useIsMobile } from "@/hooks/use-mobile";
+import { useViewport } from "@/hooks/use-tablet";
 import { useAuth } from "../context/authcontext";
 
 // ─── FONT ─────────────────────────────────────────────────────────────────────
@@ -1093,7 +1093,8 @@ function SuccessModal({
 
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 export default function CashierView() {
-  const isMobile = useIsMobile();
+  const { width } = useViewport();
+  const isCompact = width < 1100;
   const { user } = useAuth();
   const isFirstPoll = useRef(true);
   const { toasts, toast, dismiss } = useToast();
@@ -1396,10 +1397,10 @@ export default function CashierView() {
     <>
       <Sidebar />
 
-      <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", height: isMobile ? "auto" : "100vh", minHeight: "100vh", overflow: isMobile ? "auto" : "hidden", fontFamily: F, background: "#fff", paddingLeft: isMobile ? 0 : 80, paddingTop: isMobile ? 64 : 0 }}>
+      <div style={{ display: "flex", flexDirection: isCompact ? "column" : "row", height: isCompact ? "auto" : "100vh", minHeight: "100vh", overflow: isCompact ? "auto" : "hidden", fontFamily: F, background: "#fff", paddingLeft: isCompact ? 0 : 80, paddingTop: isCompact ? 72 : 0 }}>
 
         {/* ── LEFT: Menu ── */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: isMobile ? "visible" : "hidden", minWidth: 0 }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: isCompact ? "visible" : "hidden", minWidth: 0 }}>
           <div style={{ padding: "20px 24px 0", flexShrink: 0 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
               <h1 style={{ fontSize: 16, fontWeight: 600, color: "#111", fontFamily: F }}>Menu</h1>
@@ -1665,7 +1666,7 @@ export default function CashierView() {
         </div>
 
         {/* ── RIGHT: Cart ── */}
-        <div style={{ width: isMobile ? "100%" : 268, flexShrink: 0, borderLeft: isMobile ? "none" : "1px solid #f0f0f0", borderTop: isMobile ? "1px solid #f0f0f0" : "none", display: "flex", flexDirection: "column", background: "#fff" }}>
+        <div style={{ width: isCompact ? "100%" : 268, flexShrink: 0, borderLeft: isCompact ? "none" : "1px solid #f0f0f0", borderTop: isCompact ? "1px solid #f0f0f0" : "none", display: "flex", flexDirection: "column", background: "#fff" }}>
           <div style={{ padding: "20px 18px 14px", borderBottom: "1px solid #f5f5f5", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
             <div>
               <h2 style={{ fontSize: 13, fontWeight: 600, color: "#111", fontFamily: F }}>Current Order</h2>

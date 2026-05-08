@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence, useScroll, useTransform, useInView } from 'framer-motion'
 import { Search, Flame, Crown, Clock, ChevronDown, Droplets, MapPin, Star, X, CalendarDays, MessageSquare, Send, CheckCircle } from 'lucide-react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
+import { useViewport } from '@/hooks/use-tablet'
 
 const formatPHP = (value: number) =>
   new Intl.NumberFormat("en-PH", {
@@ -468,6 +469,7 @@ function StarRating({ value, onChange }: { value:number; onChange:(v:number)=>vo
 
 // ── Feedback Modal ─────────────────────────────────────────────────────────
 function FeedbackModal({ onClose, productOptions }: { onClose:()=>void; productOptions:FeedbackProductOption[] }) {
+  const { isMobile, isPhone, isShortViewport } = useViewport()
   const [rating, setRating]       = useState(0)
   const [message, setMessage]     = useState('')
   const [productId, setProductId] = useState<number|null>(productOptions[0]?.id ?? null)
@@ -509,7 +511,7 @@ function FeedbackModal({ onClose, productOptions }: { onClose:()=>void; productO
         style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', backdropFilter:'blur(6px)', zIndex:900 }} />
       <motion.div initial={{ opacity:0, y:40, scale:.96 }} animate={{ opacity:1, y:0, scale:1 }} exit={{ opacity:0, y:24, scale:.97 }}
         transition={{ type:'spring', damping:28, stiffness:260 }}
-        style={{ position:'fixed', bottom:100, right:24, width:'min(400px,calc(100vw - 32px))', background:'rgba(14,11,8,0.97)', border:'1px solid var(--gold-border)', borderRadius:20, padding:26, zIndex:901, boxShadow:'0 32px 80px rgba(0,0,0,0.7)', backdropFilter:'blur(24px)' }}>
+        style={{ position:'fixed', bottom:isMobile ? 16 : 100, right:isMobile ? 16 : 24, left:isMobile ? 16 : 'auto', width:isMobile ? 'auto' : 'min(400px,calc(100vw - 32px))', maxHeight:isShortViewport ? 'calc(100vh - 120px)' : 'calc(100vh - 140px)', overflowY:'auto', background:'rgba(14,11,8,0.97)', border:'1px solid var(--gold-border)', borderRadius:isPhone ? 18 : 20, padding:isMobile ? 20 : 26, zIndex:901, boxShadow:'0 32px 80px rgba(0,0,0,0.7)', backdropFilter:'blur(24px)' }}>
         <div style={{ position:'absolute', top:0, left:24, right:24, height:1, background:'linear-gradient(90deg,transparent,rgba(245,200,66,0.45),transparent)' }} />
 
         <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', marginBottom:20 }}>
@@ -590,6 +592,7 @@ function FeedbackModal({ onClose, productOptions }: { onClose:()=>void; productO
 
 // ── Feedback Button ────────────────────────────────────────────────────────
 function FeedbackButton() {
+  const { isMobile } = useViewport()
   const [open, setOpen]         = useState(false)
   const [products, setProducts] = useState<FeedbackProductOption[]>([])
 
@@ -608,7 +611,7 @@ function FeedbackButton() {
       </AnimatePresence>
       <motion.button initial={{ scale:0, opacity:0 }} animate={{ scale:1, opacity:1 }} transition={{ delay:1.2, type:'spring', damping:18, stiffness:260 }}
         whileHover={{ scale:1.08 }} whileTap={{ scale:.93 }} onClick={() => setOpen(v => !v)}
-        style={{ position:'fixed', bottom:28, right:24, zIndex:800, display:'flex', alignItems:'center', gap:8, background:'var(--gold)', border:'none', borderRadius:999, padding:'11px 20px', fontSize:12, fontWeight:700, color:'#111', cursor:'pointer', fontFamily:'var(--sans)', boxShadow:'0 8px 28px rgba(245,200,66,0.3)', letterSpacing:'0.03em' }}>
+        style={{ position:'fixed', bottom:isMobile ? 18 : 28, right:isMobile ? 16 : 24, zIndex:800, display:'flex', alignItems:'center', gap:8, background:'var(--gold)', border:'none', borderRadius:999, padding:isMobile ? '11px 16px' : '11px 20px', fontSize:12, fontWeight:700, color:'#111', cursor:'pointer', fontFamily:'var(--sans)', boxShadow:'0 8px 28px rgba(245,200,66,0.3)', letterSpacing:'0.03em' }}>
         <MessageSquare size={15} />
         {open ? 'Close' : 'Feedback'}
       </motion.button>
@@ -621,6 +624,7 @@ interface ProductsProps { isAuthenticated?: boolean; onLogout?: () => void }
 
 export default function Products({ isAuthenticated=false, onLogout }: ProductsProps) {
   const navigate = useNavigate()
+  const { isPhone } = useViewport()
 
   const [products,     setProducts]     = useState<Product[]>([])
   const [flavors,      setFlavors]      = useState<FlavorItem[]>([])
@@ -716,9 +720,9 @@ export default function Products({ isAuthenticated=false, onLogout }: ProductsPr
           <button onClick={() => window.scrollTo({ top:0, behavior:'smooth' })} style={{ background:'none', border:'none', cursor:'pointer', padding:0 }}>
             <div style={{ display:'flex', alignItems:'center', gap:8 }}>
   <img src="/src/assets/img/logo24.png" alt="The Crunch logo" style={{ width:32, height:32, objectFit:'contain' }} />
-  <span style={{ fontFamily:'var(--serif)', fontWeight:700, fontSize:22, color:'var(--text)', letterSpacing:'-0.02em' }}>
+  {!isPhone && <span style={{ fontFamily:'var(--serif)', fontWeight:700, fontSize:22, color:'var(--text)', letterSpacing:'-0.02em' }}>
     The <span style={{ color:'var(--gold)' }}>Crunch</span>
-  </span>
+  </span>}
 </div>
           </button>
 

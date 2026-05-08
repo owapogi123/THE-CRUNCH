@@ -10,6 +10,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useAuth } from "../context/authcontext";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useViewport } from "@/hooks/use-tablet";
 import { cachePermissions, normalizeRole } from "@/lib/permissions";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -1090,8 +1091,10 @@ export default function SettingsPage() {
   const navigate = useNavigate();
   const { user, logout, isOnline } = useAuth();
   const isMobile = useIsMobile();
-  const shellPadX = isMobile ? 18 : 36;
-  const shellLeftInset = isMobile ? 96 : 132;
+  const { width } = useViewport();
+  const isTablet = width < 1100;
+  const shellPadX = isMobile ? 18 : isTablet ? 24 : 36;
+  const shellLeftInset = isTablet ? shellPadX : 132;
   const contentMaxWidth = 1120;
 
   const userRole = normalizeRole(user?.role) as Role;

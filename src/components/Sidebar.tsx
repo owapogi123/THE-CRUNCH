@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "../context/authcontext";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useViewport } from "@/hooks/use-tablet";
 import {
   PermissionKey,
   PermissionsMap,
@@ -111,6 +112,8 @@ export function Sidebar() {
   const navigate = useNavigate();
   const { user, logout, isOnline } = useAuth();
   const isMobile = useIsMobile();
+  const { width } = useViewport();
+  const isTablet = width < 1100;
 
   const normalizedRole = String(user?.role || "").trim().toLowerCase();
   const userRole = normalizeRole(normalizedRole) as Role;
@@ -176,7 +179,7 @@ export function Sidebar() {
         onClick={() => setIsOpen(!isOpen)}
         className={cn(
           "fixed z-50 p-3 bg-white rounded-xl shadow-lg",
-          isMobile ? "top-4 left-4" : "top-6 left-6",
+          isMobile ? "top-4 left-4" : isTablet ? "top-5 left-5" : "top-6 left-6",
         )}
         whileHover={{ scale: 1.05 }}
         whileTap={{ scale: 0.95 }}
@@ -240,7 +243,7 @@ export function Sidebar() {
             transition={{ type: "spring", damping: 25, stiffness: 200 }}
             className={cn(
               "fixed top-0 left-0 h-full bg-white p-6 flex flex-col shadow-2xl z-50",
-              isMobile ? "w-full max-w-[85vw]" : "w-72",
+              isMobile ? "w-full max-w-[85vw]" : isTablet ? "w-[22rem] max-w-[78vw]" : "w-72",
             )}
             style={{ fontFamily: "Poppins, sans-serif" }}
           >

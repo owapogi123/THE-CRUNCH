@@ -3651,13 +3651,13 @@ export default function Inventory() {
   return (
     <div className="flex min-h-screen bg-gray-50 font-[Poppins,sans-serif]">
       <Sidebar />
-      <main className="flex-1 p-8 pl-24">
+      <main className="tablet-shell flex-1">
         {/* Page header + clock */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4 }}
-          className="mb-2 flex items-start justify-between"
+          className="mb-2 flex flex-wrap items-start justify-between gap-4"
         >
           <div>
             <p className="text-xs text-gray-400 uppercase tracking-widest mb-1">Menu Administration</p>
@@ -3678,7 +3678,7 @@ export default function Inventory() {
           initial={{ opacity: 0, y: -6 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1, duration: 0.3 }}
-          className="flex justify-center mb-8"
+          className="mb-8 flex justify-start overflow-x-auto md:justify-center"
         >
           <div className="inline-flex bg-gray-100 rounded-[14px] p-1 gap-0.5">
             {[

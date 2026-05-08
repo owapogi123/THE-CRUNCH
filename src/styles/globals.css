@@ -160,6 +160,63 @@ html, body {
   max-width: 100vw;
 }
 
+body, #root {
+  width: 100%;
+  min-height: 100vh;
+}
+
+.tablet-shell {
+  padding: clamp(1rem, 2.5vw, 2rem);
+  padding-top: clamp(5rem, 8vw, 5.75rem);
+}
+
+.tablet-surface {
+  border-radius: 1.75rem;
+  padding: clamp(1rem, 2.5vw, 2rem);
+}
+
+.hide-scroll {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.hide-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.responsive-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.responsive-table-wrap > table {
+  min-width: 640px;
+}
+
+@media (min-width: 768px) {
+  .tablet-shell {
+    padding-left: clamp(1.25rem, 3vw, 1.75rem);
+    padding-right: clamp(1.25rem, 3vw, 1.75rem);
+  }
+}
+
+@media (min-width: 1024px) {
+  .tablet-shell {
+    padding-left: clamp(5.5rem, 8vw, 6.5rem);
+  }
+}
+
+@media (max-width: 1023px) {
+  .grid[class~="grid-cols-4"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .grid[class~="grid-cols-3"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
 @media (max-width: 767px) {
   * {
     max-width: 100%;
@@ -174,5 +231,15 @@ html, body {
     display: block;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+  }
+
+  .grid[class~="grid-cols-4"],
+  .grid[class~="grid-cols-3"],
+  .grid[class~="grid-cols-2"] {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .responsive-table-wrap > table {
+    min-width: 560px;
   }
 }

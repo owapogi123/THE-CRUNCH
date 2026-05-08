@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { api } from "../lib/api";
 import { useAuth } from "../context/authcontext";
+import { useViewport } from "@/hooks/use-tablet";
 
 const formatPHP = (value: number) =>
   new Intl.NumberFormat("en-PH", {
@@ -223,14 +224,15 @@ function RecipeSkeleton() {
 // ─── CASH TERMS MODAL ─────────────────────────────────────────────────────────
 function CashTermsModal({ onAccept, onDecline }: { onAccept: () => void; onDecline: () => void }) {
   const [checked, setChecked] = useState(false);
+  const { isMobile } = useViewport();
   return (
     <>
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onDecline}
         style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 700, backdropFilter: "blur(14px)" }} />
       <motion.div initial={{ opacity: 0, scale: 0.92, y: 28 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.94, y: 16 }} transition={{ ...SPG, delay: 0.04 }}
-        style={{ position: "fixed", top: "27%", left: "35%", transform: "translate(-50%,-50%)", zIndex: 800, width: "min(480px,92vw)", background: "#151210", borderRadius: 26, border: "1px solid rgba(240,237,232,0.1)", boxShadow: "0 40px 80px rgba(0,0,0,0.6)", overflow: "hidden" }}>
+        style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)", zIndex: 800, width: "min(480px,92vw)", background: "#151210", borderRadius: 26, border: "1px solid rgba(240,237,232,0.1)", boxShadow: "0 40px 80px rgba(0,0,0,0.6)", overflow: "hidden" }}>
         <div style={{ height: 3, background: "linear-gradient(90deg,#f5c842,rgba(245,200,66,0.3))" }} />
-        <div style={{ padding: "32px 28px 28px" }}>
+        <div style={{ padding: isMobile ? "24px 20px 20px" : "32px 28px 28px", maxHeight: "min(80vh, 720px)", overflowY: "auto" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
             <div style={{ width: 44, height: 44, borderRadius: 14, background: "rgba(245,200,66,0.1)", border: "1px solid rgba(245,200,66,0.22)", display: "flex", alignItems: "center", justifyContent: "center", color: "#f5c842", flexShrink: 0 }}>
               <Icon d={shieldD} size={18} />
@@ -249,7 +251,7 @@ function CashTermsModal({ onAccept, onDecline }: { onAccept: () => void; onDecli
             </div>
             <span style={{ fontSize: 12.5, color: "rgba(240,237,232,0.5)", lineHeight: 1.6 }}>I have read and agree to the Cash Payment Terms & Conditions.</span>
           </label>
-          <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 10 }}>
             <motion.button onClick={onDecline} whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} transition={SP}
               style={{ flex: 1, background: "rgba(240,237,232,0.05)", border: "1px solid rgba(240,237,232,0.12)", color: "rgba(240,237,232,0.5)", borderRadius: 12, padding: "13px 0", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
               Cancel
@@ -267,6 +269,7 @@ function CashTermsModal({ onAccept, onDecline }: { onAccept: () => void; onDecli
 
 // ─── PAYMENT METHOD SELECTOR ──────────────────────────────────────────────────
 function PaymentMethodSelector({ selected, onChange, disabled }: { selected: PaymentMethodType; onChange: (m: PaymentMethodType) => void; disabled?: boolean }) {
+  const { isMobile } = useViewport();
   const methods = [
     { id: "cash"  as const, label: "Cash",  sub: "Pay onsite at the store",  d: cashD,  rgb: "34,197,94"  },
     { id: "gcash" as const, label: "GCash", sub: "Pay now via GCash",        d: gcashD, rgb: "0,120,255"  },
@@ -274,7 +277,7 @@ function PaymentMethodSelector({ selected, onChange, disabled }: { selected: Pay
   return (
     <div style={{ marginBottom: 18 }}>
       <p style={{ fontSize: 10, fontWeight: 700, color: "rgba(240,237,232,0.3)", textTransform: "uppercase", letterSpacing: "0.14em", margin: "0 0 10px" }}>Payment Method</p>
-      <div style={{ background: "rgba(240,237,232,0.03)", border: "1px solid rgba(240,237,232,0.08)", borderRadius: 16, padding: 6, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, opacity: disabled ? 0.5 : 1, pointerEvents: disabled ? "none" : "auto" }}>
+      <div style={{ background: "rgba(240,237,232,0.03)", border: "1px solid rgba(240,237,232,0.08)", borderRadius: 16, padding: 6, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 6, opacity: disabled ? 0.5 : 1, pointerEvents: disabled ? "none" : "auto" }}>
         {methods.map(m => {
           const active = selected === m.id;
           return (
@@ -307,18 +310,20 @@ function PaymentMethodSelector({ selected, onChange, disabled }: { selected: Pay
 // ─── ORDER TYPE MODAL ─────────────────────────────────────────────────────────
 function OrderTypeModal({ onClose }: { onClose: () => void }) {
   const [view, setView] = useState<"choose" | "delivery">("choose");
+  const { width, isMobile } = useViewport();
+  const isNarrow = width < 900;
   return (
     <>
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}
         style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.72)", zIndex: 500, backdropFilter: "blur(10px)" }} />
       <motion.div initial={{ opacity: 0, scale: 0.9, y: 24 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.92, y: 16 }} transition={{ ...SPG, delay: 0.04 }}
-        style={{ position: "fixed", top: "27%", left: "27%", transform: "translate(-50%,-50%)", zIndex: 600, width: "min(720px,92vw)" }}>
+        style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)", zIndex: 600, width: "min(720px,92vw)", maxHeight: "88vh", overflowY: "auto" }}>
         <motion.button onClick={onClose} whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} transition={SP}
           style={{ position: "absolute", top: -14, right: -14, width: 36, height: 36, borderRadius: "50%", background: "#1e1b17", border: "1px solid rgba(240,237,232,0.14)", color: "rgba(240,237,232,0.55)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 700, zIndex: 10, fontFamily: "inherit" }}>×</motion.button>
         <AnimatePresence mode="wait">
           {view === "choose" ? (
             <motion.div key="choose" initial={{ opacity: 0, x: -18 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -18 }} transition={SPG}
-              style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+              style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "1fr 1fr", gap: 14 }}>
               {[
                 { icon: bagD,     title: "Pick-up Order",   desc: "Order online and pick up your items at the store when it's ready.", cta: "Browse the Menu",        action: onClose,                  ctaStyle: { background: "#f5c842", color: "#111" } },
                 { icon: scooterD, title: "Delivery Order",  desc: "Order for delivery through Foodpanda or Grab.",                     cta: "Order via Delivery App", action: () => setView("delivery"), ctaStyle: { background: "rgba(249,159,4,0.07)", border: "1px solid rgba(240,237,232,0.12)", color: "rgb(215,162,71)" } },
@@ -343,14 +348,14 @@ function OrderTypeModal({ onClose }: { onClose: () => void }) {
             </motion.div>
           ) : (
             <motion.div key="delivery" initial={{ opacity: 0, x: 18 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 18 }} transition={SPG}
-              style={{ background: "#151210", border: "1px solid rgba(240,237,232,0.09)", borderRadius: 24, padding: "36px 32px 32px" }}>
+              style={{ background: "#151210", border: "1px solid rgba(240,237,232,0.09)", borderRadius: 24, padding: isMobile ? "24px 20px 20px" : "36px 32px 32px" }}>
               <motion.button onClick={() => setView("choose")} whileHover={{ x: -2 }} whileTap={{ scale: 0.95 }} transition={SP}
                 style={{ background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, color: "rgba(240,237,232,0.35)", padding: 0, marginBottom: 24 }}>
                 ← Back
               </motion.button>
               <h3 style={{ fontSize: 24, fontWeight: 900, color: "#f0ede8", margin: "0 0 6px" }}>Select a delivery app</h3>
               <p style={{ fontSize: 13, color: "rgba(240,237,232,0.38)", margin: "0 0 28px" }}>Opens in a new tab.</p>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+              <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "1fr 1fr", gap: 14 }}>
                 {[
                   { label: "FoodPanda", desc: "Order via the FoodPanda app", href: DELIVERY_LINKS.foodpanda, color: "#e91e8c", rgba: "233,30,140" },
                   { label: "Grab",      desc: "Order via the Grab app",      href: DELIVERY_LINKS.grab,      color: "#00b14f", rgba: "0,177,79"   },
@@ -375,6 +380,7 @@ function OrderTypeModal({ onClose }: { onClose: () => void }) {
 
 // ─── TRACKING PANEL ───────────────────────────────────────────────────────────
 function TrackingPanel({ orders }: { orders: CustomerOrder[] }) {
+  const { isNarrowPhone } = useViewport();
   if (orders.length === 0) return null;
   return (
     <div style={{ marginBottom: 34, display: "grid", gap: 14 }}>
@@ -383,7 +389,7 @@ function TrackingPanel({ orders }: { orders: CustomerOrder[] }) {
         <span style={{ fontSize: 12, color: "rgba(240,237,232,0.38)" }}>{orders.length} active order{orders.length !== 1 ? "s" : ""}</span>
       </div>
       {orders.map(order => (
-        <div key={order.id} style={{ background: "#151210", border: "1px solid rgba(240,237,232,0.08)", borderRadius: 22, padding: "22px 24px", display: "grid", gap: 14 }}>
+        <div key={order.id} style={{ background: "#151210", border: "1px solid rgba(240,237,232,0.08)", borderRadius: 22, padding: isNarrowPhone ? "18px 16px" : "22px 24px", display: "grid", gap: 14 }}>
           <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
@@ -396,7 +402,7 @@ function TrackingPanel({ orders }: { orders: CustomerOrder[] }) {
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {order.items.map((item, i) => (
+            {order.items.map((item) => (
               <span key={`${order.id}-${item.name}-${item.quantity}`} style={{ fontSize: 11, fontWeight: 600, padding: "7px 12px", borderRadius: 999, background: "rgba(240,237,232,0.05)", border: "1px solid rgba(240,237,232,0.08)", color: "rgba(240,237,232,0.55)" }}>
                 {item.quantity}x {item.name}
               </span>
@@ -410,6 +416,7 @@ function TrackingPanel({ orders }: { orders: CustomerOrder[] }) {
 
 // ─── HISTORY DRAWER ───────────────────────────────────────────────────────────
 function HistoryDrawer({ orders, menuItems, onClose }: { orders: CustomerOrder[]; menuItems: Recipe[]; onClose: () => void }) {
+  const { isMobile, isPhone, isShortViewport } = useViewport();
   const [expanded, setExpanded] = useState<number | null>(orders[0]?.id ?? null);
   const findImg = (name: string) =>
     menuItems.find((r) => r.name.trim().toLowerCase() === name.trim().toLowerCase())?.image ?? "/placeholder.jpg";
@@ -419,10 +426,10 @@ function HistoryDrawer({ orders, menuItems, onClose }: { orders: CustomerOrder[]
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}
         style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200, backdropFilter: "blur(8px)" }} />
       <motion.div initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={SPG}
-        style={{ position: "fixed", top: 0, right: 0, bottom: 0, width: "min(460px,100vw)", background: "#151210", zIndex: 300, display: "flex", flexDirection: "column", boxShadow: "-24px 0 80px rgba(0,0,0,0.5)", borderLeft: "1px solid rgba(240,237,232,0.07)" }}>
+        style={{ position: "fixed", top: 0, right: 0, bottom: 0, width: isMobile ? "100vw" : "min(460px,100vw)", background: "#151210", zIndex: 300, display: "flex", flexDirection: "column", boxShadow: "-24px 0 80px rgba(0,0,0,0.5)", borderLeft: "1px solid rgba(240,237,232,0.07)" }}>
         <div
           style={{
-            padding: "28px 28px 20px",
+            padding: isPhone ? "20px 18px 16px" : isMobile ? "24px 20px 18px" : "28px 28px 20px",
             borderBottom: "1px solid rgba(240,237,232,0.07)",
             display: "flex",
             justifyContent: "space-between",
@@ -459,7 +466,7 @@ function HistoryDrawer({ orders, menuItems, onClose }: { orders: CustomerOrder[]
             {"\u00D7"}
           </motion.button>
         </div>
-        <div style={{ flex: 1, overflowY: "auto", padding: "16px 24px 32px" }}>
+        <div style={{ flex: 1, overflowY: "auto", padding: isPhone ? "12px 16px 24px" : isMobile ? "14px 18px 28px" : "16px 24px 32px", paddingBottom: isShortViewport ? 18 : undefined }}>
           {orders.length === 0 ? (
             <div style={{ textAlign: "center", paddingTop: 80, display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
               <span style={{ color: "rgba(240,237,232,0.2)" }}><Icon d={clipboardD} size={42} sw="1.2" /></span>
@@ -577,6 +584,7 @@ function OrderDrawer({ cart, onClose, onRemove, onChangeQty, onClear, onSendPaym
   paymentSession: PaymentSessionState | null; paymentMessage: string | null; isSubmitting: boolean;
   selectedPaymentMethod: PaymentMethodType; onPaymentMethodChange: (m: PaymentMethodType) => void; onRequestCashTerms: () => void;
 }) {
+  const { isMobile, isPhone, isShortViewport } = useViewport();
   const total    = cart.reduce((s, i) => s + i.recipe.price * i.quantity, 0);
   const totalQty = cart.reduce((s, i) => s + i.quantity, 0);
   const isCash   = selectedPaymentMethod === "cash";
@@ -588,8 +596,8 @@ function OrderDrawer({ cart, onClose, onRemove, onChangeQty, onClear, onSendPaym
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}
         style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200, backdropFilter: "blur(8px)" }} />
       <motion.div initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={SPG}
-        style={{ position: "fixed", top: 0, right: 0, bottom: 0, width: "min(420px,100vw)", background: "#151210", zIndex: 300, display: "flex", flexDirection: "column", boxShadow: "-24px 0 80px rgba(0,0,0,0.5)", borderLeft: "1px solid rgba(240,237,232,0.07)" }}>
-        <div style={{ padding: "24px 28px 18px", borderBottom: "1px solid rgba(240,237,232,0.07)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        style={{ position: "fixed", top: 0, right: 0, bottom: 0, width: isMobile ? "100vw" : "min(420px,100vw)", background: "#151210", zIndex: 300, display: "flex", flexDirection: "column", boxShadow: "-24px 0 80px rgba(0,0,0,0.5)", borderLeft: "1px solid rgba(240,237,232,0.07)" }}>
+        <div style={{ padding: isPhone ? "20px 18px 16px" : isMobile ? "22px 20px 18px" : "24px 28px 18px", borderBottom: "1px solid rgba(240,237,232,0.07)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
           <div>
             <h2 style={{ fontSize: 20, fontWeight: 800, color: "#f0ede8", margin: 0 }}>Your Order</h2>
             <p style={{ fontSize: 12, color: "rgba(240,237,232,0.35)", margin: "4px 0 0" }}>{totalQty} item{totalQty !== 1 ? "s" : ""}</p>
@@ -624,7 +632,7 @@ function OrderDrawer({ cart, onClose, onRemove, onChangeQty, onClear, onSendPaym
           </motion.button>
           </div>
         </div>
-        <div style={{ flex: 1, overflowY: "auto", padding: "12px 28px" }}>
+        <div style={{ flex: 1, overflowY: "auto", padding: isPhone ? "10px 16px" : isMobile ? "12px 18px" : "12px 28px", paddingBottom: isShortViewport ? 12 : undefined }}>
           <AnimatePresence initial={false}>
             {cart.length === 0 ? (
               <motion.div key="empty" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={SPG} style={{ textAlign: "center", paddingTop: 88 }}>
@@ -637,7 +645,7 @@ function OrderDrawer({ cart, onClose, onRemove, onChangeQty, onClear, onSendPaym
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <p style={{ fontSize: 13, fontWeight: 600, color: "#f0ede8", margin: "0 0 3px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.recipe.name}</p>
                   {item.flavors.length > 0 && <p style={{ fontSize: 11, color: "rgba(240,237,232,0.35)", margin: "0 0 10px" }}>{item.flavors.join(" • ")}</p>}
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div style={{ display: "flex", alignItems: isPhone ? "flex-start" : "center", justifyContent: "space-between", gap: 10, flexDirection: isPhone ? "column" : "row" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(240,237,232,0.06)", borderRadius: 10, padding: "5px 12px", border: "1px solid rgba(240,237,232,0.08)" }}>
                       <motion.button whileTap={{ scale: 0.75 }} transition={SP} onClick={() => onChangeQty(item.recipe.id, -1)} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(240,237,232,0.6)", fontSize: 16, lineHeight: 1, padding: 0, fontWeight: 700 }}>−</motion.button>
                       <AnimatePresence mode="wait">
@@ -645,7 +653,7 @@ function OrderDrawer({ cart, onClose, onRemove, onChangeQty, onClear, onSendPaym
                       </AnimatePresence>
                       <motion.button whileTap={{ scale: 0.75 }} transition={SP} onClick={() => onChangeQty(item.recipe.id, 1)} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(240,237,232,0.6)", fontSize: 16, lineHeight: 1, padding: 0, fontWeight: 700 }}>+</motion.button>
                     </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, alignSelf: isPhone ? "stretch" : "auto", width: isPhone ? "100%" : "auto", justifyContent: isPhone ? "space-between" : "flex-start" }}>
                       <AnimatePresence mode="wait">
                         <motion.span key={item.quantity} initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 4 }} transition={SPG} style={{ fontSize: 14, fontWeight: 700, color: "#f5c842" }}>{formatPHP(Number(item.recipe.price * item.quantity))}</motion.span>
                       </AnimatePresence>
@@ -660,8 +668,8 @@ function OrderDrawer({ cart, onClose, onRemove, onChangeQty, onClear, onSendPaym
         <AnimatePresence>
           {cart.length > 0 && (
             <motion.div key="footer" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }} transition={SPG}
-              style={{ padding: "20px 28px 32px", borderTop: "1px solid rgba(240,237,232,0.07)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+              style={{ padding: isPhone ? "18px 16px 24px" : isMobile ? "20px 18px 26px" : "20px 28px 32px", borderTop: "1px solid rgba(240,237,232,0.07)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: isPhone ? "flex-start" : "center", flexDirection: isPhone ? "column" : "row", gap: isPhone ? 8 : 12, marginBottom: 18 }}>
                 <span style={{ fontSize: 13, color: "rgba(240,237,232,0.4)" }}>Total</span>
                 <AnimatePresence mode="wait">
                   <motion.span key={Math.round(total * 100)} initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }} transition={SPG} style={{ fontSize: 28, fontWeight: 900, color: "#f5c842", letterSpacing: "-0.03em" }}>{formatPHP(Number(total))}</motion.span>
@@ -695,12 +703,13 @@ function OrderDrawer({ cart, onClose, onRemove, onChangeQty, onClear, onSendPaym
 
 // ─── CHECKOUT MODAL ───────────────────────────────────────────────────────────
 function CheckoutModal({ orderNumber, onClose }: { orderNumber: string | null; onClose: () => void }) {
+  const { isMobile, isPhone } = useViewport();
   return (
     <>
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}
         style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 400, backdropFilter: "blur(12px)" }} />
       <motion.div initial={{ opacity: 0, scale: 0.88, y: 32 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} transition={{ ...SPG, delay: 0.04 }}
-        style={{ position: "fixed", top: "29%", left: "38%", transform: "translate(-50%,-50%)", background: "#151210", borderRadius: 28, padding: "48px 40px", zIndex: 500, textAlign: "center", width: "min(360px,90vw)", boxShadow: "0 40px 80px rgba(0,0,0,0.5)", border: "1px solid rgba(240,237,232,0.08)" }}>
+        style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)", background: "#151210", borderRadius: isPhone ? 22 : 28, padding: isMobile ? "32px 22px" : "48px 40px", zIndex: 500, textAlign: "center", width: "min(360px,90vw)", boxShadow: "0 40px 80px rgba(0,0,0,0.5)", border: "1px solid rgba(240,237,232,0.08)" }}>
         <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ delay: 0.18, type: "spring", stiffness: 280, damping: 20 }}
           style={{ width: 72, height: 72, borderRadius: "50%", background: "#f5c842", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 24px", boxShadow: "0 8px 28px rgba(245,200,66,0.3)", fontSize: 30 }}>✓</motion.div>
         <motion.h2 initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.24, ...SPG }} style={{ fontSize: 24, fontWeight: 800, color: "#f0ede8", marginBottom: 10 }}>Order Placed!</motion.h2>
@@ -732,11 +741,12 @@ function RecipeCard({ recipe, isFav, justAdded, flavorSel, variantSel, onToggleF
 }) {
   const isAvailable = recipe.available;
   const [imgErr, setImgErr] = useState(false);
+  const { isNarrowPhone, isPhone } = useViewport();
 
   return (
     <motion.div layout initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} transition={SPG}
       whileHover={{ borderColor: isAvailable ? "rgba(245,200,66,0.22)" : "rgba(240,237,232,0.1)" }}
-      style={{ background: "#151210", borderRadius: 24, padding: "clamp(20px,4vw,32px) clamp(20px,4vw,36px)", border: "1px solid rgba(240,237,232,0.07)", display: "flex", flexWrap: "wrap", gap: "clamp(20px,4vw,40px)", alignItems: "flex-start", position: "relative", overflow: "hidden", opacity: isAvailable ? 1 : 0.72 }}>
+      style={{ background: "#151210", borderRadius: 24, padding: isNarrowPhone ? "18px 16px" : "clamp(20px,4vw,32px) clamp(20px,4vw,36px)", border: "1px solid rgba(240,237,232,0.07)", display: "flex", flexWrap: "wrap", gap: isNarrowPhone ? 18 : "clamp(20px,4vw,40px)", alignItems: "flex-start", position: "relative", overflow: "hidden", opacity: isAvailable ? 1 : 0.72 }}>
 
       <div style={{ position: "absolute", top: 0, left: 32, right: 32, height: 2, background: isAvailable ? "linear-gradient(90deg,transparent,rgba(245,200,66,0.18),transparent)" : "linear-gradient(90deg,transparent,rgba(240,237,232,0.06),transparent)" }} />
 
@@ -759,14 +769,14 @@ function RecipeCard({ recipe, isFav, justAdded, flavorSel, variantSel, onToggleF
         {recipe.note && <p style={{ fontSize: 11, color: "#f5c842", fontWeight: 600, marginBottom: 16 }}>{recipe.note}</p>}
 
         <p style={{ fontSize: 10, fontWeight: 700, color: "rgba(240,237,232,0.2)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.12em" }}>Nutrition</p>
-        <div style={{ display: "flex", gap: "clamp(14px,3vw,24px)", marginBottom: 20 }}>
+        <div style={{ display: "flex", gap: isNarrowPhone ? 12 : "clamp(14px,3vw,24px)", marginBottom: 20, flexWrap: isNarrowPhone ? "wrap" : "nowrap" }}>
           {[
             { label: "Cal",     unit: "kcal", value: recipe.nutrition.calories },
             { label: "Protein", unit: "g",    value: recipe.nutrition.protein  },
             { label: "Fats",    unit: "g",    value: recipe.nutrition.fats     },
             { label: "Carbs",   unit: "g",    value: recipe.nutrition.carbs    },
           ].map(n => (
-            <div key={n.label} style={{ textAlign: "center" }}>
+            <div key={n.label} style={{ textAlign: "center", minWidth: isNarrowPhone ? 58 : undefined }}>
               <div style={{ fontSize: "clamp(16px,2.5vw,20px)", fontWeight: 800, color: isAvailable ? "#f0ede8" : "rgba(240,237,232,0.3)", lineHeight: 1 }}>{n.value}</div>
               <div style={{ fontSize: 9.5, fontWeight: 600, color: "rgba(240,237,232,0.35)", marginTop: 3 }}>{n.label}</div>
               <div style={{ fontSize: 9, color: "rgba(240,237,232,0.2)" }}>{n.unit}</div>
@@ -779,14 +789,14 @@ function RecipeCard({ recipe, isFav, justAdded, flavorSel, variantSel, onToggleF
           <FlavorPicker maxFlavors={recipe.maxFlavors} selected={flavorSel} onChange={onFlavorChange} flavors={flavors} />
         )}
 
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: isNarrowPhone ? "stretch" : "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", width: isNarrowPhone ? "100%" : "auto" }}>
             <motion.button onClick={onToggleFav} whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.93 }} transition={SP}
-              style={{ display: "flex", alignItems: "center", gap: 7, background: isFav ? "rgba(245,200,66,0.1)" : "rgba(240,237,232,0.05)", color: isFav ? "#f5c842" : "rgba(240,237,232,0.45)", border: `1px solid ${isFav ? "rgba(245,200,66,0.3)" : "rgba(240,237,232,0.1)"}`, borderRadius: 12, padding: "10px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+              style={{ display: "flex", alignItems: "center", gap: 7, background: isFav ? "rgba(245,200,66,0.1)" : "rgba(240,237,232,0.05)", color: isFav ? "#f5c842" : "rgba(240,237,232,0.45)", border: `1px solid ${isFav ? "rgba(245,200,66,0.3)" : "rgba(240,237,232,0.1)"}`, borderRadius: 12, padding: "10px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", flex: isNarrowPhone ? "1 1 100%" : "0 0 auto", justifyContent: "center" }}>
               {isFav ? "★ Saved" : "☆ Save"}
             </motion.button>
             <motion.button onClick={() => { if (isAvailable) onAddToCart(); }} disabled={!isAvailable} whileHover={isAvailable ? { scale: 1.04 } : {}} whileTap={isAvailable ? { scale: 0.93 } : {}} transition={SP}
-              style={{ display: "flex", alignItems: "center", gap: 7, background: !isAvailable ? "rgba(240,237,232,0.04)" : justAdded ? "rgba(74,222,128,0.1)" : "#f5c842", color: !isAvailable ? "rgba(240,237,232,0.2)" : justAdded ? "#4ade80" : "#111", border: !isAvailable ? "1px solid rgba(240,237,232,0.1)" : justAdded ? "1px solid rgba(74,222,128,0.25)" : "none", borderRadius: 12, padding: "10px 22px", fontSize: 13, fontWeight: 700, cursor: !isAvailable ? "not-allowed" : "pointer", fontFamily: "inherit", minWidth: 140, justifyContent: "center", opacity: !isAvailable ? 0.55 : 1 }}>
+              style={{ display: "flex", alignItems: "center", gap: 7, background: !isAvailable ? "rgba(240,237,232,0.04)" : justAdded ? "rgba(74,222,128,0.1)" : "#f5c842", color: !isAvailable ? "rgba(240,237,232,0.2)" : justAdded ? "#4ade80" : "#111", border: !isAvailable ? "1px solid rgba(240,237,232,0.1)" : justAdded ? "1px solid rgba(74,222,128,0.25)" : "none", borderRadius: 12, padding: "10px 22px", fontSize: 13, fontWeight: 700, cursor: !isAvailable ? "not-allowed" : "pointer", fontFamily: "inherit", minWidth: isNarrowPhone ? 0 : 140, flex: isNarrowPhone ? "1 1 100%" : "0 0 auto", justifyContent: "center", opacity: !isAvailable ? 0.55 : 1 }}>
               <AnimatePresence mode="wait">
                 <motion.span key={!isAvailable ? "unavailable" : justAdded ? "added" : "add"} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={SP}>
                   {!isAvailable ? "Not Available" : justAdded ? "Added!" : "Add to Order"}
@@ -794,7 +804,7 @@ function RecipeCard({ recipe, isFav, justAdded, flavorSel, variantSel, onToggleF
               </AnimatePresence>
             </motion.button>
           </div>
-          <div style={{ textAlign: "right" }}>
+          <div style={{ textAlign: isNarrowPhone ? "left" : "right", width: isNarrowPhone ? "100%" : "auto" }}>
             <div style={{ fontSize: 10, color: "rgba(240,237,232,0.25)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 2 }}>Price</div>
             <div style={{ fontSize: "clamp(20px,3vw,26px)", fontWeight: 900, color: isAvailable ? "#f5c842" : "rgba(240,237,232,0.3)", letterSpacing: "-0.04em" }}>{formatPHP(Number(recipe.price))}</div>
           </div>
@@ -802,7 +812,7 @@ function RecipeCard({ recipe, isFav, justAdded, flavorSel, variantSel, onToggleF
       </div>
 
       <motion.div whileHover={isAvailable ? { scale: 1.05 } : {}} transition={SPG}
-        style={{ width: "clamp(120px,20vw,200px)", height: "clamp(120px,20vw,200px)", borderRadius: "50%", overflow: "hidden", flexShrink: 0, boxShadow: "0 12px 48px rgba(0,0,0,0.45)", border: "1px solid rgba(240,237,232,0.08)", alignSelf: "center", position: "relative", background: "#1a1208" }}>
+        style={{ width: isPhone ? "clamp(120px,34vw,160px)" : "clamp(120px,20vw,200px)", height: isPhone ? "clamp(120px,34vw,160px)" : "clamp(120px,20vw,200px)", borderRadius: "50%", overflow: "hidden", flexShrink: 0, boxShadow: "0 12px 48px rgba(0,0,0,0.45)", border: "1px solid rgba(240,237,232,0.08)", alignSelf: "center", position: "relative", background: "#1a1208", margin: isNarrowPhone ? "0 auto" : undefined }}>
         <img
           src={imgErr ? "/placeholder.jpg" : recipe.image}
           alt={recipe.name}
@@ -821,18 +831,19 @@ function RecipeCard({ recipe, isFav, justAdded, flavorSel, variantSel, onToggleF
 
 // ─── USER PILL ────────────────────────────────────────────────────────────────
 function UserPill({ name }: { name: string }) {
+  const { isNarrowPhone } = useViewport();
   const initials = name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.85 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={SPG}
-      style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(245,200,66,0.07)", border: "1px solid rgba(245,200,66,0.18)", borderRadius: 10, padding: "6px 12px 6px 8px" }}
+      style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(245,200,66,0.07)", border: "1px solid rgba(245,200,66,0.18)", borderRadius: 10, padding: isNarrowPhone ? "6px 10px 6px 8px" : "6px 12px 6px 8px", minWidth: 0 }}
     >
       <div style={{ width: 26, height: 26, borderRadius: "50%", background: "linear-gradient(135deg,#f5c842,#e6a800)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
         <span style={{ fontSize: 10, fontWeight: 800, color: "#111" }}>{initials}</span>
       </div>
-      <span style={{ fontSize: 12, fontWeight: 600, color: "rgba(240,237,232,0.65)", maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name.split(" ")[0]}</span>
+      <span style={{ fontSize: 12, fontWeight: 600, color: "rgba(240,237,232,0.65)", maxWidth: isNarrowPhone ? 68 : 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name.split(" ")[0]}</span>
     </motion.div>
   );
 }
@@ -840,6 +851,8 @@ function UserPill({ name }: { name: string }) {
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 export default function Delicacy() {
   const navigate = useNavigate();
+  const { width, isMobile, isTablet, isNarrowPhone } = useViewport();
+  const isNarrow = width < 900;
 
   // ── Auth from shared context (stays in sync with AboutTheCrunch) ──
   const { user, logout } = useAuth();
@@ -1203,25 +1216,25 @@ export default function Delicacy() {
         initial={{ y: -80, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ duration: 0.65, ease: EASE }}
-        style={{ position: "sticky", top: 0, zIndex: 100, background: scrolled ? "rgba(14,12,10,0.96)" : "rgba(14,12,10,0.80)", backdropFilter: "blur(24px)", borderBottom: "1px solid rgba(240,237,232,0.07)", padding: "0 clamp(16px,4vw,40px)", height: 68, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        style={{ position: "sticky", top: 0, zIndex: 100, background: scrolled ? "rgba(14,12,10,0.96)" : "rgba(14,12,10,0.80)", backdropFilter: "blur(24px)", borderBottom: "1px solid rgba(240,237,232,0.07)", padding: isNarrowPhone ? "10px 14px" : "0 clamp(16px,4vw,40px)", minHeight: 68, display: "flex", justifyContent: "space-between", alignItems: "center", gap: isNarrowPhone ? 10 : 12, flexWrap: isNarrow ? "wrap" : "nowrap", paddingTop: isNarrow && !isNarrowPhone ? 12 : undefined, paddingBottom: isNarrow && !isNarrowPhone ? 12 : undefined }}>
 
-        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:8, minWidth: 0 }}>
   <img src="/src/assets/img/logo24.png" alt="The Crunch logo" style={{ width:32, height:32, objectFit:'contain' }} />
-  <span style={{ fontSize: 20, fontWeight: 900, color: "#f0ede8" }}>The <span style={{ color: "#f5c842" }}>Crunch</span></span>
+  {!isNarrowPhone && <span style={{ fontSize: 20, fontWeight: 900, color: "#f0ede8" }}>The <span style={{ color: "#f5c842" }}>Crunch</span></span>}
 </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: isNarrowPhone ? 6 : 4, flexWrap: "wrap", justifyContent: isNarrow ? "flex-start" : "flex-end", width: isNarrow ? "100%" : "auto" }}>
           {NAV_LINKS.map(item => (
             <motion.button key={item.label} whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} transition={SP}
               onClick={() => item.label === "Menu" ? setOrderTypeOpen(true) : navigate(item.path)}
-              style={{ background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13.5, fontWeight: 500, color: "rgba(240,237,232,0.45)", padding: "7px 14px", borderRadius: 8 }}
+              style={{ background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: isNarrowPhone ? 12.5 : 13.5, fontWeight: 500, color: "rgba(240,237,232,0.45)", padding: isNarrowPhone ? "7px 10px" : "7px 14px", borderRadius: 8 }}
               onMouseEnter={e => { e.currentTarget.style.color = "#f0ede8"; e.currentTarget.style.background = "rgba(240,237,232,0.07)"; }}
               onMouseLeave={e => { e.currentTarget.style.color = "rgba(240,237,232,0.45)"; e.currentTarget.style.background = "transparent"; }}>
               {item.label}
             </motion.button>
           ))}
 
-          <div style={{ width: 1, height: 16, background: "rgba(240,237,232,0.12)", margin: "0 4px" }} />
+          {!isNarrowPhone && <div style={{ width: 1, height: 16, background: "rgba(240,237,232,0.12)", margin: "0 4px" }} />}
 
           {/* History */}
           <motion.button whileHover={{ scale: 1.06 }} whileTap={{ scale: 0.9 }} transition={SP} onClick={() => setHistoryOpen(true)} title="Order History"
@@ -1239,8 +1252,8 @@ export default function Delicacy() {
 
           {/* My Order */}
           <motion.button whileHover={{ scale: 1.06 }} whileTap={{ scale: 0.9 }} transition={SP} onClick={() => setDrawerOpen(true)}
-            style={{ position: "relative", background: "#f5c842", color: "#111", border: "none", borderRadius: 10, padding: "9px 20px", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
-            My Order
+            style={{ position: "relative", background: "#f5c842", color: "#111", border: "none", borderRadius: 10, padding: isNarrowPhone ? "9px 14px" : "9px 20px", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+            {isNarrowPhone ? "Order" : "My Order"}
             <AnimatePresence>
               {totalItems > 0 && (
                 <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }} transition={SP}
@@ -1262,7 +1275,7 @@ export default function Delicacy() {
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: 10 }}
                 transition={SPG}
-                style={{ display: "flex", alignItems: "center", gap: 8 }}
+                style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, maxWidth: "100%", flexWrap: isNarrowPhone ? "wrap" : "nowrap" }}
               >
                 <UserPill name={customerName} />
                 <motion.button
@@ -1270,8 +1283,8 @@ export default function Delicacy() {
                   whileTap={{ scale: 0.9 }}
                   transition={SP}
                   onClick={handleLogout}
-                  style={{ background: "rgba(240,237,232,0.06)", color: "#f0ede8", border: "1px solid rgba(240,237,232,0.12)", borderRadius: 10, padding: "9px 18px", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600 }}>
-                  Log Out
+                  style={{ background: "rgba(240,237,232,0.06)", color: "#f0ede8", border: "1px solid rgba(240,237,232,0.12)", borderRadius: 10, padding: isNarrowPhone ? "9px 12px" : "9px 18px", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600 }}>
+                  {isNarrowPhone ? "Logout" : "Log Out"}
                 </motion.button>
               </motion.div>
             )}
@@ -1280,7 +1293,7 @@ export default function Delicacy() {
       </motion.nav>
 
       {/* ── MAIN ── */}
-      <div style={{ maxWidth: 1200, margin: "0 auto", padding: "clamp(32px,5vw,52px) clamp(16px,4vw,40px) 0", position: "relative", zIndex: 1 }}>
+      <div style={{ maxWidth: 1200, margin: "0 auto", padding: "clamp(24px,5vw,52px) clamp(16px,4vw,40px) 0", position: "relative", zIndex: 1 }}>
 
         {/* Hero */}
         <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1, duration: 0.75, ease: EASE }} style={{ marginBottom: 36 }}>
@@ -1300,12 +1313,12 @@ export default function Delicacy() {
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -8, scale: 0.92 }}
                   transition={SPG}
-                  style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(245,200,66,0.06)", border: "1px solid rgba(245,200,66,0.14)", borderRadius: 14, padding: "10px 16px" }}
+                  style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(245,200,66,0.06)", border: "1px solid rgba(245,200,66,0.14)", borderRadius: 14, padding: isNarrowPhone ? "10px 12px" : "10px 16px", maxWidth: "100%" }}
                 >
                   <div style={{ color: "#f5c842", display: "flex" }}><Icon d={userD} size={15} /></div>
-                  <div>
+                  <div style={{ minWidth: 0 }}>
                     <p style={{ fontSize: 9, fontWeight: 700, color: "rgba(245,200,66,0.55)", textTransform: "uppercase", letterSpacing: "0.14em", margin: "0 0 1px" }}>Welcome back</p>
-                    <p style={{ fontSize: 13, fontWeight: 700, color: "#f0ede8", margin: 0 }}>{customerName}</p>
+                    <p style={{ fontSize: 13, fontWeight: 700, color: "#f0ede8", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{customerName}</p>
                   </div>
                 </motion.div>
               )}
@@ -1317,26 +1330,26 @@ export default function Delicacy() {
 
         {/* Category Tabs */}
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.18, duration: 0.65, ease: EASE }}
-          style={{ display: "flex", gap: 0, marginBottom: 40, borderBottom: "1px solid rgba(240,237,232,0.07)", overflowX: "auto" }}>
+          style={{ display: "flex", gap: 0, marginBottom: 40, borderBottom: "1px solid rgba(240,237,232,0.07)", overflowX: "auto", scrollbarWidth: "none" }}>
           {(loading ? ["All", "Chicken", "Sides", "Drinks"] : categories).map(cat => (
             <motion.button key={cat} onClick={() => setActiveCategory(cat)} whileTap={{ scale: 0.95 }} transition={SP}
-              style={{ background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 14, fontWeight: activeCategory === cat ? 700 : 400, color: activeCategory === cat ? "#f5c842" : "rgba(240,237,232,0.3)", padding: "13px 22px", position: "relative", whiteSpace: "nowrap" }}>
+              style={{ background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: isNarrowPhone ? 13 : 14, fontWeight: activeCategory === cat ? 700 : 400, color: activeCategory === cat ? "#f5c842" : "rgba(240,237,232,0.3)", padding: isNarrowPhone ? "12px 16px" : "13px 22px", position: "relative", whiteSpace: "nowrap" }}>
               {cat}
               {activeCategory === cat && <motion.div layoutId="catTab" transition={SPG} style={{ position: "absolute", bottom: -1, left: 0, right: 0, height: 2, background: "#f5c842", borderRadius: 2 }} />}
             </motion.button>
           ))}
         </motion.div>
 
-        <div style={{ display: "flex", gap: "clamp(20px,4vw,36px)" }}>
+        <div style={{ display: "flex", flexDirection: isMobile || isTablet ? "column" : "row", gap: "clamp(20px,4vw,36px)" }}>
           {/* Meal Sidebar */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 44, paddingTop: 8, minWidth: 56, alignItems: "center", position: "relative" }}>
-            <div style={{ position: "absolute", top: 0, bottom: 0, left: "50%", width: 1, background: "rgba(240,237,232,0.06)", transform: "translateX(-50%)" }} />
+          <div style={{ display: "flex", flexDirection: isMobile || isTablet ? "row" : "column", gap: isMobile || isTablet ? 14 : 44, paddingTop: isMobile || isTablet ? 0 : 8, minWidth: isMobile || isTablet ? 0 : 56, alignItems: "center", position: "relative", overflowX: isMobile || isTablet ? "auto" : "visible", paddingBottom: isMobile || isTablet ? 4 : 0, scrollbarWidth: "none" }}>
+            <div style={{ position: "absolute", top: isMobile || isTablet ? "50%" : 0, bottom: isMobile || isTablet ? "auto" : 0, left: isMobile || isTablet ? 0 : "50%", right: isMobile || isTablet ? 0 : "auto", width: isMobile || isTablet ? "100%" : 1, height: isMobile || isTablet ? 1 : "auto", background: "rgba(240,237,232,0.06)", transform: isMobile || isTablet ? "translateY(-50%)" : "translateX(-50%)" }} />
             {(loading ? ["Breakfast", "Lunch", "Dinner"] : mealTypes).map((meal, mi) => (
               <motion.button key={meal} initial={{ opacity: 0, x: -14 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.6, ease: EASE, delay: 0.22 + mi * 0.07 }} onClick={() => setActiveMeal(meal)} whileHover={{ x: 2 }} whileTap={{ scale: 0.9 }}
-                style={{ background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", padding: 0, position: "relative", zIndex: 1 }}>
-                <span style={{ fontSize: 11.5, fontWeight: activeMeal === meal ? 700 : 400, color: activeMeal === meal ? "#f5c842" : "rgba(240,237,232,0.22)", writingMode: "vertical-rl", transform: "rotate(180deg)", letterSpacing: "0.1em" }}>{meal}</span>
+                style={{ background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", padding: isMobile || isTablet ? "10px 0" : 0, position: "relative", zIndex: 1 }}>
+                <span style={{ fontSize: 11.5, fontWeight: activeMeal === meal ? 700 : 400, color: activeMeal === meal ? "#f5c842" : "rgba(240,237,232,0.22)", writingMode: isMobile || isTablet ? "horizontal-tb" : "vertical-rl", transform: isMobile || isTablet ? "none" : "rotate(180deg)", letterSpacing: "0.1em", whiteSpace: "nowrap" }}>{meal}</span>
                 <AnimatePresence>
-                  {activeMeal === meal && <motion.div layoutId="mealDot" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }} transition={SP} style={{ position: "absolute", right: -12, top: "50%", transform: "translateY(-50%)", width: 5, height: 5, borderRadius: "50%", background: "#f5c842" }} />}
+                  {activeMeal === meal && <motion.div layoutId="mealDot" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }} transition={SP} style={{ position: "absolute", right: isMobile || isTablet ? "50%" : -12, top: isMobile || isTablet ? "auto" : "50%", bottom: isMobile || isTablet ? -4 : "auto", transform: isMobile || isTablet ? "translateX(50%)" : "translateY(-50%)", width: 5, height: 5, borderRadius: "50%", background: "#f5c842" }} />}
                 </AnimatePresence>
               </motion.button>
             ))}

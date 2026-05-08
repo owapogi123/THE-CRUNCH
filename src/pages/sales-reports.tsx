@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { api } from "@/lib/api";
+import { useViewport } from "@/hooks/use-tablet";
 
 // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Types Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
@@ -3423,6 +3424,8 @@ function OrdersTab({
 
 export default function SalesReports() {
   const now = new Date();
+  const { width, isMobile, isTablet } = useViewport();
+  const isNarrow = width < 980;
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Core state Ã¢â€â‚¬Ã¢â€â‚¬
   const [logs, setLogs] = useState<SaleLog[]>([]);
@@ -3651,7 +3654,7 @@ export default function SalesReports() {
         onClose={() => setLogPickerOpen(false)}
       />
 
-      <div style={{ padding: "40px 40px 40px 88px" }}>
+      <div style={{ padding: isMobile ? "78px 14px 24px" : isTablet ? "84px 18px 28px" : "40px 40px 40px 88px" }}>
         {/* Ã¢â€â‚¬Ã¢â€â‚¬ Header Ã¢â€â‚¬Ã¢â€â‚¬ */}
         <motion.div
           initial={{ opacity: 0, y: -12 }}
@@ -3692,12 +3695,14 @@ export default function SalesReports() {
               Transaction history & audit trail
             </p>
           </div>
-          <RevenueDropdown
-            period={period}
-            setPeriod={setPeriod}
-            logs={logs}
-            orders={orders}
-          />
+          <div style={{ width: isMobile ? "100%" : "auto" }}>
+            <RevenueDropdown
+              period={period}
+              setPeriod={setPeriod}
+              logs={logs}
+              orders={orders}
+            />
+          </div>
         </motion.div>
 
         {/* Ã¢â€â‚¬Ã¢â€â‚¬ Summary Bar Ã¢â€â‚¬Ã¢â€â‚¬ */}
@@ -3712,12 +3717,15 @@ export default function SalesReports() {
         {/* Ã¢â€â‚¬Ã¢â€â‚¬ Tabs Ã¢â€â‚¬Ã¢â€â‚¬ */}
         <div
           style={{
-            display: "inline-flex",
+            display: "flex",
             gap: 4,
             marginBottom: 20,
             background: "#f1f5f9",
             borderRadius: 99,
             padding: 4,
+            maxWidth: "100%",
+            overflowX: "auto",
+            width: "fit-content",
           }}
         >
           {tabs.map(({ key, label, count, icon }) => {
@@ -3786,7 +3794,7 @@ export default function SalesReports() {
               transition={{ delay: 0.15, duration: 0.35 }}
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+                gridTemplateColumns: isNarrow ? "1fr" : "minmax(0,1fr) auto",
                 gap: 14,
                 marginBottom: 20,
                 alignItems: "stretch",
@@ -3795,7 +3803,7 @@ export default function SalesReports() {
               <div
                 style={{
                   position: "relative",
-                  minWidth: 220,
+                  minWidth: 0,
                 }}
               >
                 <Search
@@ -3832,7 +3840,7 @@ export default function SalesReports() {
                   alignItems: "center",
                   gap: 8,
                   flexWrap: "wrap",
-                  justifyContent: "flex-end",
+                  justifyContent: isNarrow ? "flex-start" : "flex-end",
                 }}
               >
                 <CalendarDays className="w-4 h-4 text-gray-400 flex-shrink-0" />

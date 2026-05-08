@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { api } from "../lib/api";
 import { Sidebar } from "@/components/Sidebar";
 import { useNotifications } from "@/lib/NotificationContext";
+import { useViewport } from "@/hooks/use-tablet";
 
 // ─── FONT ─────────────────────────────────────────────────────────────────────
 if (typeof document !== "undefined" && !document.getElementById("dm-sans-font")) {
@@ -238,6 +239,7 @@ export default function Order() {
   const [usageItems, setUsageItems] = useState<KitchenUsageItem[]>([]);
   const [usageProducts, setUsageProducts] = useState<UsageProductOption[]>([]);
   const { addNotification } = useNotifications();
+  const { isMobile, isTablet } = useViewport();
 
   const fetchAll = async () => {
     try {
@@ -549,18 +551,18 @@ export default function Order() {
     <div style={{ minHeight: "100vh", background: "#fafafa", fontFamily: F }}>
       <Sidebar />
 
-      <div style={{ paddingLeft: 96 }}>
+      <div style={{ paddingLeft: isTablet ? 0 : 96, paddingTop: isMobile ? 72 : isTablet ? 76 : 0 }}>
 
         {/* ── Header ── */}
-        <div style={{ padding: "28px 32px 0", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
+        <div style={{ padding: isMobile ? "16px 14px 0" : isTablet ? "20px 18px 0" : "28px 32px 0", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
 
           {/* Left: brand + clock */}
-          <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+          <div style={{ display: "flex", alignItems: isTablet ? "flex-start" : "center", flexDirection: isTablet ? "column" : "row", gap: isTablet ? 10 : 20 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <ChefHat size={15} color="#111" />
               <span style={{ fontSize: 11, fontWeight: 600, color: "#111", letterSpacing: "0.1em", textTransform: "uppercase" }}>Cook View</span>
             </div>
-            <div style={{ width: 1, height: 24, background: "#e5e7eb" }} />
+            {!isTablet && <div style={{ width: 1, height: 24, background: "#e5e7eb" }} />}
             <div>
               <div style={{ fontSize: 17, fontWeight: 600, color: "#111", lineHeight: 1.1 }}>{fmt(currentTime)}</div>
               <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 1 }}>{fmtDate(currentTime)}</div>
@@ -568,7 +570,7 @@ export default function Order() {
           </div>
 
           {/* Right: stats */}
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", width: isTablet ? "100%" : "auto" }}>
             {[
               { label: "New",     val: newCount,    dim: false },
               { label: "Cooking", val: prepCount,   dim: false },
@@ -577,7 +579,7 @@ export default function Order() {
             ].map(({ label, val, dim }) => (
               <div key={label} style={{
                 background: "#fff", border: "1px solid #e5e7eb", borderRadius: 12,
-                padding: "10px 18px", textAlign: "center", minWidth: 64,
+                padding: "10px 18px", textAlign: "center", minWidth: 64, flex: isTablet ? "1 1 120px" : "0 0 auto",
               }}>
                 <div style={{ fontSize: 9, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{label}</div>
                 <div style={{ fontSize: 22, fontWeight: 600, color: dim ? "#d1d5db" : "#111", lineHeight: 1 }}>{val}</div>
@@ -588,7 +590,7 @@ export default function Order() {
 
         {/* ── Notification banner ── */}
         {notifPermission !== "granted" && (
-          <div style={{ padding: "12px 32px 0" }}>
+          <div style={{ padding: isMobile ? "12px 14px 0" : isTablet ? "12px 18px 0" : "12px 32px 0" }}>
             <button onClick={() => Notification.requestPermission().then(setNotifPermission)}
               style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, background: "#fff",
                 border: "1px solid #e5e7eb", color: "#6b7280", padding: "7px 14px", borderRadius: 9, cursor: "pointer", fontFamily: F }}>
@@ -598,7 +600,7 @@ export default function Order() {
         )}
 
         {/* ── Queue ── */}
-        <div style={{ padding: "16px 32px 0", display: "none" }}>
+        <div style={{ padding: isMobile ? "16px 14px 0" : isTablet ? "16px 18px 0" : "16px 32px 0", display: "none" }}>
           <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
             style={{ background: "#fff", borderRadius: 16, border: "1px solid #e5e7eb", overflow: "hidden" }}>
             <button
@@ -634,7 +636,7 @@ export default function Order() {
           </motion.div>
         </div>
 
-        <div style={{ padding: "24px 32px 40px" }}>
+        <div style={{ padding: isMobile ? "18px 14px 28px" : isTablet ? "20px 18px 32px" : "24px 32px 40px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 14 }}>
             <ClipboardList size={13} color="#9ca3af" />
             <span style={{ fontSize: 12, fontWeight: 500, color: "#6b7280" }}>Order Queue</span>
@@ -652,7 +654,7 @@ export default function Order() {
               <p style={{ fontSize: 12, color: "#d1d5db", margin: 0 }}>No pending orders. New orders will appear here.</p>
             </div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(210px, 1fr))", gap: 12 }}>
               <AnimatePresence mode="popLayout">
                 {orders.map((order) => {
                   const isNew = !order.isPreparing && !order.isReady;
