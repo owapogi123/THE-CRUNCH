@@ -645,6 +645,71 @@ function getInventoryCategoryDateTrackingType(
   return "none";
 }
 
+function getLevenshteinDistance(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+
+  const matrix = Array.from({ length: a.length + 1 }, () =>
+    new Array<number>(b.length + 1).fill(0),
+  );
+
+  for (let i = 0; i <= a.length; i += 1) matrix[i][0] = i;
+  for (let j = 0; j <= b.length; j += 1) matrix[0][j] = j;
+
+  for (let i = 1; i <= a.length; i += 1) {
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1,
+        matrix[i][j - 1] + 1,
+        matrix[i - 1][j - 1] + cost,
+      );
+    }
+  }
+
+  return matrix[a.length][b.length];
+}
+
+function resolveInventoryCategoryMatch(value?: string | null): {
+  matchedCategory: string | null;
+  dateTrackingType: "none" | "expiry" | "shelf_life";
+} {
+  const normalizedCategory = normalizeInventoryCategoryName(value);
+  const directMatch = inventoryCategoryNameLookup.get(normalizedCategory) ?? null;
+  if (directMatch) {
+    return {
+      matchedCategory: directMatch,
+      dateTrackingType:
+        inventoryCategoryDateTrackingLookup.get(normalizedCategory) ?? "none",
+    };
+  }
+
+  let bestMatchKey: string | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  for (const key of inventoryCategoryNameLookup.keys()) {
+    const distance = getLevenshteinDistance(normalizedCategory, key);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestMatchKey = key;
+    }
+  }
+
+  if (bestMatchKey && bestDistance <= 2) {
+    return {
+      matchedCategory: inventoryCategoryNameLookup.get(bestMatchKey) ?? null,
+      dateTrackingType:
+        inventoryCategoryDateTrackingLookup.get(bestMatchKey) ?? "none",
+    };
+  }
+
+  return {
+    matchedCategory: null,
+    dateTrackingType: "none",
+  };
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const calcPOTotal = (items: POItem[]) =>
@@ -776,9 +841,9 @@ function isRawMaterialPOItem(item: POItem): boolean {
 
 function getPOItemDateTrackingType(item: POItem): "none" | "expiry" | "shelf_life" {
   const itemCategory = String(item.category ?? "");
-  const normalizedCategory = normalizeInventoryCategoryName(itemCategory);
-  const matchedCategory = inventoryCategoryNameLookup.get(normalizedCategory) ?? null;
-  const dateTrackingType = inventoryCategoryDateTrackingLookup.get(normalizedCategory) ?? "none";
+  const { matchedCategory, dateTrackingType } = resolveInventoryCategoryMatch(
+    itemCategory,
+  );
   console.log("PO DATE TRACKING DEBUG", {
     itemName: item.name,
     itemCategory,

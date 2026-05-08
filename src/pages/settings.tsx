@@ -935,22 +935,7 @@ function InventoryTab({ settings, setStr, setBool, categories, menuCategories, u
         <FieldRow label="Out-of-stock behavior"><StyledSelect value={settings.outOfStockBehavior} onChange={(v) => setStr("outOfStockBehavior", v)} options={[...OUT_OF_STOCK_BEHAVIOR_OPTIONS]} /></FieldRow>
         <ToggleRow label="Auto-reorder" desc="Trigger reorders automatically when stock falls below threshold" value={settings.autoReorderEnabled} onChange={(v) => setBool("autoReorderEnabled", v)} last />
       </SettingsCard>
-      <SettingsCard title="Inventory Control" delay={0.04}>
-        <FieldRow label="Default usage type"><StyledSelect value={settings.defaultUsageType} onChange={(v) => setStr("defaultUsageType", v)} options={[...USAGE_TYPE_OPTIONS]} /></FieldRow>
-        <FieldRow label="Near expiry warning days"><StyledInput value={settings.nearExpiryWarningDays} onChange={(v) => setStr("nearExpiryWarningDays", v)} type="number" placeholder="e.g. 3" /></FieldRow>
-        <ToggleRow label="Require inventory approval" desc="Hold sensitive inventory actions for review" value={settings.requireInventoryApproval} onChange={(v) => setBool("requireInventoryApproval", v)} />
-        <ToggleRow label="Allow negative stock" desc="Permit temporary negative kitchen stock balances" value={settings.allowNegativeStock} onChange={(v) => setBool("allowNegativeStock", v)} last />
-      </SettingsCard>
-      <SettingsCard title="Daily Usage Settings" delay={0.08}>
-        <FieldRow label="Default usage type"><StyledSelect value={settings.defaultUsageType} onChange={(v) => setStr("defaultUsageType", v)} options={[...USAGE_TYPE_OPTIONS]} /></FieldRow>
-        <ToggleRow label="Require daily usage submission" desc="Require cooks to submit a daily usage report" value={settings.requireDailyUsageSubmission} onChange={(v) => setBool("requireDailyUsageSubmission", v)} />
-        <ToggleRow label="Auto-finalize usage" desc="Finalize daily usage automatically" value={settings.autoFinalizeUsage} onChange={(v) => setBool("autoFinalizeUsage", v)} last />
-      </SettingsCard>
-      <SettingsCard title="Food Freshness" delay={0.12}>
-        <ToggleRow label="Track expiry dates" desc="Monitor ingredient and product expiry" value={settings.trackExpiry} onChange={(v) => setBool("trackExpiry", v)} />
-        <ToggleRow label="Waste logging" desc="Log discarded or expired food for reporting" value={settings.wasteLogging} onChange={(v) => setBool("wasteLogging", v)} last />
-      </SettingsCard>
-      <SettingsCard title="Category Defaults" delay={0.16}>
+      <SettingsCard title="Category Defaults" delay={0.04}>
         <div style={{ padding: "14px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
           {mastersError && (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 10, padding: "10px 12px" }}>
@@ -969,7 +954,7 @@ function InventoryTab({ settings, setStr, setBool, categories, menuCategories, u
           </div>
         </div>
       </SettingsCard>
-      <SettingsCard title="Menu Categories" delay={0.18}>
+      <SettingsCard title="Menu Categories" delay={0.08}>
         <div style={{ padding: "14px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
           <p style={{ fontFamily: FONT, fontSize: "0.74rem", color: "#7a7470", lineHeight: 1.6 }}>
             Main menu grouping/section shown in Menu Management and Customer Menu.
@@ -985,7 +970,7 @@ function InventoryTab({ settings, setStr, setBool, categories, menuCategories, u
           </div>
         </div>
       </SettingsCard>
-      <SettingsCard title="Unit Defaults" delay={0.2}>
+      <SettingsCard title="Unit Defaults" delay={0.12}>
         <div style={{ padding: "14px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,140px) minmax(0,160px) minmax(0,150px) auto", gap: 10, alignItems: "end" }}>
             <div><p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Unit name</p><StyledInput value={newUnitName} onChange={setNewUnitName} placeholder="e.g. tray" /></div>
