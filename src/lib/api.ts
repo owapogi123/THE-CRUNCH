@@ -65,6 +65,20 @@ interface LoginResponse {
   username: string;
   email: string;
   role: "administrator" | "cashier" | "cook" | "inventory_manager" | "customer";
+  email_verified: boolean;
+}
+
+interface RegisterResponse {
+  message: string;
+  userId: number;
+  role: "customer";
+  requiresEmailVerification: boolean;
+  emailDeliveryFailed?: boolean;
+}
+
+interface VerifyEmailResponse {
+  message: string;
+  email_verified: boolean;
 }
 
 // ─── Attendance Record type ───────────────────────────────────────────────────
@@ -219,11 +233,28 @@ export const authApi = {
     }),
 
   register: (name: string, email: string, password: string) =>
-    apiCall<void>("/auth/register", {
+    apiCall<RegisterResponse>("/auth/register", {
       method: "POST",
       skipAuth: true,
       body: { name, email, password },
     }),
+
+  verifyEmail: (email: string, code: string) =>
+    apiCall<VerifyEmailResponse>("/auth/verify-email", {
+      method: "POST",
+      skipAuth: true,
+      body: { email, code },
+    }),
+
+  resendVerification: (email: string) =>
+    apiCall<{ message: string; requiresEmailVerification: boolean }>(
+      "/auth/resend-verification",
+      {
+        method: "POST",
+        skipAuth: true,
+        body: { email },
+      },
+    ),
 
   logout: (token: string) =>
     apiCall<void>("/auth/logout", {

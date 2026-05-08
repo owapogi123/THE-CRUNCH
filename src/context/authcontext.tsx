@@ -13,8 +13,10 @@ import { authApi } from "../lib/api";
 interface AuthUser {
   token: string;
   username: string;
+  email: string;
   role: string;
   userId: string;
+  email_verified: boolean;
 }
 
 export interface AttendanceRecord {
@@ -32,6 +34,7 @@ interface AuthContextType {
   isOnline: boolean;
   attendance: AttendanceRecord[];
   login: (data: AuthUser) => void;
+  updateUser: (patch: Partial<AuthUser>) => void;
   logout: () => void;
 }
 
@@ -43,7 +46,7 @@ const AuthContext = createContext<AuthContextType | null>(null);
 
 function clearStoredAuth() {
   if (typeof window === "undefined") return;
-  ["authToken", "isAuthenticated", "userName", "userRole", "userId"].forEach(
+  ["authToken", "isAuthenticated", "userName", "userEmail", "userRole", "userId", "userEmailVerified"].forEach(
     (key) => localStorage.removeItem(key),
   );
 }
@@ -53,8 +56,10 @@ function saveStoredAuth(data: AuthUser) {
   if (typeof window === "undefined") return;
   localStorage.setItem("authToken", data.token);
   localStorage.setItem("userName", data.username);
+  localStorage.setItem("userEmail", data.email);
   localStorage.setItem("userRole", data.role);
   localStorage.setItem("userId", data.userId);
+  localStorage.setItem("userEmailVerified", String(data.email_verified));
   localStorage.setItem("isAuthenticated", "true");
 }
 
@@ -103,11 +108,13 @@ function readStoredUser(): AuthUser | null {
 
   const token = localStorage.getItem("authToken");
   const username = localStorage.getItem("userName");
+  const email = localStorage.getItem("userEmail");
   const role = localStorage.getItem("userRole");
   const userId = localStorage.getItem("userId");
+  const emailVerified = localStorage.getItem("userEmailVerified");
   const isAuthenticated = localStorage.getItem("isAuthenticated") === "true";
 
-  if (!token || !username || !role || !userId || !isAuthenticated) {
+  if (!token || !username || !email || !role || !userId || !isAuthenticated) {
     return null;
   }
 
@@ -116,7 +123,14 @@ function readStoredUser(): AuthUser | null {
     return null;
   }
 
-  return { token, username, role, userId };
+  return {
+    token,
+    username,
+    email,
+    role,
+    userId,
+    email_verified: emailVerified === "true",
+  };
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -173,6 +187,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       };
       syncAttendance([newRecord, ...current]);
     }
+  };
+
+  const updateUser = (patch: Partial<AuthUser>) => {
+    setUser((current) => {
+      if (!current) return current;
+      const nextUser = { ...current, ...patch };
+      saveStoredAuth(nextUser);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("authChange"));
+      }
+      return nextUser;
+    });
   };
 
   // ── Logout ─────────────────────────────────────────────────────────────────
@@ -241,7 +267,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user?.token]);
 
   return (
-    <AuthContext.Provider value={{ user, isOnline, attendance, login, logout }}>
+    <AuthContext.Provider value={{ user, isOnline, attendance, login, updateUser, logout }}>
       {children}
     </AuthContext.Provider>
   );

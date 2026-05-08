@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { api } from "../lib/api";
+import { api, authApi } from "../lib/api";
 import { useAuth } from "../context/authcontext";
 import { useViewport } from "@/hooks/use-tablet";
 
@@ -849,16 +849,127 @@ function UserPill({ name }: { name: string }) {
 }
 
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
+function EmailVerificationPanel({
+  email,
+  code,
+  error,
+  success,
+  isVerifying,
+  isResending,
+  onCodeChange,
+  onVerify,
+  onResend,
+}: {
+  email: string;
+  code: string;
+  error: string;
+  success: string;
+  isVerifying: boolean;
+  isResending: boolean;
+  onCodeChange: (value: string) => void;
+  onVerify: () => void;
+  onResend: () => void;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={SPG}
+      style={{
+        marginBottom: 24,
+        padding: "18px 18px 20px",
+        borderRadius: 18,
+        background: "rgba(245,200,66,0.08)",
+        border: "1px solid rgba(245,200,66,0.18)",
+      }}
+    >
+      <p style={{ margin: "0 0 6px", fontSize: 10, fontWeight: 800, color: "#f5c842", letterSpacing: "0.18em", textTransform: "uppercase" }}>
+        Verification Required
+      </p>
+      <h3 style={{ margin: "0 0 8px", fontSize: 20, color: "#f0ede8" }}>
+        Please verify your email before placing an order.
+      </h3>
+      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.7, color: "rgba(240,237,232,0.66)" }}>
+        We sent a 6-digit code to <strong style={{ color: "#f0ede8" }}>{email}</strong>. Enter it below to unlock online ordering.
+      </p>
+      {error ? <p style={{ margin: "14px 0 0", color: "#fca5a5", fontSize: 12 }}>{error}</p> : null}
+      {success ? <p style={{ margin: "14px 0 0", color: "#86efac", fontSize: 12 }}>{success}</p> : null}
+      <div style={{ display: "flex", gap: 12, marginTop: 16, flexWrap: "wrap" }}>
+        <input
+          value={code}
+          onChange={(e) => onCodeChange(e.target.value)}
+          inputMode="numeric"
+          maxLength={6}
+          placeholder="123456"
+          style={{
+            flex: "1 1 180px",
+            minWidth: 0,
+            borderRadius: 12,
+            border: "1px solid rgba(240,237,232,0.12)",
+            background: "rgba(14,12,10,0.5)",
+            color: "#f0ede8",
+            padding: "13px 14px",
+            textAlign: "center",
+            letterSpacing: "0.35em",
+            fontSize: 18,
+            fontWeight: 700,
+            outline: "none",
+          }}
+        />
+        <button
+          type="button"
+          onClick={onVerify}
+          disabled={isVerifying || code.trim().length !== 6}
+          style={{
+            flex: "1 1 140px",
+            border: "none",
+            borderRadius: 12,
+            background: "#f5c842",
+            color: "#111",
+            padding: "13px 18px",
+            fontWeight: 800,
+            cursor: isVerifying ? "not-allowed" : "pointer",
+            opacity: isVerifying ? 0.7 : 1,
+          }}
+        >
+          {isVerifying ? "Verifying..." : "Verify"}
+        </button>
+        <button
+          type="button"
+          onClick={onResend}
+          disabled={isResending}
+          style={{
+            flex: "1 1 140px",
+            border: "1px solid rgba(240,237,232,0.12)",
+            borderRadius: 12,
+            background: "rgba(240,237,232,0.05)",
+            color: "#f0ede8",
+            padding: "13px 18px",
+            fontWeight: 700,
+            cursor: isResending ? "not-allowed" : "pointer",
+            opacity: isResending ? 0.7 : 1,
+          }}
+        >
+          {isResending ? "Sending..." : "Resend Code"}
+        </button>
+      </div>
+    </motion.div>
+  );
+}
+
 export default function Delicacy() {
   const navigate = useNavigate();
   const { width, isMobile, isTablet, isNarrowPhone } = useViewport();
   const isNarrow = width < 900;
 
   // ── Auth from shared context (stays in sync with AboutTheCrunch) ──
-  const { user, logout } = useAuth();
+  const { user, updateUser, logout } = useAuth();
   const customerUserId = user ? Number(user.userId) : 0;
   const customerName   = user?.username ?? "The Crunch Customer";
-  const customerEmail  = "";
+  const customerEmail  = user?.email ?? "";
+  const customerNeedsEmailVerification =
+    String(user?.role || "").trim().toLowerCase() === "customer" &&
+    user?.email_verified !== true;
 
   // ── Data from API ──
   const [menuItems,  setMenuItems]  = useState<Recipe[]>([]);
@@ -889,6 +1000,11 @@ export default function Delicacy() {
   const [paymentMessage, setPaymentMessage] = useState<string | null>(null);
   const [paymentMethod,  setPaymentMethod]  = useState<PaymentMethodType>("gcash");
   const [showCashTerms,  setShowCashTerms]  = useState(false);
+  const [verificationCode, setVerificationCode] = useState("");
+  const [verificationError, setVerificationError] = useState<string | null>(null);
+  const [verificationSuccess, setVerificationSuccess] = useState<string | null>(null);
+  const [isVerifyingEmail, setIsVerifyingEmail] = useState(false);
+  const [isResendingVerification, setIsResendingVerification] = useState(false);
 
   const cardRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const cartHydrated = useRef(false);
@@ -1116,18 +1232,28 @@ export default function Delicacy() {
   const handlePaymentMethodChange = (m: PaymentMethodType) => { setPaymentMethod(m); clearPayment(); };
 
   const buildItems = () => cart.map(i => ({ product_id: i.recipe.id, qty: i.quantity, subtotal: i.recipe.price * i.quantity, name: i.recipe.name, price: i.recipe.price }));
+  const ensureCustomerCanPlaceOrder = () => {
+    if (!user) {
+      setPaymentMessage("Please log in first before placing an order.");
+      return false;
+    }
+    if (user.role && !isCustomerUser(user.role)) {
+      setPaymentMessage("Please log in using a customer account to place an order.");
+      return false;
+    }
+    if (customerNeedsEmailVerification) {
+      setPaymentMessage("Please verify your email before placing an order.");
+      setVerificationError("Please verify your email before placing an order.");
+      setVerificationSuccess(null);
+      return false;
+    }
+    return true;
+  };
 
   // ── Order actions ──
   const handleRequestCashTerms = () => {
     if (isSubmitting || !cart.length) return;
-    if (!user) {
-      setPaymentMessage("Please log in first before placing an order.");
-      return;
-    }
-    if (user.role && !isCustomerUser(user.role)) {
-      setPaymentMessage("Please log in using a customer account to place an order.");
-      return;
-    }
+    if (!ensureCustomerCanPlaceOrder()) return;
     setShowCashTerms(true);
   };
 
@@ -1135,7 +1261,7 @@ export default function Delicacy() {
     setIsSubmitting(true);
     try {
       const total = cart.reduce((s, i) => s + i.recipe.price * i.quantity, 0);
-      const res   = await api.post<{ orderId: number; orderNumber: string }>("/orders", { items: buildItems(), total, customerUserId, order_type: "take-out", payment_method: "cash_on_pickup", payment_status: "Pending Payment" });
+      const res   = await api.post<{ orderId: number; orderNumber: string }>("/orders", { items: buildItems(), total, customerUserId, customer_name: customerName, customer_email: customerEmail, order_type: "take-out", payment_method: "cash_on_pickup", payment_status: "Pending Payment" });
       await fetchOrders();
       setLastOrderNum(res.orderNumber || `#${res.orderId}`);
       setDrawerOpen(false);
@@ -1146,14 +1272,7 @@ export default function Delicacy() {
 
   const handleSendPayment = async () => {
     if (isSubmitting || !cart.length) return;
-    if (!user) {
-      setPaymentMessage("Please log in first before placing an order.");
-      return;
-    }
-    if (user.role && !isCustomerUser(user.role)) {
-      setPaymentMessage("Please log in using a customer account to place an order.");
-      return;
-    }
+    if (!ensureCustomerCanPlaceOrder()) return;
     setIsSubmitting(true); setPaymentMessage(null);
     try {
       const total = cart.reduce((s, i) => s + i.recipe.price * i.quantity, 0);
@@ -1179,11 +1298,12 @@ export default function Delicacy() {
   };
 
   const handlePlaceOrder = async () => {
+    if (!ensureCustomerCanPlaceOrder()) return;
     if (isSubmitting || !paymentSession?.paid) { setPaymentMessage("Please complete and verify your GCash payment first."); return; }
     setIsSubmitting(true);
     try {
       const total = cart.reduce((s, i) => s + i.recipe.price * i.quantity, 0);
-      const res   = await api.post<{ orderId: number; orderNumber: string }>("/orders", { items: buildItems(), total, customerUserId, order_type: "take-out", payment_method: "gcash", checkout_session_id: paymentSession.checkoutSessionId, payment_reference: paymentSession.paymentReference || paymentSession.checkoutSessionId, payment_status: "Paid" });
+      const res   = await api.post<{ orderId: number; orderNumber: string }>("/orders", { items: buildItems(), total, customerUserId, customer_name: customerName, customer_email: customerEmail, order_type: "take-out", payment_method: "gcash", checkout_session_id: paymentSession.checkoutSessionId, payment_reference: paymentSession.paymentReference || paymentSession.checkoutSessionId, payment_status: "Paid" });
       await fetchOrders();
       setLastOrderNum(res.orderNumber || `#${res.orderId}`);
       clearPayment();
@@ -1197,6 +1317,50 @@ export default function Delicacy() {
   const handleLogout = () => {
     logout();
     navigate("/aboutthecrunch");
+  };
+
+  const handleVerifyEmail = async () => {
+    const normalizedCode = verificationCode.replace(/\D/g, "").slice(0, 6);
+    if (!customerEmail || normalizedCode.length !== 6) {
+      setVerificationError("Enter the 6-digit verification code.");
+      return;
+    }
+
+    setIsVerifyingEmail(true);
+    setVerificationError(null);
+    setVerificationSuccess(null);
+
+    try {
+      await authApi.verifyEmail(customerEmail, normalizedCode);
+      updateUser({ email_verified: true });
+      setVerificationSuccess("Email verified successfully. You can now place online orders.");
+      setVerificationCode("");
+      setPaymentMessage(null);
+    } catch (err: any) {
+      setVerificationError(err.message || "Could not verify email.");
+    } finally {
+      setIsVerifyingEmail(false);
+    }
+  };
+
+  const handleResendVerification = async () => {
+    if (!customerEmail) {
+      setVerificationError("No customer email found for this account.");
+      return;
+    }
+
+    setIsResendingVerification(true);
+    setVerificationError(null);
+    setVerificationSuccess(null);
+
+    try {
+      await authApi.resendVerification(customerEmail);
+      setVerificationSuccess("A new verification code has been sent to your email.");
+    } catch (err: any) {
+      setVerificationError(err.message || "Could not resend the verification code.");
+    } finally {
+      setIsResendingVerification(false);
+    }
   };
 
   // ─── RENDER ───────────────────────────────────────────────────────────────
@@ -1325,6 +1489,23 @@ export default function Delicacy() {
             </AnimatePresence>
           </div>
         </motion.div>
+
+        {customerNeedsEmailVerification ? (
+          <EmailVerificationPanel
+            email={customerEmail}
+            code={verificationCode}
+            error={verificationError || ""}
+            success={verificationSuccess || ""}
+            isVerifying={isVerifyingEmail}
+            isResending={isResendingVerification}
+            onCodeChange={(value) => {
+              setVerificationCode(value.replace(/\D/g, "").slice(0, 6));
+              setVerificationError(null);
+            }}
+            onVerify={handleVerifyEmail}
+            onResend={handleResendVerification}
+          />
+        ) : null}
 
         <TrackingPanel orders={activeOrders} />
 

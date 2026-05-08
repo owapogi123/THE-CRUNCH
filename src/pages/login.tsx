@@ -1,21 +1,13 @@
-import { useState, useEffect } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useEffect, useMemo, useState, type ChangeEvent, type CSSProperties, type ReactNode } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Eye, EyeOff } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { authApi } from "../lib/api";
 import { useAuth } from "../context/authcontext";
 
-if (typeof document !== "undefined" && !document.getElementById("login-fonts")) {
-  const link = document.createElement("link");
-  link.id = "login-fonts";
-  link.rel = "stylesheet";
-  link.href =
-    "https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400&display=swap";
-  document.head.appendChild(link);
-}
-
 const YELLOW = "#F5C518";
-const YELLOW_DARK = "#C9A010";
+const SURFACE = "rgba(20, 12, 4, 0.72)";
+const PANEL = "rgba(28, 18, 8, 0.86)";
 
 const ROLE_MAP: Record<string, string> = {
   administrator: "/dashboard",
@@ -25,717 +17,675 @@ const ROLE_MAP: Record<string, string> = {
   customer: "/products",
 };
 
-const baseInputStyle: React.CSSProperties = {
-  width: "100%",
-  background: "rgba(255,255,255,0.07)",
-  border: "1px solid rgba(255,255,255,0.12)",
-  borderRadius: 10,
-  padding: "11px 14px",
-  color: "#fff",
-  fontSize: 13,
-  fontFamily: "'Poppins', sans-serif",
-  fontWeight: 400,
-  outline: "none",
-  boxSizing: "border-box" as const,
-  transition: "border-color 0.25s, background 0.25s, box-shadow 0.25s",
-};
+type AuthMode = "signin" | "signup";
 
-// ── Time-based greeting helpers ──────────────────────────────────────────────
-
-interface TimeGreeting {
-  title: string;
-  sub: string;
-  iconType: "sun" | "moon" | "sunset" | "sunrise" | "cloud";
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <label style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+      <span
+        style={{
+          fontSize: 10,
+          letterSpacing: "0.16em",
+          textTransform: "uppercase",
+          color: "rgba(255,255,255,0.42)",
+          fontWeight: 700,
+        }}
+      >
+        {label}
+      </span>
+      {children}
+    </label>
+  );
 }
 
-function getTimeGreeting(): TimeGreeting {
-  const h = new Date().getHours();
-
-  if (h >= 5 && h <= 8)
-    return {
-      iconType: "sunrise",
-      title: "Good morning, early bird.",
-      sub: "The day is just beginning — let's make it great.",
-    };
-  if (h >= 9 && h <= 11)
-    return {
-      iconType: "sun",
-      title: "Good morning!",
-      sub: "How are you doing today?",
-    };
-  if (h === 12)
-    return {
-      iconType: "sun",
-      title: "Good noon!",
-      sub: "Grab a bite — then let's get to work.",
-    };
-  if (h >= 13 && h <= 16)
-    return {
-      iconType: "cloud",
-      title: "Good afternoon.",
-      sub: "Hope your day's going well so far.",
-    };
-  if (h >= 17 && h <= 20)
-    return {
-      iconType: "sunset",
-      title: "Good evening.",
-      sub: "Please fulfill your needs — we're here for you.",
-    };
-  if (h >= 21 && h <= 23)
-    return {
-      iconType: "moon",
-      title: "Good night.",
-      sub: "Working late? We've got you covered.",
-    };
-  // 0–4 (midnight to early morning)
+function inputStyle(hasIcon = false): CSSProperties {
   return {
-    iconType: "moon",
-    title: "Burning the midnight oil?",
-    sub: "We're still here — whenever you need us.",
+    width: "100%",
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.1)",
+    background: "rgba(255,255,255,0.06)",
+    color: "#fff",
+    padding: hasIcon ? "13px 42px 13px 14px" : "13px 14px",
+    fontSize: 14,
+    outline: "none",
   };
 }
 
-function TimeIcon({ type }: { type: TimeGreeting["iconType"] }) {
-  const stroke = YELLOW;
-  const sw = "1.8";
-  const lc = "round";
-  const lj = "round";
-
-  if (type === "sun")
-    return (
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
-        stroke={stroke} strokeWidth={sw} strokeLinecap={lc} strokeLinejoin={lj}>
-        <circle cx="12" cy="12" r="5" />
-        <line x1="12" y1="1" x2="12" y2="3" />
-        <line x1="12" y1="21" x2="12" y2="23" />
-        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-        <line x1="1" y1="12" x2="3" y2="12" />
-        <line x1="21" y1="12" x2="23" y2="12" />
-        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-      </svg>
-    );
-
-  if (type === "sunrise")
-    return (
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
-        stroke={stroke} strokeWidth={sw} strokeLinecap={lc} strokeLinejoin={lj}>
-        <path d="M17 18a5 5 0 0 0-10 0" />
-        <line x1="12" y1="2" x2="12" y2="9" />
-        <line x1="4.22" y1="10.22" x2="5.64" y2="11.64" />
-        <line x1="1" y1="18" x2="3" y2="18" />
-        <line x1="21" y1="18" x2="23" y2="18" />
-        <line x1="18.36" y1="11.64" x2="19.78" y2="10.22" />
-        <line x1="23" y1="22" x2="1" y2="22" />
-        <polyline points="8 6 12 2 16 6" />
-      </svg>
-    );
-
-  if (type === "sunset")
-    return (
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
-        stroke={stroke} strokeWidth={sw} strokeLinecap={lc} strokeLinejoin={lj}>
-        <path d="M17 18a5 5 0 0 0-10 0" />
-        <line x1="12" y1="9" x2="12" y2="2" />
-        <line x1="4.22" y1="10.22" x2="5.64" y2="11.64" />
-        <line x1="1" y1="18" x2="3" y2="18" />
-        <line x1="21" y1="18" x2="23" y2="18" />
-        <line x1="18.36" y1="11.64" x2="19.78" y2="10.22" />
-        <line x1="23" y1="22" x2="1" y2="22" />
-        <polyline points="16 5 12 9 8 5" />
-      </svg>
-    );
-
-  if (type === "moon")
-    return (
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
-        stroke={stroke} strokeWidth={sw} strokeLinecap={lc} strokeLinejoin={lj}>
-        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-      </svg>
-    );
-
-  // cloud (afternoon default)
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
-      stroke={stroke} strokeWidth={sw} strokeLinecap={lc} strokeLinejoin={lj}>
-      <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
-    </svg>
-  );
-}
-
-// ── Shared field wrapper ─────────────────────────────────────────────────────
-
-interface FieldProps {
+function PasswordField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  visible,
+  onToggle,
+  autoComplete,
+  name,
+}: {
   label: string;
-  children: React.ReactNode;
-  extra?: React.ReactNode;
-}
-function Field({ label, children, extra }: FieldProps) {
+  value: string;
+  onChange: (e: ChangeEvent<HTMLInputElement>) => void;
+  placeholder: string;
+  visible: boolean;
+  onToggle: () => void;
+  autoComplete: string;
+  name: string;
+}) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <label style={{
-          fontFamily: "'Poppins', sans-serif",
-          fontSize: 10,
-          fontWeight: 500,
-          color: "rgba(255,255,255,0.38)",
-          letterSpacing: "0.9px",
-          textTransform: "uppercase",
-        }}>
-          {label}
-        </label>
-        {extra}
+    <Field label={label}>
+      <div style={{ position: "relative" }}>
+        <input
+          name={name}
+          type={visible ? "text" : "password"}
+          value={value}
+          onChange={onChange}
+          placeholder={placeholder}
+          autoComplete={autoComplete}
+          required
+          style={inputStyle(true)}
+        />
+        <button
+          type="button"
+          onClick={onToggle}
+          style={{
+            position: "absolute",
+            right: 12,
+            top: "50%",
+            transform: "translateY(-50%)",
+            border: "none",
+            background: "none",
+            color: "rgba(255,255,255,0.45)",
+            cursor: "pointer",
+            display: "flex",
+          }}
+        >
+          {visible ? <EyeOff size={16} /> : <Eye size={16} />}
+        </button>
       </div>
-      {children}
-    </div>
+    </Field>
   );
 }
 
-// ── Framer Motion page variants ──────────────────────────────────────────────
-
-const pageVariants = {
-  enter: (dir: number) => ({
-    rotateY: dir > 0 ? 80 : -80,
-    opacity: 0,
-    scale: 0.96,
-  }),
-  center: { rotateY: 0, opacity: 1, scale: 1 },
-  exit: (dir: number) => ({
-    rotateY: dir > 0 ? -80 : 80,
-    opacity: 0,
-    scale: 0.96,
-  }),
-};
-
-// ── Sign In Form ─────────────────────────────────────────────────────────────
-
-function SignInForm({ formData, handleChange, handleSubmit, isLoading, error, showPassword, setShowPassword, goToSignUp }: any) {
+function VerifyEmailModal({
+  open,
+  email,
+  code,
+  error,
+  success,
+  isVerifying,
+  isResending,
+  onClose,
+  onCodeChange,
+  onVerify,
+  onResend,
+}: {
+  open: boolean;
+  email: string;
+  code: string;
+  error: string;
+  success: string;
+  isVerifying: boolean;
+  isResending: boolean;
+  onClose: () => void;
+  onCodeChange: (value: string) => void;
+  onVerify: () => void;
+  onResend: () => void;
+}) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <div style={{ marginBottom: 26 }}>
-        <p style={{
-          fontFamily: "'Poppins', sans-serif", fontSize: 10, fontWeight: 600,
-          color: YELLOW, letterSpacing: "1.6px", textTransform: "uppercase", margin: "0 0 10px",
-        }}>Welcome back</p>
-        <h1 style={{
-          fontFamily: "'Poppins', sans-serif", fontSize: 26, fontWeight: 700,
-          color: "#fff", margin: 0, lineHeight: 1.2, letterSpacing: "-0.3px",
-        }}>
-          Sign in to your<br />
-          <span style={{ fontWeight: 300, fontStyle: "italic", color: "rgba(255,255,255,0.45)", fontSize: 24 }}>
-            Account
-          </span>
-        </h1>
-      </div>
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 50,
+            background: "rgba(0,0,0,0.78)",
+            backdropFilter: "blur(10px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+          }}
+        >
+          <motion.div
+            initial={{ opacity: 0, y: 18, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 10, scale: 0.98 }}
+            style={{
+              width: "min(460px, 100%)",
+              background: PANEL,
+              border: "1px solid rgba(255,255,255,0.08)",
+              borderRadius: 20,
+              boxShadow: "0 30px 80px rgba(0,0,0,0.45)",
+              padding: 24,
+            }}
+          >
+            <p style={{ margin: "0 0 8px", fontSize: 10, fontWeight: 800, letterSpacing: "0.18em", textTransform: "uppercase", color: YELLOW }}>
+              Verify Email
+            </p>
+            <h2 style={{ margin: "0 0 10px", color: "#fff", fontSize: 26 }}>
+              Enter your 6-digit code
+            </h2>
+            <p style={{ margin: "0 0 16px", color: "rgba(255,255,255,0.62)", fontSize: 13, lineHeight: 1.7 }}>
+              We sent a verification code to <strong style={{ color: "#fff" }}>{email || "your email"}</strong>. It expires in 10 minutes.
+            </p>
 
-      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14, flex: 1 }}>
-        <AnimatePresence>
-          {error && (
-            <motion.p key="err" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-              style={{ margin: 0, fontSize: 12, color: "#fca5a5", fontFamily: "'Poppins', sans-serif", textAlign: "center" }}>
-              {error}
-            </motion.p>
-          )}
-        </AnimatePresence>
+            {error ? (
+              <p style={{ margin: "0 0 12px", color: "#fca5a5", fontSize: 12, textAlign: "center" }}>{error}</p>
+            ) : null}
+            {success ? (
+              <p style={{ margin: "0 0 12px", color: "#86efac", fontSize: 12, textAlign: "center" }}>{success}</p>
+            ) : null}
 
-        <Field label="Email Address">
-          <input className="lf-input" style={baseInputStyle}
-            name="email" type="email" required autoComplete="email"
-            value={formData.email} onChange={handleChange} placeholder="you@example.com" />
-        </Field>
+            <Field label="Verification Code">
+              <input
+                value={code}
+                onChange={(e) => onCodeChange(e.target.value)}
+                inputMode="numeric"
+                maxLength={6}
+                placeholder="123456"
+                style={{
+                  ...inputStyle(),
+                  textAlign: "center",
+                  letterSpacing: "0.35em",
+                  fontSize: 20,
+                  fontWeight: 700,
+                }}
+              />
+            </Field>
 
-        <Field label="Password" extra={
-          <a href="#" style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", textDecoration: "none", fontFamily: "'Poppins', sans-serif" }}
-            onMouseEnter={e => (e.currentTarget.style.color = YELLOW)}
-            onMouseLeave={e => (e.currentTarget.style.color = "rgba(255,255,255,0.25)")}>
-            Forgot password?
-          </a>
-        }>
-          <div style={{ position: "relative" }}>
-            <input className="lf-input" style={{ ...baseInputStyle, paddingRight: 42 }}
-              name="password" type={showPassword ? "text" : "password"}
-              required autoComplete="current-password"
-              value={formData.password} onChange={handleChange} placeholder="••••••••" />
-            <button type="button" className="lf-eye" onClick={() => setShowPassword(!showPassword)}>
-              {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+            <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                onClick={onVerify}
+                disabled={isVerifying || code.trim().length !== 6}
+                style={{
+                  flex: 1,
+                  borderRadius: 12,
+                  border: "none",
+                  background: YELLOW,
+                  color: "#111",
+                  padding: "13px 14px",
+                  fontWeight: 700,
+                  cursor: isVerifying ? "not-allowed" : "pointer",
+                  opacity: isVerifying ? 0.7 : 1,
+                }}
+              >
+                {isVerifying ? "Verifying..." : "Verify"}
+              </button>
+              <button
+                type="button"
+                onClick={onResend}
+                disabled={isResending || !email}
+                style={{
+                  flex: 1,
+                  borderRadius: 12,
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  background: "rgba(255,255,255,0.05)",
+                  color: "#fff",
+                  padding: "13px 14px",
+                  fontWeight: 700,
+                  cursor: isResending ? "not-allowed" : "pointer",
+                  opacity: isResending ? 0.7 : 1,
+                }}
+              >
+                {isResending ? "Sending..." : "Resend Code"}
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                marginTop: 12,
+                width: "100%",
+                background: "none",
+                border: "none",
+                color: "rgba(255,255,255,0.45)",
+                cursor: "pointer",
+                fontSize: 12,
+              }}
+            >
+              Close
             </button>
-          </div>
-        </Field>
-
-        <button type="submit" className="lf-submit" disabled={isLoading} style={{ marginTop: 8 }}>
-          {isLoading ? "Signing in…" : "Sign in"}
-        </button>
-      </form>
-
-      <p style={{ textAlign: "center", marginTop: 20, fontSize: 12, color: "rgba(255,255,255,0.25)", fontFamily: "'Poppins', sans-serif" }}>
-        No account yet?{" "}
-        <button type="button" onClick={goToSignUp} style={{
-          background: "none", border: "none", color: YELLOW, fontWeight: 600,
-          cursor: "pointer", fontSize: 12, fontFamily: "'Poppins', sans-serif",
-        }}>
-          Sign up
-        </button>
-      </p>
-    </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
-
-// ── Sign Up Form ─────────────────────────────────────────────────────────────
-
-function SignUpForm({ formData, handleChange, handleSubmit, isLoading, error, showPassword, setShowPassword, showConfirm, setShowConfirm, goToSignIn }: any) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <div style={{ marginBottom: 20 }}>
-        <p style={{
-          fontFamily: "'Poppins', sans-serif", fontSize: 10, fontWeight: 600,
-          color: YELLOW, letterSpacing: "1.6px", textTransform: "uppercase", margin: "0 0 10px",
-        }}>Get started</p>
-        <h1 style={{
-          fontFamily: "'Poppins', sans-serif", fontSize: 26, fontWeight: 700,
-          color: "#fff", margin: 0, lineHeight: 1.2, letterSpacing: "-0.3px",
-        }}>
-          Create your<br />
-          <span style={{ fontWeight: 300, fontStyle: "italic", color: "rgba(255,255,255,0.45)", fontSize: 24 }}>
-            Account
-          </span>
-        </h1>
-      </div>
-
-      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 11, flex: 1 }}>
-        <AnimatePresence>
-          {error && (
-            <motion.p key="err" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-              style={{ margin: 0, fontSize: 12, color: "#fca5a5", fontFamily: "'Poppins', sans-serif", textAlign: "center" }}>
-              {error}
-            </motion.p>
-          )}
-        </AnimatePresence>
-
-        <Field label="Full Name">
-          <input className="lf-input" style={baseInputStyle}
-            name="name" type="text" required autoComplete="name"
-            value={formData.name} onChange={handleChange} placeholder="Your full name" />
-        </Field>
-
-        <Field label="Email">
-          <input className="lf-input" style={baseInputStyle}
-            name="email" type="email" required autoComplete="email"
-            value={formData.email} onChange={handleChange} placeholder="you@example.com" />
-        </Field>
-
-        <Field label="Password">
-          <div style={{ position: "relative" }}>
-            <input className="lf-input" style={{ ...baseInputStyle, paddingRight: 42 }}
-              name="password" type={showPassword ? "text" : "password"}
-              required autoComplete="new-password"
-              value={formData.password} onChange={handleChange} placeholder="Min. 8 characters" />
-            <button type="button" className="lf-eye" onClick={() => setShowPassword(!showPassword)}>
-              {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
-            </button>
-          </div>
-        </Field>
-
-        <Field label="Confirm Password">
-          <div style={{ position: "relative" }}>
-            <input className="lf-input" style={{ ...baseInputStyle, paddingRight: 42 }}
-              name="confirmPassword" type={showConfirm ? "text" : "password"}
-              required autoComplete="new-password"
-              value={formData.confirmPassword} onChange={handleChange} placeholder="••••••••" />
-            <button type="button" className="lf-eye" onClick={() => setShowConfirm(!showConfirm)}>
-              {showConfirm ? <EyeOff size={14} /> : <Eye size={14} />}
-            </button>
-          </div>
-        </Field>
-
-        <button type="submit" className="lf-submit" disabled={isLoading} style={{ marginTop: 6 }}>
-          {isLoading ? "Creating account…" : "Create account"}
-        </button>
-      </form>
-
-      <p style={{ textAlign: "center", marginTop: 16, fontSize: 12, color: "rgba(255,255,255,0.25)", fontFamily: "'Poppins', sans-serif" }}>
-        Already have an account?{" "}
-        <button type="button" onClick={goToSignIn} style={{
-          background: "none", border: "none", color: YELLOW, fontWeight: 600,
-          cursor: "pointer", fontSize: 12, fontFamily: "'Poppins', sans-serif",
-        }}>
-          Sign in
-        </button>
-      </p>
-    </div>
-  );
-}
-
-// ── Main Login Page ──────────────────────────────────────────────────────────
 
 export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
   const { login } = useAuth();
 
-  const [isLogin, setIsLogin] = useState(true);
-  const [direction, setDirection] = useState(1);
+  const [mode, setMode] = useState<AuthMode>("signin");
   const [showPassword, setShowPassword] = useState(false);
-  const [showConfirm, setShowConfirm] = useState(false);
-  const [error, setError] = useState("");
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [formData, setFormData] = useState({ email: "", password: "", confirmPassword: "", name: "" });
+  const [error, setError] = useState("");
+  const [formData, setFormData] = useState({
+    name: "",
+    email: "",
+    password: "",
+    confirmPassword: "",
+  });
 
-  // ── Real-time greeting — updates every minute ──
-  const [greeting, setGreeting] = useState<TimeGreeting>(() => getTimeGreeting());
+  const [verificationOpen, setVerificationOpen] = useState(false);
+  const [verificationEmail, setVerificationEmail] = useState("");
+  const [verificationCode, setVerificationCode] = useState("");
+  const [verificationError, setVerificationError] = useState("");
+  const [verificationSuccess, setVerificationSuccess] = useState("");
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [isResendingVerification, setIsResendingVerification] = useState(false);
 
-  useEffect(() => {
-    const tick = () => setGreeting(getTimeGreeting());
-    const id = setInterval(tick, 60_000);
-    return () => clearInterval(id);
-  }, []);
-
-  // ── Tab from URL param ──
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    if (params.get("tab") === "signup") { setDirection(1); setIsLogin(false); }
+    if (params.get("tab") === "signup") {
+      setMode("signup");
+    }
+
+    const email = params.get("verifyEmail");
+    if (email) {
+      setVerificationEmail(email.trim().toLowerCase());
+      setVerificationOpen(true);
+      setVerificationError("");
+      setVerificationSuccess("");
+      setMode("signin");
+    }
   }, [location.search]);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) =>
-    setFormData({ ...formData, [e.target.name]: e.target.value });
+  const title = useMemo(
+    () =>
+      mode === "signin"
+        ? {
+            eyebrow: "Welcome Back",
+            heading: "Sign in to continue your order",
+            sub: "Customer accounts can log in even before verification, but online ordering stays locked until the email is verified.",
+          }
+        : {
+            eyebrow: "Create Account",
+            heading: "Register and verify your email",
+            sub: "We’ll create the customer account first, then send a 6-digit verification code through Resend.",
+          },
+    [mode],
+  );
+
+  const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
+    setFormData((current) => ({
+      ...current,
+      [e.target.name]: e.target.value,
+    }));
+  };
+
+  const switchMode = (nextMode: AuthMode) => {
+    setMode(nextMode);
+    setError("");
+    setShowPassword(false);
+    setShowConfirmPassword(false);
+    setFormData((current) => ({
+      ...current,
+      password: "",
+      confirmPassword: "",
+      ...(nextMode === "signin" ? {} : { name: current.name }),
+    }));
+  };
+
+  const handleVerifyEmail = async () => {
+    const normalizedEmail = verificationEmail.trim().toLowerCase();
+    const normalizedCode = verificationCode.replace(/\D/g, "").slice(0, 6);
+    if (!normalizedEmail || normalizedCode.length !== 6) {
+      setVerificationError("Enter the 6-digit verification code.");
+      return;
+    }
+
+    setIsVerifying(true);
+    setVerificationError("");
+    setVerificationSuccess("");
+
+    try {
+      await authApi.verifyEmail(normalizedEmail, normalizedCode);
+      setVerificationSuccess("Email verified successfully. You can now sign in and place online orders.");
+      setMode("signin");
+      setFormData((current) => ({
+        ...current,
+        email: normalizedEmail,
+        password: "",
+        confirmPassword: "",
+      }));
+      window.setTimeout(() => {
+        setVerificationOpen(false);
+        setVerificationCode("");
+      }, 1200);
+    } catch (err: any) {
+      setVerificationError(err.message || "Could not verify email.");
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
+  const handleResendVerification = async () => {
+    const normalizedEmail = verificationEmail.trim().toLowerCase();
+    if (!normalizedEmail) {
+      setVerificationError("Enter your email first.");
+      return;
+    }
+
+    setIsResendingVerification(true);
+    setVerificationError("");
+    setVerificationSuccess("");
+
+    try {
+      await authApi.resendVerification(normalizedEmail);
+      setVerificationSuccess("A new verification code has been sent.");
+    } catch (err: any) {
+      setVerificationError(err.message || "Could not resend the verification code.");
+    } finally {
+      setIsResendingVerification(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setIsLoading(true);
 
-    if (isLogin) {
-      try {
+    try {
+      if (mode === "signin") {
         const data = await authApi.login(formData.email, formData.password);
         login({
           token: data.token,
           username: data.username,
+          email: data.email,
           role: data.role,
           userId: String(data.userId),
+          email_verified: data.email_verified,
         });
         navigate(ROLE_MAP[data.role] ?? "/", { replace: true });
-      } catch (err: any) {
-        setError(err.message || "Invalid credentials.");
-      } finally {
-        setIsLoading(false);
-      }
-    } else {
-      if (formData.password.length < 8) {
-        setError("Password must be at least 8 characters.");
-        setIsLoading(false);
         return;
+      }
+
+      if (formData.password.length < 8) {
+        throw new Error("Password must be at least 8 characters.");
       }
       if (formData.password !== formData.confirmPassword) {
-        setError("Passwords don't match!");
-        setIsLoading(false);
-        return;
+        throw new Error("Passwords don't match.");
       }
-      try {
-        await authApi.register(formData.name, formData.email, formData.password);
-        const data = await authApi.login(formData.email, formData.password);
-        login({
-          token: data.token,
-          username: data.username,
-          role: data.role,
-          userId: String(data.userId),
-        });
-        navigate(ROLE_MAP[data.role] ?? "/products", { replace: true });
-      } catch (err: any) {
-        if (
-          err.message?.toLowerCase().includes("login") ||
-          err.message?.toLowerCase().includes("credential")
-        ) {
-          setError("");
-          switchTab(true);
-          setFormData({ email: formData.email, password: "", confirmPassword: "", name: "" });
-        } else {
-          setError(err.message || "Failed to register.");
-        }
-      } finally {
-        setIsLoading(false);
-      }
-    }
-  };
 
-  const switchTab = (toLogin: boolean) => {
-    setDirection(toLogin ? -1 : 1);
-    setIsLogin(toLogin);
-    setError("");
-    setFormData({ email: "", password: "", confirmPassword: "", name: "" });
-    setShowPassword(false);
-    setShowConfirm(false);
+      const registration = await authApi.register(
+        formData.name,
+        formData.email,
+        formData.password,
+      );
+      const normalizedEmail = formData.email.trim().toLowerCase();
+      setMode("signin");
+      setFormData({
+        name: "",
+        email: normalizedEmail,
+        password: "",
+        confirmPassword: "",
+      });
+      setVerificationEmail(normalizedEmail);
+      setVerificationCode("");
+      setVerificationError(
+        registration.emailDeliveryFailed
+          ? "Your account was created, but the verification email could not be sent yet. Use Resend Code."
+          : "",
+      );
+      setVerificationSuccess(
+        registration.emailDeliveryFailed
+          ? ""
+          : "Your account was created. Check your inbox for the verification code.",
+      );
+      setVerificationOpen(Boolean(registration.requiresEmailVerification));
+    } catch (err: any) {
+      setError(err.message || "Authentication failed.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
     <>
-      <style>{`
-        * { box-sizing: border-box; }
-
-        .lf-input:focus {
-          border-color: rgba(245,197,24,0.55) !important;
-          background: rgba(255,255,255,0.11) !important;
-          box-shadow: 0 0 0 3px rgba(245,197,24,0.08) !important;
-        }
-        .lf-input::placeholder {
-          color: rgba(255,255,255,0.20);
-          font-family: 'Poppins', sans-serif;
-        }
-
-        .lf-eye {
-          position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
-          background: none; border: none; cursor: pointer;
-          color: rgba(255,255,255,0.25); display: flex; align-items: center; padding: 0;
-          transition: color 0.2s;
-        }
-        .lf-eye:hover { color: ${YELLOW}; }
-
-        .lf-submit {
-          width: 100%; padding: 13px; border-radius: 10px; border: none;
-          font-family: 'Poppins', sans-serif; font-weight: 600; font-size: 13px;
-          cursor: pointer; background: ${YELLOW}; color: #111;
-          letter-spacing: 0.2px; transition: background 0.25s, transform 0.2s;
-          position: relative; overflow: hidden;
-        }
-        .lf-submit:hover:not(:disabled) { background: ${YELLOW_DARK}; transform: translateY(-1px); }
-        .lf-submit:active:not(:disabled) { transform: scale(0.985); }
-        .lf-submit:disabled { opacity: 0.35; cursor: not-allowed; }
-        .lf-submit::after {
-          content: ''; position: absolute; inset: 0;
-          background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
-          background-size: 200% 100%; animation: lf-shimmer 2.4s infinite;
-        }
-        @keyframes lf-shimmer {
-          0% { background-position: -200% 0; }
-          100% { background-position: 200% 0; }
-        }
-
-        .lf-spine {
-          position: absolute; left: 42%; top: 5%; bottom: 5%; width: 1px;
-          background: linear-gradient(to bottom, transparent, rgba(255,255,255,0.09) 20%, rgba(255,255,255,0.09) 80%, transparent);
-          pointer-events: none; z-index: 10;
-        }
-
-        @media (max-width: 640px) {
-          .lf-left { display: none !important; }
-          .lf-book {
-            max-width: 100% !important;
-            border-radius: 16px !important;
-            min-height: auto !important;
-          }
-          .lf-page-wrap { padding: 30px 22px 24px !important; }
-        }
-      `}</style>
-
-      <div style={{
-        minHeight: "100vh",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        fontFamily: "'Poppins', sans-serif",
-        position: "relative", overflow: "hidden",
-        padding: "20px 16px",
-      }}>
-
-        {/* ── Background ── */}
-        <div style={{ position: "absolute", inset: 0 }}>
-          <img src="/src/assets/img/crunch22.png" alt=""
-            style={{
-              width: "100%", height: "100%", objectFit: "cover",
-              filter: "blur(22px) brightness(0.30) saturate(0.60)",
-              transform: "scale(1.1)",
-            }}
-          />
-        </div>
-
-        <div style={{
-          position: "absolute", inset: 0,
-          background: "linear-gradient(160deg, rgba(6,4,1,0.55) 0%, rgba(10,6,1,0.45) 50%, rgba(14,9,1,0.60) 100%)",
-        }} />
-        <div style={{
-          position: "absolute", inset: 0,
-          background: "radial-gradient(ellipse at 50% 105%, rgba(200,130,0,0.14) 0%, transparent 55%)",
-          pointerEvents: "none",
-        }} />
-
-        {/* ── Logo ── */}
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "grid",
+          placeItems: "center",
+          padding: "24px 16px",
+          background:
+            "radial-gradient(circle at top, rgba(245,197,24,0.18), transparent 28%), linear-gradient(135deg, #120b03 0%, #090603 55%, #1a1006 100%)",
+        }}
+      >
         <motion.div
-          initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          style={{ position: "absolute", top: 22, left: 26, zIndex: 20, display: "flex", alignItems: "center", gap: 9 }}
-        >
-          <div style={{
-            width: 28, height: 28, borderRadius: 7, background: YELLOW,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            boxShadow: "0 4px 14px rgba(245,197,24,0.35)", flexShrink: 0,
-          }}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-              stroke="#111" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 11l19-9-9 19-2-8-8-2z" />
-            </svg>
-          </div>
-          <span style={{ color: "#fff", fontFamily: "'Poppins', sans-serif", fontWeight: 600, fontSize: 13 }}>
-            The Crunch Dahlia
-          </span>
-        </motion.div>
-
-        {/* ── Book card ── */}
-        <motion.div
-          className="lf-book"
-          initial={{ opacity: 0, y: 28, scale: 0.97 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          transition={{ duration: 0.65, ease: [0.23, 1, 0.32, 1] }}
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35 }}
           style={{
-            position: "relative", zIndex: 5,
-            width: "100%", maxWidth: 800,
-            display: "flex",
-            borderRadius: 20,
+            width: "min(980px, 100%)",
+            display: "grid",
+            gridTemplateColumns: "minmax(280px, 0.95fr) minmax(340px, 1fr)",
+            background: SURFACE,
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: 24,
             overflow: "hidden",
-            background: "rgba(16,10,2,0.52)",
-            border: "1px solid rgba(255,255,255,0.10)",
-            backdropFilter: "blur(32px)",
-            WebkitBackdropFilter: "blur(32px)",
-            boxShadow: "0 40px 100px rgba(0,0,0,0.72), inset 0 0 0 0.5px rgba(255,255,255,0.05)",
-            minHeight: 540,
-            perspective: 1400,
+            boxShadow: "0 32px 90px rgba(0,0,0,0.45)",
+            backdropFilter: "blur(18px)",
           }}
         >
-          <div className="lf-spine" />
-
-          {/* ── Left panel ── */}
           <div
-            className="lf-left"
             style={{
-              width: "42%", flexShrink: 0,
-              display: "flex", flexDirection: "column",
-              position: "relative", overflow: "hidden",
-              borderRight: "1px solid rgba(255,255,255,0.07)",
+              position: "relative",
+              padding: "32px 28px",
+              background:
+                "linear-gradient(180deg, rgba(245,197,24,0.12) 0%, rgba(15,10,5,0.5) 24%, rgba(12,8,4,0.94) 100%)",
+              minHeight: 560,
             }}
           >
-            <div style={{ flex: "0 0 62%", position: "relative", overflow: "hidden" }}>
-              <img
-                src="/src/assets/img/crunch22.png"
-                alt="The Crunch Dahlia"
-                style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "center top", display: "block" }}
-              />
-              <div style={{
-                position: "absolute", bottom: 0, left: 0, right: 0, height: "50%",
-                background: "linear-gradient(to bottom, transparent, rgba(12,8,2,0.92))",
-                pointerEvents: "none",
-              }} />
-              <div style={{ position: "absolute", top: 18, left: 20, display: "flex", gap: 5, zIndex: 2 }}>
-                {[true, false].map((isSignIn, i) => (
-                  <div key={i} style={{
-                    width: isLogin === isSignIn ? 18 : 5,
-                    height: 5, borderRadius: 3,
-                    background: isLogin === isSignIn ? YELLOW : "rgba(255,255,255,0.25)",
-                    transition: "width 0.35s ease, background 0.35s ease",
-                  }} />
-                ))}
-              </div>
+            <div
+              style={{
+                width: 42,
+                height: 42,
+                borderRadius: 12,
+                background: YELLOW,
+                color: "#111",
+                display: "grid",
+                placeItems: "center",
+                fontWeight: 900,
+                fontSize: 18,
+                marginBottom: 18,
+              }}
+            >
+              TC
             </div>
+            <p style={{ margin: "0 0 12px", color: YELLOW, fontSize: 10, fontWeight: 800, letterSpacing: "0.18em", textTransform: "uppercase" }}>
+              {title.eyebrow}
+            </p>
+            <h1 style={{ margin: "0 0 14px", color: "#fff", fontSize: "clamp(28px, 3vw, 42px)", lineHeight: 1.08 }}>
+              {title.heading}
+            </h1>
+            <p style={{ margin: 0, color: "rgba(255,255,255,0.65)", fontSize: 14, lineHeight: 1.75, maxWidth: 420 }}>
+              {title.sub}
+            </p>
 
-            <div style={{
-              flex: 1,
-              background: "rgba(12,8,2,0.82)",
-              backdropFilter: "blur(12px)",
-              WebkitBackdropFilter: "blur(12px)",
-              padding: "18px 22px 22px",
-              display: "flex", flexDirection: "column", justifyContent: "space-between",
-            }}>
-              {/*
-               * ── REAL-TIME GREETING ──
-               * `greeting` state updates every minute via the setInterval in useEffect.
-               * The AnimatePresence key on the title causes a smooth fade when it changes.
-               */}
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={greeting.title}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -6 }}
-                  transition={{ duration: 0.4 }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                    <div style={{
-                      width: 32, height: 32, borderRadius: 8, flexShrink: 0,
-                      background: "rgba(245,197,24,0.13)",
-                      border: "1px solid rgba(245,197,24,0.22)",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                    }}>
-                      <TimeIcon type={greeting.iconType} />
-                    </div>
-                    <p style={{
-                      fontFamily: "'Poppins', sans-serif", fontSize: 15, fontWeight: 700,
-                      color: "#fff", margin: 0, lineHeight: 1.3,
-                    }}>
-                      {greeting.title}
-                    </p>
-                  </div>
-
-                  <p style={{
-                    fontFamily: "'Poppins', sans-serif", fontSize: 12, fontWeight: 300,
-                    color: "rgba(255,255,255,0.35)", margin: 0, lineHeight: 1.65,
-                  }}>
-                    {greeting.sub}
-                  </p>
-                </motion.div>
-              </AnimatePresence>
-
-              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 14 }}>
-                <div style={{ width: 6, height: 6, borderRadius: "50%", background: YELLOW, flexShrink: 0 }} />
-                <span style={{
-                  fontSize: 10, color: "rgba(255,255,255,0.22)",
-                  fontFamily: "'Poppins', sans-serif", fontWeight: 500, letterSpacing: "0.8px",
-                }}>
-                  FAIRVIEW BRANCH
-                </span>
-              </div>
+            <div
+              style={{
+                marginTop: 28,
+                padding: 18,
+                borderRadius: 18,
+                border: "1px solid rgba(255,255,255,0.08)",
+                background: "rgba(255,255,255,0.04)",
+              }}
+            >
+              <p style={{ margin: "0 0 8px", color: "#fff", fontWeight: 700, fontSize: 14 }}>
+                Verification flow
+              </p>
+              <p style={{ margin: 0, color: "rgba(255,255,255,0.55)", fontSize: 13, lineHeight: 1.7 }}>
+                Register a customer account, receive a Resend email with a 6-digit code, verify the email, then place online orders from the customer menu.
+              </p>
             </div>
           </div>
 
-          {/* ── Right panel ── */}
-          <div style={{ flex: 1, position: "relative", overflow: "hidden", perspective: 1400 }}>
-            <AnimatePresence custom={direction} mode="wait">
-              <motion.div
-                key={isLogin ? "signin" : "signup"}
-                custom={direction}
-                variants={pageVariants}
-                initial="enter"
-                animate="center"
-                exit="exit"
-                transition={{
-                  rotateY: { duration: 0.42, ease: [0.23, 1, 0.32, 1] },
-                  opacity: { duration: 0.22 },
-                  scale: { duration: 0.42, ease: [0.23, 1, 0.32, 1] },
-                }}
-                className="lf-page-wrap"
+          <div style={{ padding: "32px 28px", background: PANEL }}>
+            <div style={{ display: "inline-flex", gap: 8, padding: 6, borderRadius: 999, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
+              {[
+                { id: "signin" as const, label: "Sign In" },
+                { id: "signup" as const, label: "Sign Up" },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => switchMode(tab.id)}
+                  style={{
+                    border: "none",
+                    borderRadius: 999,
+                    padding: "10px 18px",
+                    background: mode === tab.id ? YELLOW : "transparent",
+                    color: mode === tab.id ? "#111" : "rgba(255,255,255,0.6)",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            <form onSubmit={handleSubmit} style={{ marginTop: 22, display: "flex", flexDirection: "column", gap: 14 }}>
+              {error ? (
+                <p style={{ margin: 0, color: "#fca5a5", fontSize: 12, textAlign: "center" }}>{error}</p>
+              ) : null}
+
+              {mode === "signup" ? (
+                <Field label="Full Name">
+                  <input
+                    name="name"
+                    value={formData.name}
+                    onChange={handleChange}
+                    placeholder="Your full name"
+                    required
+                    style={inputStyle()}
+                  />
+                </Field>
+              ) : null}
+
+              <Field label="Email Address">
+                <input
+                  name="email"
+                  type="email"
+                  value={formData.email}
+                  onChange={handleChange}
+                  placeholder="you@example.com"
+                  autoComplete="email"
+                  required
+                  style={inputStyle()}
+                />
+              </Field>
+
+              <PasswordField
+                label="Password"
+                name="password"
+                value={formData.password}
+                onChange={handleChange}
+                placeholder={mode === "signup" ? "Minimum 8 characters" : "Enter your password"}
+                visible={showPassword}
+                onToggle={() => setShowPassword((current) => !current)}
+                autoComplete={mode === "signup" ? "new-password" : "current-password"}
+              />
+
+              {mode === "signup" ? (
+                <PasswordField
+                  label="Confirm Password"
+                  name="confirmPassword"
+                  value={formData.confirmPassword}
+                  onChange={handleChange}
+                  placeholder="Re-enter your password"
+                  visible={showConfirmPassword}
+                  onToggle={() => setShowConfirmPassword((current) => !current)}
+                  autoComplete="new-password"
+                />
+              ) : null}
+
+              <button
+                type="submit"
+                disabled={isLoading}
                 style={{
-                  position: "absolute", inset: 0,
-                  padding: "36px 32px 28px",
-                  display: "flex", flexDirection: "column",
-                  backfaceVisibility: "hidden",
-                  WebkitBackfaceVisibility: "hidden",
-                  willChange: "transform",
+                  marginTop: 4,
+                  border: "none",
+                  borderRadius: 12,
+                  background: YELLOW,
+                  color: "#111",
+                  padding: "14px 16px",
+                  fontWeight: 800,
+                  cursor: isLoading ? "not-allowed" : "pointer",
+                  opacity: isLoading ? 0.75 : 1,
                 }}
               >
-                {isLogin
-                  ? <SignInForm
-                      formData={formData} handleChange={handleChange}
-                      handleSubmit={handleSubmit} isLoading={isLoading} error={error}
-                      showPassword={showPassword} setShowPassword={setShowPassword}
-                      goToSignUp={() => switchTab(false)}
-                    />
-                  : <SignUpForm
-                      formData={formData} handleChange={handleChange}
-                      handleSubmit={handleSubmit} isLoading={isLoading} error={error}
-                      showPassword={showPassword} setShowPassword={setShowPassword}
-                      showConfirm={showConfirm} setShowConfirm={setShowConfirm}
-                      goToSignIn={() => switchTab(true)}
-                    />
-                }
-              </motion.div>
-            </AnimatePresence>
+                {isLoading
+                  ? mode === "signin"
+                    ? "Signing in..."
+                    : "Creating account..."
+                  : mode === "signin"
+                    ? "Sign In"
+                    : "Create Account"}
+              </button>
+            </form>
+
+            <div style={{ marginTop: 18, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <p style={{ margin: 0, color: "rgba(255,255,255,0.48)", fontSize: 12 }}>
+                {mode === "signin" ? "Need an account?" : "Already have an account?"}{" "}
+                <button
+                  type="button"
+                  onClick={() => switchMode(mode === "signin" ? "signup" : "signin")}
+                  style={{ border: "none", background: "none", color: YELLOW, cursor: "pointer", fontWeight: 700, padding: 0 }}
+                >
+                  {mode === "signin" ? "Sign up" : "Sign in"}
+                </button>
+              </p>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setVerificationEmail(formData.email.trim().toLowerCase());
+                  setVerificationCode("");
+                  setVerificationError("");
+                  setVerificationSuccess("");
+                  setVerificationOpen(true);
+                }}
+                style={{ border: "none", background: "none", color: "rgba(255,255,255,0.62)", cursor: "pointer", fontSize: 12 }}
+              >
+                Already have a code?
+              </button>
+            </div>
           </div>
         </motion.div>
       </div>
+
+      <VerifyEmailModal
+        open={verificationOpen}
+        email={verificationEmail}
+        code={verificationCode}
+        error={verificationError}
+        success={verificationSuccess}
+        isVerifying={isVerifying}
+        isResending={isResendingVerification}
+        onClose={() => setVerificationOpen(false)}
+        onCodeChange={(value) => {
+          setVerificationCode(value.replace(/\D/g, "").slice(0, 6));
+          setVerificationError("");
+        }}
+        onVerify={handleVerifyEmail}
+        onResend={handleResendVerification}
+      />
     </>
   );
 }
