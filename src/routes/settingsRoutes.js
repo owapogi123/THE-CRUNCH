@@ -24,7 +24,8 @@ async function ensureInventoryMasterTables() {
     CREATE TABLE IF NOT EXISTS inventory_categories (
       category_id INT AUTO_INCREMENT PRIMARY KEY,
       name VARCHAR(100) NOT NULL UNIQUE,
-      uses_shelf_life BOOLEAN DEFAULT FALSE,
+      type ENUM('raw_material','ingredient','finished') NOT NULL DEFAULT 'ingredient',
+      date_tracking_type ENUM('none','expiry','shelf_life') NOT NULL DEFAULT 'none',
       is_active BOOLEAN DEFAULT TRUE,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -36,6 +37,17 @@ async function ensureInventoryMasterTables() {
       unit_id INT AUTO_INCREMENT PRIMARY KEY,
       name VARCHAR(100) NOT NULL UNIQUE,
       abbreviation VARCHAR(30) NULL,
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS menu_categories (
+      category_id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(100) NOT NULL UNIQUE,
+      display_order INT NOT NULL DEFAULT 0,
       is_active BOOLEAN DEFAULT TRUE,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -69,13 +81,8 @@ async function ensureInventoryMasterTables() {
   );
   await addColumnIfMissing(
     "inventory_categories",
-    "shelf_life_enabled",
-    "BOOLEAN NOT NULL DEFAULT FALSE",
-  );
-  await addColumnIfMissing(
-    "inventory_categories",
-    "default_shelf_life_days",
-    "INT NULL",
+    "date_tracking_type",
+    "ENUM('none','expiry','shelf_life') NOT NULL DEFAULT 'none'",
   );
   await addColumnIfMissing(
     "inventory_units",
@@ -88,20 +95,34 @@ async function ensureInventoryMasterTables() {
     "DECIMAL(12,4) NULL",
   );
 
+  await db.query(`
+    UPDATE inventory_categories
+       SET date_tracking_type = CASE
+         WHEN LOWER(TRIM(name)) = 'raw material' THEN 'shelf_life'
+         WHEN LOWER(TRIM(name)) IN ('sauces', 'aromatics') THEN 'expiry'
+         WHEN date_tracking_type IS NULL OR date_tracking_type = '' THEN 'none'
+         ELSE date_tracking_type
+       END
+     WHERE date_tracking_type IS NULL
+        OR date_tracking_type = ''
+        OR date_tracking_type = 'none'
+  `);
+
   const categorySeeds = [
-    ["Raw Material", 1, "raw_material"],
-    ["Sauces", 0, "ingredient"],
-    ["Ingredients", 0, "ingredient"],
-    ["Aromatics", 0, "ingredient"],
+    ["Raw Material", "raw_material", "shelf_life"],
+    ["Sauces", "ingredient", "expiry"],
+    ["Ingredients", "ingredient", "shelf_life"],
+    ["Aromatics", "ingredient", "expiry"],
+    ["Packaging", "finished", "none"],
   ];
-  for (const [name, usesShelfLife, type] of categorySeeds) {
+  for (const [name, type, dateTrackingType] of categorySeeds) {
     await db.query(
-      `INSERT INTO inventory_categories (name, uses_shelf_life, type, shelf_life_enabled)
-       SELECT ?, ?, ?, ?
+      `INSERT INTO inventory_categories (name, type, date_tracking_type, is_active)
+       SELECT ?, ?, ?, TRUE
        WHERE NOT EXISTS (
          SELECT 1 FROM inventory_categories WHERE LOWER(name) = LOWER(?)
        )`,
-      [name, usesShelfLife, type, usesShelfLife, name],
+      [name, type, dateTrackingType, name],
     );
   }
 
@@ -123,6 +144,25 @@ async function ensureInventoryMasterTables() {
          SELECT 1 FROM inventory_units WHERE LOWER(name) = LOWER(?)
        )`,
       [name, abbreviation, name],
+    );
+  }
+
+  const menuCategorySeeds = [
+    ["Chicken", 1],
+    ["Meals", 2],
+    ["Drinks", 3],
+    ["Sides", 4],
+    ["Combos", 5],
+    ["Promo", 6],
+  ];
+  for (const [name, displayOrder] of menuCategorySeeds) {
+    await db.query(
+      `INSERT INTO menu_categories (name, display_order, is_active)
+       SELECT ?, ?, TRUE
+       WHERE NOT EXISTS (
+         SELECT 1 FROM menu_categories WHERE LOWER(name) = LOWER(?)
+       )`,
+      [name, displayOrder, name],
     );
   }
 }
@@ -478,16 +518,14 @@ router.get("/inventory-categories", async (req, res) => {
       `SELECT
          category_id,
          name,
-         uses_shelf_life,
          type,
-         shelf_life_enabled,
-         default_shelf_life_days,
+         date_tracking_type,
          is_active,
          created_at,
          updated_at
        FROM inventory_categories
        ${activeOnly ? "WHERE is_active = TRUE" : ""}
-       ORDER BY is_active DESC, uses_shelf_life DESC, name ASC`,
+       ORDER BY is_active DESC, name ASC`,
     );
     res.json(rows);
   } catch (error) {
@@ -503,26 +541,18 @@ router.post("/inventory-categories", async (req, res) => {
   try {
     await ensureInventoryMasterTables();
     const name = normalizeName(req.body?.name, "Category name");
-    const usesShelfLife = normalizeBoolean(req.body?.uses_shelf_life, false);
     const type = normalizeEnum(
       req.body?.type,
       ["raw_material", "ingredient", "finished"],
       "type",
-      usesShelfLife ? "raw_material" : "ingredient",
+      "ingredient",
     );
-    const shelfLifeEnabled = normalizeBoolean(
-      req.body?.shelf_life_enabled,
-      usesShelfLife,
+    const dateTrackingType = normalizeEnum(
+      req.body?.date_tracking_type,
+      ["none", "expiry", "shelf_life"],
+      "date_tracking_type",
+      "none",
     );
-    const defaultShelfLifeDays = Object.prototype.hasOwnProperty.call(
-      req.body || {},
-      "default_shelf_life_days",
-    )
-      ? normalizeNumber(req.body?.default_shelf_life_days, "default_shelf_life_days", {
-          allowNull: true,
-          min: 0,
-        })
-      : null;
 
     const [existing] = await db.query(
       `SELECT category_id
@@ -538,30 +568,20 @@ router.post("/inventory-categories", async (req, res) => {
     const [result] = await db.query(
       `INSERT INTO inventory_categories (
          name,
-         uses_shelf_life,
          type,
-         shelf_life_enabled,
-         default_shelf_life_days,
+         date_tracking_type,
          is_active
        )
-       VALUES (?, ?, ?, ?, ?, TRUE)`,
-      [
-        name,
-        usesShelfLife ? 1 : 0,
-        type,
-        shelfLifeEnabled ? 1 : 0,
-        defaultShelfLifeDays,
-      ],
+       VALUES (?, ?, ?, TRUE)`,
+      [name, type, dateTrackingType],
     );
 
     const [rows] = await db.query(
       `SELECT
          category_id,
          name,
-         uses_shelf_life,
          type,
-         shelf_life_enabled,
-         default_shelf_life_days,
+         date_tracking_type,
          is_active,
          created_at,
          updated_at
@@ -608,11 +628,6 @@ router.patch("/inventory-categories/:id", async (req, res) => {
       values.push(name);
     }
 
-    if (Object.prototype.hasOwnProperty.call(req.body, "uses_shelf_life")) {
-      updates.push("uses_shelf_life = ?");
-      values.push(normalizeBoolean(req.body.uses_shelf_life, false) ? 1 : 0);
-    }
-
     if (Object.prototype.hasOwnProperty.call(req.body, "type")) {
       updates.push("type = ?");
       values.push(
@@ -625,18 +640,15 @@ router.patch("/inventory-categories/:id", async (req, res) => {
       );
     }
 
-    if (Object.prototype.hasOwnProperty.call(req.body, "shelf_life_enabled")) {
-      updates.push("shelf_life_enabled = ?");
-      values.push(normalizeBoolean(req.body.shelf_life_enabled, false) ? 1 : 0);
-    }
-
-    if (Object.prototype.hasOwnProperty.call(req.body, "default_shelf_life_days")) {
-      updates.push("default_shelf_life_days = ?");
+    if (Object.prototype.hasOwnProperty.call(req.body, "date_tracking_type")) {
+      updates.push("date_tracking_type = ?");
       values.push(
-        normalizeNumber(req.body.default_shelf_life_days, "default_shelf_life_days", {
-          allowNull: true,
-          min: 0,
-        }),
+        normalizeEnum(
+          req.body.date_tracking_type,
+          ["none", "expiry", "shelf_life"],
+          "date_tracking_type",
+          "none",
+        ),
       );
     }
 
@@ -665,10 +677,8 @@ router.patch("/inventory-categories/:id", async (req, res) => {
       `SELECT
          category_id,
          name,
-         uses_shelf_life,
          type,
-         shelf_life_enabled,
-         default_shelf_life_days,
+         date_tracking_type,
          is_active,
          created_at,
          updated_at
@@ -683,6 +693,167 @@ router.patch("/inventory-categories/:id", async (req, res) => {
       message: error.message?.includes("required")
         ? error.message
         : "Failed to update inventory category",
+      error: error.message,
+    });
+  }
+});
+
+router.get("/menu-categories", async (req, res) => {
+  try {
+    await ensureInventoryMasterTables();
+    const activeOnly = normalizeBoolean(req.query.activeOnly, true);
+    const [rows] = await db.query(
+      `SELECT
+         category_id,
+         name,
+         display_order,
+         is_active,
+         created_at,
+         updated_at
+       FROM menu_categories
+       ${activeOnly ? "WHERE is_active = TRUE" : ""}
+       ORDER BY display_order ASC, name ASC`,
+    );
+    res.json(rows);
+  } catch (error) {
+    console.error("GET /api/settings/menu-categories error:", error);
+    res.status(500).json({
+      message: "Failed to load menu categories",
+      error: error.message,
+    });
+  }
+});
+
+router.post("/menu-categories", async (req, res) => {
+  try {
+    await ensureInventoryMasterTables();
+    const name = normalizeName(req.body?.name, "Menu category name");
+    const displayOrder = Object.prototype.hasOwnProperty.call(
+      req.body || {},
+      "display_order",
+    )
+      ? normalizeNumber(req.body?.display_order, "display_order", { min: 0 })
+      : 0;
+
+    const [existing] = await db.query(
+      `SELECT category_id
+         FROM menu_categories
+        WHERE LOWER(name) = LOWER(?)
+        LIMIT 1`,
+      [name],
+    );
+    if (existing.length > 0) {
+      return res.status(409).json({ message: "Menu category already exists" });
+    }
+
+    const [result] = await db.query(
+      `INSERT INTO menu_categories (
+         name,
+         display_order,
+         is_active
+       )
+       VALUES (?, ?, TRUE)`,
+      [name, displayOrder],
+    );
+
+    const [rows] = await db.query(
+      `SELECT
+         category_id,
+         name,
+         display_order,
+         is_active,
+         created_at,
+         updated_at
+       FROM menu_categories
+       WHERE category_id = ?`,
+      [result.insertId],
+    );
+    res.status(201).json(rows[0]);
+  } catch (error) {
+    console.error("POST /api/settings/menu-categories error:", error);
+    res.status(error.message?.includes("required") ? 400 : 500).json({
+      message: error.message?.includes("required")
+        ? error.message
+        : "Failed to create menu category",
+      error: error.message,
+    });
+  }
+});
+
+router.patch("/menu-categories/:id", async (req, res) => {
+  try {
+    await ensureInventoryMasterTables();
+    const categoryId = Number(req.params.id);
+    if (!Number.isFinite(categoryId) || categoryId <= 0) {
+      return res.status(400).json({ message: "Invalid category id" });
+    }
+
+    const updates = [];
+    const values = [];
+
+    if (Object.prototype.hasOwnProperty.call(req.body, "name")) {
+      const name = normalizeName(req.body?.name, "Menu category name");
+      const [duplicate] = await db.query(
+        `SELECT category_id
+           FROM menu_categories
+          WHERE LOWER(name) = LOWER(?) AND category_id <> ?
+          LIMIT 1`,
+        [name, categoryId],
+      );
+      if (duplicate.length > 0) {
+        return res.status(409).json({ message: "Menu category already exists" });
+      }
+      updates.push("name = ?");
+      values.push(name);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, "display_order")) {
+      updates.push("display_order = ?");
+      values.push(
+        normalizeNumber(req.body.display_order, "display_order", { min: 0 }),
+      );
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, "is_active")) {
+      updates.push("is_active = ?");
+      values.push(normalizeBoolean(req.body.is_active, true) ? 1 : 0);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ message: "No updates provided" });
+    }
+
+    values.push(categoryId);
+    const [result] = await db.query(
+      `UPDATE menu_categories
+          SET ${updates.join(", ")}
+        WHERE category_id = ?`,
+      values,
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Menu category not found" });
+    }
+
+    const [rows] = await db.query(
+      `SELECT
+         category_id,
+         name,
+         display_order,
+         is_active,
+         created_at,
+         updated_at
+       FROM menu_categories
+       WHERE category_id = ?`,
+      [categoryId],
+    );
+    res.json(rows[0]);
+  } catch (error) {
+    console.error("PATCH /api/settings/menu-categories/:id error:", error);
+    res.status(error.message?.includes("required") ? 400 : 500).json({
+      message: error.message?.includes("required")
+        ? error.message
+        : "Failed to update menu category",
       error: error.message,
     });
   }

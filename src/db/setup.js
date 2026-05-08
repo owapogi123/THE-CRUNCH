@@ -436,7 +436,8 @@ CREATE TABLE IF NOT EXISTS feedback (
 CREATE TABLE IF NOT EXISTS inventory_categories (
     category_id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(100) NOT NULL UNIQUE,
-    uses_shelf_life BOOLEAN DEFAULT FALSE,
+    type ENUM('raw_material','ingredient','finished') NOT NULL DEFAULT 'ingredient',
+    date_tracking_type ENUM('none','expiry','shelf_life') NOT NULL DEFAULT 'none',
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -446,6 +447,17 @@ CREATE TABLE IF NOT EXISTS inventory_units (
     unit_id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(100) NOT NULL UNIQUE,
     abbreviation VARCHAR(30) NULL,
+    base_unit VARCHAR(100) NULL,
+    conversion_to_base DECIMAL(12,4) NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS menu_categories (
+    category_id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    display_order INT NOT NULL DEFAULT 0,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -455,34 +467,22 @@ CREATE TABLE IF NOT EXISTS inventory_units (
     await connection.query(createStatements);
     log.log("Tables created.");
 
-    await connection.query(
-      `INSERT INTO inventory_categories (name, uses_shelf_life)
-       SELECT 'Raw Material', TRUE
-       WHERE NOT EXISTS (
-         SELECT 1 FROM inventory_categories WHERE LOWER(name) = LOWER('Raw Material')
-       )`,
-    );
-    await connection.query(
-      `INSERT INTO inventory_categories (name, uses_shelf_life)
-       SELECT 'Sauces', FALSE
-       WHERE NOT EXISTS (
-         SELECT 1 FROM inventory_categories WHERE LOWER(name) = LOWER('Sauces')
-       )`,
-    );
-    await connection.query(
-      `INSERT INTO inventory_categories (name, uses_shelf_life)
-       SELECT 'Ingredients', FALSE
-       WHERE NOT EXISTS (
-         SELECT 1 FROM inventory_categories WHERE LOWER(name) = LOWER('Ingredients')
-       )`,
-    );
-    await connection.query(
-      `INSERT INTO inventory_categories (name, uses_shelf_life)
-       SELECT 'Aromatics', FALSE
-       WHERE NOT EXISTS (
-         SELECT 1 FROM inventory_categories WHERE LOWER(name) = LOWER('Aromatics')
-       )`,
-    );
+    for (const [name, type, dateTrackingType] of [
+      ["Raw Material", "raw_material", "shelf_life"],
+      ["Sauces", "ingredient", "expiry"],
+      ["Ingredients", "ingredient", "shelf_life"],
+      ["Aromatics", "ingredient", "expiry"],
+      ["Packaging", "finished", "none"],
+    ]) {
+      await connection.query(
+        `INSERT INTO inventory_categories (name, type, date_tracking_type, is_active)
+         SELECT ?, ?, ?, TRUE
+         WHERE NOT EXISTS (
+           SELECT 1 FROM inventory_categories WHERE LOWER(name) = LOWER(?)
+         )`,
+        [name, type, dateTrackingType, name],
+      );
+    }
 
     for (const unitName of [
       "kg",
@@ -501,6 +501,24 @@ CREATE TABLE IF NOT EXISTS inventory_units (
            SELECT 1 FROM inventory_units WHERE LOWER(name) = LOWER(?)
          )`,
         [unitName, unitName],
+      );
+    }
+
+    for (const [name, displayOrder] of [
+      ["Chicken", 1],
+      ["Meals", 2],
+      ["Drinks", 3],
+      ["Sides", 4],
+      ["Combos", 5],
+      ["Promo", 6],
+    ]) {
+      await connection.query(
+        `INSERT INTO menu_categories (name, display_order, is_active)
+         SELECT ?, ?, TRUE
+         WHERE NOT EXISTS (
+           SELECT 1 FROM menu_categories WHERE LOWER(name) = LOWER(?)
+         )`,
+        [name, displayOrder, name],
       );
     }
 
