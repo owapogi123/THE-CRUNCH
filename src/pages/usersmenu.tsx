@@ -226,14 +226,18 @@ function CashTermsModal({ onAccept, onDecline }: { onAccept: () => void; onDecli
   const [checked, setChecked] = useState(false);
   const { isMobile } = useViewport();
   return (
-    <>
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onDecline}
-        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 700, backdropFilter: "blur(14px)" }} />
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onDecline}
+      style={{ position: "fixed", inset: 0, zIndex: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, overflowY: "auto", background: "rgba(0,0,0,0.75)", backdropFilter: "blur(14px)" }}>
       <motion.div initial={{ opacity: 0, scale: 0.92, y: 28 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.94, y: 16 }} transition={{ ...SPG, delay: 0.04 }}
-        style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)", zIndex: 800, width: "min(480px,92vw)", background: "#151210", borderRadius: 26, border: "1px solid rgba(240,237,232,0.1)", boxShadow: "0 40px 80px rgba(0,0,0,0.6)", overflow: "hidden" }}>
+        onClick={(e) => e.stopPropagation()}
+        style={{ position: "relative", width: "min(480px, 100%)", maxHeight: "calc(100vh - 48px)", overflowY: "auto", background: "#151210", borderRadius: 26, border: "1px solid rgba(240,237,232,0.1)", boxShadow: "0 40px 80px rgba(0,0,0,0.6)" }}>
+        <motion.button onClick={onDecline} whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.9 }} transition={SP}
+          style={{ position: "absolute", top: 14, right: 14, width: 36, height: 36, borderRadius: "50%", background: "transparent", border: "1px solid rgba(240,237,232,0.1)", color: "rgba(240,237,232,0.6)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, lineHeight: 1, zIndex: 1 }}>
+          {"\u00D7"}
+        </motion.button>
         <div style={{ height: 3, background: "linear-gradient(90deg,#f5c842,rgba(245,200,66,0.3))" }} />
-        <div style={{ padding: isMobile ? "24px 20px 20px" : "32px 28px 28px", maxHeight: "min(80vh, 720px)", overflowY: "auto" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+        <div style={{ padding: isMobile ? "24px 20px 20px" : "32px 28px 28px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20, paddingRight: 44 }}>
             <div style={{ width: 44, height: 44, borderRadius: 14, background: "rgba(245,200,66,0.1)", border: "1px solid rgba(245,200,66,0.22)", display: "flex", alignItems: "center", justifyContent: "center", color: "#f5c842", flexShrink: 0 }}>
               <Icon d={shieldD} size={18} />
             </div>
@@ -263,7 +267,7 @@ function CashTermsModal({ onAccept, onDecline }: { onAccept: () => void; onDecli
           </div>
         </div>
       </motion.div>
-    </>
+    </motion.div>
   );
 }
 
@@ -313,13 +317,17 @@ function OrderTypeModal({ onClose }: { onClose: () => void }) {
   const { width, isMobile } = useViewport();
   const isNarrow = width < 900;
   return (
-    <>
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}
-        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.72)", zIndex: 500, backdropFilter: "blur(10px)" }} />
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}
+      style={{ position: "fixed", inset: 0, zIndex: 600, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, overflowY: "auto", background: "rgba(0,0,0,0.72)", backdropFilter: "blur(10px)" }}>
       <motion.div initial={{ opacity: 0, scale: 0.9, y: 24 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.92, y: 16 }} transition={{ ...SPG, delay: 0.04 }}
-        style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)", zIndex: 600, width: "min(720px,92vw)", maxHeight: "88vh", overflowY: "auto" }}>
-        <motion.button onClick={onClose} whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} transition={SP}
+        onClick={(e) => e.stopPropagation()}
+        style={{ position: "relative", width: "min(720px, 100%)", maxHeight: "calc(100vh - 48px)", overflowY: "auto" }}>
+        <motion.button onClick={onClose} whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.9 }} transition={SP}
           style={{ position: "absolute", top: -14, right: -14, width: 36, height: 36, borderRadius: "50%", background: "#1e1b17", border: "1px solid rgba(240,237,232,0.14)", color: "rgba(240,237,232,0.55)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 700, zIndex: 10, fontFamily: "inherit" }}>×</motion.button>
+        <motion.button onClick={onClose} whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.9 }} transition={SP}
+          style={{ position: "absolute", top: 14, right: 14, width: 36, height: 36, borderRadius: "50%", background: "transparent", border: "1px solid rgba(240,237,232,0.12)", color: "rgba(240,237,232,0.6)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, lineHeight: 1, zIndex: 11, fontFamily: "inherit" }}>
+          {"\u00D7"}
+        </motion.button>
         <AnimatePresence mode="wait">
           {view === "choose" ? (
             <motion.div key="choose" initial={{ opacity: 0, x: -18 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -18 }} transition={SPG}
@@ -374,7 +382,7 @@ function OrderTypeModal({ onClose }: { onClose: () => void }) {
           )}
         </AnimatePresence>
       </motion.div>
-    </>
+    </motion.div>
   );
 }
 
@@ -1008,6 +1016,18 @@ export default function Delicacy() {
 
   const cardRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const cartHydrated = useRef(false);
+
+  useEffect(() => {
+    const shouldLockScroll = orderTypeOpen || showCashTerms;
+    if (!shouldLockScroll) return undefined;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [orderTypeOpen, showCashTerms]);
 
   // ── Fetch all menu data from backend ──
   useEffect(() => {
