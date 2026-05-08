@@ -2503,12 +2503,12 @@ function MenuAdminTab() {
     if (apiOptions.length > 0) return apiOptions;
 
     const fallback = new Set<string>([
-      "Chicken",
-      "Sides",
-      "Drinks",
-      "Combos",
-      "Promo",
-      "Meals",
+      "Menu Food",
+      "Beverages",
+      "Desserts",
+      "Combo Meals",
+      "Snacks",
+      "Promotional Items",
       ...products.map((product) => product.category).filter(Boolean),
       fCat.trim(),
       eCat.trim(),

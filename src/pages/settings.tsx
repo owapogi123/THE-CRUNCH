@@ -983,8 +983,11 @@ function InventoryTab({ settings, setStr, setBool, categories, menuCategories, u
       </SettingsCard>
       <SettingsCard title="Menu Categories" delay={0.18}>
         <div style={{ padding: "14px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
+          <p style={{ fontFamily: FONT, fontSize: "0.74rem", color: "#7a7470", lineHeight: 1.6 }}>
+            Main menu grouping/section shown in Menu Management and Customer Menu.
+          </p>
           <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,140px) auto", gap: 10, alignItems: "end" }}>
-            <div><p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Category name</p><StyledInput value={newMenuCategoryName} onChange={setNewMenuCategoryName} placeholder="e.g. Chicken" /></div>
+            <div><p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Category name</p><StyledInput value={newMenuCategoryName} onChange={setNewMenuCategoryName} placeholder="e.g. Menu Food" /></div>
             <div><p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Display order</p><StyledInput value={newMenuCategoryOrder} onChange={setNewMenuCategoryOrder} type="number" placeholder="0" /></div>
             <button onClick={async () => { try { await onAddMenuCategory({ name: newMenuCategoryName, display_order: newMenuCategoryOrder.trim() === "" ? 0 : Number(newMenuCategoryOrder) }); setNewMenuCategoryName(""); setNewMenuCategoryOrder(""); } catch { /* handled by parent */ } }} disabled={mastersLoading} style={{ fontFamily: FONT, fontSize: "0.75rem", fontWeight: 600, color: "#fff", background: ACCENT, border: "none", borderRadius: 8, padding: "9px 14px", cursor: "pointer", opacity: mastersLoading ? 0.65 : 1 }}>Add menu category</button>
           </div>
