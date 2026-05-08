@@ -81,37 +81,37 @@ WHERE NOT EXISTS (
 );
 
 INSERT INTO menu_categories (name, display_order, is_active)
-SELECT 'Chicken', 1, TRUE
+SELECT 'Menu Food', 1, TRUE
 WHERE NOT EXISTS (
-  SELECT 1 FROM menu_categories WHERE LOWER(name) = LOWER('Chicken')
+  SELECT 1 FROM menu_categories WHERE LOWER(name) = LOWER('Menu Food')
 );
 
 INSERT INTO menu_categories (name, display_order, is_active)
-SELECT 'Meals', 2, TRUE
+SELECT 'Beverages', 2, TRUE
 WHERE NOT EXISTS (
-  SELECT 1 FROM menu_categories WHERE LOWER(name) = LOWER('Meals')
+  SELECT 1 FROM menu_categories WHERE LOWER(name) = LOWER('Beverages')
 );
 
 INSERT INTO menu_categories (name, display_order, is_active)
-SELECT 'Drinks', 3, TRUE
+SELECT 'Desserts', 3, TRUE
 WHERE NOT EXISTS (
-  SELECT 1 FROM menu_categories WHERE LOWER(name) = LOWER('Drinks')
+  SELECT 1 FROM menu_categories WHERE LOWER(name) = LOWER('Desserts')
 );
 
 INSERT INTO menu_categories (name, display_order, is_active)
-SELECT 'Sides', 4, TRUE
+SELECT 'Combo Meals', 4, TRUE
 WHERE NOT EXISTS (
-  SELECT 1 FROM menu_categories WHERE LOWER(name) = LOWER('Sides')
+  SELECT 1 FROM menu_categories WHERE LOWER(name) = LOWER('Combo Meals')
 );
 
 INSERT INTO menu_categories (name, display_order, is_active)
-SELECT 'Combos', 5, TRUE
+SELECT 'Snacks', 5, TRUE
 WHERE NOT EXISTS (
-  SELECT 1 FROM menu_categories WHERE LOWER(name) = LOWER('Combos')
+  SELECT 1 FROM menu_categories WHERE LOWER(name) = LOWER('Snacks')
 );
 
 INSERT INTO menu_categories (name, display_order, is_active)
-SELECT 'Promo', 6, TRUE
+SELECT 'Promotional Items', 6, TRUE
 WHERE NOT EXISTS (
-  SELECT 1 FROM menu_categories WHERE LOWER(name) = LOWER('Promo')
+  SELECT 1 FROM menu_categories WHERE LOWER(name) = LOWER('Promotional Items')
 );

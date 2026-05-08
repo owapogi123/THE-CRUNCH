@@ -467,10 +467,49 @@ CREATE TABLE IF NOT EXISTS menu_categories (
     await connection.query(createStatements);
     log.log("Tables created.");
 
+    const [inventoryCategoryColumns] = await connection.query(
+      `SHOW COLUMNS FROM inventory_categories`,
+    );
+    const inventoryCategoryFieldSet = new Set(
+      inventoryCategoryColumns.map((column) =>
+        String(column.Field).toLowerCase(),
+      ),
+    );
+
+    if (!inventoryCategoryFieldSet.has("date_tracking_type")) {
+      await connection.query(`
+        ALTER TABLE inventory_categories
+        ADD COLUMN date_tracking_type ENUM('none','expiry','shelf_life') NOT NULL DEFAULT 'expiry'
+      `);
+    }
+
+    if (!inventoryCategoryFieldSet.has("type")) {
+      await connection.query(`
+        ALTER TABLE inventory_categories
+        ADD COLUMN type ENUM('raw_material','ingredient','finished') NOT NULL DEFAULT 'ingredient'
+      `);
+    }
+
+    await connection.query(`
+      UPDATE inventory_categories
+         SET date_tracking_type = 'shelf_life'
+       WHERE LOWER(TRIM(name)) = 'raw material'
+    `);
+    await connection.query(`
+      UPDATE inventory_categories
+         SET date_tracking_type = 'expiry'
+       WHERE LOWER(TRIM(name)) IN ('sauces', 'aromatics', 'ingredients')
+    `);
+    await connection.query(`
+      UPDATE inventory_categories
+         SET date_tracking_type = 'none'
+       WHERE LOWER(TRIM(name)) = 'packaging'
+    `);
+
     for (const [name, type, dateTrackingType] of [
       ["Raw Material", "raw_material", "shelf_life"],
       ["Sauces", "ingredient", "expiry"],
-      ["Ingredients", "ingredient", "shelf_life"],
+      ["Ingredients", "ingredient", "expiry"],
       ["Aromatics", "ingredient", "expiry"],
       ["Packaging", "finished", "none"],
     ]) {
@@ -505,12 +544,12 @@ CREATE TABLE IF NOT EXISTS menu_categories (
     }
 
     for (const [name, displayOrder] of [
-      ["Chicken", 1],
-      ["Meals", 2],
-      ["Drinks", 3],
-      ["Sides", 4],
-      ["Combos", 5],
-      ["Promo", 6],
+      ["Menu Food", 1],
+      ["Beverages", 2],
+      ["Desserts", 3],
+      ["Combo Meals", 4],
+      ["Snacks", 5],
+      ["Promotional Items", 6],
     ]) {
       await connection.query(
         `INSERT INTO menu_categories (name, display_order, is_active)

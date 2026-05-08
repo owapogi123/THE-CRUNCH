@@ -148,12 +148,12 @@ async function ensureInventoryMasterTables() {
   }
 
   const menuCategorySeeds = [
-    ["Chicken", 1],
-    ["Meals", 2],
-    ["Drinks", 3],
-    ["Sides", 4],
-    ["Combos", 5],
-    ["Promo", 6],
+    ["Menu Food", 1],
+    ["Beverages", 2],
+    ["Desserts", 3],
+    ["Combo Meals", 4],
+    ["Snacks", 5],
+    ["Promotional Items", 6],
   ];
   for (const [name, displayOrder] of menuCategorySeeds) {
     await db.query(
