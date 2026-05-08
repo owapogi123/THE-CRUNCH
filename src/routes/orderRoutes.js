@@ -214,6 +214,114 @@ function buildCustomerReceiptNote(paymentStatus) {
   return "Your payment has been verified. We are preparing your order.";
 }
 
+async function loadBillingSettings(connection = db) {
+  try {
+    const [rows] = await connection.query(
+      `SELECT settings_json
+         FROM system_settings
+        WHERE setting_key = 'restaurant_settings'
+        LIMIT 1`,
+    );
+    if (!rows.length || !rows[0].settings_json) {
+      return { taxRate: 0, serviceCharge: 0 };
+    }
+    const parsed = JSON.parse(rows[0].settings_json);
+    return {
+      taxRate: Math.max(0, Number(parsed?.taxRate ?? 0) || 0),
+      serviceCharge: Math.max(0, Number(parsed?.serviceCharge ?? 0) || 0),
+    };
+  } catch {
+    return { taxRate: 0, serviceCharge: 0 };
+  }
+}
+
+async function resolveCashierDiscount(connection, discountName) {
+  const normalizedName = String(discountName || "").trim();
+  if (!normalizedName) {
+    return { discountName: "", discountRate: 0 };
+  }
+  try {
+    const [rows] = await connection.query(
+      `SELECT name, percentage
+         FROM discount_types
+        WHERE LOWER(name) = LOWER(?)
+          AND is_active = TRUE
+        LIMIT 1`,
+      [normalizedName],
+    );
+
+    if (!rows.length) {
+      return { discountName: "", discountRate: 0 };
+    }
+
+    return {
+      discountName: String(rows[0].name || normalizedName),
+      discountRate: Math.max(0, Number(rows[0].percentage || 0) || 0),
+    };
+  } catch {
+    return { discountName: "", discountRate: 0 };
+  }
+}
+
+function calculateBillingTotals(subtotal, settings, discountRate = 0) {
+  const safeSubtotal = Math.max(0, Number(subtotal || 0));
+  const safeDiscountRate = Math.max(0, Number(discountRate || 0));
+  const discountAmount = safeSubtotal * (safeDiscountRate / 100);
+  const taxAmount = safeSubtotal * (Number(settings.taxRate || 0) / 100);
+  const serviceChargeAmount =
+    safeSubtotal * (Number(settings.serviceCharge || 0) / 100);
+  const grandTotal =
+    safeSubtotal - discountAmount + taxAmount + serviceChargeAmount;
+  return {
+    subtotal: safeSubtotal,
+    discountAmount,
+    taxAmount,
+    serviceChargeAmount,
+    grandTotal,
+  };
+}
+
+async function getCurrentOrderSubtotal(connection, items) {
+  const normalizedItems = Array.isArray(items)
+    ? items
+        .map((item) => ({
+          productId: Number(item?.product_id),
+          quantity: Number(item?.qty || item?.quantity || 0),
+        }))
+        .filter(
+          (item) =>
+            Number.isFinite(item.productId) &&
+            item.productId > 0 &&
+            Number.isFinite(item.quantity) &&
+            item.quantity > 0,
+        )
+    : [];
+
+  if (normalizedItems.length === 0) {
+    return 0;
+  }
+
+  const productIds = [...new Set(normalizedItems.map((item) => item.productId))];
+  const placeholders = productIds.map(() => "?").join(", ");
+  const [rows] = await connection.query(
+    `SELECT
+       p.id AS productId,
+       COALESCE(m.Price, p.price, 0) AS currentPrice
+     FROM products p
+     LEFT JOIN Menu m ON m.Product_ID = p.id
+     WHERE p.id IN (${placeholders})`,
+    productIds,
+  );
+  const priceMap = new Map(
+    rows.map((row) => [Number(row.productId), Number(row.currentPrice || 0)]),
+  );
+
+  return normalizedItems.reduce((sum, item) => {
+    const price = priceMap.get(item.productId) ?? 0;
+    return sum + Math.max(0, price) * item.quantity;
+  }, 0);
+}
+
 async function ensurePaymentProofDirectory() {
   await fs.mkdir(PAYMENT_PROOF_DIR, { recursive: true });
 }
@@ -1025,7 +1133,10 @@ router.post("/paymongo/checkout", async (req, res) => {
       return res.status(400).json({ message: "Order items are required" });
     }
 
-    const totalAmount = Math.round(Number(total || 0) * 100);
+    const billingSettings = await loadBillingSettings();
+    const subtotal = await getCurrentOrderSubtotal(db, items);
+    const totals = calculateBillingTotals(subtotal, billingSettings);
+    const totalAmount = Math.round(totals.grandTotal * 100);
     if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
       return res.status(400).json({ message: "A valid total amount is required" });
     }
@@ -1043,20 +1154,44 @@ router.post("/paymongo/checkout", async (req, res) => {
             } : undefined,
             cancel_url: `${appBaseUrl}/usersmenu?payment=cancelled`,
             description: "The Crunch pickup order",
-            line_items: items.map((item) => ({
+            line_items: [
+              ...items.map((item) => ({
               amount: Math.round(Number(item.price || 0) * 100),
               currency: "PHP",
               description: item.name,
               name: item.name,
               quantity: Number(item.qty) || 0,
-            })),
+              })),
+              ...(totals.taxAmount > 0
+                ? [{
+                    amount: Math.round(totals.taxAmount * 100),
+                    currency: "PHP",
+                    description: "Tax",
+                    name: "Tax",
+                    quantity: 1,
+                  }]
+                : []),
+              ...(totals.serviceChargeAmount > 0
+                ? [{
+                    amount: Math.round(totals.serviceChargeAmount * 100),
+                    currency: "PHP",
+                    description: "Service Charge",
+                    name: "Service Charge",
+                    quantity: 1,
+                  }]
+                : []),
+            ],
             payment_method_types: ["gcash"],
             send_email_receipt: false,
             show_line_items: true,
             success_url: `${appBaseUrl}/usersmenu?payment=success`,
             metadata: {
               customerUserId: customerUserId ? String(customerUserId) : "",
-              total: String(total || 0),
+              submittedTotal: String(total || 0),
+              subtotal: String(totals.subtotal),
+              taxAmount: String(totals.taxAmount),
+              serviceChargeAmount: String(totals.serviceChargeAmount),
+              grandTotal: String(totals.grandTotal),
             },
           },
         },
@@ -1138,6 +1273,12 @@ router.post("/", async (req, res) => {
       customer_name,
       customerEmail,
       customer_email,
+      customerType,
+      customer_type,
+      discountName,
+      discount_name,
+      discountRate,
+      discount_rate,
     } = req.body;
 
     // Online orders from usersmenu.tsx send NO cashierId — that's intentional.
@@ -1272,6 +1413,19 @@ router.post("/", async (req, res) => {
     conn = await db.getConnection();
     await conn.beginTransaction();
     txStarted = true;
+    const billingSettings = await loadBillingSettings(conn);
+    const subtotalAmount = await getCurrentOrderSubtotal(conn, items);
+    const requestedDiscountName =
+      discount_name || discountName || customer_type || customerType || "";
+    const appliedDiscount =
+      resolvedCashierId != null && !isOnlinePickupOrder
+        ? await resolveCashierDiscount(conn, requestedDiscountName)
+        : { discountName: "", discountRate: 0 };
+    const billingTotals = calculateBillingTotals(
+      subtotalAmount,
+      billingSettings,
+      appliedDiscount.discountRate,
+    );
     const persistedCashierId = await ensureLegacyCashierRow(
       conn,
       resolvedCashierId,
@@ -1283,7 +1437,7 @@ router.post("/", async (req, res) => {
          (Total_Amount, Customer_ID, Cashier_ID, Order_Type, Status, customer_user_id, payment_reference, payment_status, payment_method, proof_image_url, verified_by, verified_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        total,
+        billingTotals.grandTotal,
         customerId || null,
         persistedCashierId,
         finalOrderType,
@@ -1337,7 +1491,7 @@ router.post("/", async (req, res) => {
       // Insert line item
       await conn.query(
         "INSERT INTO order_item (Order_ID, Product_ID, Quantity, Subtotal) VALUES (?, ?, ?, ?)",
-        [orderId, item.product_id, requiredQty, item.subtotal]
+        [orderId, item.product_id, requiredQty, Number(item.price || 0) * requiredQty]
       );
 
     }
@@ -1372,7 +1526,10 @@ router.post("/", async (req, res) => {
               orderType: finalOrderType,
               paymentMethod: storedPaymentMethod,
               paymentStatus: effectivePaymentStatus,
-              total,
+              subtotal: billingTotals.subtotal,
+              taxAmount: billingTotals.taxAmount,
+              serviceChargeAmount: billingTotals.serviceChargeAmount,
+              total: billingTotals.grandTotal,
               items,
               note: buildCustomerReceiptNote(effectivePaymentStatus),
             },

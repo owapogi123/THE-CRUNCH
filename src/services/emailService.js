@@ -1,4 +1,5 @@
 const { Resend } = require("resend");
+const db = require("../config/db");
 
 function getResendClient() {
   const apiKey = String(process.env.RESEND_API_KEY || "").trim();
@@ -14,6 +15,52 @@ function getSender() {
     throw new Error("EMAIL_FROM is not configured");
   }
   return from;
+}
+
+async function loadRestaurantSettings() {
+  try {
+    const [rows] = await db.query(
+      `SELECT settings_json
+         FROM system_settings
+        WHERE setting_key = 'restaurant_settings'
+        LIMIT 1`,
+    );
+
+    if (!rows.length || !rows[0].settings_json) {
+      return {
+        restaurantName: "The Crunch",
+        tagline: "",
+        email: "",
+        phone: "",
+        address: "",
+        currency: "PHP",
+      };
+    }
+
+    const parsed = JSON.parse(rows[0].settings_json);
+    const readString = (value, fallback = "") => {
+      const normalized = String(value ?? "").trim();
+      return normalized || fallback;
+    };
+
+    return {
+      restaurantName: readString(parsed?.restaurantName, "The Crunch"),
+      tagline: readString(parsed?.tagline),
+      email: readString(parsed?.email),
+      phone: readString(parsed?.phone),
+      address: readString(parsed?.address),
+      currency: readString(parsed?.currency, "PHP"),
+    };
+  } catch {
+    return {
+      restaurantName: "The Crunch",
+      tagline: "",
+      email: "",
+      phone: "",
+      address: "",
+      currency: "PHP",
+    };
+  }
 }
 
 async function sendVerificationEmail({
@@ -76,6 +123,12 @@ async function sendCustomerOrderReceiptEmail({
   const paymentMethod = String(order?.paymentMethod || "").trim();
   const paymentStatus = String(order?.paymentStatus || "").trim();
   const note = String(order?.note || "").trim();
+  const restaurantSettings = await loadRestaurantSettings();
+  const restaurantName = restaurantSettings.restaurantName;
+  const currency = restaurantSettings.currency;
+  const subtotalAmount = Number(order?.subtotal || 0);
+  const taxAmount = Number(order?.taxAmount || 0);
+  const serviceChargeAmount = Number(order?.serviceChargeAmount || 0);
   const total = Number(order?.total || 0);
   const items = Array.isArray(order?.items) ? order.items : [];
 
@@ -96,7 +149,7 @@ async function sendCustomerOrderReceiptEmail({
         <tr>
           <td style="padding: 10px 0; border-bottom: 1px solid #eee3d4; color: #23150c;">${name}</td>
           <td style="padding: 10px 0; border-bottom: 1px solid #eee3d4; color: #23150c; text-align: center;">${quantity}</td>
-          <td style="padding: 10px 0; border-bottom: 1px solid #eee3d4; color: #23150c; text-align: right;">PHP ${subtotal.toFixed(2)}</td>
+          <td style="padding: 10px 0; border-bottom: 1px solid #eee3d4; color: #23150c; text-align: right;">${currency} ${subtotal.toFixed(2)}</td>
         </tr>
       `;
     })
@@ -107,7 +160,10 @@ async function sendCustomerOrderReceiptEmail({
     ["Order Type", orderType],
     ["Payment Method", paymentMethod],
     ["Payment Status", paymentStatus],
-    ["Total", `PHP ${total.toFixed(2)}`],
+    ["Subtotal", `${currency} ${subtotalAmount.toFixed(2)}`],
+    ["Tax", `${currency} ${taxAmount.toFixed(2)}`],
+    ["Service Charge", `${currency} ${serviceChargeAmount.toFixed(2)}`],
+    ["Total", `${currency} ${total.toFixed(2)}`],
   ]
     .map(
       ([label, value]) => `
@@ -119,18 +175,32 @@ async function sendCustomerOrderReceiptEmail({
     )
     .join("");
 
+  const contactRows = [
+    restaurantSettings.tagline,
+    restaurantSettings.address,
+    restaurantSettings.phone,
+    restaurantSettings.email,
+  ]
+    .filter(Boolean)
+    .map(
+      (line) => `
+        <p style="margin: 0; font-size: 13px; line-height: 1.6; color: #6b7280;">${line}</p>
+      `,
+    )
+    .join("");
+
   await resend.emails.send({
     from,
     to: recipient,
-    subject: `Order Confirmation ${orderNumber} - The Crunch`,
+    subject: `Order Confirmation ${orderNumber} - ${restaurantName}`,
     html: `
       <div style="font-family: Arial, sans-serif; background: #f7f3ee; padding: 24px; color: #23150c;">
         <div style="max-width: 620px; margin: 0 auto; background: #ffffff; border-radius: 16px; padding: 32px; border: 1px solid #eadfce;">
-          <p style="margin: 0 0 12px; font-size: 14px; color: #8a6d3b; text-transform: uppercase; letter-spacing: 0.12em;">The Crunch</p>
+          <p style="margin: 0 0 12px; font-size: 14px; color: #8a6d3b; text-transform: uppercase; letter-spacing: 0.12em;">${restaurantName}</p>
           <h1 style="margin: 0 0 14px; font-size: 24px; color: #23150c;">Your order confirmation</h1>
           <p style="margin: 0 0 18px; font-size: 15px; line-height: 1.7;">Hi ${safeName},</p>
           <p style="margin: 0 0 18px; font-size: 15px; line-height: 1.7;">
-            Thanks for ordering from The Crunch. Here are the details of your online order.
+            Thanks for ordering from ${restaurantName}. Here are the details of your online order.
           </p>
 
           <table style="width: 100%; border-collapse: collapse; margin-bottom: 22px;">
@@ -155,10 +225,15 @@ async function sendCustomerOrderReceiptEmail({
             <p style="margin: 0 0 6px; font-size: 13px; font-weight: 700; color: #5a3712;">Order Note</p>
             <p style="margin: 0; font-size: 14px; line-height: 1.7; color: #5a3712;">${note}</p>
           </div>
+          ${
+            contactRows
+              ? `<div style="margin-top: 18px; padding-top: 18px; border-top: 1px solid #eee3d4;">${contactRows}</div>`
+              : ""
+          }
         </div>
       </div>
     `,
-    text: `Hi ${safeName}, your The Crunch order ${orderNumber} is confirmed. Order type: ${orderType}. Payment method: ${paymentMethod}. Payment status: ${paymentStatus}. Total: PHP ${total.toFixed(2)}. ${note}`,
+    text: `Hi ${safeName}, your ${restaurantName} order ${orderNumber} is confirmed. Order type: ${orderType}. Payment method: ${paymentMethod}. Payment status: ${paymentStatus}. Total: ${currency} ${total.toFixed(2)}. ${note}`,
   });
 }
 

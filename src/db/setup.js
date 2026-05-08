@@ -465,6 +465,15 @@ CREATE TABLE IF NOT EXISTS menu_categories (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS discount_types (
+    discount_id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    percentage DECIMAL(5,2) NOT NULL DEFAULT 0,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
 `;
 
     await connection.query(createStatements);
@@ -561,6 +570,21 @@ CREATE TABLE IF NOT EXISTS menu_categories (
            SELECT 1 FROM menu_categories WHERE LOWER(name) = LOWER(?)
          )`,
         [name, displayOrder, name],
+      );
+    }
+
+    for (const [name, percentage] of [
+      ["Regular customer", 0],
+      ["PWD", 20],
+      ["Senior Citizen", 20],
+    ]) {
+      await connection.query(
+        `INSERT INTO discount_types (name, percentage, is_active)
+         SELECT ?, ?, TRUE
+         WHERE NOT EXISTS (
+           SELECT 1 FROM discount_types WHERE LOWER(name) = LOWER(?)
+         )`,
+        [name, percentage, name],
       );
     }
 

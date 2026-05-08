@@ -1,4 +1,5 @@
 const router = require("express").Router();
+const db = require("../config/db");
 
 const fetchFn = (...args) =>
   typeof fetch === "function"
@@ -41,6 +42,52 @@ function hasPaidCheckout(attributes) {
     paymentStatus === "paid" ||
     paymentStatus === "completed"
   );
+}
+
+async function loadBillingSettings() {
+  try {
+    const [rows] = await db.query(
+      `SELECT settings_json
+         FROM system_settings
+        WHERE setting_key = 'restaurant_settings'
+        LIMIT 1`,
+    );
+    if (!rows.length || !rows[0].settings_json) {
+      return { taxRate: 0, serviceCharge: 0 };
+    }
+    const parsed = JSON.parse(rows[0].settings_json);
+    return {
+      taxRate: Math.max(
+        0,
+        Number(
+          parsed?.taxRate ??
+            0,
+        ) || 0,
+      ),
+      serviceCharge: Math.max(
+        0,
+        Number(
+          parsed?.serviceCharge ??
+            0,
+        ) || 0,
+      ),
+    };
+  } catch {
+    return { taxRate: 0, serviceCharge: 0 };
+  }
+}
+
+function calculateBillingTotals(items, settings) {
+  const subtotal = (Array.isArray(items) ? items : []).reduce((sum, item) => {
+    const price = Number(item?.price || 0);
+    const quantity = Number(item?.qty || item?.quantity || 1);
+    return sum + Math.max(0, price) * Math.max(1, quantity);
+  }, 0);
+  const taxAmount = subtotal * (Number(settings.taxRate || 0) / 100);
+  const serviceChargeAmount =
+    subtotal * (Number(settings.serviceCharge || 0) / 100);
+  const grandTotal = subtotal + taxAmount + serviceChargeAmount;
+  return { subtotal, taxAmount, serviceChargeAmount, grandTotal };
 }
 
 async function payMongoRequest(path, options = {}) {
@@ -105,7 +152,9 @@ router.post("/create-checkout", async (req, res) => {
       });
     }
 
-    const totalPesos = Number(total || 0);
+    const billingSettings = await loadBillingSettings();
+    const totals = calculateBillingTotals(items, billingSettings);
+    const totalPesos = totals.grandTotal;
     const totalAmount = Math.round(totalPesos * 100);
     if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
       return res
@@ -136,6 +185,24 @@ router.post("/create-checkout", async (req, res) => {
       name: item.name,
       quantity: Math.max(1, Number(item.qty || item.quantity || 1)),
     }));
+    if (totals.taxAmount > 0) {
+      lineItems.push({
+        amount: Math.round(totals.taxAmount * 100),
+        currency: "PHP",
+        description: "Tax",
+        name: "Tax",
+        quantity: 1,
+      });
+    }
+    if (totals.serviceChargeAmount > 0) {
+      lineItems.push({
+        amount: Math.round(totals.serviceChargeAmount * 100),
+        currency: "PHP",
+        description: "Service Charge",
+        name: "Service Charge",
+        quantity: 1,
+      });
+    }
 
     const payload = {
       data: {
@@ -152,6 +219,14 @@ router.post("/create-checkout", async (req, res) => {
           payment_method_types: ["qrph"],
           success_url: process.env.PAYMONGO_SUCCESS_URL,
           cancel_url: process.env.PAYMONGO_CANCEL_URL,
+          metadata: {
+            customerUserId: customerUserId ? String(customerUserId) : "",
+            submittedTotal: String(total || 0),
+            subtotal: String(totals.subtotal),
+            taxAmount: String(totals.taxAmount),
+            serviceChargeAmount: String(totals.serviceChargeAmount),
+            grandTotal: String(totals.grandTotal),
+          },
         },
       },
     };

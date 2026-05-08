@@ -55,6 +55,17 @@ async function ensureInventoryMasterTables() {
   `);
 
   await db.query(`
+    CREATE TABLE IF NOT EXISTS discount_types (
+      discount_id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(100) NOT NULL UNIQUE,
+      percentage DECIMAL(5,2) NOT NULL DEFAULT 0,
+      is_active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )
+  `);
+
+  await db.query(`
     CREATE TABLE IF NOT EXISTS system_settings (
       setting_key VARCHAR(100) PRIMARY KEY,
       settings_json LONGTEXT NULL,
@@ -163,6 +174,22 @@ async function ensureInventoryMasterTables() {
          SELECT 1 FROM menu_categories WHERE LOWER(name) = LOWER(?)
        )`,
       [name, displayOrder, name],
+    );
+  }
+
+  const discountTypeSeeds = [
+    ["Regular customer", 0],
+    ["PWD", 20],
+    ["Senior Citizen", 20],
+  ];
+  for (const [name, percentage] of discountTypeSeeds) {
+    await db.query(
+      `INSERT INTO discount_types (name, percentage, is_active)
+       SELECT ?, ?, TRUE
+       WHERE NOT EXISTS (
+         SELECT 1 FROM discount_types WHERE LOWER(name) = LOWER(?)
+       )`,
+      [name, percentage, name],
     );
   }
 }
@@ -327,6 +354,11 @@ function normalizeOptionalString(value) {
   return normalized || null;
 }
 
+function normalizeString(value, fallback = "") {
+  const normalized = String(value ?? "").trim();
+  return normalized || fallback;
+}
+
 function normalizeBoolean(value, fallback = false) {
   if (typeof value === "boolean") return value;
   if (value === 1 || value === "1" || value === "true") return true;
@@ -345,18 +377,36 @@ function normalizeEnum(value, allowedValues, fieldName, fallback) {
   return normalized;
 }
 
+function normalizePercentage(value, fieldName) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0 || numeric > 100) {
+    throw new Error(`${fieldName} must be between 0 and 100`);
+  }
+  return Math.round(numeric * 100) / 100;
+}
+
 function sanitizeSettingsPayload(payload) {
   const source = payload && typeof payload === "object" ? payload : {};
   return {
-    restaurantName: String(source.restaurantName ?? ""),
-    tagline: String(source.tagline ?? ""),
-    email: String(source.email ?? ""),
-    phone: String(source.phone ?? ""),
-    address: String(source.address ?? ""),
-    currency: String(source.currency ?? "PHP"),
-    timezone: String(source.timezone ?? "Asia/Manila"),
-    openTime: String(source.openTime ?? "08:00"),
-    closeTime: String(source.closeTime ?? "22:00"),
+    restaurantName: normalizeString(source.restaurantName, "The Crunch"),
+    tagline: normalizeString(source.tagline),
+    email: normalizeString(source.email),
+    phone: normalizeString(source.phone),
+    address: normalizeString(source.address),
+    currency: normalizeString(source.currency, "PHP"),
+    timezone: normalizeString(source.timezone, "Asia/Manila"),
+    openTime: normalizeString(source.openTime, "08:00"),
+    closeTime: normalizeString(source.closeTime, "22:00"),
+    weekdayOpenTime: normalizeString(source.weekdayOpenTime, "10:00"),
+    weekdayCloseTime: normalizeString(source.weekdayCloseTime, "22:00"),
+    weekendOpenTime: normalizeString(source.weekendOpenTime, "11:00"),
+    weekendCloseTime: normalizeString(source.weekendCloseTime, "20:30"),
+    storeStatusMode: normalizeEnum(
+      source.storeStatusMode,
+      ["auto", "manual_open", "manual_closed"],
+      "storeStatusMode",
+      "auto",
+    ),
     orderTypes: {
       dineIn: normalizeBoolean(source.orderTypes?.dineIn, true),
       takeout: normalizeBoolean(source.orderTypes?.takeout, true),
@@ -375,7 +425,6 @@ function sanitizeSettingsPayload(payload) {
         source.criticalStockThreshold ??
         "",
     ),
-    autoReorderEnabled: normalizeBoolean(source.autoReorderEnabled, false),
     trackExpiry: normalizeBoolean(source.trackExpiry, false),
     wasteLogging: normalizeBoolean(source.wasteLogging, false),
     defaultUsageType: normalizeEnum(
@@ -395,17 +444,21 @@ function sanitizeSettingsPayload(payload) {
       true,
     ),
     autoFinalizeUsage: normalizeBoolean(source.autoFinalizeUsage, false),
-    outOfStockBehavior: normalizeEnum(
-      source.outOfStockBehavior,
-      ["hide", "disable"],
-      "outOfStockBehavior",
-      "disable",
+    enableToastNotifications: normalizeBoolean(
+      source.enableToastNotifications,
+      true,
     ),
-    emailNotifications: normalizeBoolean(source.emailNotifications, true),
-    smsNotifications: normalizeBoolean(source.smsNotifications, false),
-    orderAlerts: normalizeBoolean(source.orderAlerts, true),
-    staffAlerts: normalizeBoolean(source.staffAlerts, false),
-    dailyReportTime: String(source.dailyReportTime ?? "08:00"),
+    toastPosition: normalizeEnum(
+      source.toastPosition,
+      ["top-right", "top-left", "bottom-right", "bottom-left"],
+      "toastPosition",
+      "top-right",
+    ),
+    toastDuration: String(source.toastDuration ?? "4000"),
+    enableConfirmDialogs: normalizeBoolean(
+      source.enableConfirmDialogs,
+      true,
+    ),
     taxRate: String(source.taxRate ?? ""),
     serviceCharge: String(source.serviceCharge ?? ""),
     receiptFooter: String(source.receiptFooter ?? ""),
@@ -426,7 +479,7 @@ router.get("/", async (_req, res) => {
     );
 
     if (rows.length === 0 || !rows[0].settings_json) {
-      return res.json({});
+      return res.json(sanitizeSettingsPayload({}));
     }
 
     const parsed = JSON.parse(rows[0].settings_json);
@@ -845,6 +898,145 @@ router.patch("/menu-categories/:id", async (req, res) => {
       message: error.message?.includes("required")
         ? error.message
         : "Failed to update menu category",
+      error: error.message,
+    });
+  }
+});
+
+router.get("/discount-types", async (req, res) => {
+  try {
+    await ensureInventoryMasterTables();
+    const activeOnly = normalizeBoolean(req.query.activeOnly, true);
+    const [rows] = await db.query(
+      `SELECT discount_id, name, percentage, is_active, created_at, updated_at
+         FROM discount_types
+        ${activeOnly ? "WHERE is_active = TRUE" : ""}
+        ORDER BY percentage ASC, name ASC`,
+    );
+    res.json(rows);
+  } catch (error) {
+    console.error("GET /api/settings/discount-types error:", error);
+    res.status(500).json({
+      message: "Failed to load discount types",
+      error: error.message,
+    });
+  }
+});
+
+router.post("/discount-types", async (req, res) => {
+  try {
+    await ensureInventoryMasterTables();
+    const name = normalizeString(req.body?.name);
+    const percentage = normalizePercentage(
+      req.body?.percentage,
+      "percentage",
+    );
+
+    if (!name) {
+      return res.status(400).json({ message: "Discount name is required" });
+    }
+
+    const [existing] = await db.query(
+      `SELECT discount_id
+         FROM discount_types
+        WHERE LOWER(name) = LOWER(?)
+        LIMIT 1`,
+      [name],
+    );
+    if (existing.length > 0) {
+      return res.status(409).json({ message: "Discount type already exists" });
+    }
+
+    const [result] = await db.query(
+      `INSERT INTO discount_types (name, percentage, is_active)
+       VALUES (?, ?, TRUE)`,
+      [name, percentage],
+    );
+
+    const [rows] = await db.query(
+      `SELECT discount_id, name, percentage, is_active, created_at, updated_at
+         FROM discount_types
+        WHERE discount_id = ?`,
+      [result.insertId],
+    );
+    res.status(201).json(rows[0]);
+  } catch (error) {
+    console.error("POST /api/settings/discount-types error:", error);
+    res.status(500).json({
+      message: error.message || "Failed to create discount type",
+      error: error.message,
+    });
+  }
+});
+
+router.patch("/discount-types/:id", async (req, res) => {
+  try {
+    await ensureInventoryMasterTables();
+    const discountId = Number(req.params.id);
+    if (!Number.isFinite(discountId) || discountId <= 0) {
+      return res.status(400).json({ message: "Invalid discount type id" });
+    }
+
+    const updates = [];
+    const values = [];
+
+    if (Object.prototype.hasOwnProperty.call(req.body, "name")) {
+      const name = normalizeString(req.body?.name);
+      if (!name) {
+        return res.status(400).json({ message: "Discount name is required" });
+      }
+      const [existing] = await db.query(
+        `SELECT discount_id
+           FROM discount_types
+          WHERE LOWER(name) = LOWER(?)
+            AND discount_id <> ?
+          LIMIT 1`,
+        [name, discountId],
+      );
+      if (existing.length > 0) {
+        return res.status(409).json({ message: "Discount type already exists" });
+      }
+      updates.push("name = ?");
+      values.push(name);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, "percentage")) {
+      updates.push("percentage = ?");
+      values.push(normalizePercentage(req.body?.percentage, "percentage"));
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, "is_active")) {
+      updates.push("is_active = ?");
+      values.push(normalizeBoolean(req.body?.is_active, true));
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ message: "No valid fields to update" });
+    }
+
+    values.push(discountId);
+    const [result] = await db.query(
+      `UPDATE discount_types
+          SET ${updates.join(", ")}
+        WHERE discount_id = ?`,
+      values,
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Discount type not found" });
+    }
+
+    const [rows] = await db.query(
+      `SELECT discount_id, name, percentage, is_active, created_at, updated_at
+         FROM discount_types
+        WHERE discount_id = ?`,
+      [discountId],
+    );
+    res.json(rows[0]);
+  } catch (error) {
+    console.error("PATCH /api/settings/discount-types/:id error:", error);
+    res.status(500).json({
+      message: error.message || "Failed to update discount type",
       error: error.message,
     });
   }
