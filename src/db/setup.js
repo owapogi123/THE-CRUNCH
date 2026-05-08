@@ -183,6 +183,9 @@ CREATE TABLE IF NOT EXISTS Inventory (
     Stock INT,
     Reorder_Point DECIMAL(10,2) DEFAULT 20,
     Critical_Point DECIMAL(10,2) DEFAULT 5,
+    use_default_thresholds TINYINT(1) NOT NULL DEFAULT 1,
+    low_stock_threshold INT NULL,
+    critical_stock_threshold INT NULL,
     Item_Purchased VARCHAR(150),
     Last_Update DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (Product_ID) REFERENCES Menu(Product_ID)
@@ -672,6 +675,24 @@ END
       "Inventory",
       "Wasted",
       "`Wasted` DECIMAL(10,2) DEFAULT 0",
+    );
+    await ensureColumn(
+      connection,
+      "Inventory",
+      "use_default_thresholds",
+      "`use_default_thresholds` TINYINT(1) NOT NULL DEFAULT 1",
+    );
+    await ensureColumn(
+      connection,
+      "Inventory",
+      "low_stock_threshold",
+      "`low_stock_threshold` INT NULL",
+    );
+    await ensureColumn(
+      connection,
+      "Inventory",
+      "critical_stock_threshold",
+      "`critical_stock_threshold` INT NULL",
     );
 
     await ensureColumn(

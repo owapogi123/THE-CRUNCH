@@ -29,6 +29,38 @@ async function ensureProductsImageColumn() {
     }
 }
 
+async function ensureInventoryThresholdColumns() {
+    if (!(await hasColumn("Inventory", "Reorder_Point"))) {
+        await db.query(
+            "ALTER TABLE Inventory ADD COLUMN Reorder_Point DECIMAL(10,2) DEFAULT 20",
+        );
+    }
+
+    if (!(await hasColumn("Inventory", "Critical_Point"))) {
+        await db.query(
+            "ALTER TABLE Inventory ADD COLUMN Critical_Point DECIMAL(10,2) DEFAULT 5",
+        );
+    }
+
+    if (!(await hasColumn("Inventory", "use_default_thresholds"))) {
+        await db.query(
+            "ALTER TABLE Inventory ADD COLUMN use_default_thresholds TINYINT(1) NOT NULL DEFAULT 1",
+        );
+    }
+
+    if (!(await hasColumn("Inventory", "low_stock_threshold"))) {
+        await db.query(
+            "ALTER TABLE Inventory ADD COLUMN low_stock_threshold INT NULL",
+        );
+    }
+
+    if (!(await hasColumn("Inventory", "critical_stock_threshold"))) {
+        await db.query(
+            "ALTER TABLE Inventory ADD COLUMN critical_stock_threshold INT NULL",
+        );
+    }
+}
+
 async function ensureMenuManagementColumns() {
     await ensureProductsImageColumn();
     await ensureProductsItemTypeSchema(db);
@@ -98,6 +130,26 @@ function parseItemTypeInput(value, fallback = STOCK_ITEM) {
     }
 
     throw new Error("item_type must be either stock_item or menu_item");
+}
+
+function normalizeBooleanFlag(value, fallback = true) {
+    if (value === undefined || value === null || value === "") {
+        return fallback;
+    }
+    if (typeof value === "boolean") {
+        return value;
+    }
+    if (typeof value === "number") {
+        return value !== 0;
+    }
+    const normalized = String(value).trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(normalized)) {
+        return true;
+    }
+    if (["0", "false", "no", "off"].includes(normalized)) {
+        return false;
+    }
+    return fallback;
 }
 
 function normalizePromoValues(isPromotional, promoPrice, promoLabel) {
@@ -205,6 +257,7 @@ router.get("/", async (req, res) => {
         await ensureMenuManagementColumns();
         await ensureMenuAvailabilitySchema(db);
         const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+        await ensureInventoryThresholdColumns();
         const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p", "m");
         const requestedItemType = String(req.query.item_type || "")
             .trim()
@@ -258,6 +311,7 @@ router.post("/", async (req, res) => {
         await ensureMenuManagementColumns();
         await ensureMenuAvailabilitySchema(db);
         const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+        await ensureInventoryThresholdColumns();
         const {
             name,
             price,
@@ -275,6 +329,9 @@ router.post("/", async (req, res) => {
             manual_status,
             override_mode,
             ingredients,
+            use_default_thresholds,
+            low_stock_threshold,
+            critical_stock_threshold,
         } = req.body;
 
         const normalizedAvailabilityStatus = normalizeAvailabilityStatus(
@@ -306,6 +363,44 @@ router.post("/", async (req, res) => {
             promo_price,
             promo_label,
         );
+        const useDefaultThresholds = normalizeBooleanFlag(
+            use_default_thresholds,
+            true,
+        );
+        const lowStockThreshold =
+            low_stock_threshold === undefined ||
+            low_stock_threshold === null ||
+            low_stock_threshold === ""
+                ? null
+                : Number(low_stock_threshold);
+        const criticalStockThreshold =
+            critical_stock_threshold === undefined ||
+            critical_stock_threshold === null ||
+            critical_stock_threshold === ""
+                ? null
+                : Number(critical_stock_threshold);
+
+        if (
+            lowStockThreshold !== null &&
+            (!Number.isFinite(lowStockThreshold) || lowStockThreshold < 0)
+        ) {
+            return res.status(400).json({ message: "Invalid low stock threshold value" });
+        }
+        if (
+            criticalStockThreshold !== null &&
+            (!Number.isFinite(criticalStockThreshold) || criticalStockThreshold < 0)
+        ) {
+            return res.status(400).json({ message: "Invalid critical stock threshold value" });
+        }
+        if (
+            lowStockThreshold !== null &&
+            criticalStockThreshold !== null &&
+            criticalStockThreshold > lowStockThreshold
+        ) {
+            return res.status(400).json({
+                message: "Critical threshold cannot be greater than warning threshold",
+            });
+        }
 
         const insertColumns = [
             "name",
@@ -374,6 +469,41 @@ router.post("/", async (req, res) => {
             ]
         );
 
+        await db.query(
+            `INSERT INTO Inventory (
+                Product_ID,
+                Quantity,
+                Stock,
+                Reorder_Point,
+                Critical_Point,
+                Item_Purchased,
+                use_default_thresholds,
+                low_stock_threshold,
+                critical_stock_threshold
+            )
+             VALUES (?,?,?,?,?,?,?,?,?)
+             ON DUPLICATE KEY UPDATE
+                Quantity = VALUES(Quantity),
+                Stock = VALUES(Stock),
+                Reorder_Point = VALUES(Reorder_Point),
+                Critical_Point = VALUES(Critical_Point),
+                Item_Purchased = VALUES(Item_Purchased),
+                use_default_thresholds = VALUES(use_default_thresholds),
+                low_stock_threshold = VALUES(low_stock_threshold),
+                critical_stock_threshold = VALUES(critical_stock_threshold)`,
+            [
+                newId,
+                quantity || 0,
+                quantity || 0,
+                20,
+                5,
+                name,
+                useDefaultThresholds ? 1 : 0,
+                lowStockThreshold,
+                criticalStockThreshold,
+            ],
+        );
+
         if (normalizedIngredients !== null) {
             await replaceMenuIngredients(db, newId, normalizedIngredients);
         }
@@ -437,6 +567,9 @@ router.put("/:id", async (req, res) => {
             manual_status,
             override_mode,
             ingredients,
+            use_default_thresholds,
+            low_stock_threshold,
+            critical_stock_threshold,
         } = req.body;
 
         const productFields = [];
@@ -483,6 +616,64 @@ router.put("/:id", async (req, res) => {
             inventoryValues.push(safeQuantity);
             inventoryFields.push("Quantity = ?");
             inventoryValues.push(safeQuantity);
+        }
+
+        if (
+            use_default_thresholds !== undefined ||
+            low_stock_threshold !== undefined ||
+            critical_stock_threshold !== undefined
+        ) {
+            const useDefaultThresholds = normalizeBooleanFlag(
+                use_default_thresholds,
+                true,
+            );
+            const lowStockThreshold =
+                low_stock_threshold === undefined ||
+                low_stock_threshold === null ||
+                low_stock_threshold === ""
+                    ? null
+                    : Number(low_stock_threshold);
+            const criticalStockThreshold =
+                critical_stock_threshold === undefined ||
+                critical_stock_threshold === null ||
+                critical_stock_threshold === ""
+                    ? null
+                    : Number(critical_stock_threshold);
+
+            if (
+                lowStockThreshold !== null &&
+                (!Number.isFinite(lowStockThreshold) || lowStockThreshold < 0)
+            ) {
+                return res.status(400).json({ message: "Invalid low stock threshold value" });
+            }
+            if (
+                criticalStockThreshold !== null &&
+                (!Number.isFinite(criticalStockThreshold) || criticalStockThreshold < 0)
+            ) {
+                return res.status(400).json({ message: "Invalid critical stock threshold value" });
+            }
+            if (
+                lowStockThreshold !== null &&
+                criticalStockThreshold !== null &&
+                criticalStockThreshold > lowStockThreshold
+            ) {
+                return res.status(400).json({
+                    message: "Critical threshold cannot be greater than warning threshold",
+                });
+            }
+
+            if (use_default_thresholds !== undefined) {
+                inventoryFields.push("use_default_thresholds = ?");
+                inventoryValues.push(useDefaultThresholds ? 1 : 0);
+            }
+            if (low_stock_threshold !== undefined) {
+                inventoryFields.push("low_stock_threshold = ?");
+                inventoryValues.push(lowStockThreshold);
+            }
+            if (critical_stock_threshold !== undefined) {
+                inventoryFields.push("critical_stock_threshold = ?");
+                inventoryValues.push(criticalStockThreshold);
+            }
         }
 
         if (description !== undefined) {

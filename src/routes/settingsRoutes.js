@@ -99,7 +99,7 @@ async function ensureInventoryMasterTables() {
     UPDATE inventory_categories
        SET date_tracking_type = CASE
          WHEN LOWER(TRIM(name)) = 'raw material' THEN 'shelf_life'
-         WHEN LOWER(TRIM(name)) IN ('sauces', 'aromatics') THEN 'expiry'
+         WHEN LOWER(TRIM(name)) IN ('sauces', 'aromatics', 'ingredients') THEN 'expiry'
          WHEN date_tracking_type IS NULL OR date_tracking_type = '' THEN 'none'
          ELSE date_tracking_type
        END
@@ -111,7 +111,7 @@ async function ensureInventoryMasterTables() {
   const categorySeeds = [
     ["Raw Material", "raw_material", "shelf_life"],
     ["Sauces", "ingredient", "expiry"],
-    ["Ingredients", "ingredient", "shelf_life"],
+    ["Ingredients", "ingredient", "expiry"],
     ["Aromatics", "ingredient", "expiry"],
     ["Packaging", "finished", "none"],
   ];
@@ -367,8 +367,14 @@ function sanitizeSettingsPayload(payload) {
     requireTableNumber: normalizeBoolean(source.requireTableNumber, true),
     allowSplitBills: normalizeBoolean(source.allowSplitBills, false),
     enableLoyaltyPoints: normalizeBoolean(source.enableLoyaltyPoints, false),
-    lowStockThreshold: String(source.lowStockThreshold ?? ""),
-    criticalStockThreshold: String(source.criticalStockThreshold ?? ""),
+    defaultLowStockThreshold: String(
+      source.defaultLowStockThreshold ?? source.lowStockThreshold ?? "",
+    ),
+    defaultCriticalStockThreshold: String(
+      source.defaultCriticalStockThreshold ??
+        source.criticalStockThreshold ??
+        "",
+    ),
     autoReorderEnabled: normalizeBoolean(source.autoReorderEnabled, false),
     trackExpiry: normalizeBoolean(source.trackExpiry, false),
     wasteLogging: normalizeBoolean(source.wasteLogging, false),
@@ -424,7 +430,11 @@ router.get("/", async (_req, res) => {
     }
 
     const parsed = JSON.parse(rows[0].settings_json);
-    res.json(parsed && typeof parsed === "object" ? parsed : {});
+    res.json(
+      parsed && typeof parsed === "object"
+        ? sanitizeSettingsPayload(parsed)
+        : {},
+    );
   } catch (error) {
     console.error("GET /api/settings error:", error);
     res.status(500).json({
@@ -541,12 +551,6 @@ router.post("/inventory-categories", async (req, res) => {
   try {
     await ensureInventoryMasterTables();
     const name = normalizeName(req.body?.name, "Category name");
-    const type = normalizeEnum(
-      req.body?.type,
-      ["raw_material", "ingredient", "finished"],
-      "type",
-      "ingredient",
-    );
     const dateTrackingType = normalizeEnum(
       req.body?.date_tracking_type,
       ["none", "expiry", "shelf_life"],
@@ -568,12 +572,11 @@ router.post("/inventory-categories", async (req, res) => {
     const [result] = await db.query(
       `INSERT INTO inventory_categories (
          name,
-         type,
          date_tracking_type,
          is_active
        )
-       VALUES (?, ?, ?, TRUE)`,
-      [name, type, dateTrackingType],
+       VALUES (?, ?, TRUE)`,
+      [name, dateTrackingType],
     );
 
     const [rows] = await db.query(
@@ -626,18 +629,6 @@ router.patch("/inventory-categories/:id", async (req, res) => {
       }
       updates.push("name = ?");
       values.push(name);
-    }
-
-    if (Object.prototype.hasOwnProperty.call(req.body, "type")) {
-      updates.push("type = ?");
-      values.push(
-        normalizeEnum(
-          req.body.type,
-          ["raw_material", "ingredient", "finished"],
-          "type",
-          "ingredient",
-        ),
-      );
     }
 
     if (Object.prototype.hasOwnProperty.call(req.body, "date_tracking_type")) {

@@ -47,6 +47,87 @@ function isStrictRawMaterialCategory(value) {
   return normalized === "raw material" || normalized === "raw materials";
 }
 
+function normalizeInventoryCategoryName(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase();
+}
+
+function getLevenshteinDistance(a, b) {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+
+  const matrix = Array.from({ length: a.length + 1 }, () =>
+    new Array(b.length + 1).fill(0),
+  );
+
+  for (let i = 0; i <= a.length; i += 1) matrix[i][0] = i;
+  for (let j = 0; j <= b.length; j += 1) matrix[0][j] = j;
+
+  for (let i = 1; i <= a.length; i += 1) {
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1,
+        matrix[i][j - 1] + 1,
+        matrix[i - 1][j - 1] + cost,
+      );
+    }
+  }
+
+  return matrix[a.length][b.length];
+}
+
+async function resolveInventoryCategoryTracking(connOrDb, categoryValue) {
+  const [rows] = await connOrDb.query(
+    `SELECT name, date_tracking_type
+       FROM inventory_categories`,
+  );
+
+  const normalizedCategory = normalizeInventoryCategoryName(categoryValue);
+  const normalizedRows = rows.map((row) => ({
+    name: String(row.name || ""),
+    normalizedName: normalizeInventoryCategoryName(row.name),
+    dateTrackingType: String(row.date_tracking_type || "none"),
+  }));
+
+  const directMatch =
+    normalizedRows.find((row) => row.normalizedName === normalizedCategory) ??
+    null;
+  if (directMatch) {
+    return {
+      matchedCategory: directMatch.name,
+      dateTrackingType: directMatch.dateTrackingType,
+    };
+  }
+
+  let bestMatch = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const row of normalizedRows) {
+    const distance = getLevenshteinDistance(
+      normalizedCategory,
+      row.normalizedName,
+    );
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestMatch = row;
+    }
+  }
+
+  if (bestMatch && bestDistance <= 2) {
+    return {
+      matchedCategory: bestMatch.name,
+      dateTrackingType: bestMatch.dateTrackingType,
+    };
+  }
+
+  return {
+    matchedCategory: null,
+    dateTrackingType: "none",
+  };
+}
+
 function computeUsableUntil(baseValue, shelfLifeDays, shelfLifeHours) {
   const base = new Date(baseValue);
   if (isNaN(base.getTime())) return null;
@@ -643,22 +724,32 @@ router.patch("/:id/receive", async (req, res) => {
       const shelfLifeHours = toPositiveIntegerOrNull(
         shelfLifeInput.shelfLifeHours,
       );
-      const isRawMaterial = isStrictRawMaterialCategory(item.category);
-      const itemExpiryDate = isRawMaterial
-        ? null
-        : toDateString(itemExpiryDates?.[item.item_id]);
-      const usableUntil = isRawMaterial
+      const { matchedCategory, dateTrackingType } =
+        await resolveInventoryCategoryTracking(conn, item.category);
+      console.log("PO DATE TRACKING DEBUG", {
+        itemName: item.name,
+        itemCategory: item.category,
+        matchedCategory,
+        dateTrackingType,
+      });
+
+      const usesShelfLife = dateTrackingType === "shelf_life";
+      const usesExpiry = dateTrackingType === "expiry";
+      const itemExpiryDate = usesExpiry
+        ? toDateString(itemExpiryDates?.[item.item_id])
+        : null;
+      const usableUntil = usesShelfLife
         ? computeUsableUntil(safeReceivedAt, shelfLifeDays, shelfLifeHours)
         : null;
 
-      if (isRawMaterial && !usableUntil) {
+      if (usesShelfLife && !usableUntil) {
         await conn.rollback();
         return res.status(400).json({
-          error: `Shelf life is required for raw material "${item.name}"`,
+          error: `Shelf life is required for "${item.name}"`,
         });
       }
 
-      if (!isRawMaterial && !itemExpiryDate) {
+      if (usesExpiry && !itemExpiryDate) {
         await conn.rollback();
         return res.status(400).json({
           error: `Expiry date is required for "${item.name}"`,

@@ -30,6 +30,34 @@ async function ensureInventoryAlertColumns() {
       "ALTER TABLE Inventory ADD COLUMN Critical_Point DECIMAL(10,2) DEFAULT 5",
     );
   }
+
+  if (!(await hasColumn("Inventory", "use_default_thresholds"))) {
+    await db.query(
+      "ALTER TABLE Inventory ADD COLUMN use_default_thresholds TINYINT(1) NOT NULL DEFAULT 1",
+    );
+  }
+
+  if (!(await hasColumn("Inventory", "low_stock_threshold"))) {
+    await db.query(
+      "ALTER TABLE Inventory ADD COLUMN low_stock_threshold INT NULL",
+    );
+  }
+
+  if (!(await hasColumn("Inventory", "critical_stock_threshold"))) {
+    await db.query(
+      "ALTER TABLE Inventory ADD COLUMN critical_stock_threshold INT NULL",
+    );
+  }
+}
+
+function normalizeBooleanFlag(value, fallback = true) {
+  if (value === undefined || value === null || value === "") return fallback;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return fallback;
 }
 
 async function ensureProductsImageColumn() {
@@ -402,8 +430,27 @@ router.get("/", async (req, res) => {
 
     // Ensure inventory rows exist for all menu products.
     await db.query(
-      `INSERT INTO Inventory (Product_ID, Quantity, Stock, Item_Purchased)
-       SELECT m.Product_ID, m.Stock, m.Stock, m.Product_Name
+      `INSERT INTO Inventory (
+         Product_ID,
+         Quantity,
+         Stock,
+         Item_Purchased,
+         Reorder_Point,
+         Critical_Point,
+         use_default_thresholds,
+         low_stock_threshold,
+         critical_stock_threshold
+       )
+       SELECT
+         m.Product_ID,
+         m.Stock,
+         m.Stock,
+         m.Product_Name,
+         20,
+         5,
+         1,
+         NULL,
+         NULL
        FROM Menu m
        JOIN products p ON p.id = m.Product_ID
        LEFT JOIN Inventory i ON i.Product_ID = m.Product_ID
@@ -414,6 +461,18 @@ router.get("/", async (req, res) => {
 
     const hasReorderPoint = await hasColumn("Inventory", "Reorder_Point");
     const hasCriticalPoint = await hasColumn("Inventory", "Critical_Point");
+    const hasUseDefaultThresholds = await hasColumn(
+      "Inventory",
+      "use_default_thresholds",
+    );
+    const hasLowStockThreshold = await hasColumn(
+      "Inventory",
+      "low_stock_threshold",
+    );
+    const hasCriticalStockThreshold = await hasColumn(
+      "Inventory",
+      "critical_stock_threshold",
+    );
 
     const reorderExpr = hasReorderPoint
       ? "COALESCE(i.Reorder_Point, 20)"
@@ -421,6 +480,15 @@ router.get("/", async (req, res) => {
     const criticalExpr = hasCriticalPoint
       ? "COALESCE(i.Critical_Point, 5)"
       : "5";
+    const useDefaultThresholdsExpr = hasUseDefaultThresholds
+      ? "COALESCE(i.use_default_thresholds, 1)"
+      : "1";
+    const lowStockThresholdExpr = hasLowStockThreshold
+      ? "i.low_stock_threshold"
+      : "NULL";
+    const criticalStockThresholdExpr = hasCriticalStockThreshold
+      ? "i.critical_stock_threshold"
+      : "NULL";
 
     const [rows] = await db.query(
       `SELECT
@@ -435,6 +503,9 @@ router.get("/", async (req, res) => {
          i.Last_Update                                                           AS last_update,
          ${reorderExpr}                                                          AS reorderPoint,
          ${criticalExpr}                                                         AS criticalPoint,
+         ${useDefaultThresholdsExpr}                                             AS useDefaultThresholds,
+         ${lowStockThresholdExpr}                                                AS lowStockThreshold,
+         ${criticalStockThresholdExpr}                                           AS criticalStockThreshold,
          COALESCE(sa.supplier_name, 'No Supplier')                              AS supplier_name,
          COALESCE(i.Daily_Withdrawn, 0)                                         AS dailyWithdrawn,
          COALESCE(i.Returned, 0)                                                AS returned,
@@ -574,6 +645,9 @@ router.put("/:inventory_id", async (req, res) => {
       wasted,
       reorderPoint,
       criticalPoint,
+      useDefaultThresholds,
+      lowStockThreshold,
+      criticalStockThreshold,
     } = req.body;
     const fields = [];
     const values = [];
@@ -597,13 +671,22 @@ router.put("/:inventory_id", async (req, res) => {
       values.push(Number(wasted));
     }
 
-    if (reorderPoint !== undefined || criticalPoint !== undefined) {
+    if (
+      reorderPoint !== undefined ||
+      criticalPoint !== undefined ||
+      useDefaultThresholds !== undefined ||
+      lowStockThreshold !== undefined ||
+      criticalStockThreshold !== undefined
+    ) {
       await ensureInventoryAlertColumns();
 
       const [existingRows] = await db.query(
         `SELECT
            COALESCE(Reorder_Point, 20) AS reorderPoint,
-           COALESCE(Critical_Point, 5) AS criticalPoint
+           COALESCE(Critical_Point, 5) AS criticalPoint,
+           COALESCE(use_default_thresholds, 1) AS useDefaultThresholds,
+           low_stock_threshold AS lowStockThreshold,
+           critical_stock_threshold AS criticalStockThreshold
          FROM Inventory
          WHERE Inventory_ID = ?`,
         [inventoryId],
@@ -621,6 +704,24 @@ router.put("/:inventory_id", async (req, res) => {
         criticalPoint !== undefined
           ? Number(criticalPoint)
           : Number(existingRows[0].criticalPoint);
+      const nextUseDefaultThresholds = normalizeBooleanFlag(
+        useDefaultThresholds,
+        Number(existingRows[0].useDefaultThresholds ?? 1) === 1,
+      );
+      const nextLowStockThreshold =
+        lowStockThreshold !== undefined && lowStockThreshold !== null && lowStockThreshold !== ""
+          ? Number(lowStockThreshold)
+          : existingRows[0].lowStockThreshold == null
+            ? null
+            : Number(existingRows[0].lowStockThreshold);
+      const nextCriticalStockThreshold =
+        criticalStockThreshold !== undefined &&
+        criticalStockThreshold !== null &&
+        criticalStockThreshold !== ""
+          ? Number(criticalStockThreshold)
+          : existingRows[0].criticalStockThreshold == null
+            ? null
+            : Number(existingRows[0].criticalStockThreshold);
 
       if (!Number.isFinite(nextReorderPoint) || nextReorderPoint < 0) {
         return res.status(400).json({ message: "Invalid reorderPoint value" });
@@ -634,6 +735,33 @@ router.put("/:inventory_id", async (req, res) => {
             "Critical threshold cannot be greater than warning threshold",
         });
       }
+      if (
+        nextLowStockThreshold !== null &&
+        (!Number.isFinite(nextLowStockThreshold) || nextLowStockThreshold < 0)
+      ) {
+        return res
+          .status(400)
+          .json({ message: "Invalid lowStockThreshold value" });
+      }
+      if (
+        nextCriticalStockThreshold !== null &&
+        (!Number.isFinite(nextCriticalStockThreshold) ||
+          nextCriticalStockThreshold < 0)
+      ) {
+        return res
+          .status(400)
+          .json({ message: "Invalid criticalStockThreshold value" });
+      }
+      if (
+        nextLowStockThreshold !== null &&
+        nextCriticalStockThreshold !== null &&
+        nextCriticalStockThreshold > nextLowStockThreshold
+      ) {
+        return res.status(400).json({
+          message:
+            "Critical threshold cannot be greater than warning threshold",
+        });
+      }
 
       if (reorderPoint !== undefined) {
         fields.push("Reorder_Point = ?");
@@ -642,6 +770,26 @@ router.put("/:inventory_id", async (req, res) => {
       if (criticalPoint !== undefined) {
         fields.push("Critical_Point = ?");
         values.push(nextCriticalPoint);
+      }
+      if (useDefaultThresholds !== undefined) {
+        fields.push("use_default_thresholds = ?");
+        values.push(nextUseDefaultThresholds ? 1 : 0);
+      }
+      if (lowStockThreshold !== undefined) {
+        fields.push("low_stock_threshold = ?");
+        values.push(
+          lowStockThreshold === null || lowStockThreshold === ""
+            ? null
+            : nextLowStockThreshold,
+        );
+      }
+      if (criticalStockThreshold !== undefined) {
+        fields.push("critical_stock_threshold = ?");
+        values.push(
+          criticalStockThreshold === null || criticalStockThreshold === ""
+            ? null
+            : nextCriticalStockThreshold,
+        );
       }
     }
 
