@@ -130,7 +130,7 @@ router.post("/create-checkout", async (req, res) => {
     });
 
     const lineItems = items.map((item) => ({
-      amount: Math.max(10000, Math.round(Number(item.price || 0) * 100)),
+      amount: Math.round(Number(item.price || 0) * 100),
       currency: "PHP",
       description: item.name,
       name: item.name,
