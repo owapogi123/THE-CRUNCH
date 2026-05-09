@@ -20,7 +20,7 @@ import {
 } from "recharts";
 import { api } from "@/lib/api";
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Types Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 interface OrderItem {
   name: string;
@@ -57,7 +57,7 @@ interface RawOrderRow {
 
 type SalesReportPeriod = "daily" | "weekly" | "monthly" | "yearly";
 
-// Sub-options per period — each has a key, a label, and a function that returns [start, end]
+// Sub-options per period Ã¢â‚¬â€ each has a key, a label, and a function that returns [start, end]
 interface PeriodOption {
   key: string;
   label: string;
@@ -79,7 +79,7 @@ function getPeriodOptions(period: SalesReportPeriod): PeriodOption[] {
     ];
   }
   if (period === "weekly") {
-    // "This week" = Mon–today of current calendar week
+    // "This week" = MonÃ¢â‚¬â€œtoday of current calendar week
     const dayOfWeek = now.getDay(); // 0=Sun
     const diffToMon = (dayOfWeek + 6) % 7;
     const thisMonday = new Date(now); thisMonday.setDate(now.getDate() - diffToMon);
@@ -156,7 +156,7 @@ interface DateRange {
   end: Date | null;
 }
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Constants Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 const DAYS_OF_WEEK = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const WEEKEND_NAMES = ["Sat", "Sun"];
@@ -198,7 +198,7 @@ const SHORT_MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun",
   "Jul","Aug","Sep","Oct","Nov","Dec"];
 const DAY_HEADERS = ["Su","Mo","Tu","We","Th","Fr","Sa"];
 
-// ─── Utility ──────────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Utility Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 function formatDateShort(d: Date): string {
   const y = d.getFullYear();
@@ -365,7 +365,7 @@ function computeChartData(
   }));
 }
 
-// ─── Date Range Picker ────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Date Range Picker Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 interface DateRangePickerProps {
   value: DateRange;
@@ -603,7 +603,7 @@ function DateRangePicker({ value, onChange }: DateRangePickerProps) {
 }
 
 
-// ─── Period Dropdown ──────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Period Dropdown Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 interface PeriodDropdownProps {
   selectedPeriod: SalesReportPeriod;
@@ -629,9 +629,9 @@ function PeriodDropdown({ selectedPeriod, selectedSubKey, onSelect, disabled }: 
   const activeRange = activeOpt.getRange();
   const rangeLabel  = activeRange.start.toDateString() === activeRange.end.toDateString()
     ? formatDisplayDate(activeRange.start)
-    : `${formatDisplayDate(activeRange.start)} – ${formatDisplayDate(activeRange.end)}`;
+    : `${formatDisplayDate(activeRange.start)} Ã¢â‚¬â€œ ${formatDisplayDate(activeRange.end)}`;
 
-  const triggerLabel = `${PERIOD_LABELS.find(p => p.value === selectedPeriod)?.label} · ${activeOpt.label}`;
+  const triggerLabel = `${PERIOD_LABELS.find(p => p.value === selectedPeriod)?.label} Ã‚Â· ${activeOpt.label}`;
 
   return (
     <div ref={ref} style={{ position: "relative", fontFamily: "'Poppins', sans-serif" }}>
@@ -692,7 +692,7 @@ function PeriodDropdown({ selectedPeriod, selectedSubKey, onSelect, disabled }: 
                   const r = opt.getRange();
                   const rl = r.start.toDateString() === r.end.toDateString()
                     ? formatDisplayDate(r.start)
-                    : `${formatDisplayDate(r.start)} – ${formatDisplayDate(r.end)}`;
+                    : `${formatDisplayDate(r.start)} Ã¢â‚¬â€œ ${formatDisplayDate(r.end)}`;
                   const isActive = isActivePeriod && opt.key === selectedSubKey;
                   return (
                     <button
@@ -727,7 +727,7 @@ function PeriodDropdown({ selectedPeriod, selectedSubKey, onSelect, disabled }: 
   );
 }
 
-// ─── Sub-Components ───────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Sub-Components Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 interface KpiCardProps {
   label: string;
@@ -854,7 +854,7 @@ function TopItemsChart({ items }: TopItemsProps) {
   );
 }
 
-// ─── Main Dashboard ───────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Main Dashboard Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 export default function AdminDashboard() {
   const [orders, setOrders] = useState<Order[]>([]);
@@ -888,10 +888,6 @@ export default function AdminDashboard() {
   const activeOrders = filteredOrders.filter(
     (o) => !["Completed", "Cancelled"].includes(o.status),
   ).length;
-  const completedOrders = filteredOrders.filter((o) => o.status === "Completed").length;
-  const cancelledOrders = filteredOrders.filter((o) => o.status === "Cancelled").length;
-  const completionRate = totalOrders > 0 ? ((completedOrders / totalOrders) * 100).toFixed(1) : "0.0";
-  const cancellationRate = totalOrders > 0 ? ((cancelledOrders / totalOrders) * 100).toFixed(1) : "0.0";
 
   const topItems = useMemo(() => computeTopItems(filteredOrders), [filteredOrders]);
   const orderTypes = useMemo(() => computeOrderTypes(filteredOrders), [filteredOrders]);
@@ -906,7 +902,7 @@ export default function AdminDashboard() {
   const periodLabel = PERIOD_LABELS.find((p) => p.value === selectedPeriod)?.label ?? "";
   const yAxisFormatter = (v: number) =>
     salesView === "sales"
-      ? `₱${v >= 1000 ? Math.round(v / 1000) + "k" : v}`
+      ? `Ã¢â€šÂ±${v >= 1000 ? Math.round(v / 1000) + "k" : v}`
       : String(v);
 
   useEffect(() => {
@@ -961,7 +957,7 @@ export default function AdminDashboard() {
       <main className="tablet-shell flex-1">
         <div className="tablet-surface bg-[#FDFAF6] min-h-[calc(100vh-5rem)]">
 
-          {/* ── Header ── */}
+          {/* Ã¢â€â‚¬Ã¢â€â‚¬ Header Ã¢â€â‚¬Ã¢â€â‚¬ */}
           <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
             {/* Brand */}
             <div className="flex items-center gap-3 shrink-0">
@@ -998,7 +994,7 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* ── Banners ── */}
+          {/* Ã¢â€â‚¬Ã¢â€â‚¬ Banners Ã¢â€â‚¬Ã¢â€â‚¬ */}
           {ordersError && (
             <Card className="bg-red-50 border border-red-200 rounded-2xl p-4 mb-6 shadow-sm">
               <p className="text-sm font-semibold text-red-700">Dashboard data failed to load</p>
@@ -1019,16 +1015,16 @@ export default function AdminDashboard() {
             </Card>
           )}
 
-          {/* ── KPI Cards ── */}
+          {/* Ã¢â€â‚¬Ã¢â€â‚¬ KPI Cards Ã¢â€â‚¬Ã¢â€â‚¬ */}
             <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <KpiCard label="Total Orders" value={isLoadingOrders ? "..." : totalOrders.toLocaleString()} trend="Live" up={null} />
-            <KpiCard label="Total Sales" value={isLoadingOrders ? "..." : `₱${totalSales.toLocaleString()}`} trend="Live" up={null} />
-            <KpiCard label="Avg Order Value" value={isLoadingOrders ? "..." : `₱${avgOrderValue.toFixed(2)}`} trend="Per transaction" up={null} />
+            <KpiCard label="Total Sales" value={isLoadingOrders ? "..." : `Ã¢â€šÂ±${totalSales.toLocaleString()}`} trend="Live" up={null} />
+            <KpiCard label="Avg Order Value" value={isLoadingOrders ? "..." : `Ã¢â€šÂ±${avgOrderValue.toFixed(2)}`} trend="Per transaction" up={null} />
             <KpiCard label="Active Orders" value={isLoadingOrders ? "..." : activeOrders.toLocaleString()} trend="In progress" up={null} />
 
           </div>
 
-          {/* ── Charts Row ── */}
+          {/* Ã¢â€â‚¬Ã¢â€â‚¬ Charts Row Ã¢â€â‚¬Ã¢â€â‚¬ */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">
             <div className="lg:col-span-8">
               <Card className="bg-white rounded-2xl p-6 shadow-md border-0">
@@ -1037,14 +1033,14 @@ export default function AdminDashboard() {
   <h2 className="text-lg font-semibold text-gray-800">Order & Sales Review</h2>
   <p className="text-xs text-gray-400 mt-0.5">
     {hasCustomRange
-      ? `${formatDisplayDate(dateRange.start!)} – ${formatDisplayDate(dateRange.end!)}`
+      ? `${formatDisplayDate(dateRange.start!)} Ã¢â‚¬â€œ ${formatDisplayDate(dateRange.end!)}`
       : activeRange
-      ? `${formatDisplayDate(activeRange.start)}${activeRange.start.toDateString() !== activeRange.end.toDateString() ? " – " + formatDisplayDate(activeRange.end) : ""}`
-      : "—"}
+      ? `${formatDisplayDate(activeRange.start)}${activeRange.start.toDateString() !== activeRange.end.toDateString() ? " Ã¢â‚¬â€œ " + formatDisplayDate(activeRange.end) : ""}`
+      : "Ã¢â‚¬â€"}
   </p>
               {!isLoadingOrders && (
   <p className="text-sm font-semibold text-[#7C2D2D] mt-2">
-    ₱{totalSales.toLocaleString()}{" "}
+    Ã¢â€šÂ±{totalSales.toLocaleString()}{" "}
     <span className="text-xs font-normal text-gray-400">
       as of{" "}
       {hasCustomRange && dateRange.end
@@ -1141,7 +1137,7 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* ── Bottom Row ── */}
+          {/* Ã¢â€â‚¬Ã¢â€â‚¬ Bottom Row Ã¢â€â‚¬Ã¢â€â‚¬ */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
             <Card className="bg-white rounded-2xl p-6 shadow-md border-0">
               <h3 className="text-lg font-semibold text-gray-800 mb-4">Peak Hours</h3>

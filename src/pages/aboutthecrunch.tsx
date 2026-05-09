@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence, useInView, useScroll, useTransform } from 'framer-motion';
 import { useAuth } from '../context/authcontext';
 
-// ── Font injection ─────────────────────────────────────────────────────────────
+// â”€â”€ Font injection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 if (typeof document !== 'undefined' && !document.getElementById('crunch-fonts')) {
   const l = document.createElement('link');
   l.id = 'crunch-fonts';
@@ -14,7 +14,7 @@ if (typeof document !== 'undefined' && !document.getElementById('crunch-fonts'))
 
 const PP = "'Poppins', sans-serif";
 
-// ── Responsive hook ───────────────────────────────────────────────────────────
+// â”€â”€ Responsive hook â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function useBreakpoint() {
   const [w, setW] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
   useEffect(() => {
@@ -25,7 +25,7 @@ function useBreakpoint() {
   return { isMobile: w < 640, isTablet: w < 1024, w };
 }
 
-// ── Reveal helper ─────────────────────────────────────────────────────────────
+// â”€â”€ Reveal helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function Reveal({
   children, delay = 0, dir = 'up', style = {},
 }: {
@@ -53,10 +53,10 @@ function Reveal({
   );
 }
 
-// ── Marquee ───────────────────────────────────────────────────────────────────
+// â”€â”€ Marquee â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const marqueeItems = [
   'Fresh Daily', '7 Bold Flavors', '250+ Branches',
-  'Since 2021 � Quezon City, PH',
+  'Since 2021 — Quezon City, PH',
   'Made with Love', 'Fast Service',
 ];
 
@@ -85,27 +85,27 @@ function Marquee() {
   );
 }
 
-// ── Data ──────────────────────────────────────────────────────────────────────
+// â”€â”€ Data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const perks = [
-  { num: '01', title: 'Fresh Daily',      desc: 'Ingredients sourced and prepped every morning — no shortcuts, ever.' },
+  { num: '01', title: 'Fresh Daily',      desc: 'Ingredients sourced and prepped every morning â€” no shortcuts, ever.' },
   { num: '02', title: 'Fast Service',     desc: 'Hot and crispy, from our fryer to your hands in minutes.' },
   { num: '03', title: 'Made with Love',   desc: 'Every order is crafted like it\'s going to family.' },
   { num: '04', title: 'Bold Flavors',     desc: '7 signature sauces crafted to satisfy any mood or craving.' },
   { num: '05', title: 'Community First',  desc: 'Built for the neighborhood, grown by the neighborhood.' },
-  { num: '06', title: '250+ Branches',    desc: 'From Luzon to Mindanao — The Crunch is everywhere you are.' },
+  { num: '06', title: '250+ Branches',    desc: 'From Luzon to Mindanao â€” The Crunch is everywhere you are.' },
 ];
 
 const IMG_HERO  = '/src/assets/img/crunch22.png';
 const IMG_STORY = '/src/assets/img/chickchicken.png';
 
-// ── Main Page ─────────────────────────────────────────────────────────────────
+// â”€â”€ Main Page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export default function AboutTheCrunch() {
   const navigate = useNavigate();
   const { isMobile, isTablet } = useBreakpoint();
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
-  // ── Single source of truth: auth context shared with Delicacy (usersmenu) ──
+  // â”€â”€ Single source of truth: auth context shared with Delicacy (usersmenu) â”€â”€
   const { user, logout } = useAuth();
   const isAuthenticated = !!user;
 
@@ -127,7 +127,6 @@ export default function AboutTheCrunch() {
 
   const heroRef = useRef<HTMLDivElement>(null);
   const { scrollYProgress } = useScroll({ target: heroRef, offset: ['start start', 'end start'] });
-  const imgY = useTransform(scrollYProgress, [0, 1], ['0%', '20%']);
   const txtY = useTransform(scrollYProgress, [0, 1], ['0%', '12%']);
 
   const navLinks = [
@@ -139,7 +138,7 @@ export default function AboutTheCrunch() {
   return (
     <div style={{ fontFamily: PP, background: '#0a0806', color: '#ede9e2', overflowX: 'hidden', minHeight: '100vh' }}>
 
-      {/* ── NAV ── */}
+      {/* â”€â”€ NAV â”€â”€ */}
       <motion.header
         initial={{ opacity: 0, y: -16 }}
         animate={{ opacity: 1, y: 0 }}
@@ -190,7 +189,7 @@ export default function AboutTheCrunch() {
           </nav>
         )}
 
-        {/* Desktop Auth — reactive to shared auth context */}
+        {/* Desktop Auth â€” reactive to shared auth context */}
         {!isTablet ? (
           <AnimatePresence mode="wait">
             {isAuthenticated ? (
@@ -297,7 +296,7 @@ export default function AboutTheCrunch() {
         )}
       </AnimatePresence>
 
-      {/* ── HERO ── */}
+      {/* â”€â”€ HERO â”€â”€ */}
       <div
         ref={heroRef}
         style={{
@@ -324,7 +323,7 @@ export default function AboutTheCrunch() {
           <motion.div style={{ y: isTablet ? 0 : txtY }}>
             <motion.p initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3, duration: 0.6 }}
               style={{ fontFamily: PP, fontSize: 10, fontWeight: 700, letterSpacing: '0.3em', textTransform: 'uppercase', color: '#f5c842', marginBottom: 20 }}>
-              Since 2021 � Quezon City, PH
+              Since 2021 ï¿½ Quezon City, PH
             </motion.p>
 
             <motion.h1 initial={{ opacity: 0, y: 36 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45, duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
@@ -407,10 +406,10 @@ export default function AboutTheCrunch() {
         )}
       </div>
 
-      {/* ── MARQUEE ── */}
+      {/* â”€â”€ MARQUEE â”€â”€ */}
       <Marquee />
 
-      {/* ── STORY ── */}
+      {/* â”€â”€ STORY â”€â”€ */}
       <section id="story" style={{ background: '#0e0c0a', padding: isMobile ? '72px 0' : '112px 0' }}>
         <div style={{
           maxWidth: 1200, margin: '0 auto',
@@ -423,7 +422,7 @@ export default function AboutTheCrunch() {
           <Reveal dir={isTablet ? 'up' : 'left'}>
             <div style={{ position: 'relative', paddingBottom: isTablet ? 0 : 48, paddingRight: isTablet ? 0 : 48 }}>
               <div style={{ borderRadius: 20, overflow: 'hidden', height: isMobile ? 260 : isTablet ? 380 : 460 }}>
-                <img src={IMG_STORY} alt="The Crunch — Crunchy Addicting Flavorful"
+                <img src={IMG_STORY} alt="The Crunch â€” Crunchy Addicting Flavorful"
                   style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', display: 'block' }} />
               </div>
               {!isMobile && (
@@ -469,7 +468,7 @@ export default function AboutTheCrunch() {
         </div>
       </section>
 
-      {/* ── MISSION ── */}
+      {/* â”€â”€ MISSION â”€â”€ */}
       <section style={{ background: '#080604', padding: isMobile ? '80px 0' : '100px 0', position: 'relative', overflow: 'hidden' }}>
         <div style={{
           position: 'absolute', inset: 0, pointerEvents: 'none',
@@ -509,7 +508,7 @@ export default function AboutTheCrunch() {
         </div>
       </section>
 
-      {/* ── PERKS ── */}
+      {/* â”€â”€ PERKS â”€â”€ */}
       <section style={{ background: '#0e0c0a', padding: isMobile ? '72px 0' : '96px 0' }}>
         <div style={{ maxWidth: 1200, margin: '0 auto', padding: isMobile ? '0 24px' : '0 48px' }}>
           <Reveal>
@@ -553,7 +552,7 @@ export default function AboutTheCrunch() {
         </div>
       </section>
 
-      {/* ── CTA ── */}
+      {/* â”€â”€ CTA â”€â”€ */}
       <section style={{ position: 'relative', height: isMobile ? '70vh' : '85vh', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ position: 'absolute', inset: 0 }}>
           <img src={IMG_HERO} alt="Chicken feast"
@@ -584,7 +583,7 @@ export default function AboutTheCrunch() {
         </div>
       </section>
 
-      {/* ── FOOTER ── */}
+      {/* â”€â”€ FOOTER â”€â”€ */}
       <footer style={{ background: '#080604', borderTop: '1px solid rgba(255,255,255,0.05)', padding: isMobile ? '48px 24px 32px' : '60px 48px 36px' }}>
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : isTablet ? '1fr 1fr' : '2fr 1fr 1fr', gap: isMobile ? 36 : 48, marginBottom: 40 }}>
@@ -629,7 +628,7 @@ export default function AboutTheCrunch() {
 
           <div style={{ borderTop: '1px solid rgba(255,255,255,0.04)', paddingTop: 24, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
             <span style={{ fontFamily: PP, fontSize: 11.5, color: 'rgba(237,233,226,0.1)', fontWeight: 300 }}>
-              © {new Date().getFullYear()} The Crunch Fairview Dahlia Quezon City · All rights reserved
+              Â© {new Date().getFullYear()} The Crunch Fairview Dahlia Quezon City Â· All rights reserved
             </span>
             <span style={{ fontFamily: PP, fontSize: 11.5, color: 'rgba(237,233,226,0.1)', fontWeight: 300 }}>Fairview, Dahlia, QC 1118</span>
           </div>

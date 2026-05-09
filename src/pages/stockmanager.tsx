@@ -11,7 +11,7 @@ import {
 import { Sidebar } from "@/components/Sidebar";
 import { useNotifications } from "@/lib/NotificationContext";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 type WithdrawalType = "initial" | "supplementary" | "return";
 type StockStatus = "critical" | "low" | "normal";
@@ -252,7 +252,7 @@ interface StockAlertSettings {
   defaultCriticalStockThreshold: number;
 }
 
-// ─── API ──────────────────────────────────────────────────────────────────────
+// â”€â”€â”€ API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const API_BASE = "/api";
 function toNumber(v: unknown, fb = 0): number {
@@ -457,7 +457,7 @@ const api = {
   },
 };
 
-// ─── Storage Batch APIs (unchanged) ─────────────────────────────────────────
+// â”€â”€â”€ Storage Batch APIs (unchanged) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const storageApi = {
   getAll: () => apiFetch<StorageBatch[]>("/batches/active"),
   withdrawFromStorage: (body: {
@@ -477,7 +477,7 @@ const storageApi = {
     }>("/batches/withdraw", { method: "POST", body: JSON.stringify(body) }),
 };
 
-// ─── NEW Kitchen Batch APIs ─────────────────────────────────────────────────
+// â”€â”€â”€ NEW Kitchen Batch APIs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const kitchenApi = {
   getAll: () => apiFetch<KitchenBatch[]>("/batches/kitchen"),
   createKitchenBatch: (body: {
@@ -528,7 +528,7 @@ const kitchenApi = {
     }),
 };
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "dashboard", label: "Dashboard" },
@@ -748,7 +748,7 @@ function resolveInventoryCategoryMatch(value?: string | null): {
   };
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const calcPOTotal = (items: POItem[]) =>
   items.reduce((s, i) => s + i.quantity * i.unitCost, 0);
@@ -905,23 +905,6 @@ function isStrictRawMaterialCategory(value?: string | null): boolean {
   return getInventoryCategoryDateTrackingType(value) === "shelf_life";
 }
 
-function isStockManagerCategory(value?: string | null): boolean {
-  const normalized = normalizeInventoryCategoryName(value);
-  if (inventoryCategoryDateTrackingLookup.has(normalized)) return true;
-  return (
-    normalized.includes("suppl") ||
-    normalized.includes("menu food") ||
-    normalized.includes("beverage") ||
-    normalized.includes("drink") ||
-    normalized.includes("sauce") ||
-    normalized === "raw materials" ||
-    normalized === "ingredients" ||
-    normalized === "ingridients" ||
-    normalized === "aromatics" ||
-    isStrictRawMaterialCategory(normalized)
-  );
-}
-
 function isMainStockDashboardCategory(value?: string | null): boolean {
   const normalized = normalizeInventoryCategoryName(value);
   if (inventoryCategoryDateTrackingLookup.has(normalized)) return true;
@@ -942,9 +925,6 @@ function isCountedInTotalProducts(value?: string | null): boolean {
   return normalized !== "good";
 }
 
-function isRawMaterialPOItem(item: POItem): boolean {
-  return getPOItemDateTrackingType(item) === "shelf_life";
-}
 
 function getPOItemDateTrackingType(item: POItem): "none" | "expiry" | "shelf_life" {
   const itemCategory = String(item.category ?? "");
@@ -1245,7 +1225,7 @@ function normalizeReportData(data: ReportData): ReportData {
   };
 }
 
-// ─── Shared UI ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Shared UI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const inputCls =
   "w-full border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm text-slate-800 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-300 focus:border-transparent placeholder-slate-300 transition-all duration-200";
@@ -1253,7 +1233,7 @@ const inputCls =
 function ExpiryChip({ dateStr }: { dateStr: string | null | undefined }) {
   const days = daysUntilExpiry(dateStr);
   if (!dateStr || days === null)
-    return <span className="text-xs text-slate-300">—</span>;
+    return <span className="text-xs text-slate-300">â€”</span>;
   if (days < 0)
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-600 border border-red-200">
@@ -1409,7 +1389,7 @@ function DashboardSummaryModal({
               onClick={onClose}
               className="text-slate-400 hover:text-slate-700 transition-colors text-lg"
             >
-              ×
+              Ã—
             </button>
           </div>
 
@@ -1881,7 +1861,7 @@ const CartIcon = () => (
   </svg>
 );
 
-// ─── Feature Components ───────────────────────────────────────────────────────
+// â”€â”€â”€ Feature Components â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function PODetailDrawer({
   order,
@@ -1952,7 +1932,7 @@ function PODetailDrawer({
               Cancel this purchase order?
             </p>
             <p className="text-xs text-red-400 mb-3">
-              {order.id} · {order.supplier} · {order.items.length} item
+              {order.id} Â· {order.supplier} Â· {order.items.length} item
               {order.items.length !== 1 ? "s" : ""}
             </p>
             <div className="flex gap-2">
@@ -2014,7 +1994,7 @@ function PODetailDrawer({
                         {item.name}
                       </p>
                       <p className="text-xs text-gray-400 mt-0.5">
-                        {item.category} · {item.quantity} {item.unit}
+                        {item.category} Â· {item.quantity} {item.unit}
                       </p>
                       <div className="mt-2 space-y-1">
                         <span
@@ -2056,10 +2036,10 @@ function PODetailDrawer({
                     </div>
                     <div className="text-right flex-shrink-0">
                       <p className="text-sm font-semibold text-gray-800">
-                        ₱{(item.quantity * item.unitCost).toLocaleString()}
+                        â‚±{(item.quantity * item.unitCost).toLocaleString()}
                       </p>
                       <p className="text-xs text-gray-400">
-                        ₱{item.unitCost}/{item.unit}
+                        â‚±{item.unitCost}/{item.unit}
                       </p>
                     </div>
                   </div>
@@ -2071,16 +2051,16 @@ function PODetailDrawer({
         <div className="bg-gray-50 rounded-xl p-4 space-y-2">
           <div className="flex justify-between text-sm text-gray-500">
             <span>Subtotal</span>
-            <span>₱{total.toLocaleString()}</span>
+            <span>â‚±{total.toLocaleString()}</span>
           </div>
           <div className="flex justify-between text-sm text-gray-500">
             <span>VAT (12%)</span>
-            <span>₱{tax.toFixed(2)}</span>
+            <span>â‚±{tax.toFixed(2)}</span>
           </div>
           <div className="flex justify-between font-semibold text-gray-800 pt-2 border-t border-gray-200">
             <span>Total</span>
             <span>
-              ₱
+              â‚±
               {(total + tax).toLocaleString(undefined, {
                 maximumFractionDigits: 2,
               })}
@@ -2273,7 +2253,7 @@ function ReceivePOModal({
           <div className="rounded-xl bg-slate-50 border border-slate-100 px-4 py-3">
             <p className="text-sm font-semibold text-slate-800">{order.id}</p>
             <p className="text-xs text-slate-500 mt-0.5">
-              {order.supplier} · Expected delivery {order.deliveryDate}
+              {order.supplier} Â· Expected delivery {order.deliveryDate}
             </p>
           </div>
           <div className="grid gap-4 md:grid-cols-2">
@@ -2340,7 +2320,7 @@ function ReceivePOModal({
                       {item.name}
                     </p>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      {item.category} · {item.quantity} {item.unit}
+                      {item.category} Â· {item.quantity} {item.unit}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -2443,8 +2423,8 @@ function ReceivePOModal({
                 )}
                 {warn && dayCount !== null && (
                   <p className="text-[11px] text-orange-500 font-medium mt-2">
-                    ⚠ This item will expire in {dayCount} day
-                    {dayCount !== 1 ? "s" : ""} — consider whether to accept.
+                    âš  This item will expire in {dayCount} day
+                    {dayCount !== 1 ? "s" : ""} â€” consider whether to accept.
                   </p>
                 )}
               </div>
@@ -2465,285 +2445,6 @@ function ReceivePOModal({
             className="flex-1 py-3 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-700 transition-colors disabled:opacity-60"
           >
             {loading ? "Receiving..." : "Confirm Receive"}
-          </button>
-        </div>
-      </motion.div>
-    </motion.div>
-  );
-}
-
-function POReceiptModal({
-  order,
-  onClose,
-}: {
-  order: PurchaseOrder;
-  onClose: () => void;
-}) {
-  const [downloadingPdf, setDownloadingPdf] = useState(false);
-  const subtotal = calcPOTotal(order.items);
-  const vat = subtotal * 0.12;
-  const total = subtotal + vat;
-
-  const handlePrint = () => {
-    window.print();
-  };
-
-  const handleDownloadPdf = async () => {
-    const receiptElement = document.getElementById("po-receipt-content");
-    if (!receiptElement) return;
-
-    setDownloadingPdf(true);
-    try {
-      const canvas = await html2canvas(receiptElement, {
-        scale: 2,
-        backgroundColor: "#ffffff",
-      });
-      const imageData = canvas.toDataURL("image/png");
-      const pdf = new jsPDF("p", "mm", "a4");
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const margin = 10;
-      const renderWidth = pageWidth - margin * 2;
-      const renderHeight = (canvas.height * renderWidth) / canvas.width;
-      const boundedHeight = Math.min(renderHeight, pageHeight - margin * 2);
-
-      pdf.addImage(
-        imageData,
-        "PNG",
-        margin,
-        margin,
-        renderWidth,
-        boundedHeight,
-      );
-      pdf.save(`receipt-${order.id}.pdf`);
-    } finally {
-      setDownloadingPdf(false);
-    }
-  };
-
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-    >
-      <style>{`
-        @media print {
-          body * {
-            visibility: hidden;
-          }
-          #po-receipt-content,
-          #po-receipt-content * {
-            visibility: visible;
-          }
-          #po-receipt-content {
-            position: absolute;
-            inset: 0;
-            margin: 0;
-            width: 100%;
-            max-width: none;
-            box-shadow: none !important;
-            border: none !important;
-          }
-        }
-      `}</style>
-      <motion.div
-        initial={{ scale: 0.96, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        exit={{ scale: 0.96, opacity: 0 }}
-        transition={{ type: "spring", stiffness: 300, damping: 28 }}
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col"
-      >
-        <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100">
-          <div>
-            <h2 className="text-lg font-semibold text-gray-800">
-              Purchase Order Receipt
-            </h2>
-            <p className="text-xs text-gray-400 mt-0.5">
-              Printable official receipt for completed purchase orders
-            </p>
-          </div>
-          <CloseBtn onClick={onClose} />
-        </div>
-
-        <div className="flex-1 overflow-y-auto bg-slate-50 px-6 py-5">
-          <div
-            id="po-receipt-content"
-            className="mx-auto w-full max-w-3xl rounded-2xl border border-slate-200 bg-white p-8 shadow-sm"
-          >
-            <div className="border-b border-slate-200 pb-6">
-              <p className="text-2xl font-bold text-slate-900">
-                Restaurant Stock System
-              </p>
-              <p className="text-sm text-slate-500 mt-1">Official Receipt</p>
-              <div className="mt-5 grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <p className="text-xs uppercase tracking-wide text-slate-400">
-                    Receipt Number
-                  </p>
-                  <p className="font-semibold text-slate-800 mt-1">
-                    {order.receiptNo || "-"}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs uppercase tracking-wide text-slate-400">
-                    PO Number
-                  </p>
-                  <p className="font-semibold text-slate-800 mt-1">
-                    {order.id}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs uppercase tracking-wide text-slate-400">
-                    Date Received
-                  </p>
-                  <p className="font-medium text-slate-700 mt-1">
-                    {order.receivedDate
-                      ? fmtReceivedDate(order.receivedDate)
-                      : "-"}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs uppercase tracking-wide text-slate-400">
-                    Received By
-                  </p>
-                  <p className="font-medium text-slate-700 mt-1">
-                    {order.receivedBy || "-"}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="py-6 border-b border-slate-200">
-              <p className="text-xs uppercase tracking-wide text-slate-400">
-                Supplier
-              </p>
-              <p className="text-lg font-semibold text-slate-800 mt-2">
-                {order.supplier}
-              </p>
-              <p className="text-sm text-slate-500 mt-1">{order.contact}</p>
-            </div>
-
-            <div className="py-6">
-              <div className="overflow-hidden rounded-xl border border-slate-200">
-                <table className="w-full text-sm">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      {[
-                        "Item",
-                        "Category",
-                        "Qty",
-                        "Unit",
-                        "Unit Cost",
-                        "Amount",
-                      ].map((header) => (
-                        <th
-                          key={header}
-                          className={`px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400 ${
-                            ["Item", "Category"].includes(header)
-                              ? "text-left"
-                              : "text-right"
-                          }`}
-                        >
-                          {header}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {order.items.map((item) => (
-                      <tr key={item.id}>
-                        <td className="px-4 py-3 font-medium text-slate-800">
-                          {item.name}
-                        </td>
-                        <td className="px-4 py-3 text-slate-500">
-                          {item.category}
-                        </td>
-                        <td className="px-4 py-3 text-right text-slate-700">
-                          {item.quantity}
-                        </td>
-                        <td className="px-4 py-3 text-right text-slate-500">
-                          {item.unit}
-                        </td>
-                        <td className="px-4 py-3 text-right text-slate-700">
-                          ₱{toNumber(item.unitCost).toLocaleString()}
-                        </td>
-                        <td className="px-4 py-3 text-right font-semibold text-slate-800">
-                          ₱
-                          {(
-                            toNumber(item.quantity) * toNumber(item.unitCost)
-                          ).toLocaleString()}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot className="bg-slate-50">
-                    <tr>
-                      <td
-                        colSpan={5}
-                        className="px-4 py-3 text-right text-slate-500"
-                      >
-                        Subtotal
-                      </td>
-                      <td className="px-4 py-3 text-right font-medium text-slate-700">
-                        ₱{subtotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                      </td>
-                    </tr>
-                    <tr>
-                      <td
-                        colSpan={5}
-                        className="px-4 py-3 text-right text-slate-500"
-                      >
-                        VAT 12%
-                      </td>
-                      <td className="px-4 py-3 text-right font-medium text-slate-700">
-                        ₱{vat.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                      </td>
-                    </tr>
-                    <tr>
-                      <td
-                        colSpan={5}
-                        className="px-4 py-3 text-right font-semibold text-slate-800"
-                      >
-                        Total
-                      </td>
-                      <td className="px-4 py-3 text-right text-base font-bold text-slate-900">
-                        ₱{total.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </div>
-
-            <div className="border-t border-slate-200 pt-5">
-              <p className="text-xs italic text-slate-400">
-                This serves as your official receipt.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="px-6 py-4 border-t border-gray-100 flex gap-3">
-          <button
-            onClick={onClose}
-            className="flex-1 py-3 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
-          >
-            Close
-          </button>
-          <button
-            onClick={handlePrint}
-            className="flex-1 py-3 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
-          >
-            Print
-          </button>
-          <button
-            onClick={handleDownloadPdf}
-            disabled={downloadingPdf}
-            className="flex-1 py-3 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-700 transition-colors disabled:opacity-60"
-          >
-            {downloadingPdf ? "Preparing PDF..." : "Download PDF"}
           </button>
         </div>
       </motion.div>
@@ -3328,7 +3029,7 @@ function CreatePOModal({
               {allSuppliers.map((s) => (
                 <option key={s.supplier_id} value={s.supplier_id}>
                   {s.supplier_name}
-                  {s.products_supplied ? ` · ${s.products_supplied}` : ""}
+                  {s.products_supplied ? ` Â· ${s.products_supplied}` : ""}
                 </option>
               ))}
             </select>
@@ -3340,7 +3041,7 @@ function CreatePOModal({
               </p>
               <p className="text-xs text-slate-500">
                 {selectedSupplier.contact_number}
-                {selectedSupplier.email && ` · ${selectedSupplier.email}`}
+                {selectedSupplier.email && ` Â· ${selectedSupplier.email}`}
               </p>
               {parseSupplierProducts(selectedSupplier.products_supplied)
                 .length > 0 && (
@@ -3499,7 +3200,7 @@ function CreatePOModal({
                                   </span>
                                   <span className="block text-[11px] text-slate-400">
                                     {product.category}
-                                    {product.unit ? ` · ${product.unit}` : ""}
+                                    {product.unit ? ` Â· ${product.unit}` : ""}
                                   </span>
                                 </button>
                               ))}
@@ -3510,7 +3211,7 @@ function CreatePOModal({
                     {[
                       ["Unit", "unit", "kg / pcs"],
                       ["Qty", "quantity", "0"],
-                      ["Unit Cost", "unitCost", "₱0"],
+                      ["Unit Cost", "unitCost", "â‚±0"],
                     ].map(([lbl, field, ph]) => (
                       <div key={field} className="min-w-0">
                         <label className="block text-[11px] text-gray-400 mb-1">
@@ -3547,7 +3248,7 @@ function CreatePOModal({
             <div className="bg-gray-50 rounded-xl px-4 py-3 flex justify-between items-center">
               <span className="text-sm text-gray-500">Estimated Subtotal</span>
               <span className="text-sm font-semibold text-gray-800">
-                ₱{subtotal.toLocaleString()}
+                â‚±{subtotal.toLocaleString()}
               </span>
             </div>
           )}
@@ -3630,7 +3331,7 @@ function StockAlertRestockBanner({
                 </span>
               )}
               {criticalItems.length > 0 && lowItems.length > 0 && (
-                <span className="mx-1 text-slate-300">·</span>
+                <span className="mx-1 text-slate-300">Â·</span>
               )}
               {lowItems.length > 0 && (
                 <span className="text-amber-600 font-medium">
@@ -3659,12 +3360,12 @@ function StockAlertRestockBanner({
               {
                 items: criticalItems,
                 severity: "critical" as const,
-                label: "🔴 Critical — Order Immediately",
+                label: "ðŸ”´ Critical â€” Order Immediately",
               },
               {
                 items: lowItems,
                 severity: "low" as const,
-                label: "🟡 Low Stock — Reorder Soon",
+                label: "ðŸŸ¡ Low Stock â€” Reorder Soon",
               },
             ].map(({ items, severity, label }, gi) =>
               items.length > 0 ? (
@@ -3782,7 +3483,7 @@ function YesterdayReturnsBanner({ batches }: { batches: Batch[] }) {
     >
       <div className="px-5 py-3.5 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <span className="text-lg">↩</span>
+          <span className="text-lg">â†©</span>
           <div>
             <p className="text-xs font-bold text-emerald-800 uppercase tracking-wider">
               Returned Stock (Available Today)
@@ -3924,7 +3625,7 @@ function FIFOBatchPreview({
             FIFO Batch Queue (Active + Returned)
           </span>
           <span className="text-[10px] text-slate-400">
-            — oldest pulled first
+            â€” oldest pulled first
           </span>
         </div>
         <span className="text-[10px] font-semibold text-slate-500">
@@ -4002,7 +3703,7 @@ function FIFOBatchPreview({
                   </p>
                   {previewRow && (
                     <p className="text-xs font-semibold text-indigo-600 mt-0.5">
-                      −{previewRow.take} {unit} will be pulled
+                      âˆ’{previewRow.take} {unit} will be pulled
                     </p>
                   )}
                 </div>
@@ -4013,7 +3714,7 @@ function FIFOBatchPreview({
       {insufficient && (
         <div className="px-3.5 py-2.5 bg-red-50 border-t border-red-100">
           <p className="text-xs font-semibold text-red-600">
-            ⚠ Insufficient stock — need {qtyNeeded} {unit} but only{" "}
+            âš  Insufficient stock â€” need {qtyNeeded} {unit} but only{" "}
             {totalAvailable} {unit} available
           </p>
         </div>
@@ -4193,7 +3894,7 @@ function KitchenBatchQueuePreview({
                   </span>
                 </p>
                 <p className="text-[11px] text-slate-400">
-                  {batch.withdrawn_qty} withdrawn · {batch.used_qty} used ·{" "}
+                  {batch.withdrawn_qty} withdrawn Â· {batch.used_qty} used Â·{" "}
                   {batch.returned_qty} returned
                 </p>
               </div>
@@ -4291,7 +3992,7 @@ function FIFOBatchGrouped({
                     </span>
                   )}
                   <span className="text-xs font-bold text-slate-600">
-                    Delivery — {fmtReceivedDate(date)}
+                    Delivery â€” {fmtReceivedDate(date)}
                   </span>
                   <span className="text-[10px] text-slate-400">
                     ({batches.length} item type{batches.length !== 1 ? "s" : ""}
@@ -4334,7 +4035,7 @@ function FIFOBatchGrouped({
         <div className="rounded-xl border border-slate-100 overflow-hidden">
           <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-              Soonest expiry first — use these before they expire
+              Soonest expiry first â€” use these before they expire
             </span>
             <span className="text-[10px] text-slate-400">
               {byExpiry.length} batches
@@ -4368,7 +4069,7 @@ function FIFOBatchGrouped({
                       {displayName}
                     </p>
                     <p className="text-[11px] text-slate-400">
-                      Batch #{batch.batch_id} · Received{" "}
+                      Batch #{batch.batch_id} Â· Received{" "}
                       {fmtReceivedDate(batch.received_date)}
                     </p>
                   </div>
@@ -4394,7 +4095,7 @@ function FIFOBatchGrouped({
   );
 }
 
-// ─── Kitchen Batches Section ──────────────────────────────────────────────────
+// â”€â”€â”€ Kitchen Batches Section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function KitchenBatchesSection({
   kitchenBatches,
@@ -4435,7 +4136,7 @@ function KitchenBatchesSection({
         <div>
           <h3 className="text-sm font-bold text-slate-700">Kitchen Batches</h3>
           <p className="text-xs text-slate-500">
-            Items currently in kitchen use — reconcile or return unused portions
+            Items currently in kitchen use â€” reconcile or return unused portions
           </p>
         </div>
         {selectedBatches.size > 0 && (
@@ -4498,7 +4199,7 @@ function KitchenBatchesSection({
                       )}
                     </div>
                     <p className="text-xs text-slate-500">
-                      From Storage Batch #{batch.storage_batch_id} · Withdrawn{" "}
+                      From Storage Batch #{batch.storage_batch_id} Â· Withdrawn{" "}
                       {fmtDate(batch.withdrawn_at)}
                     </p>
                   </div>
@@ -4511,7 +4212,7 @@ function KitchenBatchesSection({
                       </span>
                     </p>
                     <p className="text-xs text-slate-500">
-                      {batch.used_qty > 0 && `${batch.used_qty} used · `}
+                      {batch.used_qty > 0 && `${batch.used_qty} used Â· `}
                       {batch.returned_qty > 0 &&
                         `${batch.returned_qty} returned`}
                       {batch.used_qty === 0 &&
@@ -4548,7 +4249,7 @@ function KitchenBatchesSection({
   );
 }
 
-// ─── Main Component ───────────────────────────────────────────────────────────
+// â”€â”€â”€ Main Component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export default function StockManager() {
   const [tab, setTab] = useState<Tab>("dashboard");
@@ -5044,7 +4745,7 @@ export default function StockManager() {
     return () => window.removeEventListener("scroll", handleScroll);
   }, [tab]);
 
-  // ── Derived data ──────────────────────────────────────────────────────────
+  // â”€â”€ Derived data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const lowStock = products.filter(
     (p) =>
@@ -5350,7 +5051,7 @@ export default function StockManager() {
         id: `product-${p.product_id}`,
         name: p.product_name,
         value: `${fmtInt(p.mainStock)} ${p.unit}`,
-        meta: `${p.category} · reorder point ${fmtInt(p.reorderPoint)}`,
+        meta: `${p.category} Â· reorder point ${fmtInt(p.reorderPoint)}`,
       }));
     const withdrawnRows = [...products]
       .filter((p) => toNumber(p.dailyWithdrawn) > 0)
@@ -5359,7 +5060,7 @@ export default function StockManager() {
         id: `withdrawn-${p.product_id}`,
         name: p.product_name,
         value: `${fmtInt(p.dailyWithdrawn)} ${p.unit}`,
-        meta: `${p.category} · main stock ${fmtInt(p.mainStock)} ${p.unit}`,
+        meta: `${p.category} Â· main stock ${fmtInt(p.mainStock)} ${p.unit}`,
       }));
     const wastedRows = [...products]
       .filter((p) => toNumber(p.wasted) > 0)
@@ -5368,7 +5069,7 @@ export default function StockManager() {
         id: `wasted-${p.product_id}`,
         name: p.product_name,
         value: `${fmtInt(p.wasted)} ${p.unit}`,
-        meta: `${p.category} · withdrawn today ${fmtInt(p.dailyWithdrawn)} ${p.unit}`,
+        meta: `${p.category} Â· withdrawn today ${fmtInt(p.dailyWithdrawn)} ${p.unit}`,
       }));
     const returnedRows = [...products]
       .filter((p) => toNumber(p.returned) > 0)
@@ -5377,7 +5078,7 @@ export default function StockManager() {
         id: `returned-${p.product_id}`,
         name: p.product_name,
         value: `${fmtInt(p.returned)} ${p.unit}`,
-        meta: `${p.category} · current stock ${fmtInt(p.mainStock)} ${p.unit}`,
+        meta: `${p.category} Â· current stock ${fmtInt(p.mainStock)} ${p.unit}`,
       }));
 
     return {
@@ -5485,7 +5186,7 @@ export default function StockManager() {
     [products],
   );
 
-  // ── PO Actions ────────────────────────────────────────────────────────────
+  // â”€â”€ PO Actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const handlePOStatusChange = useCallback(
     async (id: string, status: POStatus) => {
@@ -5670,7 +5371,7 @@ export default function StockManager() {
     [showToast, suppliers],
   );
 
-  // ── Stock Actions ─────────────────────────────────────────────────────────
+  // â”€â”€ Stock Actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const handleSpoilageInputChange = (value: string) => {
     const maxAllowed = selectedSpoilageProduct?.dailyWithdrawn ?? 0;
@@ -5678,7 +5379,7 @@ export default function StockManager() {
     if (!value || isNaN(numValue) || numValue <= maxAllowed) setAdjQty(value);
   };
 
-  // ─── Withdrawal lifecycle ───────────────────────────────────────────────────
+  // â”€â”€â”€ Withdrawal lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   async function doWithdraw(
     product_id: number,
     qty: number,
@@ -5721,7 +5422,7 @@ export default function StockManager() {
           storage_batch_id: sourceBatchId,
         });
         showToast(
-          `Initial withdrawal → Kitchen Batch #${kitchenBatch.kitchen_batch_id}`,
+          `Initial withdrawal â†’ Kitchen Batch #${kitchenBatch.kitchen_batch_id}`,
           "success",
         );
       } else if (type === "supplementary") {
@@ -6300,7 +6001,7 @@ export default function StockManager() {
     }
   }
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   return (
     <>
@@ -6311,7 +6012,7 @@ export default function StockManager() {
       >
         <Sidebar />
 
-        {/* ── Header ── */}
+        {/* â”€â”€ Header â”€â”€ */}
         <header className="bg-white border-b border-slate-100 sticky top-0 z-30 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-4 px-4 py-4 pt-20 md:px-6 md:pt-24 lg:px-8 lg:pt-4 lg:pl-24">
             <div>
@@ -6333,7 +6034,7 @@ export default function StockManager() {
                   onClick={() => setTab("withdrawal")}
                   className="px-3.5 py-1.5 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold border border-amber-200 flex items-center gap-1.5"
                 >
-                  ↩ {yesterdayReturns.length} return
+                  â†© {yesterdayReturns.length} return
                   {yesterdayReturns.length > 1 ? "s" : ""} from yesterday
                 </button>
               )}
@@ -6507,7 +6208,7 @@ export default function StockManager() {
             <LoadingSkeleton />
           ) : (
             <AnimatePresence mode="wait">
-              {/* ── Dashboard ── */}
+              {/* â”€â”€ Dashboard â”€â”€ */}
               {tab === "dashboard" && (
                 <motion.div
                   key="dashboard"
@@ -6565,7 +6266,7 @@ export default function StockManager() {
                         className="bg-gradient-to-r from-orange-50 to-amber-50 border border-orange-100 rounded-2xl p-4 flex items-center gap-6"
                       >
                         <div className="flex items-center gap-2">
-                          <span className="text-lg">🐔</span>
+                          <span className="text-lg">ðŸ”</span>
                           <span className="text-xs font-bold text-orange-700 uppercase tracking-wider">
                             Chicken Inventory
                           </span>
@@ -6593,7 +6294,7 @@ export default function StockManager() {
                           {wholeChickenProducts.length > 0 &&
                             choppedChickenProducts.length > 0 && (
                               <div className="flex items-center text-orange-200 text-lg font-light">
-                                →
+                                â†’
                               </div>
                             )}
                           {choppedChickenProducts.map((p) => (
@@ -6617,7 +6318,7 @@ export default function StockManager() {
                           ))}
                         </div>
                         <p className="text-xs text-orange-400 italic">
-                          Delivered whole → chopped separately in inventory
+                          Delivered whole â†’ chopped separately in inventory
                         </p>
                       </motion.div>
                     )}
@@ -6696,9 +6397,6 @@ export default function StockManager() {
                               const statusDotClass = isOutOfStock
                                 ? "bg-slate-500"
                                 : STATUS_DOT[status];
-                              const statusBarClass = isOutOfStock
-                                ? "bg-slate-500"
-                                : STATUS_BAR[status];
                               const statusBadgeClass = isOutOfStock
                                 ? "bg-slate-100 text-slate-700"
                                 : p.isRawMaterial
@@ -6711,12 +6409,6 @@ export default function StockManager() {
                                 : isOutOfStock
                                   ? "Out of Stock"
                                   : status;
-                              const pct = Math.min(
-                                100,
-                                (p.mainStock /
-                                  Math.max(1, p.reorderPoint * 2)) *
-                                  100,
-                              );
                               return (
                                 <tr
                                   key={p.inventory_id}
@@ -6968,7 +6660,7 @@ export default function StockManager() {
                                 {selectedSpoilageProduct.dailyWithdrawn ===
                                   0 && (
                                   <p className="text-xs text-rose-500">
-                                    ⚠️ No stock was withdrawn today. Cannot
+                                    âš ï¸ No stock was withdrawn today. Cannot
                                     record spoilage.
                                   </p>
                                 )}
@@ -7088,28 +6780,28 @@ export default function StockManager() {
                                       {fmtInt(cookReportTotals.withdrawn)}
                                     </span>
                                   </span>
-                                  <span>•</span>
+                                  <span>â€¢</span>
                                   <span>
                                     Used:{" "}
                                     <span className="font-semibold text-slate-700">
                                       {fmtInt(cookReportTotals.used)}
                                     </span>
                                   </span>
-                                  <span>•</span>
+                                  <span>â€¢</span>
                                   <span>
                                     Spoilage:{" "}
                                     <span className="font-semibold text-slate-700">
                                       {fmtInt(cookReportTotals.spoilage)}
                                     </span>
                                   </span>
-                                  <span>•</span>
+                                  <span>â€¢</span>
                                   <span>
                                     Returned:{" "}
                                     <span className="font-semibold text-slate-700">
                                       {fmtInt(cookReportTotals.returned)}
                                     </span>
                                   </span>
-                                  <span>•</span>
+                                  <span>â€¢</span>
                                   <span>
                                     Last updated:{" "}
                                     <span className="font-semibold text-slate-700">
@@ -7197,7 +6889,7 @@ export default function StockManager() {
                                                       {item.product_name}
                                                     </p>
                                                     <p className="text-xs text-slate-400 mt-1">
-                                                      {item.category} · {item.unit}
+                                                      {item.category} Â· {item.unit}
                                                     </p>
                                                     {item.note && (
                                                       <p className="text-xs text-slate-500 mt-2">
@@ -7260,7 +6952,7 @@ export default function StockManager() {
                       )}
                     </motion.div>
 
-                    {/* ── Stock Movement Report ── */}
+                    {/* â”€â”€ Stock Movement Report â”€â”€ */}
                     {dashboardSubTab === "stock-movement" && (
                     <div
                       id="dashboard-stock-movement"
@@ -7470,8 +7162,8 @@ export default function StockManager() {
                             ))}
                           </div>
                           <SectionCard
-                            title={`Stock Movement — ${reportData.period}`}
-                            subtitle={`Generated ${new Date(reportData.generatedAt).toLocaleString()} · ${reportData.items.length} items`}
+                            title={`Stock Movement â€” ${reportData.period}`}
+                            subtitle={`Generated ${new Date(reportData.generatedAt).toLocaleString()} Â· ${reportData.items.length} items`}
                           >
                             <table className="w-full text-sm">
                               <thead>
@@ -7583,7 +7275,7 @@ export default function StockManager() {
                 </motion.div>
               )}
 
-              {/* ── Withdrawal ── */}
+              {/* â”€â”€ Withdrawal â”€â”€ */}
               {tab === "withdrawal" && (
                 <motion.div
                   key="withdrawal"
@@ -7613,8 +7305,8 @@ export default function StockManager() {
                         title="New Withdrawal Record"
                         subtitle={
                           wdType === "initial"
-                            ? "Opening withdrawal — sets the day's reference"
-                            : "FIFO — oldest batch pulled first"
+                            ? "Opening withdrawal â€” sets the day's reference"
+                            : "FIFO â€” oldest batch pulled first"
                         }
                       >
                         <div className="p-5 space-y-4">
@@ -7654,7 +7346,7 @@ export default function StockManager() {
                             className={`text-xs px-3 py-2 rounded-xl border ${wdType === "initial" ? "bg-indigo-50 text-indigo-600 border-indigo-100" : "bg-sky-50 text-sky-600 border-sky-100"}`}
                           >
                             {wdType === "initial" &&
-                              "Opening withdrawal for today — recorded as the initial pull."}
+                              "Opening withdrawal for today â€” recorded as the initial pull."}
                             {wdType === "supplementary" &&
                               "Additional pull on top of the opening withdrawal."}
                           </div>
@@ -7712,7 +7404,7 @@ export default function StockManager() {
                                       >
                                         <option value="">Select item</option>
                                         {wholeChickenProducts.length > 0 && (
-                                          <optgroup label="★ Whole Chicken ★">
+                                          <optgroup label="â˜… Whole Chicken â˜…">
                                             {wholeChickenProducts.map((p) => (
                                               <option
                                                 key={p.product_id}
@@ -7724,7 +7416,7 @@ export default function StockManager() {
                                           </optgroup>
                                         )}
                                         {choppedChickenProducts.length > 0 && (
-                                          <optgroup label="★ Chopped Chicken ★">
+                                          <optgroup label="â˜… Chopped Chicken â˜…">
                                             {choppedChickenProducts.map((p) => (
                                               <option
                                                 key={p.product_id}
@@ -7736,7 +7428,7 @@ export default function StockManager() {
                                           </optgroup>
                                         )}
                                         {otherMainStockProducts.length > 0 && (
-                                          <optgroup label="★ Other Items ★">
+                                          <optgroup label="â˜… Other Items â˜…">
                                             {otherMainStockProducts.map((p) => (
                                               <option
                                                 key={p.product_id}
@@ -7789,7 +7481,7 @@ export default function StockManager() {
                               onChange={(v) => setWdProductId(Number(v))}
                             >
                               {wholeChickenProducts.length > 0 && (
-                                <optgroup label="── Whole Chicken ──">
+                                <optgroup label="â”€â”€ Whole Chicken â”€â”€">
                                   {wholeChickenProducts.map((p) => (
                                     <option
                                       key={p.product_id}
@@ -7801,7 +7493,7 @@ export default function StockManager() {
                                 </optgroup>
                               )}
                               {choppedChickenProducts.length > 0 && (
-                                <optgroup label="── Chopped Chicken ──">
+                                <optgroup label="â”€â”€ Chopped Chicken â”€â”€">
                                   {choppedChickenProducts.map((p) => (
                                     <option
                                       key={p.product_id}
@@ -7813,7 +7505,7 @@ export default function StockManager() {
                                 </optgroup>
                               )}
                               {otherMainStockProducts.length > 0 && (
-                                <optgroup label="── Other Items ──">
+                                <optgroup label="â”€â”€ Other Items â”€â”€">
                                   {otherMainStockProducts.map((p) => (
                                       <option
                                         key={p.product_id}
@@ -7845,7 +7537,7 @@ export default function StockManager() {
                             .toLowerCase()
                             .includes("sauce") && (
                             <div className="text-xs px-3 py-2 rounded-xl border bg-rose-50 text-rose-500 border-rose-100">
-                              ⚠️ Sauce items are not reconciled at end-of-day.
+                              âš ï¸ Sauce items are not reconciled at end-of-day.
                               Once withdrawn, they are considered consumed.
                             </div>
                           )}
@@ -7901,7 +7593,7 @@ export default function StockManager() {
                                       {w.recorded_by && (
                                         <>
                                           {" "}
-                                          ·{" "}
+                                          Â·{" "}
                                           <span className="text-slate-500">
                                             {w.recorded_by}
                                           </span>
@@ -7918,7 +7610,7 @@ export default function StockManager() {
                                     <span
                                       className={`text-sm font-semibold ${w.type === "return" ? "text-amber-600" : "text-slate-700"}`}
                                     >
-                                      −{w.quantity}
+                                      âˆ’{w.quantity}
                                     </span>
                                   </div>
                                 </motion.div>
@@ -7974,13 +7666,13 @@ export default function StockManager() {
                                     {latestKitchenBatch.kitchen_batch_id} -{" "}
                                     {latestKitchenBatch.withdrawn_qty}{" "}
                                     {selectedWithdrawalProduct.unit} withdrawn
-                                    {" · "}
+                                    {" Â· "}
                                     {latestKitchenBatch.used_qty}{" "}
                                     {selectedWithdrawalProduct.unit} used
-                                    {" · "}
+                                    {" Â· "}
                                     {latestKitchenBatch.returned_qty}{" "}
                                     {selectedWithdrawalProduct.unit} returned
-                                    {" → "}
+                                    {" â†’ "}
                                     {Math.max(
                                       0,
                                       latestKitchenBatch.withdrawn_qty -
@@ -7997,13 +7689,13 @@ export default function StockManager() {
                                     {latestKitchenBatch.kitchen_batch_id} -{" "}
                                     {latestKitchenBatch.withdrawn_qty}{" "}
                                     {selectedWithdrawalProduct.unit} withdrawn
-                                    {" · "}
+                                    {" Â· "}
                                     {latestKitchenBatch.used_qty}{" "}
                                     {selectedWithdrawalProduct.unit} used
-                                    {" · "}
+                                    {" Â· "}
                                     {latestKitchenBatch.returned_qty}{" "}
                                     {selectedWithdrawalProduct.unit} returned
-                                    {" → "}
+                                    {" â†’ "}
                                     {Math.max(
                                       0,
                                       latestKitchenBatch.withdrawn_qty -
@@ -8062,7 +7754,7 @@ export default function StockManager() {
                     <motion.div variants={itemVariants}>
                       <SectionCard
                         title="Currently Withdrawn"
-                        subtitle="Stock pulled for today's preparation — net of returns"
+                        subtitle="Stock pulled for today's preparation â€” net of returns"
                       >
                         {products.filter((p) => p.dailyWithdrawn > 0).length ===
                         0 ? (
@@ -8129,7 +7821,7 @@ export default function StockManager() {
                 </motion.div>
               )}
 
-              {/* ── Alerts ── */}
+              {/* â”€â”€ Alerts â”€â”€ */}
               {tab === "alerts" && (
                 <motion.div
                   key="alerts"
@@ -8310,7 +8002,7 @@ export default function StockManager() {
                                         {appliedThresholds.useDefaultThresholds
                                           ? "Using defaults"
                                           : "Custom thresholds"}{" "}
-                                        · Warning at {appliedThresholds.low} ·
+                                        Â· Warning at {appliedThresholds.low} Â·
                                         Critical at {appliedThresholds.critical}
                                       </p>
                                       <span
@@ -8345,7 +8037,7 @@ export default function StockManager() {
                 </motion.div>
               )}
 
-              {/* ── Suppliers ── */}
+              {/* â”€â”€ Suppliers â”€â”€ */}
               {tab === "suppliers" && (
                 <motion.div
                   key="suppliers"
@@ -8414,7 +8106,7 @@ export default function StockManager() {
                                 <label className="block text-xs font-semibold text-slate-500 mb-1.5">
                                   Supplied Products
                                   <span className="ml-1 text-slate-400 font-normal">
-                                    (optional — will auto-update from POs)
+                                    (optional â€” will auto-update from POs)
                                   </span>
                                 </label>
                                 <div className="flex flex-wrap gap-2 p-3 border border-slate-200 rounded-xl bg-slate-50 min-h-[48px]">
@@ -8440,7 +8132,7 @@ export default function StockManager() {
                                         }}
                                         className="text-slate-300 hover:text-red-400 transition-colors ml-0.5"
                                       >
-                                        ×
+                                        Ã—
                                       </button>
                                     </span>
                                   ))}
@@ -8683,7 +8375,7 @@ export default function StockManager() {
                         </div>
                         {historyLoading ? (
                           <div className="py-12 text-center text-sm text-slate-400 animate-pulse">
-                            Loading history…
+                            Loading historyâ€¦
                           </div>
                         ) : filteredHistory.length === 0 ? (
                           <EmptyState
@@ -8788,7 +8480,7 @@ export default function StockManager() {
                                       )}
                                     </p>
                                     <p className="text-xs text-slate-400 truncate">
-                                      {h.details ?? "—"}
+                                      {h.details ?? "â€”"}
                                     </p>
                                   </div>
                                 );
@@ -8829,7 +8521,7 @@ export default function StockManager() {
                 </motion.div>
               )}
 
-              {/* ── Purchase Orders ── */}
+              {/* â”€â”€ Purchase Orders â”€â”€ */}
               {tab === "purchases" && (
                 <motion.div
                   key="purchases"
@@ -8947,7 +8639,7 @@ export default function StockManager() {
                       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
                         <div className="px-5 py-4 border-b border-slate-50">
                           <p className="font-semibold text-slate-800 text-sm">
-                            Quick Order — All Products
+                            Quick Order â€” All Products
                           </p>
                           <p className="text-xs text-slate-400 mt-0.5">
                             Place a PO for any product, regardless of stock
@@ -9054,7 +8746,7 @@ export default function StockManager() {
                         <div className="divide-y divide-slate-50">
                           {poLoading ? (
                             <div className="py-12 text-center text-sm text-slate-400 animate-pulse">
-                              Loading purchase orders…
+                              Loading purchase ordersâ€¦
                             </div>
                           ) : filteredPOs.length === 0 ? (
                             <EmptyState message="No purchase orders found." />
@@ -9101,7 +8793,7 @@ export default function StockManager() {
                                       {order.deliveryDate}
                                     </span>
                                     <span className="text-sm font-semibold text-slate-800">
-                                      ₱
+                                      â‚±
                                       {(
                                         calcPOTotal(order.items) * 1.12
                                       ).toLocaleString(undefined, {
@@ -9202,7 +8894,7 @@ export default function StockManager() {
                                     <span>Order: {order.date}</span>
                                     <span>Delivery: {order.deliveryDate}</span>
                                     <span className="font-semibold text-slate-700">
-                                      ₱
+                                      â‚±
                                       {(
                                         calcPOTotal(order.items) * 1.12
                                       ).toLocaleString(undefined, {
@@ -9401,7 +9093,7 @@ export default function StockManager() {
                         <div className="divide-y divide-slate-50">
                           {poLoading ? (
                             <div className="py-12 text-center text-sm text-slate-400 animate-pulse">
-                              Loading purchase order history…
+                              Loading purchase order historyâ€¦
                             </div>
                           ) : filteredCompletedPOs.length === 0 ? (
                             <EmptyState
@@ -9461,7 +9153,7 @@ export default function StockManager() {
                                         : "-"}
                                     </span>
                                     <span className="text-sm font-semibold text-slate-800">
-                                      ₱
+                                      â‚±
                                       {(
                                         calcPOTotal(order.items) * 1.12
                                       ).toLocaleString(undefined, {
@@ -9514,7 +9206,7 @@ export default function StockManager() {
                                         : "-"}
                                     </span>
                                     <span className="font-semibold text-slate-700">
-                                      ₱
+                                      â‚±
                                       {(
                                         calcPOTotal(order.items) * 1.12
                                       ).toLocaleString(undefined, {
@@ -9613,12 +9305,12 @@ export default function StockManager() {
               aria-label="Back to top"
               title="Back to top"
             >
-              <span className="text-xl leading-none">↑</span>
+              <span className="text-xl leading-none">â†‘</span>
             </motion.button>
           )}
         </AnimatePresence>
 
-        {/* ── Overlays ── */}
+        {/* â”€â”€ Overlays â”€â”€ */}
         <AnimatePresence>
           {selectedOrder && (
             <>
@@ -9710,7 +9402,7 @@ export default function StockManager() {
                     onClick={() => setShowRawMaterialForm(false)}
                     className="text-slate-400 hover:text-slate-600 transition-colors text-lg"
                   >
-                    ✕
+                    âœ•
                   </button>
                 </div>
                 <div className="p-6 grid grid-cols-2 gap-4">
@@ -9883,7 +9575,7 @@ export default function StockManager() {
                       End-of-Day Reconciliation
                     </p>
                     <p className="text-xs text-slate-400 mt-0.5">
-                      Returns are saved on the batch — staff will see them
+                      Returns are saved on the batch â€” staff will see them
                       tomorrow morning.
                     </p>
                   </div>
@@ -9891,7 +9583,7 @@ export default function StockManager() {
                     onClick={() => setShowReconcile(false)}
                     className="text-slate-400 hover:text-slate-600 transition-colors text-lg"
                   >
-                    ✕
+                    âœ•
                   </button>
                 </div>
                 <div className="px-6 pt-4 flex items-center gap-4 text-xs text-slate-400">
@@ -10010,8 +9702,8 @@ export default function StockManager() {
                           {isChopped && parseFloat(item.returnQty) > 0 && (
                             <p className="text-[10px] text-slate-400 mt-2 pl-px">
                               {item.returnDestination === "whole"
-                                ? "↩ Excess will be returned to Whole Chicken stock"
-                                : "↩ Excess will stay as Chopped Chicken stock"}
+                                ? "â†© Excess will be returned to Whole Chicken stock"
+                                : "â†© Excess will stay as Chopped Chicken stock"}
                             </p>
                           )}
                         </div>
@@ -10029,7 +9721,7 @@ export default function StockManager() {
                     {reconcileItems.filter((i) => parseFloat(i.returnQty) > 0)
                       .length > 0 && (
                       <span className="ml-1 text-amber-600 font-medium">
-                        — will show in tomorrow's banner
+                        â€” will show in tomorrow's banner
                       </span>
                     )}
                   </p>
