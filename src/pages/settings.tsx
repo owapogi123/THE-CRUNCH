@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+﻿import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { NavLink, useNavigate } from "react-router-dom";
 import {
@@ -2360,24 +2360,21 @@ function DiscountTypeEditor({
     <div
       style={{
         border: "1px solid #eee7df",
-        borderRadius: 12,
-        padding: "12px 14px",
-        display: "grid",
-        gridTemplateColumns: "minmax(0,1.8fr) minmax(110px,0.8fr) auto auto auto",
-        gap: 10,
+        borderRadius: 14,
+        padding: "16px 20px",
+        display: "flex",
         alignItems: "center",
+        gap: 14,
+        background: "#fdfcfb",
       }}
     >
-      <div>
-        <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>
-          Discount Name
-        </p>
-        <StyledInput value={name} onChange={setName} placeholder="e.g. PWD" />
+      {/* Discount Name */}
+      <div style={{ flex: "1 1 0", minWidth: 0 }}>
+        <StyledInput value={name} onChange={setName} placeholder="Discount name" />
       </div>
-      <div>
-        <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>
-          Percentage
-        </p>
+
+      {/* Percentage */}
+      <div style={{ flex: "0 0 180px" }}>
         <StyledInput
           value={percentage}
           onChange={setPercentage}
@@ -2386,22 +2383,27 @@ function DiscountTypeEditor({
           placeholder="0 to 100"
         />
       </div>
+
+      {/* Status */}
       <div
         style={{
-          padding: "10px 12px",
-          borderRadius: 10,
-          border: `1px solid ${isActive ? "#bbf7d0" : "#fecaca"}`,
-          background: isActive ? "#f0fdf4" : "#fff1f2",
-          color: isActive ? "#166534" : "#b91c1c",
+          flex: "0 0 auto",
           fontFamily: FONT,
-          fontSize: "0.72rem",
-          fontWeight: 700,
-          minWidth: 82,
-          textAlign: "center",
+          fontSize: "0.75rem",
+          fontWeight: 600,
+          color: isActive ? "#1c1a18" : "#a8a29e",
+          background: "#ffffff",
+          border: "1px solid #ede8e2",
+          borderRadius: 10,
+          padding: "10px 20px",
+          boxShadow: "0 2px 6px rgba(28,26,24,0.07)",
+          whiteSpace: "nowrap",
         }}
       >
         {isActive ? "Active" : "Disabled"}
       </div>
+
+      {/* Save */}
       <button
         onClick={async () => {
           try {
@@ -2415,20 +2417,24 @@ function DiscountTypeEditor({
         }}
         disabled={busy}
         style={{
+          flex: "0 0 auto",
           fontFamily: FONT,
-          fontSize: "0.72rem",
+          fontSize: "0.75rem",
           fontWeight: 700,
           color: "#fff",
           background: "#1f2937",
           border: "none",
-          borderRadius: 8,
-          padding: "9px 12px",
-          cursor: "pointer",
+          borderRadius: 10,
+          padding: "10px 22px",
+          cursor: busy ? "not-allowed" : "pointer",
           opacity: busy ? 0.65 : 1,
+          whiteSpace: "nowrap",
         }}
       >
         Save
       </button>
+
+      {/* Disable / Enable */}
       <button
         onClick={async () => {
           try {
@@ -2439,16 +2445,18 @@ function DiscountTypeEditor({
         }}
         disabled={busy}
         style={{
+          flex: "0 0 auto",
           fontFamily: FONT,
-          fontSize: "0.72rem",
+          fontSize: "0.75rem",
           fontWeight: 600,
           color: isActive ? "#dc2626" : "#166534",
           background: "#fff",
           border: `1px solid ${isActive ? "#fecaca" : "#bbf7d0"}`,
-          borderRadius: 8,
-          padding: "9px 12px",
-          cursor: "pointer",
+          borderRadius: 10,
+          padding: "10px 22px",
+          cursor: busy ? "not-allowed" : "pointer",
           opacity: busy ? 0.65 : 1,
+          whiteSpace: "nowrap",
         }}
       >
         {isActive ? "Disable" : "Enable"}
@@ -3079,162 +3087,60 @@ function BillingTab({
           />
         </FieldRow>
       </SettingsCard>
-      <SettingsCard title="Discount Types" delay={0.04}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 12,
-            marginBottom: 14,
-          }}
-        >
-          <p
-            style={{
-              margin: 0,
-              fontFamily: FONT,
-              fontSize: "0.76rem",
-              color: "#8b837b",
-              lineHeight: 1.6,
-            }}
-          >
-            Cashier walk-in checkout only. Set active discount names and percentages from 0 to 100.
-          </p>
-          <button onClick={() => void onReloadDiscountTypes()} style={secondaryActionButton}>
-            Reload
-          </button>
+      
+<SettingsCard title="Discount Types" delay={0.04}>
+  <div style={{ padding: "20px 28px", display: "flex", flexDirection: "column", gap: 16 }}>
+    {/* ... existing header/reload/error content ... */}
+
+    {/* Add form row */}
+    <div style={{ display: "flex", gap: 14, alignItems: "flex-end" }}>
+      <div style={{ flex: "1 1 0" }}>
+        <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Discount Name</p>
+        <StyledInput value={newDiscountName} onChange={setNewDiscountName} placeholder="e.g. PWD" />
+      </div>
+      <div style={{ flex: "0 0 180px" }}>
+        <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>Percentage</p>
+        <StyledInput value={newDiscountPercentage} onChange={setNewDiscountPercentage} type="number" step={1} placeholder="0 to 100" />
+      </div>
+      <button
+        onClick={async () => {
+          try {
+            await onAddDiscountType({ name: newDiscountName, percentage: Number(newDiscountPercentage) });
+            setNewDiscountName("");
+            setNewDiscountPercentage("");
+          } catch { /* handled by parent */ }
+        }}
+        disabled={billingLoading}
+        style={{
+          fontFamily: FONT, fontSize: "0.74rem", fontWeight: 700,
+          color: "#fff", background: ACCENT, border: "none",
+          borderRadius: 10, padding: "11px 20px", cursor: "pointer",
+          opacity: billingLoading ? 0.65 : 1, whiteSpace: "nowrap",
+        }}
+      >
+        Add discount
+      </button>
+    </div>
+
+    {/* List */}
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {discountTypes.map((discountType) => (
+        <DiscountTypeEditor
+          key={discountType.discount_id}
+          discountType={discountType}
+          busy={billingLoading}
+          onSave={onUpdateDiscountType}
+          onDisable={onToggleDiscountType}
+        />
+      ))}
+      {discountTypes.length === 0 && (
+        <div style={{ textAlign: "center", padding: "18px 0", fontFamily: FONT, fontSize: "0.77rem", color: "#b0aaa3" }}>
+          No discount types found.
         </div>
-        {billingError ? (
-          <div
-            style={{
-              marginBottom: 14,
-              padding: "12px 14px",
-              borderRadius: 12,
-              border: "1px solid #fecaca",
-              background: "#fff1f2",
-              color: "#b91c1c",
-              fontFamily: FONT,
-              fontSize: "0.76rem",
-            }}
-          >
-            {billingError}
-          </div>
-        ) : null}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "minmax(0,1.8fr) minmax(110px,0.8fr) auto",
-            gap: 10,
-            alignItems: "end",
-            marginBottom: 16,
-          }}
-        >
-          <div>
-            <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>
-              Discount Name
-            </p>
-            <StyledInput
-              value={newDiscountName}
-              onChange={setNewDiscountName}
-              placeholder="e.g. PWD"
-            />
-          </div>
-          <div>
-            <p style={{ fontFamily: FONT, fontSize: "0.68rem", color: "#9a9490", marginBottom: 6 }}>
-              Percentage
-            </p>
-            <StyledInput
-              value={newDiscountPercentage}
-              onChange={setNewDiscountPercentage}
-              type="number"
-              step={1}
-              placeholder="0 to 100"
-            />
-          </div>
-          <button
-            onClick={async () => {
-              try {
-                await onAddDiscountType({
-                  name: newDiscountName,
-                  percentage: Number(newDiscountPercentage),
-                });
-                setNewDiscountName("");
-                setNewDiscountPercentage("");
-              } catch {
-                /* handled by parent */
-              }
-            }}
-            disabled={billingLoading}
-            style={{
-              fontFamily: FONT,
-              fontSize: "0.74rem",
-              fontWeight: 700,
-              color: "#fff",
-              background: ACCENT,
-              border: "none",
-              borderRadius: 8,
-              padding: "10px 14px",
-              cursor: "pointer",
-              opacity: billingLoading ? 0.65 : 1,
-            }}
-          >
-            Add discount
-          </button>
-        </div>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "minmax(0,1.8fr) minmax(110px,0.8fr) auto auto auto",
-            gap: 10,
-            alignItems: "center",
-            marginBottom: 8,
-            padding: "0 2px",
-          }}
-        >
-          {["Discount Name", "Percentage (%)", "Status", "Save", "Disable"].map(
-            (label) => (
-              <p
-                key={label}
-                style={{
-                  margin: 0,
-                  fontFamily: FONT,
-                  fontSize: "0.66rem",
-                  color: "#9a9490",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.06em",
-                  fontWeight: 700,
-                }}
-              >
-                {label}
-              </p>
-            ),
-          )}
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {discountTypes.map((discountType) => (
-            <DiscountTypeEditor
-              key={discountType.discount_id}
-              discountType={discountType}
-              busy={billingLoading}
-              onSave={onUpdateDiscountType}
-              onDisable={onToggleDiscountType}
-            />
-          ))}
-          {discountTypes.length === 0 ? (
-            <div
-              style={{
-                textAlign: "center",
-                padding: "18px 0",
-                fontFamily: FONT,
-                fontSize: "0.77rem",
-                color: "#b0aaa3",
-              }}
-            >
-              No discount types found.
-            </div>
-          ) : null}
-        </div>
-      </SettingsCard>
+      )}
+    </div>
+  </div>
+</SettingsCard>
     </>
   );
 }

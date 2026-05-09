@@ -6302,8 +6302,8 @@ export default function StockManager() {
             </div>
           )}
           {tab === "withdrawal" && !isLoading && (
-            <div className="border-t border-slate-100 px-6 pb-4 pt-2">
-              <div className="flex items-center justify-center gap-2 flex-wrap">
+             <div className="border-t border-slate-100 px-6 pb-0 pt-2">
+               <div className="mx-auto flex w-full max-w-5xl items-end justify-center gap-6 border-b border-slate-200">
                 {[
                   {
                     label: "New Withdrawal Record",
@@ -6337,9 +6337,11 @@ export default function StockManager() {
                       e.preventDefault();
                       scrollDashboardTo(item.target);
                     }}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium border transition-all duration-200 bg-white text-slate-500 border-slate-200 hover:border-slate-300 hover:text-slate-700"
+                    className="group relative flex-shrink-0 border-none bg-transparent px-5 py-3 text-sm font-semibold whitespace-nowrap transition-colors duration-200 text-slate-400 hover:text-slate-700 no-underline"
+                    style={{ fontFamily: "'Poppins', sans-serif" }}
                   >
                     {item.label}
+                     <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-blue-500 opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
                   </a>
                 ))}
               </div>
