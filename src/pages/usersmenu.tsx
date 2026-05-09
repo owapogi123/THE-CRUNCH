@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { api, authApi } from "../lib/api";
+import { api, authApi, resolveAssetUrl } from "../lib/api";
 import {
   fetchGeneralSettings,
   GENERAL_SETTINGS_DEFAULTS,
@@ -137,7 +137,9 @@ function mapInventoryRecipes(
       name,
       price: Number(row.price ?? menuMeta?.price ?? 0),
       category,
-      image: String(row.image || menuMeta?.image || "/placeholder.jpg"),
+      image: resolveAssetUrl(
+        String(row.image || menuMeta?.image || "/img/placeholder.jpg"),
+      ),
       available,
       description: menuMeta?.description || `Freshly prepared ${String(category).toLowerCase()} from The Crunch.`,
       nutrition: menuMeta?.nutrition ?? DEFAULT_NUTRITION,
@@ -296,7 +298,7 @@ function Avatar({ src, size = 40 }: { src: string; size?: number }) {
   const [err, setErr] = useState(false);
   return (
     <div style={{ width: size, height: size, borderRadius: "50%", overflow: "hidden", flexShrink: 0, border: "1.5px solid rgba(240,237,232,0.1)", background: "#1a1208" }}>
-      <img src={err ? "/placeholder.jpg" : src} alt="" onError={() => setErr(true)} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+      <img src={err ? "/img/placeholder.jpg" : src} alt="" onError={() => setErr(true)} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
     </div>
   );
 }
@@ -549,7 +551,7 @@ function HistoryDrawer({ orders, menuItems, onClose }: { orders: CustomerOrder[]
   const { isMobile, isPhone, isShortViewport } = useViewport();
   const [expanded, setExpanded] = useState<number | null>(orders[0]?.id ?? null);
   const findImg = (name: string) =>
-    menuItems.find((r) => r.name.trim().toLowerCase() === name.trim().toLowerCase())?.image ?? "/placeholder.jpg";
+    menuItems.find((r) => r.name.trim().toLowerCase() === name.trim().toLowerCase())?.image ?? "/img/placeholder.jpg";
 
   return (
     <>
@@ -963,7 +965,7 @@ function RecipeCard({ recipe, isFav, justAdded, flavorSel, variantSel, onToggleF
       <motion.div whileHover={isAvailable ? { scale: 1.05 } : {}} transition={SPG}
         style={{ width: isPhone ? "clamp(120px,34vw,160px)" : "clamp(120px,20vw,200px)", height: isPhone ? "clamp(120px,34vw,160px)" : "clamp(120px,20vw,200px)", borderRadius: "50%", overflow: "hidden", flexShrink: 0, boxShadow: "0 12px 48px rgba(0,0,0,0.45)", border: "1px solid rgba(240,237,232,0.08)", alignSelf: "center", position: "relative", background: "#1a1208", margin: isNarrowPhone ? "0 auto" : undefined }}>
         <img
-          src={imgErr ? "/placeholder.jpg" : recipe.image}
+          src={imgErr ? "/img/placeholder.jpg" : recipe.image}
           alt={recipe.name}
           onError={() => setImgErr(true)}
           style={{ width: "100%", height: "100%", objectFit: "cover", filter: isAvailable ? "brightness(0.96) saturate(1.1)" : "brightness(0.45) saturate(0.3)" }}

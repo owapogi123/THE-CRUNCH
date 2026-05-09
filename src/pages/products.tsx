@@ -3,6 +3,7 @@ import { motion, AnimatePresence, useScroll, useTransform, useInView } from 'fra
 import { Search, Flame, Crown, Clock, ChevronDown, Droplets, MapPin, Star, X, CalendarDays, MessageSquare, Send, CheckCircle } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useViewport } from '@/hooks/use-tablet'
+import { resolveAssetUrl } from '@/lib/api'
 
 const formatPHP = (value: number) =>
   new Intl.NumberFormat("en-PH", {
@@ -14,7 +15,7 @@ const formatPHP = (value: number) =>
 const NAV_H = 64
 const BANNER_H = 40
 const TAB_TOP = NAV_H + BANNER_H
-const PLACEHOLDER = '/placeholder.jpg'
+const PLACEHOLDER = '/img/placeholder.jpg'
 const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 const CATEGORIES = ['All', 'Chicken', 'Sides', 'Drinks', 'Combos'] as const
 type Category = typeof CATEGORIES[number]
@@ -47,7 +48,7 @@ const normalizeProductCategory = (value: unknown): Category => {
 }
 
 const normalizeProductImage = (value: unknown) =>
-  typeof value === 'string' && value.trim() ? value.trim() : PLACEHOLDER
+  typeof value === 'string' && value.trim() ? resolveAssetUrl(value.trim()) : PLACEHOLDER
 
 const mapProducts = (data: unknown[]): Product[] =>
   Array.isArray(data)

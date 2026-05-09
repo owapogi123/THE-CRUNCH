@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { Sidebar } from "@/components/Sidebar";
-import { api, apiCall } from "@/lib/api";
+import { api, apiCall, resolveAssetUrl } from "@/lib/api";
 import { motion } from "framer-motion";
 import { useNotifications } from "@/lib/NotificationContext";
 
@@ -62,6 +62,20 @@ function notify(
   type: "success" | "error" | "warning" | "info" = "info",
 ) {
   addNotification({ id: `${Date.now()}-${Math.random()}`, label, type });
+}
+
+async function uploadProductImage(file: File): Promise<string> {
+  const formData = new FormData();
+  formData.append("image", file);
+  const response = await api.post<{ fileUrl: string }>(
+    "/upload-product-image",
+    formData,
+  );
+  const fileUrl = String(response?.fileUrl ?? "").trim();
+  if (!fileUrl) {
+    throw new Error("Product image upload did not return a file path");
+  }
+  return fileUrl;
 }
 
 // ─── Shared UI ────────────────────────────────────────────────────────────────
@@ -974,15 +988,6 @@ function MenuAdminTab() {
     return Array.from(fallback).filter(Boolean).sort((a, b) => a.localeCompare(b));
   })();
 
-  function toBase64(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  }
-
   function toOverrideMode(
     manualOverride: unknown,
     manualStatus: unknown,
@@ -1328,7 +1333,7 @@ function MenuAdminTab() {
     try {
       setSaving(true);
       let imageUrl = "/img/placeholder.jpg";
-      if (fImageFile) imageUrl = await toBase64(fImageFile);
+      if (fImageFile) imageUrl = await uploadProductImage(fImageFile);
       const ingredients = buildIngredientPayload(fIngredients);
       const manualOverridePayload = toOverridePayload(fOverrideMode);
 
@@ -1386,7 +1391,7 @@ function MenuAdminTab() {
       setSaving(true);
       let editImageUrl: string | undefined;
       if (eImageFile) {
-        editImageUrl = await toBase64(eImageFile);
+        editImageUrl = await uploadProductImage(eImageFile);
       } else if (eImagePreview && eImagePreview !== "/img/placeholder.jpg") {
         editImageUrl = eImagePreview;
       }
@@ -1618,7 +1623,7 @@ function MenuAdminTab() {
                 <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center overflow-hidden flex-shrink-0">
                   {product.image && product.image !== "/img/placeholder.jpg" ? (
                     <img
-                      src={product.image}
+                      src={resolveAssetUrl(product.image)}
                       alt={product.name}
                       className="w-full h-full object-cover"
                     />
@@ -1815,7 +1820,7 @@ function MenuAdminTab() {
             >
               {fImagePreview ? (
                 <img
-                  src={fImagePreview}
+                  src={resolveAssetUrl(fImagePreview)}
                   alt="Preview"
                   className="w-full h-[120px] object-cover"
                 />
@@ -1957,7 +1962,7 @@ function MenuAdminTab() {
             >
               {eImagePreview ? (
                 <img
-                  src={eImagePreview}
+                  src={resolveAssetUrl(eImagePreview)}
                   alt="Preview"
                   className="w-full h-[120px] object-cover"
                 />

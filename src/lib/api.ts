@@ -32,6 +32,24 @@ function resolveApiBaseUrl(): string {
 }
 
 const API_BASE_URL = resolveApiBaseUrl();
+const API_ASSET_BASE_URL = API_BASE_URL.replace(/\/api$/i, "");
+
+export function resolveAssetUrl(value?: string | null): string {
+  const normalized = String(value || "").trim();
+  if (!normalized) return "/img/placeholder.jpg";
+  if (/^data:image\//i.test(normalized)) return "/img/placeholder.jpg";
+  if (
+    /^(blob:|data:|https?:\/\/)/i.test(normalized) ||
+    normalized.startsWith("/img/") ||
+    normalized.startsWith("/placeholder")
+  ) {
+    return normalized;
+  }
+  if (normalized.startsWith("/uploads/")) {
+    return `${API_ASSET_BASE_URL}${normalized}`;
+  }
+  return normalized;
+}
 
 function getStoredAuthToken(): string | null {
   if (typeof window === "undefined") return null;

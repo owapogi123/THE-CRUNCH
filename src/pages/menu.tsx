@@ -22,7 +22,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { api, apiCall } from "../lib/api";
+import { api, apiCall, resolveAssetUrl } from "../lib/api";
 import {
   fetchGeneralSettings,
   GENERAL_SETTINGS_DEFAULTS,
@@ -246,7 +246,7 @@ const mapProducts = (data: Record<string, unknown>[]): MenuItem[] => {
     itemType: String(p.item_type ?? "menu_item"),
     remainingStock: Number(p.stock ?? p.quantity ?? p.dailyWithdrawn ?? 0),
     availabilityStatus: String(p.availability_status ?? "Available"),
-    image: p.image ? String(p.image) : null,
+    image: p.image ? resolveAssetUrl(String(p.image)) : null,
   }));
 };
 
