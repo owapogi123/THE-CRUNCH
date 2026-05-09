@@ -310,7 +310,7 @@ export default function Login() {
         ? {
             eyebrow: "Welcome Back",
             heading: "Sign in to continue your order",
-            sub: "Customer accounts can log in even before verification, but online ordering stays locked until the email is verified.",
+            sub: "Customer accounts must verify their email first before sign-in is allowed.",
           }
         : {
             eyebrow: "Create Account",
@@ -354,7 +354,7 @@ export default function Login() {
 
     try {
       await authApi.verifyEmail(normalizedEmail, normalizedCode);
-      setVerificationSuccess("Email verified successfully. You can now sign in and place online orders.");
+      setVerificationSuccess("Email verified successfully. Your account is now active and ready for sign-in.");
       setMode("signin");
       setFormData((current) => ({
         ...current,
@@ -427,27 +427,39 @@ export default function Login() {
         formData.password,
       );
       const normalizedEmail = formData.email.trim().toLowerCase();
-      setMode("signin");
       setFormData({
-        name: "",
+        name: formData.name,
         email: normalizedEmail,
         password: "",
         confirmPassword: "",
       });
       setVerificationEmail(normalizedEmail);
       setVerificationCode("");
-      setVerificationError(
-        registration.emailDeliveryFailed
-          ? "Your account was created, but the verification email could not be sent yet. Use Resend Code."
-          : "",
-      );
-      setVerificationSuccess(
-        registration.emailDeliveryFailed
-          ? ""
-          : "Your account was created. Check your inbox for the verification code.",
-      );
+      setVerificationError("");
+      setVerificationSuccess("Verification code sent. Enter it to activate your account.");
       setVerificationOpen(Boolean(registration.requiresEmailVerification));
     } catch (err: any) {
+      if (
+        mode === "signin" &&
+        err?.status === 403 &&
+        err?.data &&
+        typeof err.data === "object" &&
+        err.data !== null &&
+        "requiresEmailVerification" in err.data &&
+        err.data.requiresEmailVerification
+      ) {
+        const blockedEmail =
+          typeof err.data.email === "string" && err.data.email.trim()
+            ? err.data.email.trim().toLowerCase()
+            : formData.email.trim().toLowerCase();
+        setVerificationEmail(blockedEmail);
+        setVerificationCode("");
+        setVerificationError(err.message || "Please verify your email before signing in.");
+        setVerificationSuccess("");
+        setVerificationOpen(true);
+        setError("");
+        return;
+      }
       setError(err.message || "Authentication failed.");
     } finally {
       setIsLoading(false);
@@ -514,7 +526,9 @@ export default function Login() {
               {title.heading}
             </h1>
             <p style={{ margin: 0, color: "rgba(255,255,255,0.65)", fontSize: 14, lineHeight: 1.75, maxWidth: 420 }}>
-              {title.sub}
+              {mode === "signup"
+                ? "We'll send a 6-digit verification code through Resend, and your customer account stays inactive until that code is verified."
+                : title.sub}
             </p>
 
             <div
@@ -530,7 +544,7 @@ export default function Login() {
                 Verification flow
               </p>
               <p style={{ margin: 0, color: "rgba(255,255,255,0.55)", fontSize: 13, lineHeight: 1.7 }}>
-                Register a customer account, receive a Resend email with a 6-digit code, verify the email, then place online orders from the customer menu.
+                Sign up, receive a 6-digit code by email, verify it, then sign in with an activated customer account.
               </p>
             </div>
           </div>
@@ -678,7 +692,12 @@ export default function Login() {
         success={verificationSuccess}
         isVerifying={isVerifying}
         isResending={isResendingVerification}
-        onClose={() => setVerificationOpen(false)}
+        onClose={() => {
+          setVerificationOpen(false);
+          setVerificationCode("");
+          setVerificationSuccess("");
+          setVerificationError("");
+        }}
         onCodeChange={(value) => {
           setVerificationCode(value.replace(/\D/g, "").slice(0, 6));
           setVerificationError("");
