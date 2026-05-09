@@ -253,7 +253,71 @@ async function sendCustomerOrderReceiptEmail({
   });
 }
 
+async function sendPasswordResetEmail({
+  to,
+  code,
+  customerName,
+}) {
+  const resend = getResendClient();
+  const from = getSender();
+  const recipient = String(to || "").trim();
+  const safeName = String(customerName || "Customer").trim() || "Customer";
+  const resetCode = String(code || "").trim();
+  const restaurantSettings = await loadRestaurantSettings();
+  const restaurantName = restaurantSettings.restaurantName;
+
+  if (!recipient) {
+    throw new Error("Password reset email recipient is required");
+  }
+
+  if (!resetCode) {
+    throw new Error("Password reset code is required");
+  }
+
+  const result = await resend.emails.send({
+    from,
+    to: recipient,
+    subject: `Reset your password - ${restaurantName}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; background: #f7f3ee; padding: 24px; color: #23150c;">
+        <div style="max-width: 560px; margin: 0 auto; background: #ffffff; border-radius: 16px; padding: 32px; border: 1px solid #eadfce;">
+          <p style="margin: 0 0 12px; font-size: 14px; color: #8a6d3b; text-transform: uppercase; letter-spacing: 0.12em;">${restaurantName}</p>
+          <h1 style="margin: 0 0 16px; font-size: 24px; color: #23150c;">Reset your password</h1>
+          <p style="margin: 0 0 18px; font-size: 15px; line-height: 1.7;">Hi ${safeName},</p>
+          <p style="margin: 0 0 18px; font-size: 15px; line-height: 1.7;">
+            Use the 6-digit code below to reset your password. This code expires in 10 minutes.
+          </p>
+          <div style="margin: 24px 0; padding: 18px; text-align: center; background: #fff8e1; border: 1px solid #f2d48a; border-radius: 14px;">
+            <div style="font-size: 30px; font-weight: 700; letter-spacing: 0.3em; color: #5a3712;">${resetCode}</div>
+          </div>
+          <p style="margin: 0; font-size: 14px; line-height: 1.7; color: #6b7280;">
+            If you did not request a password reset, you can safely ignore this email.
+          </p>
+        </div>
+      </div>
+    `,
+    text: `Hi ${safeName}, your ${restaurantName} password reset code is ${resetCode}. This code expires in 10 minutes.`,
+  });
+
+  if (result?.error) {
+    const resendError = new Error(
+      typeof result.error === "string"
+        ? result.error
+        : result.error?.message || "Unknown Resend error",
+    );
+    resendError.name = result.error?.name || "ResendPasswordResetError";
+    resendError.statusCode = result.error?.statusCode;
+    resendError.response = result.error?.response || result;
+    resendError.cause = result.error?.cause;
+    resendError.resendError = result.error;
+    throw resendError;
+  }
+
+  return result;
+}
+
 module.exports = {
   sendVerificationEmail,
   sendCustomerOrderReceiptEmail,
+  sendPasswordResetEmail,
 };

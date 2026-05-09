@@ -129,6 +129,8 @@ CREATE TABLE IF NOT EXISTS users (
     email_verified TINYINT(1) NOT NULL DEFAULT 0,
     email_verification_code VARCHAR(10) NULL,
     email_verification_expires DATETIME NULL,
+    password_reset_code VARCHAR(10) NULL,
+    password_reset_expires DATETIME NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -587,6 +589,19 @@ CREATE TABLE IF NOT EXISTS discount_types (
         [name, percentage, name],
       );
     }
+
+    await ensureColumn(
+      connection,
+      "users",
+      "password_reset_code",
+      "`password_reset_code` VARCHAR(10) NULL",
+    );
+    await ensureColumn(
+      connection,
+      "users",
+      "password_reset_expires",
+      "`password_reset_expires` DATETIME NULL",
+    );
 
     if (!(await tableExists(connection, "orders")) && (await tableExists(connection, "Orders"))) {
       await connection.query("RENAME TABLE `Orders` TO `orders`");
