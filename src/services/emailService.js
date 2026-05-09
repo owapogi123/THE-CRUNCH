@@ -82,7 +82,7 @@ async function sendVerificationEmail({
     throw new Error("Verification code is required");
   }
 
-  await resend.emails.send({
+  const result = await resend.emails.send({
     from,
     to: recipient,
     subject: "Verify your email - The Crunch",
@@ -107,6 +107,22 @@ async function sendVerificationEmail({
     `,
     text: `Hi ${safeName}, your The Crunch verification code is ${verificationCode}. This code expires in 10 minutes.`,
   });
+
+  if (result?.error) {
+    const resendError = new Error(
+      typeof result.error === "string"
+        ? result.error
+        : result.error?.message || "Unknown Resend error",
+    );
+    resendError.name = result.error?.name || "ResendVerificationError";
+    resendError.statusCode = result.error?.statusCode;
+    resendError.response = result.error?.response || result;
+    resendError.cause = result.error?.cause;
+    resendError.resendError = result.error;
+    throw resendError;
+  }
+
+  return result;
 }
 
 async function sendCustomerOrderReceiptEmail({

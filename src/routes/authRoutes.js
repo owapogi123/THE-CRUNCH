@@ -25,13 +25,50 @@ function toBooleanFlag(value) {
   return Number(value) === 1 || value === true;
 }
 
+async function sendVerificationEmailOrThrow({
+  email,
+  otpCode,
+  name,
+}) {
+  if (!email) {
+    throw new Error("Recipient email is required for OTP delivery");
+  }
+
+  if (!otpCode) {
+    throw new Error("Generated OTP code is missing");
+  }
+
+  try {
+    await sendVerificationEmail({
+      to: email,
+      code: otpCode,
+      customerName: name,
+    });
+  } catch (emailError) {
+    console.error("OTP email failed:", emailError);
+    throw emailError;
+  }
+}
+
 router.post("/register", async (req, res) => {
   try {
-    const { name, username, password, email } = req.body;
-    const userName = String(name || username || "").trim();
-    const normalizedEmail = normalizeEmail(email);
+    const rawEmail = String(req.body?.email || req.body?.Email || "").trim();
+    const email = normalizeEmail(rawEmail);
+    const name = String(
+      req.body?.name ||
+      req.body?.fullName ||
+      req.body?.customerName ||
+      req.body?.username ||
+      "Customer",
+    ).trim();
+    const password = String(req.body?.password || "").trim();
+    const userName = name || "Customer";
 
-    if (!userName || !password || !normalizedEmail) {
+    if (!email) {
+      return res.status(400).json({ message: "Email is required for OTP." });
+    }
+
+    if (!userName || !password) {
       return res.status(400).json({
         message: "Name, email, and password required",
       });
@@ -47,7 +84,7 @@ router.post("/register", async (req, res) => {
 
     const [existing] = await db.query(
       "SELECT id FROM users WHERE email = ? OR username = ?",
-      [normalizedEmail, userName],
+      [email, userName],
     );
     if (existing.length > 0) {
       return res.status(400).json({
@@ -56,8 +93,28 @@ router.post("/register", async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const verificationCode = generateVerificationCode();
+    const otpCode = generateVerificationCode();
     const verificationExpires = getVerificationExpiryDate();
+
+    if (!otpCode) {
+      return res.status(500).json({
+        message: "Failed to generate OTP.",
+      });
+    }
+
+    try {
+      await sendVerificationEmailOrThrow({
+        email,
+        otpCode,
+        name: userName,
+      });
+    } catch (emailError) {
+      // Resend free/testing mode only allows sending to the verified account email unless a custom domain is verified.
+      console.error("OTP email failed:", emailError);
+      return res.status(500).json({
+        message: "Failed to send OTP. Please try again.",
+      });
+    }
 
     const [result] = await db.query(
       `INSERT INTO users (
@@ -72,36 +129,20 @@ router.post("/register", async (req, res) => {
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         userName,
-        normalizedEmail,
+        email,
         hashedPassword,
         userRole,
         0,
-        verificationCode,
+        otpCode,
         verificationExpires,
       ],
     );
 
-    let emailDeliveryFailed = false;
-    try {
-      await sendVerificationEmail({
-        to: normalizedEmail,
-        code: verificationCode,
-        customerName: userName,
-      });
-    } catch (emailError) {
-      emailDeliveryFailed = true;
-      console.error(
-        "Failed to send verification email:",
-        emailError && emailError.message ? emailError.message : emailError,
-      );
-    }
-
     return res.status(201).json({
-      message: "User registered successfully",
+      message: "Verification code sent. Complete email verification to activate your account",
       userId: result.insertId,
       role: userRole,
       requiresEmailVerification: true,
-      emailDeliveryFailed,
     });
   } catch (error) {
     console.error(error);
@@ -148,6 +189,15 @@ router.post("/login", async (req, res) => {
     }
 
     const emailVerified = toBooleanFlag(user.email_verified);
+    const normalizedRole = String(user.role || "").trim().toLowerCase();
+    if (normalizedRole === "customer" && !emailVerified) {
+      return res.status(403).json({
+        message: "Please verify your email before signing in",
+        requiresEmailVerification: true,
+        email: user.email,
+      });
+    }
+
     const token = jwt.sign(
       {
         userId: user.id,
@@ -271,19 +321,32 @@ router.post("/resend-verification", async (req, res) => {
     const verificationCode = generateVerificationCode();
     const verificationExpires = getVerificationExpiryDate();
 
+    if (!verificationCode) {
+      return res.status(500).json({
+        message: "Failed to generate verification code",
+      });
+    }
+
     await db.query(
       `UPDATE users
        SET email_verification_code = ?,
            email_verification_expires = ?
-       WHERE id = ?`,
+      WHERE id = ?`,
       [verificationCode, verificationExpires, user.id],
     );
 
-    await sendVerificationEmail({
-      to: user.email,
-      code: verificationCode,
-      customerName: user.username,
-    });
+    try {
+      await sendVerificationEmailOrThrow({
+        email: user.email,
+        otpCode: verificationCode,
+        name: user.username,
+      });
+    } catch (emailError) {
+      return res.status(500).json({
+        message: "OTP email resend failed",
+        error: emailError.message,
+      });
+    }
 
     return res.json({
       message: "Verification code resent successfully",
