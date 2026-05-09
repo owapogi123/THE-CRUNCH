@@ -249,7 +249,6 @@ export default function ForgotPassword() {
     setError(""); setSuccess("");
   };
 
-  const stepIndex = ORDER.indexOf(step);
   const left = LEFT[step];
 
   /* send code */
@@ -273,15 +272,11 @@ export default function ForgotPassword() {
     finally { setResend(false); }
   };
 
-  /* verify code */
+  /* proceed to reset after entering the emailed code */
   const handleVerifyCode = async () => {
     if (code.length !== 6) { setError("Enter the 6-digit code from your email."); return; }
-    setLoading(true); setError("");
-    try {
-      await authApi.verifyResetCode(email.trim().toLowerCase(), code);
-      goTo("newpassword");
-    } catch (e: any) { setError(e.message || "Invalid or expired code."); }
-    finally { setLoading(false); }
+    setError("");
+    goTo("newpassword");
   };
 
   /* reset password */

@@ -339,6 +339,179 @@ function VerifyEmailModal({
   );
 }
 
+function ForgotPasswordModal({
+  open,
+  email,
+  code,
+  newPassword,
+  confirmPassword,
+  message,
+  error,
+  step,
+  isSubmitting,
+  onClose,
+  onEmailChange,
+  onCodeChange,
+  onNewPasswordChange,
+  onConfirmPasswordChange,
+  onSendCode,
+  onResetPassword,
+}: {
+  open: boolean;
+  email: string;
+  code: string;
+  newPassword: string;
+  confirmPassword: string;
+  message: string;
+  error: string;
+  step: 1 | 2;
+  isSubmitting: boolean;
+  onClose: () => void;
+  onEmailChange: (value: string) => void;
+  onCodeChange: (value: string) => void;
+  onNewPasswordChange: (value: string) => void;
+  onConfirmPasswordChange: (value: string) => void;
+  onSendCode: () => void;
+  onResetPassword: () => void;
+}) {
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          style={{
+            position: "fixed", inset: 0, zIndex: 60,
+            background: "rgba(0,0,0,0.82)", backdropFilter: "blur(14px)",
+            display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+          }}
+        >
+          <motion.div
+            initial={{ opacity: 0, y: 24, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 12, scale: 0.97 }}
+            transition={{ type: "spring", stiffness: 320, damping: 28 }}
+            style={{
+              width: "min(460px, 100%)",
+              background: PANEL,
+              border: `1px solid ${BORDER}`,
+              borderRadius: 22,
+              boxShadow: `0 30px 80px rgba(0,0,0,0.6), 0 0 60px ${Y}18`,
+              padding: "28px 28px 24px",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
+              <div style={{ width: 38, height: 38, borderRadius: 10, background: Y_DIM, border: `1px solid ${Y}30`, display: "grid", placeItems: "center" }}>
+                <Lock size={17} color={Y} />
+              </div>
+              <div>
+                <p style={{ margin: 0, fontSize: 10, fontWeight: 800, letterSpacing: "0.18em", textTransform: "uppercase", color: Y, fontFamily: "'Poppins', sans-serif" }}>
+                  Forgot Password
+                </p>
+                <h2 style={{ margin: 0, color: "#fff", fontSize: 20, fontFamily: "'Poppins', sans-serif", fontWeight: 700 }}>
+                  {step === 1 ? "Send reset code" : "Reset your password"}
+                </h2>
+              </div>
+            </div>
+
+            <p style={{ margin: "0 0 18px", color: TEXT_MUTED, fontSize: 13, lineHeight: 1.7, fontFamily: "'Poppins', sans-serif" }}>
+              {step === 1
+                ? "Enter your email and we’ll send a 6-digit reset code if the account exists."
+                : "Enter the reset code from your email and choose a new password."}
+            </p>
+
+            <AnimatePresence mode="wait">
+              {error && (
+                <motion.p key="forgot-e" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                  style={{ margin: "0 0 12px", color: "#fca5a5", fontSize: 12, textAlign: "center", fontFamily: "'Poppins', sans-serif" }}>
+                  {error}
+                </motion.p>
+              )}
+              {message && (
+                <motion.p key="forgot-m" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                  style={{ margin: "0 0 12px", color: "#86efac", fontSize: 12, textAlign: "center", fontFamily: "'Poppins', sans-serif" }}>
+                  {message}
+                </motion.p>
+              )}
+            </AnimatePresence>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <Field label="Email Address" icon={<Mail size={11} />}>
+                <TextInput
+                  name="forgotEmail"
+                  type="email"
+                  value={email}
+                  onChange={(e) => onEmailChange(e.target.value)}
+                  placeholder="you@example.com"
+                  autoComplete="email"
+                  required
+                  icon={<Mail size={15} />}
+                />
+              </Field>
+
+              {step === 2 && (
+                <>
+                  <Field label="Reset Code" icon={<Mail size={11} />}>
+                    <TextInput
+                      name="resetCode"
+                      value={code}
+                      onChange={(e) => onCodeChange(e.target.value)}
+                      placeholder="6-digit code"
+                      required
+                      icon={<Mail size={15} />}
+                    />
+                  </Field>
+                  <PasswordField
+                    label="New Password"
+                    name="newPassword"
+                    value={newPassword}
+                    onChange={(e) => onNewPasswordChange(e.target.value)}
+                    placeholder="Minimum 8 characters"
+                    autoComplete="new-password"
+                  />
+                  <PasswordField
+                    label="Confirm Password"
+                    name="confirmNewPassword"
+                    value={confirmPassword}
+                    onChange={(e) => onConfirmPasswordChange(e.target.value)}
+                    placeholder="Re-enter your new password"
+                    autoComplete="new-password"
+                  />
+                </>
+              )}
+            </div>
+
+            <PrimaryButton
+              type="button"
+              onClick={step === 1 ? onSendCode : onResetPassword}
+              disabled={
+                isSubmitting ||
+                !email.trim() ||
+                (step === 2 &&
+                  (!code.trim() || !newPassword.trim() || !confirmPassword.trim()))
+              }
+            >
+              {isSubmitting
+                ? step === 1
+                  ? "Sending…"
+                  : "Resetting…"
+                : step === 1
+                  ? "Send reset code"
+                  : "Reset password"}
+            </PrimaryButton>
+
+            <button type="button" onClick={onClose}
+              style={{ marginTop: 14, width: "100%", background: "none", border: "none", color: TEXT_MUTED, cursor: "pointer", fontSize: 12, fontFamily: "'Poppins', sans-serif" }}>
+              Close
+            </button>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
 /* ─── main component ─────────────────────────────────────────────────────── */
 export default function Login() {
   const navigate = useNavigate();
@@ -358,6 +531,15 @@ export default function Login() {
   const [verificationSuccess, setVerificationSuccess] = useState("");
   const [isVerifying, setIsVerifying] = useState(false);
   const [isResendingVerification, setIsResendingVerification] = useState(false);
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotStep, setForgotStep] = useState<1 | 2>(1);
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotCode, setForgotCode] = useState("");
+  const [forgotNewPassword, setForgotNewPassword] = useState("");
+  const [forgotConfirmPassword, setForgotConfirmPassword] = useState("");
+  const [forgotMessage, setForgotMessage] = useState("");
+  const [forgotError, setForgotError] = useState("");
+  const [forgotSubmitting, setForgotSubmitting] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -405,6 +587,73 @@ export default function Login() {
       setVerificationSuccess("New code sent.");
     } catch (err: any) { setVerificationError(err.message || "Could not resend."); }
     finally { setIsResendingVerification(false); }
+  };
+
+  const closeForgotModal = () => {
+    setForgotOpen(false);
+    setForgotStep(1);
+    setForgotCode("");
+    setForgotNewPassword("");
+    setForgotConfirmPassword("");
+    setForgotMessage("");
+    setForgotError("");
+    setForgotSubmitting(false);
+  };
+
+  const handleSendResetCode = async () => {
+    const email = forgotEmail.trim().toLowerCase();
+    if (!email) {
+      setForgotError("Enter your email first.");
+      return;
+    }
+    setForgotSubmitting(true);
+    setForgotError("");
+    setForgotMessage("");
+    try {
+      const data = await authApi.forgotPassword(email);
+      setForgotMessage(data.message || "If that email is registered, a reset code has been sent.");
+      setForgotStep(2);
+    } catch (err: any) {
+      setForgotError(err.message || "Could not send reset code.");
+    } finally {
+      setForgotSubmitting(false);
+    }
+  };
+
+  const handleResetPassword = async () => {
+    const email = forgotEmail.trim().toLowerCase();
+    const code = forgotCode.replace(/\D/g, "").slice(0, 6);
+    if (!email || !code || !forgotNewPassword || !forgotConfirmPassword) {
+      setForgotError("Complete all fields first.");
+      return;
+    }
+    if (forgotNewPassword.length < 8) {
+      setForgotError("Password must be at least 8 characters.");
+      return;
+    }
+    if (forgotNewPassword !== forgotConfirmPassword) {
+      setForgotError("Passwords don't match.");
+      return;
+    }
+    setForgotSubmitting(true);
+    setForgotError("");
+    setForgotMessage("");
+    try {
+      await authApi.resetPassword(email, code, forgotNewPassword);
+      closeForgotModal();
+      switchMode("signin");
+      setError("Password reset successfully. You can sign in now.");
+      setFormData((current) => ({
+        ...current,
+        email,
+        password: "",
+        confirmPassword: "",
+      }));
+    } catch (err: any) {
+      setForgotError(err.message || "Could not reset password.");
+    } finally {
+      setForgotSubmitting(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -643,7 +892,11 @@ export default function Login() {
                         onChange={handleChange} placeholder="Enter your password" autoComplete="current-password" />
 
                       <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                        <button type="button" onClick={() => navigate("/forgot-password")}
+                        <button type="button" onClick={() => {
+                          setForgotEmail(formData.email.trim().toLowerCase());
+                          setForgotCode(""); setForgotNewPassword(""); setForgotConfirmPassword("");
+                          setForgotMessage(""); setForgotError(""); setForgotStep(1); setForgotOpen(true);
+                        }}
                           style={{ border: "none", background: "none", color: TEXT_MUTED, cursor: "pointer", fontSize: 12, fontFamily: "'Poppins', sans-serif", padding: 0 }}>
                           Forgot password?
                         </button>
@@ -653,11 +906,7 @@ export default function Login() {
                         {isLoading ? "Signing in…" : "Sign In"}
                       </PrimaryButton>
                     </form>
-                    <Footer mode={mode} onSwitch={switchMode} onOpenVerify={() => {
-                      setVerificationEmail(formData.email.trim().toLowerCase());
-                      setVerificationCode(""); setVerificationError(""); setVerificationSuccess("");
-                      setVerificationOpen(true);
-                    }} />
+                    <Footer mode={mode} onSwitch={switchMode} />
                   </>
                 )}
 
@@ -683,11 +932,7 @@ export default function Login() {
                         {isLoading ? "Creating account…" : "Create Account"}
                       </PrimaryButton>
                     </form>
-                    <Footer mode={mode} onSwitch={switchMode} onOpenVerify={() => {
-                      setVerificationEmail(formData.email.trim().toLowerCase());
-                      setVerificationCode(""); setVerificationError(""); setVerificationSuccess("");
-                      setVerificationOpen(true);
-                    }} />
+                    <Footer mode={mode} onSwitch={switchMode} />
                   </>
                 )}
               </motion.div>
@@ -704,6 +949,24 @@ export default function Login() {
         onCodeChange={(v) => { setVerificationCode(v.replace(/\D/g, "").slice(0, 6)); setVerificationError(""); }}
         onVerify={handleVerifyEmail}
         onResend={handleResendVerification}
+      />
+      <ForgotPasswordModal
+        open={forgotOpen}
+        email={forgotEmail}
+        code={forgotCode}
+        newPassword={forgotNewPassword}
+        confirmPassword={forgotConfirmPassword}
+        message={forgotMessage}
+        error={forgotError}
+        step={forgotStep}
+        isSubmitting={forgotSubmitting}
+        onClose={closeForgotModal}
+        onEmailChange={(value) => { setForgotEmail(value); setForgotError(""); }}
+        onCodeChange={(value) => { setForgotCode(value.replace(/\D/g, "").slice(0, 6)); setForgotError(""); }}
+        onNewPasswordChange={(value) => { setForgotNewPassword(value); setForgotError(""); }}
+        onConfirmPasswordChange={(value) => { setForgotConfirmPassword(value); setForgotError(""); }}
+        onSendCode={handleSendResetCode}
+        onResetPassword={handleResetPassword}
       />
     </>
   );
@@ -729,9 +992,9 @@ function TabSwitcher({ mode, onSwitch }: { mode: AuthMode; onSwitch: (m: AuthMod
   );
 }
 
-function Footer({ mode, onSwitch, onOpenVerify }: { mode: AuthMode; onSwitch: (m: AuthMode) => void; onOpenVerify: () => void }) {
+function Footer({ mode, onSwitch }: { mode: AuthMode; onSwitch: (m: AuthMode) => void }) {
   return (
-    <div style={{ marginTop: 20, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+    <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-start", gap: 12, flexWrap: "wrap" }}>
       <p style={{ margin: 0, color: TEXT_MUTED, fontSize: 12, fontFamily: "'Poppins', sans-serif" }}>
         {mode === "signin" ? "Need an account? " : "Have an account? "}
         <button type="button" onClick={() => onSwitch(mode === "signin" ? "signup" : "signin")}
@@ -739,10 +1002,6 @@ function Footer({ mode, onSwitch, onOpenVerify }: { mode: AuthMode; onSwitch: (m
           {mode === "signin" ? "Sign up" : "Sign in"}
         </button>
       </p>
-      <button type="button" onClick={onOpenVerify}
-        style={{ border: "none", background: "none", color: TEXT_MUTED, cursor: "pointer", fontSize: 12, fontFamily: "'Poppins', sans-serif" }}>
-        Already have a code?
-      </button>
     </div>
   );
 }

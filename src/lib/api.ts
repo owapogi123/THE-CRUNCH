@@ -81,6 +81,10 @@ interface VerifyEmailResponse {
   email_verified: boolean;
 }
 
+interface ForgotPasswordResponse {
+  message: string;
+}
+
 // ─── Attendance Record type ───────────────────────────────────────────────────
 export interface AttendanceRecord {
   id: number;
@@ -255,6 +259,20 @@ export const authApi = {
         body: { email },
       },
     ),
+
+  forgotPassword: (email: string) =>
+    apiCall<ForgotPasswordResponse>("/auth/forgot-password", {
+      method: "POST",
+      skipAuth: true,
+      body: { email },
+    }),
+
+  resetPassword: (email: string, code: string, newPassword: string) =>
+    apiCall<ForgotPasswordResponse>("/auth/reset-password", {
+      method: "POST",
+      skipAuth: true,
+      body: { email, code, newPassword },
+    }),
 
   logout: (token: string) =>
     apiCall<void>("/auth/logout", {

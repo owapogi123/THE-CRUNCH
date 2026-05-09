@@ -3039,8 +3039,6 @@ function BillingTab({
   setStr,
   discountTypes,
   billingLoading,
-  billingError,
-  onReloadDiscountTypes,
   onAddDiscountType,
   onUpdateDiscountType,
   onToggleDiscountType,
@@ -3049,8 +3047,6 @@ function BillingTab({
   setStr: (k: keyof RestaurantSettings, v: string) => void;
   discountTypes: DiscountTypeRecord[];
   billingLoading: boolean;
-  billingError: string | null;
-  onReloadDiscountTypes: () => Promise<void>;
   onAddDiscountType: (payload: {
     name: string;
     percentage: number;
@@ -3390,9 +3386,6 @@ export default function SettingsPage() {
     string | null
   >(null);
   const [billingMastersLoading, setBillingMastersLoading] = useState(false);
-  const [billingMastersError, setBillingMastersError] = useState<string | null>(
-    null,
-  );
 
   // Permissions state
   const [permissions, setPermissions] = useState<PermissionsMap>(
@@ -3568,18 +3561,13 @@ export default function SettingsPage() {
 
   const fetchDiscountTypes = useCallback(async () => {
     setBillingMastersLoading(true);
-    setBillingMastersError(null);
     try {
       const res = await fetch("/api/settings/discount-types?activeOnly=0");
       if (!res.ok) throw new Error("Could not load discount types.");
       const data = await res.json().catch(() => []);
       setDiscountTypes(Array.isArray(data) ? data : []);
-    } catch (err) {
-      setBillingMastersError(
-        err instanceof Error && err.message
-          ? err.message
-          : "Could not load discount types.",
-      );
+    } catch {
+      setDiscountTypes([]);
     } finally {
       setBillingMastersLoading(false);
     }
@@ -4878,8 +4866,6 @@ export default function SettingsPage() {
                   {...sharedProps}
                   discountTypes={discountTypes}
                   billingLoading={billingMastersLoading}
-                  billingError={billingMastersError}
-                  onReloadDiscountTypes={fetchDiscountTypes}
                   onAddDiscountType={addDiscountType}
                   onUpdateDiscountType={updateDiscountType}
                   onToggleDiscountType={toggleDiscountType}
