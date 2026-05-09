@@ -15,6 +15,11 @@ import { useNotifications } from "@/lib/NotificationContext";
 
 type WithdrawalType = "initial" | "supplementary" | "return";
 type StockStatus = "critical" | "low" | "normal";
+type WithdrawalFormRow = {
+  id: string;
+  productId: number | null;
+  qty: string;
+};
 type Tab =
   | "dashboard"
   | "withdrawal"
@@ -49,6 +54,14 @@ export interface PurchaseOrder {
   receiptNo?: string;
   receivedBy?: string;
   receivedDate?: string;
+}
+
+function createWithdrawalRow(): WithdrawalFormRow {
+  return {
+    id: crypto.randomUUID(),
+    productId: null,
+    qty: "",
+  };
 }
 
 const PESO = "\u20B1";
@@ -4546,6 +4559,15 @@ export default function StockManager() {
     | "stock-movement"
     | "cook-report"
   >("main-stock");
+  type WithdrawalSubTab =
+    | "new-record"
+    | "kitchen-queue"
+    | "fifo-preview"
+    | "delivered-batches"
+    | "currently-withdrawn"
+    | "kitchen-batches";
+  const [withdrawalSubTab, setWithdrawalSubTab] =
+    useState<WithdrawalSubTab>("new-record");
   const [products, setProducts] = useState<Product[]>([]);
   const [withdrawals, setWithdrawals] = useState<StockStatusRecord[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -4561,8 +4583,12 @@ export default function StockManager() {
   );
   const [dashboardSummary, setDashboardSummary] =
     useState<DashboardSummaryKey | null>(null);
-  const [wdProductId, setWdProductId] = useState<number | null>(null);
-  const [wdQty, setWdQty] = useState("");
+  const [withdrawalRows, setWithdrawalRows] = useState<WithdrawalFormRow[]>([
+    createWithdrawalRow(),
+  ]);
+  const [activeWithdrawalRowId, setActiveWithdrawalRowId] = useState<string>(
+    () => withdrawalRows[0].id,
+  );
   const [wdType, setWdType] = useState<WithdrawalType>("initial");
   const [adjProductId, setAdjProductId] = useState<number | null>(null);
   const [adjQty, setAdjQty] = useState("");
@@ -4982,10 +5008,20 @@ export default function StockManager() {
   }, [tab]);
   useEffect(() => {
     if (products.length > 0) {
-      if (wdProductId === null) setWdProductId(products[0].product_id);
       if (adjProductId === null) setAdjProductId(products[0].product_id);
     }
-  }, [products, wdProductId, adjProductId]);
+  }, [products, adjProductId]);
+  useEffect(() => {
+    if (withdrawalRows.length === 0) {
+      const nextRow = createWithdrawalRow();
+      setWithdrawalRows([nextRow]);
+      setActiveWithdrawalRowId(nextRow.id);
+      return;
+    }
+    if (!withdrawalRows.some((row) => row.id === activeWithdrawalRowId)) {
+      setActiveWithdrawalRowId(withdrawalRows[0].id);
+    }
+  }, [withdrawalRows, activeWithdrawalRowId]);
   useEffect(() => {
     setReportData(null);
   }, [reportPeriod]);
@@ -5049,31 +5085,53 @@ export default function StockManager() {
     });
     return Array.from(m.values());
   }, [criticalStock, lowStock]);
+  const mainStockProducts = useMemo(
+    () => products.filter((p) => !isMenuFoodProduct(p)),
+    [products],
+  );
+  const activeWithdrawalRow = useMemo(
+    () =>
+      withdrawalRows.find((row) => row.id === activeWithdrawalRowId) ??
+      withdrawalRows[0] ??
+      null,
+    [withdrawalRows, activeWithdrawalRowId],
+  );
+  const activeWithdrawalProductId = activeWithdrawalRow?.productId ?? null;
+  const wdProductId = activeWithdrawalProductId;
+  const wdQty = activeWithdrawalRow?.qty ?? "";
+  const setWdProductId = useCallback((value: number | null) => {
+    if (!activeWithdrawalRowId) return;
+    updateWithdrawalRow(activeWithdrawalRowId, { productId: value });
+  }, [activeWithdrawalRowId]);
+  const setWdQty = useCallback((value: string) => {
+    if (!activeWithdrawalRowId) return;
+    updateWithdrawalRow(activeWithdrawalRowId, { qty: value });
+  }, [activeWithdrawalRowId]);
   const selectedProductBatches = useMemo(
     () =>
-      !wdProductId
+      !activeWithdrawalProductId
         ? []
         : activeBatches
-            .filter((b) => b.product_id === wdProductId)
+            .filter((b) => b.product_id === activeWithdrawalProductId)
             .sort(
               (a, b) =>
                 new Date(a.received_date).getTime() -
                 new Date(b.received_date).getTime(),
             ),
-    [activeBatches, wdProductId],
+    [activeBatches, activeWithdrawalProductId],
   );
   const selectedKitchenBatches = useMemo(
     () =>
-      !wdProductId
+      !activeWithdrawalProductId
         ? []
         : kitchenBatches
-            .filter((b) => b.product_id === wdProductId)
+            .filter((b) => b.product_id === activeWithdrawalProductId)
             .sort(
               (a, b) =>
                 new Date(a.withdrawn_at).getTime() -
                 new Date(b.withdrawn_at).getTime(),
             ),
-    [kitchenBatches, wdProductId],
+    [kitchenBatches, activeWithdrawalProductId],
   );
   const todayInitialExists = useMemo(
     () => selectedKitchenBatches.some((b) => b.status === "active"),
@@ -5200,10 +5258,6 @@ export default function StockManager() {
       )
       .slice(0, 6);
   }, [products, supplierForm.products_supplied, supplierProductInput]);
-  const mainStockProducts = useMemo(
-    () => products.filter((p) => !isMenuFoodProduct(p)),
-    [products],
-  );
   const cookReportItems = useMemo(() => cookReport?.items ?? [], [cookReport]);
   const cookReportVarianceCount = useMemo(
     () =>
@@ -5231,8 +5285,10 @@ export default function StockManager() {
     [cookReportItems],
   );
   const selectedWithdrawalProduct = useMemo(
-    () => mainStockProducts.find((p) => p.product_id === wdProductId) ?? null,
-    [mainStockProducts, wdProductId],
+    () =>
+      mainStockProducts.find((p) => p.product_id === activeWithdrawalProductId) ??
+      null,
+    [mainStockProducts, activeWithdrawalProductId],
   );
   const selectedWithdrawalStatus = selectedWithdrawalProduct
     ? getStockStatus(selectedWithdrawalProduct, stockAlertSettings)
@@ -5627,8 +5683,16 @@ export default function StockManager() {
     product_id: number,
     qty: number,
     type: WithdrawalType,
+    options?: {
+      manageSubmitting?: boolean;
+      refreshAfter?: boolean;
+      silentError?: boolean;
+    },
   ) {
-    setSubmitting(true);
+    const manageSubmitting = options?.manageSubmitting ?? true;
+    const refreshAfter = options?.refreshAfter ?? true;
+    const silentError = options?.silentError ?? false;
+    if (manageSubmitting) setSubmitting(true);
     try {
       // Initial or Supplementary: always deduct from storage first (FIFO)
       if (type === "initial") {
@@ -5690,34 +5754,111 @@ export default function StockManager() {
         );
       }
     } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : "Withdrawal failed",
-        "error",
-      );
+      if (!silentError) {
+        showToast(
+          err instanceof Error ? err.message : "Withdrawal failed",
+          "error",
+        );
+      }
       throw err;
     } finally {
-      setSubmitting(false);
-      await fetchAll();
+      if (manageSubmitting) setSubmitting(false);
+      if (refreshAfter) await fetchAll();
     }
   }
 
+  function updateWithdrawalRow(
+    rowId: string,
+    patch: Partial<WithdrawalFormRow>,
+  ) {
+    setWithdrawalRows((current) =>
+      current.map((row) => (row.id === rowId ? { ...row, ...patch } : row)),
+    );
+  }
+
+  function addWithdrawalRow() {
+    const nextRow = createWithdrawalRow();
+    setWithdrawalRows((current) => [...current, nextRow]);
+    setActiveWithdrawalRowId(nextRow.id);
+  }
+
+  function removeWithdrawalRow(rowId: string) {
+    setWithdrawalRows((current) => {
+      if (current.length <= 1) return current;
+      return current.filter((row) => row.id !== rowId);
+    });
+  }
+
   async function submitWithdrawal() {
-    const qty = parseInt(wdQty);
-    if (!qty || qty <= 0 || wdProductId === null) return;
-    const product = products.find((p) => p.product_id === wdProductId);
-    if (!product) return;
-    if (qty > product.mainStock) {
-      showToast(
-        `Insufficient stock. Available: ${product.mainStock} ${product.unit}`,
-        "error",
-      );
+    const mergedRows = new Map<number, { product: Product; qty: number }>();
+
+    for (const row of withdrawalRows) {
+      if (row.productId === null) {
+        showToast("Please select an item for every withdrawal row.", "error");
+        return;
+      }
+      if (!row.qty.trim()) {
+        showToast("Please enter a quantity for every withdrawal row.", "error");
+        return;
+      }
+
+      const qty = parseInt(row.qty, 10);
+      if (!Number.isFinite(qty) || qty <= 0) {
+        showToast("Withdrawal quantity must be greater than zero.", "error");
+        return;
+      }
+
+      const product = products.find((p) => p.product_id === row.productId);
+      if (!product) {
+        showToast("One of the selected products could not be found.", "error");
+        return;
+      }
+
+      const existing = mergedRows.get(row.productId);
+      if (existing) {
+        existing.qty += qty;
+      } else {
+        mergedRows.set(row.productId, { product, qty });
+      }
+    }
+
+    if (mergedRows.size === 0) {
+      showToast("Add at least one withdrawal item before submitting.", "error");
       return;
     }
+
     try {
-      await doWithdraw(wdProductId, qty, wdType);
-      setWdQty("");
-    } catch {
-      // error already shown inside doWithdraw
+      setSubmitting(true);
+      for (const { product, qty } of mergedRows.values()) {
+        if (qty > product.mainStock) {
+          showToast(
+            `Insufficient stock for ${product.product_name}. Available: ${product.mainStock} ${product.unit}`,
+            "error",
+          );
+          return;
+        }
+
+        try {
+          await doWithdraw(product.product_id, qty, wdType, {
+            manageSubmitting: false,
+            refreshAfter: false,
+            silentError: true,
+          });
+        } catch (err) {
+          const message =
+            err instanceof Error ? err.message : "Withdrawal failed";
+          showToast(`Failed on ${product.product_name}: ${message}`, "error");
+          return;
+        }
+      }
+
+      const resetRow = createWithdrawalRow();
+      setWithdrawalRows([resetRow]);
+      setActiveWithdrawalRowId(resetRow.id);
+      showToast("Withdrawals submitted successfully.", "success");
+    } finally {
+      await fetchAll();
+      setSubmitting(false);
     }
   }
 
@@ -6307,42 +6448,49 @@ export default function StockManager() {
                 {[
                   {
                     label: "New Withdrawal Record",
-                    target: "withdrawal-new-record",
+                    id: "new-record" as const,
                   },
                   {
                     label: "Kitchen Batch Queue",
-                    target: "withdrawal-kitchen-queue",
+                    id: "kitchen-queue" as const,
                   },
                   {
                     label: "FIFO Withdrawal Preview",
-                    target: "withdrawal-fifo-preview",
+                    id: "fifo-preview" as const,
                   },
                   {
                     label: "Delivered batches",
-                    target: "withdrawal-delivered-batches",
+                    id: "delivered-batches" as const,
                   },
                   {
                     label: "Currently Withdrawn",
-                    target: "withdrawal-currently-withdrawn",
+                    id: "currently-withdrawn" as const,
                   },
                   {
                     label: "Kitchen Batches",
-                    target: "withdrawal-kitchen-batches",
+                    id: "kitchen-batches" as const,
                   },
                 ].map((item) => (
-                  <a
-                    key={item.label}
-                    href={`#${item.target}`}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      scrollDashboardTo(item.target);
-                    }}
-                    className="group relative flex-shrink-0 border-none bg-transparent px-5 py-3 text-sm font-semibold whitespace-nowrap transition-colors duration-200 text-slate-400 hover:text-slate-700 no-underline"
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setWithdrawalSubTab(item.id)}
+                    className={`relative flex-shrink-0 border-none bg-transparent px-5 py-3 text-sm font-semibold whitespace-nowrap transition-colors duration-200 ${
+                      withdrawalSubTab === item.id
+                        ? "text-blue-600"
+                        : "text-slate-400 hover:text-slate-600"
+                    }`}
                     style={{ fontFamily: "'Poppins', sans-serif" }}
                   >
                     {item.label}
-                     <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-blue-500 opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
-                  </a>
+                    <span
+                      className={`absolute inset-x-0 bottom-0 h-0.5 rounded-full transition-opacity duration-200 ${
+                        withdrawalSubTab === item.id
+                          ? "bg-blue-500 opacity-100"
+                          : "bg-transparent opacity-0"
+                      }`}
+                    />
+                  </button>
                 ))}
               </div>
             </div>
@@ -7456,11 +7604,10 @@ export default function StockManager() {
                         <YesterdayReturnsBanner batches={yesterdayReturns} />
                       </motion.div>
                     )}
+                    {withdrawalSubTab === "new-record" && (
                     <motion.div
-                      id="withdrawal-new-record"
                       variants={itemVariants}
                       className="grid grid-cols-2 gap-6"
-                      style={{ scrollMarginTop: "180px" }}
                     >
                       <SectionCard
                         title="New Withdrawal Record"
@@ -7521,6 +7668,121 @@ export default function StockManager() {
                                 supplementary withdrawal?
                               </div>
                             )}
+                          <FormField label="Withdrawal Items">
+                            <div className="space-y-3">
+                              {withdrawalRows.map((row, index) => {
+                                const rowProduct =
+                                  mainStockProducts.find(
+                                    (product) => product.product_id === row.productId,
+                                  ) ?? null;
+                                const isActiveRow =
+                                  activeWithdrawalRowId === row.id;
+
+                                return (
+                                  <div
+                                    key={row.id}
+                                    className={`rounded-2xl border p-3 transition-colors ${
+                                      isActiveRow
+                                        ? "border-blue-200 bg-blue-50/40"
+                                        : "border-slate-200 bg-slate-50/60"
+                                    }`}
+                                  >
+                                    <div className="mb-2 flex items-center justify-between gap-3">
+                                      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                                        Item {index + 1}
+                                      </p>
+                                      <button
+                                        type="button"
+                                        onClick={() => removeWithdrawalRow(row.id)}
+                                        disabled={withdrawalRows.length === 1}
+                                        className="rounded-lg border border-rose-100 bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-500 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                      >
+                                        Remove
+                                      </button>
+                                    </div>
+                                    <div className="grid grid-cols-[minmax(0,1.6fr)_minmax(120px,0.8fr)] gap-3">
+                                      <StyledSelect
+                                        value={row.productId ?? ""}
+                                        onChange={(value) => {
+                                          setActiveWithdrawalRowId(row.id);
+                                          updateWithdrawalRow(row.id, {
+                                            productId: value ? Number(value) : null,
+                                          });
+                                        }}
+                                      >
+                                        <option value="">Select item</option>
+                                        {wholeChickenProducts.length > 0 && (
+                                          <optgroup label="★ Whole Chicken ★">
+                                            {wholeChickenProducts.map((p) => (
+                                              <option
+                                                key={p.product_id}
+                                                value={p.product_id}
+                                              >
+                                                {p.product_name} ({p.mainStock} {p.unit})
+                                              </option>
+                                            ))}
+                                          </optgroup>
+                                        )}
+                                        {choppedChickenProducts.length > 0 && (
+                                          <optgroup label="★ Chopped Chicken ★">
+                                            {choppedChickenProducts.map((p) => (
+                                              <option
+                                                key={p.product_id}
+                                                value={p.product_id}
+                                              >
+                                                {p.product_name} ({p.mainStock} {p.unit})
+                                              </option>
+                                            ))}
+                                          </optgroup>
+                                        )}
+                                        {otherMainStockProducts.length > 0 && (
+                                          <optgroup label="★ Other Items ★">
+                                            {otherMainStockProducts.map((p) => (
+                                              <option
+                                                key={p.product_id}
+                                                value={p.product_id}
+                                              >
+                                                {p.product_name} ({p.mainStock} {p.unit})
+                                              </option>
+                                            ))}
+                                          </optgroup>
+                                        )}
+                                      </StyledSelect>
+                                      <StyledInput
+                                        type="number"
+                                        value={row.qty}
+                                        onChange={(value) => {
+                                          setActiveWithdrawalRowId(row.id);
+                                          updateWithdrawalRow(row.id, { qty: value });
+                                        }}
+                                        placeholder="Enter amount"
+                                      />
+                                    </div>
+                                    <div className="mt-2 flex items-center justify-between gap-3 text-xs text-slate-500">
+                                      <span>
+                                        {rowProduct
+                                          ? `Available: ${rowProduct.mainStock} ${rowProduct.unit}`
+                                          : "Choose an item to see stock details."}
+                                      </span>
+                                      {isActiveRow && (
+                                        <span className="font-semibold text-blue-600">
+                                          Preview item
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                              <button
+                                type="button"
+                                onClick={addWithdrawalRow}
+                                className="w-full rounded-xl border border-dashed border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 transition-colors hover:border-slate-400 hover:bg-slate-50"
+                              >
+                                + Add Item
+                              </button>
+                            </div>
+                          </FormField>
+                          {false && (
                           <FormField label="Select Item">
                             <StyledSelect
                               value={wdProductId ?? ""}
@@ -7564,6 +7826,7 @@ export default function StockManager() {
                               )}
                             </StyledSelect>
                           </FormField>
+                          )}
                           {selectedWithdrawalProduct &&
                             selectedWithdrawalStatus !== "normal" && (
                               <div
@@ -7586,6 +7849,7 @@ export default function StockManager() {
                               Once withdrawn, they are considered consumed.
                             </div>
                           )}
+                          {false && (
                           <FormField label="Quantity">
                             <StyledInput
                               type="number"
@@ -7594,6 +7858,7 @@ export default function StockManager() {
                               placeholder="Enter amount"
                             />
                           </FormField>
+                          )}
                           <Btn
                             onClick={submitWithdrawal}
                             variant="primary"
@@ -7601,9 +7866,7 @@ export default function StockManager() {
                           >
                             {submitting
                               ? "Saving..."
-                              : wdType === "initial"
-                                ? "Submit Opening Withdrawal"
-                                : "Submit Withdrawal"}
+                              : "Submit Withdrawals"}
                           </Btn>
                         </div>
                       </SectionCard>
@@ -7665,30 +7928,30 @@ export default function StockManager() {
                         )}
                       </SectionCard>
                     </motion.div>
-                    {selectedKitchenBatches.length > 0 && (
-                      <motion.div
-                        id="withdrawal-kitchen-queue"
-                        variants={itemVariants}
-                        style={{ scrollMarginTop: "180px" }}
-                      >
+                    )}
+                    {withdrawalSubTab === "kitchen-queue" && (
+                      <motion.div variants={itemVariants}>
                         <SectionCard
                           title="Kitchen Batch Queue"
                           subtitle="Shows batches currently withdrawn to kitchen."
                         >
                           <div className="p-4">
-                            <KitchenBatchQueuePreview
-                              batches={selectedKitchenBatches}
-                              unit={selectedWithdrawalProduct?.unit ?? ""}
-                            />
+                            {selectedKitchenBatches.length > 0 ? (
+                              <KitchenBatchQueuePreview
+                                batches={selectedKitchenBatches}
+                                unit={selectedWithdrawalProduct?.unit ?? ""}
+                              />
+                            ) : (
+                              <EmptyState message="No kitchen batches are currently queued." />
+                            )}
                           </div>
                         </SectionCard>
                       </motion.div>
                     )}
-                    {selectedWithdrawalProduct && (
+                    {withdrawalSubTab === "fifo-preview" &&
+                      selectedWithdrawalProduct && (
                       <motion.div
-                        id="withdrawal-fifo-preview"
                         variants={itemVariants}
-                        style={{ scrollMarginTop: "180px" }}
                       >
                         <SectionCard
                           title="FIFO Withdrawal Preview"
@@ -7767,11 +8030,21 @@ export default function StockManager() {
                         </SectionCard>
                       </motion.div>
                     )}
-                    <motion.div
-                      id="withdrawal-delivered-batches"
-                      variants={itemVariants}
-                      style={{ scrollMarginTop: "180px" }}
-                    >
+                    {withdrawalSubTab === "fifo-preview" &&
+                      !selectedWithdrawalProduct && (
+                      <motion.div variants={itemVariants}>
+                        <SectionCard
+                          title="FIFO Withdrawal Preview"
+                          subtitle="For the selected item only"
+                        >
+                          <div className="p-4">
+                            <EmptyState message="Select an item in New Withdrawal Record to preview FIFO batches." />
+                          </div>
+                        </SectionCard>
+                      </motion.div>
+                    )}
+                    {withdrawalSubTab === "delivered-batches" && (
+                    <motion.div variants={itemVariants}>
                       <SectionCard
                         title="Delivered batches"
                         subtitle="Grouped by received date"
@@ -7784,11 +8057,9 @@ export default function StockManager() {
                         </div>
                       </SectionCard>
                     </motion.div>
-                    <motion.div
-                      id="withdrawal-currently-withdrawn"
-                      variants={itemVariants}
-                      style={{ scrollMarginTop: "180px" }}
-                    >
+                    )}
+                    {withdrawalSubTab === "currently-withdrawn" && (
+                    <motion.div variants={itemVariants}>
                       <SectionCard
                         title="Currently Withdrawn"
                         subtitle="Stock pulled for today's preparation — net of returns"
@@ -7840,11 +8111,9 @@ export default function StockManager() {
                         )}
                       </SectionCard>
                     </motion.div>
-                    <motion.div
-                      id="withdrawal-kitchen-batches"
-                      variants={itemVariants}
-                      style={{ scrollMarginTop: "180px" }}
-                    >
+                    )}
+                    {withdrawalSubTab === "kitchen-batches" && (
+                    <motion.div variants={itemVariants}>
                       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm">
                         <div className="p-4">
                           <KitchenBatchesSection
@@ -7855,6 +8124,7 @@ export default function StockManager() {
                         </div>
                       </div>
                     </motion.div>
+                    )}
                   </motion.div>
                 </motion.div>
               )}
