@@ -7,7 +7,12 @@ const app = express();
 // Middleware
 app.use(
   cors({
-    origin: "*",
+    origin: [
+      "http://localhost:5173",
+      "https://cc85a772.the-crunch.pages.dev",
+      "https://thecrunch.site",
+      "https://www.thecrunch.site",
+    ],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allowedHeaders: [
