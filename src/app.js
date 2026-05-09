@@ -3,16 +3,27 @@ const cors = require("cors");
 const path = require("path");
 
 const app = express();
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://thecrunch.site",
+  "https://www.thecrunch.site",
+];
 
 // Middleware
 app.use(
   cors({
-    origin: [
-      "http://localhost:5173",
-      "https://cc85a772.the-crunch.pages.dev",
-      "https://thecrunch.site",
-      "https://www.thecrunch.site",
-    ],
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+
+      const isCloudflarePages =
+        /^https:\/\/[a-z0-9-]+\.the-crunch\.pages\.dev$/.test(origin);
+
+      if (allowedOrigins.includes(origin) || isCloudflarePages) {
+        return callback(null, true);
+      }
+
+      return callback(new Error(`CORS blocked: ${origin}`));
+    },
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allowedHeaders: [
