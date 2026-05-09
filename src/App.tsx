@@ -26,6 +26,7 @@ import Order from "./pages/Order";
 
 // ── Shared / Auth
 import Login from "./pages/login";
+import ForgotPassword from "./pages/forgotpassword";
 import AboutTheCrunch from "./pages/aboutthecrunch";
 
 // ── Customer pages
@@ -94,7 +95,6 @@ function PublicOnlyRoute({
 }) {
   const { user } = useAuth();
   if (user) {
-    // Already logged in — send them to their home page instead of /login
     return <Navigate to={redirectTo} replace />;
   }
   return element;
@@ -244,6 +244,9 @@ export default function App() {
         element={<PublicOnlyRoute element={<Login />} redirectTo={homePath} />}
       />
 
+      {/* /forgot-password is public — no redirect needed for logged-in users */}
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+
       <Route path="/aboutthecrunch" element={<AboutTheCrunch />} />
 
       {/* ── Customer landing (public, but passes auth state for nav) ── */}
@@ -314,8 +317,6 @@ export default function App() {
       {/* ── Fallbacks ────────────────────────────────────────── */}
       <Route path="/unauthorized" element={<Unauthorized />} />
       <Route path="*" element={<Navigate to="/" replace />} />
-
-
 
       {/* ── Settings ────────────────────────────────────────── */}
       <Route path="/settings" element={protect(<Settings />, "settings")} />
