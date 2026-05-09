@@ -740,6 +740,13 @@ END
       "image",
       "`image` LONGTEXT NULL",
     );
+    await connection.query(`
+      UPDATE products
+         SET image = '/img/placeholder.jpg'
+       WHERE image IS NOT NULL
+         AND TRIM(image) <> ''
+         AND image LIKE 'data:image%'
+    `);
     await ensureColumn(
       connection,
       "products",

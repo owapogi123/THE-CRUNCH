@@ -70,6 +70,8 @@ const kitchenUsageRoutes = require("./routes/kitchenUsageRoutes");
 app.use("/api/kitchen-usage", kitchenUsageRoutes);
 const uploadProofRoutes = require("./routes/uploadProofRoutes");
 app.use("/api/upload-proof", uploadProofRoutes);
+const uploadProductImageRoutes = require("./routes/uploadProductImageRoutes");
+app.use("/api/upload-product-image", uploadProductImageRoutes);
 const feedbackRoutes = require("./routes/feedbackRoutes");
 app.use("/api/feedback", feedbackRoutes);
 const settingsRoutes = require("./routes/settingsRoutes");

@@ -66,6 +66,16 @@ async function ensureProductsImageColumn() {
   }
 }
 
+async function cleanupLegacyBase64ProductImages() {
+  await db.query(
+    `UPDATE products
+     SET image = '/img/placeholder.jpg'
+     WHERE image IS NOT NULL
+       AND TRIM(image) <> ''
+       AND image LIKE 'data:image%'`,
+  );
+}
+
 async function ensureBatchShelfLifeColumns() {
   if (!(await hasColumn("batches", "shelf_life_days"))) {
     await db.query(
@@ -88,6 +98,7 @@ async function ensureBatchShelfLifeColumns() {
 
 async function ensureMenuManagementColumns() {
   await ensureProductsImageColumn();
+  await cleanupLegacyBase64ProductImages();
   await ensureProductsItemTypeSchema(db);
 
   if (!(await hasColumn("products", "menu_code"))) {
@@ -523,7 +534,11 @@ router.get("/", async (req, res) => {
          COALESCE(p.description, '')                                            AS description,
          COALESCE(m.Promo, '')                                                  AS promo,
          CASE WHEN COALESCE(m.Promo, '') = 'RAW_MATERIAL' THEN 1 ELSE 0 END    AS isRawMaterial,
-         COALESCE(p.image, '/img/placeholder.jpg')                              AS image,
+         CASE
+           WHEN p.image LIKE 'data:image%' THEN '/img/placeholder.jpg'
+           WHEN COALESCE(TRIM(p.image), '') = '' THEN '/img/placeholder.jpg'
+           ELSE p.image
+         END                                                                    AS image,
          COALESCE(p.menu_code, CONCAT('M-', LPAD(i.Product_ID, 3, '0')))        AS menu_code,
          CASE
            WHEN COALESCE(m.manual_override, 0) = 1 THEN

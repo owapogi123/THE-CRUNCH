@@ -80,7 +80,11 @@ router.get("/menu-sections", async (_req, res) => {
           COALESCE(m.Price, p.price, 0) AS price,
           COALESCE(p.description, '') AS description,
           COALESCE(p.promo_label, '') AS promo_label,
-          COALESCE(p.image, '') AS image,
+          CASE
+            WHEN p.image LIKE 'data:image%' THEN '/img/placeholder.jpg'
+            WHEN COALESCE(TRIM(p.image), '') = '' THEN ''
+            ELSE p.image
+          END AS image,
           COALESCE(p.availability_status, 'Available') AS availability_status
        FROM Menu m
        LEFT JOIN products p ON p.id = m.Product_ID
@@ -135,7 +139,11 @@ router.get("/promos", async (_req, res) => {
           p.id,
           COALESCE(m.Product_Name, p.name, 'Crunch Special') AS product_name,
           COALESCE(p.description, '') AS description,
-          COALESCE(p.image, '') AS image,
+          CASE
+            WHEN p.image LIKE 'data:image%' THEN '/img/placeholder.jpg'
+            WHEN COALESCE(TRIM(p.image), '') = '' THEN ''
+            ELSE p.image
+          END AS image,
           COALESCE(p.promo_label, '') AS promo_label,
           COALESCE(p.price, 0) AS regular_price,
           COALESCE(p.promo_price, 0) AS promo_price,

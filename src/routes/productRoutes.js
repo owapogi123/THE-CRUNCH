@@ -29,6 +29,16 @@ async function ensureProductsImageColumn() {
     }
 }
 
+async function cleanupLegacyBase64ProductImages() {
+    await db.query(
+        `UPDATE products
+         SET image = '/img/placeholder.jpg'
+         WHERE image IS NOT NULL
+           AND TRIM(image) <> ''
+           AND image LIKE 'data:image%'`,
+    );
+}
+
 async function ensureInventoryThresholdColumns() {
     if (!(await hasColumn("Inventory", "Reorder_Point"))) {
         await db.query(
@@ -62,7 +72,8 @@ async function ensureInventoryThresholdColumns() {
 }
 
 async function ensureMenuManagementColumns() {
-    await ensureProductsImageColumn();
+  await ensureProductsImageColumn();
+    await cleanupLegacyBase64ProductImages();
     await ensureProductsItemTypeSchema(db);
 
     if (!(await hasColumn("products", "menu_code"))) {
@@ -110,6 +121,28 @@ async function ensureMenuManagementColumns() {
          SET is_promotional = 0
          WHERE is_promotional IS NULL`,
     );
+}
+
+function normalizeProductImageValue(value) {
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+
+    const normalized = String(value).trim();
+    if (!normalized) return null;
+    if (/^data:image\//i.test(normalized)) {
+        throw new Error(
+            "Base64 product images are not supported. Upload the image first and save the returned file path.",
+        );
+    }
+    return normalized;
+}
+
+function sanitizeProductImageValue(value) {
+    const normalized = String(value || "").trim();
+    if (!normalized || /^data:image\//i.test(normalized)) {
+        return "/img/placeholder.jpg";
+    }
+    return normalized;
 }
 
 function normalizeAvailabilityStatus(value) {
@@ -241,6 +274,7 @@ async function attachIngredientAvailability(rows) {
         const availabilityStatus = resolveAvailabilityStatus(row, ingredients);
         return {
             ...row,
+            image: sanitizeProductImageValue(row.image),
             ingredient_count: ingredients.length,
             available_servings: availableServings,
             availability_status: availabilityStatus,
@@ -337,6 +371,7 @@ router.post("/", async (req, res) => {
         const normalizedAvailabilityStatus = normalizeAvailabilityStatus(
             availability_status,
         );
+        const normalizedImage = normalizeProductImageValue(image);
         const normalizedIngredients = normalizeMenuIngredients(ingredients);
         const normalizedItemType = parseItemTypeInput(item_type, STOCK_ITEM);
         if (normalizedIngredients !== null) {
@@ -418,7 +453,7 @@ router.post("/", async (req, res) => {
             price || 0,
             quantity || 0,
             description || null,
-            image || null,
+            normalizedImage ?? null,
             normalizedAvailabilityStatus,
             normalizedPromo.isPromotional,
             normalizedPromo.promoPrice,
@@ -516,6 +551,8 @@ router.post("/", async (req, res) => {
         if (
             err &&
             (err.message === "item_type must be either stock_item or menu_item" ||
+                err.message ===
+                    "Base64 product images are not supported. Upload the image first and save the returned file path." ||
                 err.message === "ingredients must be an array" ||
                 err.message === "Each ingredient must include a valid product_id" ||
                 err.message === "Each ingredient must include a positive quantity_required" ||
@@ -681,9 +718,12 @@ router.put("/:id", async (req, res) => {
             productValues.push(description ? String(description).trim() : null);
         }
 
-        if (image !== undefined) {
+        const normalizedImage =
+            image !== undefined ? normalizeProductImageValue(image) : undefined;
+
+        if (normalizedImage !== undefined) {
             productFields.push("image = ?");
-            productValues.push(image ? String(image) : null);
+            productValues.push(normalizedImage);
         }
 
         if (availability_status !== undefined) {
@@ -815,6 +855,8 @@ router.put("/:id", async (req, res) => {
         if (
             err &&
             (err.message === "item_type must be either stock_item or menu_item" ||
+                err.message ===
+                    "Base64 product images are not supported. Upload the image first and save the returned file path." ||
                 err.message === "ingredients must be an array" ||
                 err.message === "Each ingredient must include a valid product_id" ||
                 err.message === "Each ingredient must include a positive quantity_required" ||
