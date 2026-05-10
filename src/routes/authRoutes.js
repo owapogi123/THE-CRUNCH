@@ -11,6 +11,7 @@ const {
 const router = express.Router();
 
 const JWT_SECRET = process.env.JWT_SECRET || "secretkey";
+const SIGNUP_FIELD_MAX_LENGTH = 50;
 
 function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
@@ -30,6 +31,33 @@ function getResetExpiryDate() {
 
 function toBooleanFlag(value) {
   return Number(value) === 1 || value === true;
+}
+
+async function ensurePendingSignupsTable() {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS pending_signups (
+      pending_signup_id INT AUTO_INCREMENT PRIMARY KEY,
+      username VARCHAR(100) NOT NULL,
+      email VARCHAR(150) NOT NULL UNIQUE,
+      password_hash VARCHAR(255) NOT NULL,
+      otp_code VARCHAR(10) NOT NULL,
+      otp_expires_at DATETIME NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )
+  `);
+}
+
+async function findPendingSignupByEmail(email) {
+  await ensurePendingSignupsTable();
+  const [rows] = await db.query(
+    `SELECT pending_signup_id, username, email, password_hash, otp_code, otp_expires_at
+       FROM pending_signups
+      WHERE email = ?
+      LIMIT 1`,
+    [email],
+  );
+  return rows[0] || null;
 }
 
 async function sendVerificationEmailOrThrow({
@@ -81,6 +109,7 @@ async function ensurePasswordResetColumns() {
 
 router.post("/register", async (req, res) => {
   try {
+    await ensurePendingSignupsTable();
     const rawEmail = String(req.body?.email || req.body?.Email || "").trim();
     const email = normalizeEmail(rawEmail);
     const name = String(
@@ -100,6 +129,24 @@ router.post("/register", async (req, res) => {
     if (!userName || !password) {
       return res.status(400).json({
         message: "Name, email, and password required",
+      });
+    }
+
+    if (userName.length > SIGNUP_FIELD_MAX_LENGTH) {
+      return res.status(400).json({
+        message: "Full name must not exceed 50 characters.",
+      });
+    }
+
+    if (email.length > SIGNUP_FIELD_MAX_LENGTH) {
+      return res.status(400).json({
+        message: "Email must not exceed 50 characters.",
+      });
+    }
+
+    if (password.length > SIGNUP_FIELD_MAX_LENGTH) {
+      return res.status(400).json({
+        message: "Password must not exceed 50 characters.",
       });
     }
 
@@ -145,31 +192,25 @@ router.post("/register", async (req, res) => {
       });
     }
 
-    const [result] = await db.query(
-      `INSERT INTO users (
+    await db.query(
+      `INSERT INTO pending_signups (
          username,
          email,
          password_hash,
-         role,
-         email_verified,
-         email_verification_code,
-         email_verification_expires
+         otp_code,
+         otp_expires_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        userName,
-        email,
-        hashedPassword,
-        userRole,
-        0,
-        otpCode,
-        verificationExpires,
-      ],
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         username = VALUES(username),
+         password_hash = VALUES(password_hash),
+         otp_code = VALUES(otp_code),
+         otp_expires_at = VALUES(otp_expires_at)`,
+      [userName, email, hashedPassword, otpCode, verificationExpires],
     );
 
-    return res.status(201).json({
-      message: "Verification code sent. Complete email verification to activate your account",
-      userId: result.insertId,
+    return res.json({
+      message: "Verification code sent. Complete email verification to create your account",
       role: userRole,
       requiresEmailVerification: true,
     });
@@ -184,6 +225,7 @@ router.post("/register", async (req, res) => {
 
 router.post("/login", async (req, res) => {
   try {
+    await ensurePendingSignupsTable();
     const { username, email, password } = req.body;
     const loginIdentifier = String(email || username || "").trim();
     const normalizedLoginIdentifier = normalizeEmail(loginIdentifier);
@@ -208,6 +250,14 @@ router.post("/login", async (req, res) => {
     );
 
     if (rows.length === 0) {
+      const pendingSignup = await findPendingSignupByEmail(normalizedLoginIdentifier);
+      if (pendingSignup) {
+        return res.status(403).json({
+          message: "Please verify your email before signing in",
+          requiresEmailVerification: true,
+          email: pendingSignup.email,
+        });
+      }
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
@@ -259,12 +309,91 @@ router.post("/login", async (req, res) => {
 
 router.post("/verify-email", async (req, res) => {
   try {
+    await ensurePendingSignupsTable();
     const email = normalizeEmail(req.body?.email);
     const code = String(req.body?.code || "").trim();
 
     if (!email || !code) {
       return res.status(400).json({
         message: "Email and verification code are required",
+      });
+    }
+
+    if (email.length > SIGNUP_FIELD_MAX_LENGTH) {
+      return res.status(400).json({
+        message: "Email must not exceed 50 characters.",
+      });
+    }
+
+    const pendingSignup = await findPendingSignupByEmail(email);
+
+    if (pendingSignup) {
+      if (!pendingSignup.otp_code || pendingSignup.otp_code !== code) {
+        return res.status(400).json({ message: "Invalid verification code" });
+      }
+
+      const expiresAt = pendingSignup.otp_expires_at
+        ? new Date(pendingSignup.otp_expires_at)
+        : null;
+      if (!expiresAt || Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() < Date.now()) {
+        return res.status(400).json({ message: "Verification code has expired" });
+      }
+
+      const connection = await db.getConnection();
+      try {
+        await connection.beginTransaction();
+
+        const [existingUsers] = await connection.query(
+          `SELECT id
+             FROM users
+            WHERE email = ? OR username = ?
+            LIMIT 1`,
+          [email, pendingSignup.username],
+        );
+
+        if (existingUsers.length > 0) {
+          await connection.rollback();
+          return res.status(400).json({
+            message: "Email or username already registered",
+          });
+        }
+
+        await connection.query(
+          `INSERT INTO users (
+             username,
+             email,
+             password_hash,
+             role,
+             email_verified,
+             email_verification_code,
+             email_verification_expires
+           )
+           VALUES (?, ?, ?, ?, 1, NULL, NULL)`,
+          [
+            pendingSignup.username,
+            pendingSignup.email,
+            pendingSignup.password_hash,
+            "customer",
+          ],
+        );
+
+        await connection.query(
+          `DELETE FROM pending_signups
+            WHERE pending_signup_id = ?`,
+          [pendingSignup.pending_signup_id],
+        );
+
+        await connection.commit();
+      } catch (transactionError) {
+        await connection.rollback();
+        throw transactionError;
+      } finally {
+        connection.release();
+      }
+
+      return res.json({
+        message: "Email verified successfully",
+        email_verified: true,
       });
     }
 
@@ -324,10 +453,48 @@ router.post("/verify-email", async (req, res) => {
 
 router.post("/resend-verification", async (req, res) => {
   try {
+    await ensurePendingSignupsTable();
     const email = normalizeEmail(req.body?.email);
 
     if (!email) {
       return res.status(400).json({ message: "Email is required" });
+    }
+
+    const pendingSignup = await findPendingSignupByEmail(email);
+    if (pendingSignup) {
+      const verificationCode = generateVerificationCode();
+      const verificationExpires = getVerificationExpiryDate();
+
+      if (!verificationCode) {
+        return res.status(500).json({
+          message: "Failed to generate verification code",
+        });
+      }
+
+      await db.query(
+        `UPDATE pending_signups
+            SET otp_code = ?,
+                otp_expires_at = ?
+          WHERE pending_signup_id = ?`,
+        [verificationCode, verificationExpires, pendingSignup.pending_signup_id],
+      );
+
+      try {
+        await sendVerificationEmailOrThrow({
+          email: pendingSignup.email,
+          otpCode: verificationCode,
+          name: pendingSignup.username,
+        });
+      } catch (emailError) {
+        return res.status(500).json({
+          message: "OTP email resend failed",
+        });
+      }
+
+      return res.json({
+        message: "Verification code resent successfully",
+        requiresEmailVerification: true,
+      });
     }
 
     const [rows] = await db.query(

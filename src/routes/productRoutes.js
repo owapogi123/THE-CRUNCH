@@ -16,6 +16,38 @@ const {
     assertProductsMatchItemType,
 } = require("../utils/productItemType");
 
+const PRODUCT_NAME_MAX_LENGTH = 100;
+const PRODUCT_DESCRIPTION_MAX_LENGTH = 100;
+const RAW_MATERIAL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9' -]*[A-Za-z0-9]$|^[A-Za-z0-9]$/;
+
+function normalizeProductName(value, { stockOnly = false } = {}) {
+    const normalized = String(value ?? "").trim();
+    if (!normalized) {
+        throw new Error("Product name is required.");
+    }
+    if (normalized.length < 2) {
+        throw new Error("Product name must be at least 2 characters.");
+    }
+    if (normalized.length > PRODUCT_NAME_MAX_LENGTH) {
+        throw new Error("Product name must not exceed 100 characters.");
+    }
+    if (stockOnly && !RAW_MATERIAL_NAME_PATTERN.test(normalized)) {
+        throw new Error(
+            "Material name may only use letters, numbers, spaces, apostrophes, and hyphens.",
+        );
+    }
+    return normalized;
+}
+
+function normalizeProductDescription(value) {
+    const normalized = String(value ?? "").trim();
+    if (!normalized) return null;
+    if (normalized.length > PRODUCT_DESCRIPTION_MAX_LENGTH) {
+        throw new Error("Description must not exceed 100 characters.");
+    }
+    return normalized;
+}
+
 async function hasColumn(tableName, columnName) {
     const [rows] = await db.query(`SHOW COLUMNS FROM ${tableName} LIKE ?`, [
         columnName,
@@ -304,6 +336,9 @@ router.get("/", async (req, res) => {
         if (requestedItemType === STOCK_ITEM || requestedItemType === MENU_ITEM) {
             filters.push(`${itemTypeExpr} = ?`);
             values.push(requestedItemType);
+            if (requestedItemType === MENU_ITEM) {
+                filters.push("m.Product_ID IS NOT NULL");
+            }
         }
 
         if (!includeRawMaterials) {
@@ -393,11 +428,41 @@ router.post("/", async (req, res) => {
                 message: "Ingredients can only be assigned to menu_item products",
             });
         }
+        const normalizedName = normalizeProductName(name, {
+            stockOnly: normalizedItemType === STOCK_ITEM,
+        });
+        const normalizedDescription = normalizeProductDescription(description);
         const normalizedPromo = normalizePromoValues(
             is_promotional,
             promo_price,
             promo_label,
         );
+        const safePrice =
+            price === undefined || price === null || price === ""
+                ? 0
+                : Number(price);
+        const safeQuantity =
+            quantity === undefined || quantity === null || quantity === ""
+                ? 0
+                : Number(quantity);
+        if (!Number.isFinite(safePrice) || safePrice < 0) {
+            return res.status(400).json({ message: "Invalid price value" });
+        }
+        if (normalizedItemType === MENU_ITEM && safePrice < 1) {
+            return res.status(400).json({ message: "Price must be at least \u20B11." });
+        }
+        if (!Number.isFinite(safeQuantity) || safeQuantity < 0) {
+            return res.status(400).json({ message: "Invalid quantity value" });
+        }
+        if (
+            normalizedPromo.promoPrice !== null &&
+            (!Number.isFinite(Number(normalizedPromo.promoPrice)) ||
+                Number(normalizedPromo.promoPrice) < 1)
+        ) {
+            return res.status(400).json({
+                message: "Promo price must be at least \u20B11.",
+            });
+        }
         const useDefaultThresholds = normalizeBooleanFlag(
             use_default_thresholds,
             true,
@@ -449,10 +514,10 @@ router.post("/", async (req, res) => {
             "promo_label",
         ];
         const insertValues = [
-            name,
-            price || 0,
-            quantity || 0,
-            description || null,
+            normalizedName,
+            safePrice,
+            safeQuantity,
+            normalizedDescription,
             normalizedImage ?? null,
             normalizedAvailabilityStatus,
             normalizedPromo.isPromotional,
@@ -494,10 +559,10 @@ router.post("/", async (req, res) => {
              VALUES (?,?,?,?,?,?,?,?)`,
             [
                 newId,
-                name,
+                normalizedName,
                 category || null,
-                price || 0,
-                quantity || 0,
+                safePrice,
+                safeQuantity,
                 promoTag,
                 manualOverrideState?.manualOverride ?? 0,
                 manualOverrideState?.manualStatus ?? "Available",
@@ -528,11 +593,11 @@ router.post("/", async (req, res) => {
                 critical_stock_threshold = VALUES(critical_stock_threshold)`,
             [
                 newId,
-                quantity || 0,
-                quantity || 0,
+                safeQuantity,
+                safeQuantity,
                 20,
                 5,
-                name,
+                normalizedName,
                 useDefaultThresholds ? 1 : 0,
                 lowStockThreshold,
                 criticalStockThreshold,
@@ -556,6 +621,12 @@ router.post("/", async (req, res) => {
                 err.message === "ingredients must be an array" ||
                 err.message === "Each ingredient must include a valid product_id" ||
                 err.message === "Each ingredient must include a positive quantity_required" ||
+                err.message === "Product name is required." ||
+                err.message === "Product name must be at least 2 characters." ||
+                err.message === "Product name must not exceed 100 characters." ||
+                err.message === "Description must not exceed 100 characters." ||
+                err.message ===
+                    "Material name may only use letters, numbers, spaces, apostrophes, and hyphens." ||
                 /must be (stock_item|menu_item)|was not found/i.test(err.message))
         ) {
             return res.status(400).json({ message: err.message });
@@ -578,7 +649,7 @@ router.put("/:id", async (req, res) => {
         }
         const itemTypeSelect = hasItemTypeColumn ? "item_type" : "NULL AS item_type";
         const [[existingProduct]] = await db.query(
-            `SELECT ${itemTypeSelect}
+            `SELECT ${itemTypeSelect}, price
              FROM products
              WHERE id = ?
              LIMIT 1`,
@@ -617,10 +688,11 @@ router.put("/:id", async (req, res) => {
         const inventoryValues = [];
 
         if (name !== undefined) {
-            const safeName = String(name).trim();
-            if (!safeName) {
-                return res.status(400).json({ message: "name cannot be empty" });
-            }
+            const safeName = normalizeProductName(name, {
+                stockOnly:
+                    normalizeItemType(existingProduct.item_type, MENU_ITEM) ===
+                    STOCK_ITEM,
+            });
             productFields.push("name = ?");
             productValues.push(safeName);
             menuFields.push("Product_Name = ?");
@@ -714,8 +786,9 @@ router.put("/:id", async (req, res) => {
         }
 
         if (description !== undefined) {
+            const safeDescription = normalizeProductDescription(description);
             productFields.push("description = ?");
-            productValues.push(description ? String(description).trim() : null);
+            productValues.push(safeDescription);
         }
 
         const normalizedImage =
@@ -749,6 +822,14 @@ router.put("/:id", async (req, res) => {
             item_type,
             normalizeItemType(existingProduct.item_type, MENU_ITEM),
         );
+        const effectivePrice =
+            price !== undefined ? Number(price) : Number(existingProduct.price ?? 0);
+        if (!Number.isFinite(effectivePrice) || effectivePrice < 0) {
+            return res.status(400).json({ message: "Invalid price value" });
+        }
+        if (effectiveTargetItemType === MENU_ITEM && effectivePrice < 1) {
+            return res.status(400).json({ message: "Price must be at least \u20B11." });
+        }
         if (normalizedIngredients !== null) {
             if (effectiveTargetItemType !== MENU_ITEM) {
                 return res.status(400).json({
@@ -777,6 +858,15 @@ router.put("/:id", async (req, res) => {
                 promo_price,
                 promo_label,
             );
+            if (
+                normalizedPromo.promoPrice !== null &&
+                (!Number.isFinite(Number(normalizedPromo.promoPrice)) ||
+                    Number(normalizedPromo.promoPrice) < 1)
+            ) {
+                return res.status(400).json({
+                    message: "Promo price must be at least \u20B11.",
+                });
+            }
             productFields.push("is_promotional = ?");
             productValues.push(normalizedPromo.isPromotional);
             productFields.push("promo_price = ?");
@@ -860,6 +950,12 @@ router.put("/:id", async (req, res) => {
                 err.message === "ingredients must be an array" ||
                 err.message === "Each ingredient must include a valid product_id" ||
                 err.message === "Each ingredient must include a positive quantity_required" ||
+                err.message === "Product name is required." ||
+                err.message === "Product name must be at least 2 characters." ||
+                err.message === "Product name must not exceed 100 characters." ||
+                err.message === "Description must not exceed 100 characters." ||
+                err.message ===
+                    "Material name may only use letters, numbers, spaces, apostrophes, and hyphens." ||
                 /must be (stock_item|menu_item)|was not found/i.test(err.message))
         ) {
             return res.status(400).json({ message: err.message });

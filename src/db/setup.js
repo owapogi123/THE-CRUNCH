@@ -62,6 +62,7 @@ async function setup(options = {}) {
       "DROP TABLE IF EXISTS purchase_orders;",
       "DROP TABLE IF EXISTS po_counter;",
       "DROP TABLE IF EXISTS feedback;",
+      "DROP TABLE IF EXISTS pending_signups;",
       "DROP TABLE IF EXISTS menu_item_ingredients;",
       "DROP TABLE IF EXISTS Order_Tracking;",
       "DROP TABLE IF EXISTS Kitchen;",
@@ -132,6 +133,17 @@ CREATE TABLE IF NOT EXISTS users (
     password_reset_code VARCHAR(10) NULL,
     password_reset_expires DATETIME NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS pending_signups (
+    pending_signup_id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(100) NOT NULL,
+    email VARCHAR(150) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    otp_code VARCHAR(10) NOT NULL,
+    otp_expires_at DATETIME NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS Categories (

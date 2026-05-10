@@ -1,5 +1,6 @@
 const router = require("express").Router();
 const db = require("../config/db");
+const MAX_FEEDBACK_LENGTH = 200;
 
 function normalizeNullableInt(value) {
   if (value === undefined || value === null || value === "") return null;
@@ -31,6 +32,13 @@ router.post("/", async (req, res) => {
 
     if (!comment) {
       return res.status(400).json({ message: "Comment is required" });
+    }
+
+    if (comment.length > MAX_FEEDBACK_LENGTH) {
+      return res.status(400).json({
+        success: false,
+        message: "Feedback must not exceed 200 characters.",
+      });
     }
 
     if (

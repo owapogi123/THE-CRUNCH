@@ -375,6 +375,13 @@ function normalizePercentage(value, fieldName) {
   return Math.round(numeric * 100) / 100;
 }
 
+function normalizeNonNegativeNumericString(value, fieldName, fallback = "") {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+  return String(normalizeNumber(value, fieldName, { min: 0 }));
+}
+
 function sanitizeSettingsPayload(payload) {
   const source = payload && typeof payload === "object" ? payload : {};
   return {
@@ -407,13 +414,15 @@ function sanitizeSettingsPayload(payload) {
     requireTableNumber: normalizeBoolean(source.requireTableNumber, true),
     allowSplitBills: normalizeBoolean(source.allowSplitBills, false),
     enableLoyaltyPoints: normalizeBoolean(source.enableLoyaltyPoints, false),
-    defaultLowStockThreshold: String(
+    defaultLowStockThreshold: normalizeNonNegativeNumericString(
       source.defaultLowStockThreshold ?? source.lowStockThreshold ?? "",
+      "defaultLowStockThreshold",
     ),
-    defaultCriticalStockThreshold: String(
+    defaultCriticalStockThreshold: normalizeNonNegativeNumericString(
       source.defaultCriticalStockThreshold ??
         source.criticalStockThreshold ??
         "",
+      "defaultCriticalStockThreshold",
     ),
     trackExpiry: normalizeBoolean(source.trackExpiry, false),
     wasteLogging: normalizeBoolean(source.wasteLogging, false),
@@ -428,7 +437,11 @@ function sanitizeSettingsPayload(payload) {
       true,
     ),
     allowNegativeStock: normalizeBoolean(source.allowNegativeStock, false),
-    nearExpiryWarningDays: String(source.nearExpiryWarningDays ?? "3"),
+    nearExpiryWarningDays: normalizeNonNegativeNumericString(
+      source.nearExpiryWarningDays ?? "3",
+      "nearExpiryWarningDays",
+      "3",
+    ),
     requireDailyUsageSubmission: normalizeBoolean(
       source.requireDailyUsageSubmission,
       true,
@@ -444,13 +457,23 @@ function sanitizeSettingsPayload(payload) {
       "toastPosition",
       "top-right",
     ),
-    toastDuration: String(source.toastDuration ?? "4000"),
+    toastDuration: normalizeNonNegativeNumericString(
+      source.toastDuration ?? "4000",
+      "toastDuration",
+      "4000",
+    ),
     enableConfirmDialogs: normalizeBoolean(
       source.enableConfirmDialogs,
       true,
     ),
-    taxRate: String(source.taxRate ?? ""),
-    serviceCharge: String(source.serviceCharge ?? ""),
+    taxRate: normalizeNonNegativeNumericString(
+      source.taxRate ?? "",
+      "taxRate",
+    ),
+    serviceCharge: normalizeNonNegativeNumericString(
+      source.serviceCharge ?? "",
+      "serviceCharge",
+    ),
     receiptFooter: String(source.receiptFooter ?? ""),
     printerEnabled: normalizeBoolean(source.printerEnabled, false),
     kitchenPrinterEnabled: normalizeBoolean(source.kitchenPrinterEnabled, false),

@@ -674,14 +674,23 @@ router.put("/:inventory_id", async (req, res) => {
       values.push(Number(stock));
     }
     if (daily_withdrawn !== undefined) {
+      if (!Number.isFinite(Number(daily_withdrawn)) || Number(daily_withdrawn) < 0) {
+        return res.status(400).json({ message: "Invalid daily_withdrawn value" });
+      }
       fields.push("Daily_Withdrawn = ?");
       values.push(Number(daily_withdrawn));
     }
     if (returned !== undefined) {
+      if (!Number.isFinite(Number(returned)) || Number(returned) < 0) {
+        return res.status(400).json({ message: "Invalid returned value" });
+      }
       fields.push("Returned = ?");
       values.push(Number(returned));
     }
     if (wasted !== undefined) {
+      if (!Number.isFinite(Number(wasted)) || Number(wasted) < 0) {
+        return res.status(400).json({ message: "Invalid wasted value" });
+      }
       fields.push("Wasted = ?");
       values.push(Number(wasted));
     }

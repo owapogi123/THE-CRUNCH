@@ -16,6 +16,14 @@ function toNumber(value, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+const PURCHASE_ORDER_NAME_MAX_LENGTH = 100;
+const PURCHASE_ORDER_NUMBER_MAX_DIGITS = 20;
+
+function hasValidNumericLength(value, maxDigits = PURCHASE_ORDER_NUMBER_MAX_DIGITS) {
+  const digitsOnly = String(value ?? "").replace(/\D/g, "");
+  return digitsOnly.length > 0 && digitsOnly.length <= maxDigits;
+}
+
 function formatPOId(counter) {
   return `PO-${String(counter).padStart(4, "0")}`;
 }
@@ -389,6 +397,46 @@ router.post("/", async (req, res) => {
 
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: "At least one item is required" });
+  }
+  for (const item of items) {
+    const safeName = String(item?.name ?? "").trim();
+    if (!safeName) {
+      return res.status(400).json({
+        error: "Each purchase order item must have a name",
+      });
+    }
+    if (safeName.length > PURCHASE_ORDER_NAME_MAX_LENGTH) {
+      return res.status(400).json({
+        error: "Purchase order item name must not exceed 100 characters",
+      });
+    }
+    if (!hasValidNumericLength(item.quantity)) {
+      return res.status(400).json({
+        error: "Purchase order item quantity is too long or invalid",
+      });
+    }
+    const safeQuantity = toNumber(item.quantity, Number.NaN);
+    if (!Number.isFinite(safeQuantity) || safeQuantity <= 0) {
+      return res.status(400).json({
+        error: "Purchase order item quantity must be greater than 0",
+      });
+    }
+    if (!hasValidNumericLength(item.unitCost ?? item.unit_cost)) {
+      return res.status(400).json({
+        error: "Purchase order item unit cost is too long or invalid",
+      });
+    }
+    const safeUnitCost = toNumber(item.unitCost ?? item.unit_cost, Number.NaN);
+    if (!Number.isFinite(safeUnitCost) || safeUnitCost < 0) {
+      return res.status(400).json({
+        error: "Purchase order item unit cost cannot be negative",
+      });
+    }
+    if (!String(item.unit ?? "").trim()) {
+      return res.status(400).json({
+        error: "Purchase order item unit is required and must come from inventory",
+      });
+    }
   }
 
   const validStatuses = ["Draft", "Ordered", "Received", "Cancelled"];
