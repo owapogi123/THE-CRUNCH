@@ -8,7 +8,7 @@ function normalizeNullableInt(value) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : NaN;
 }
 
-router.post("/", verifyToken, async (req, res) => {
+router.post("/",verifyToken, async (req, res) => {
   try {
     const productId = normalizeNullableInt(req.body?.product_id);
     const customerUserId = normalizeNullableInt(req.body?.customer_user_id);
