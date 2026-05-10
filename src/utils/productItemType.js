@@ -47,7 +47,11 @@ function getLegacyItemTypeCaseSql(productAlias = "p", menuAlias = "m") {
 
 function getProductItemTypeExpression(hasItemTypeColumn, productAlias = "p", menuAlias = "m") {
   if (hasItemTypeColumn) {
-    return `COALESCE(${productAlias}.item_type, '${STOCK_ITEM}')`;
+    return `CASE
+      WHEN LOWER(TRIM(COALESCE(${productAlias}.item_type, ''))) IN ('${STOCK_ITEM}', '${MENU_ITEM}')
+        THEN LOWER(TRIM(${productAlias}.item_type))
+      ELSE ${getLegacyItemTypeCaseSql(productAlias, menuAlias)}
+    END`;
   }
   return getLegacyItemTypeCaseSql(productAlias, menuAlias);
 }

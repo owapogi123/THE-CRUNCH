@@ -504,37 +504,25 @@ CREATE TABLE IF NOT EXISTS discount_types (
       `);
     }
 
-    await connection.query(`
-      UPDATE inventory_categories
-         SET date_tracking_type = 'shelf_life'
-       WHERE LOWER(TRIM(name)) = 'raw material'
-    `);
-    await connection.query(`
-      UPDATE inventory_categories
-         SET date_tracking_type = 'expiry'
-       WHERE LOWER(TRIM(name)) IN ('sauces', 'aromatics', 'ingredients')
-    `);
-    await connection.query(`
-      UPDATE inventory_categories
-         SET date_tracking_type = 'none'
-       WHERE LOWER(TRIM(name)) = 'packaging'
+    const [[inventoryCategoryCount]] = await connection.query(`
+      SELECT COUNT(*) AS totalCategories
+      FROM inventory_categories
     `);
 
-    for (const [name, type, dateTrackingType] of [
+    if (Number(inventoryCategoryCount?.totalCategories || 0) === 0) {
+      for (const [name, type, dateTrackingType] of [
       ["Raw Material", "raw_material", "shelf_life"],
       ["Sauces", "ingredient", "expiry"],
       ["Ingredients", "ingredient", "expiry"],
       ["Aromatics", "ingredient", "expiry"],
       ["Packaging", "finished", "none"],
-    ]) {
-      await connection.query(
-        `INSERT INTO inventory_categories (name, type, date_tracking_type, is_active)
-         SELECT ?, ?, ?, TRUE
-         WHERE NOT EXISTS (
-           SELECT 1 FROM inventory_categories WHERE LOWER(name) = LOWER(?)
-         )`,
-        [name, type, dateTrackingType, name],
-      );
+      ]) {
+        await connection.query(
+          `INSERT INTO inventory_categories (name, type, date_tracking_type, is_active)
+           VALUES (?, ?, ?, TRUE)`,
+          [name, type, dateTrackingType],
+        );
+      }
     }
 
     for (const unitName of [

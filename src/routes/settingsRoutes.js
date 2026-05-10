@@ -106,19 +106,6 @@ async function ensureInventoryMasterTables() {
     "DECIMAL(12,4) NULL",
   );
 
-  await db.query(`
-    UPDATE inventory_categories
-       SET date_tracking_type = CASE
-         WHEN LOWER(TRIM(name)) = 'raw material' THEN 'shelf_life'
-         WHEN LOWER(TRIM(name)) IN ('sauces', 'aromatics', 'ingredients') THEN 'expiry'
-         WHEN date_tracking_type IS NULL OR date_tracking_type = '' THEN 'none'
-         ELSE date_tracking_type
-       END
-     WHERE date_tracking_type IS NULL
-        OR date_tracking_type = ''
-        OR date_tracking_type = 'none'
-  `);
-
   const categorySeeds = [
     ["Raw Material", "raw_material", "shelf_life"],
     ["Sauces", "ingredient", "expiry"],
@@ -126,15 +113,18 @@ async function ensureInventoryMasterTables() {
     ["Aromatics", "ingredient", "expiry"],
     ["Packaging", "finished", "none"],
   ];
-  for (const [name, type, dateTrackingType] of categorySeeds) {
-    await db.query(
-      `INSERT INTO inventory_categories (name, type, date_tracking_type, is_active)
-       SELECT ?, ?, ?, TRUE
-       WHERE NOT EXISTS (
-         SELECT 1 FROM inventory_categories WHERE LOWER(name) = LOWER(?)
-       )`,
-      [name, type, dateTrackingType, name],
-    );
+  const [[{ totalCategories = 0 } = {}]] = await db.query(
+    `SELECT COUNT(*) AS totalCategories FROM inventory_categories`,
+  );
+
+  if (Number(totalCategories) === 0) {
+    for (const [name, type, dateTrackingType] of categorySeeds) {
+      await db.query(
+        `INSERT INTO inventory_categories (name, type, date_tracking_type, is_active)
+         VALUES (?, ?, ?, TRUE)`,
+        [name, type, dateTrackingType],
+      );
+    }
   }
 
   const unitSeeds = [
