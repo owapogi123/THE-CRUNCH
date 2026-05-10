@@ -4935,19 +4935,6 @@ type WithdrawalSubTab =
     },
     [activeWithdrawalRowId],
   );
-  const selectedProductBatches = useMemo(
-    () =>
-      !activeWithdrawalProductId
-        ? []
-        : activeBatches
-            .filter((b) => b.product_id === activeWithdrawalProductId)
-            .sort(
-              (a, b) =>
-                new Date(a.received_date).getTime() -
-                new Date(b.received_date).getTime(),
-            ),
-    [activeBatches, activeWithdrawalProductId],
-  );
   const selectedKitchenBatches = useMemo(
     () =>
       !activeWithdrawalProductId
@@ -4972,15 +4959,6 @@ type WithdrawalSubTab =
           sum + Math.max(0, b.withdrawn_qty - b.used_qty - b.returned_qty),
         0,
       ),
-    [selectedKitchenBatches],
-  );
-  const latestKitchenBatch = useMemo(
-    () =>
-      selectedKitchenBatches.length > 0
-        ? [...selectedKitchenBatches].sort(
-            (a, b) => b.kitchen_batch_id - a.kitchen_batch_id,
-          )[0]
-        : null,
     [selectedKitchenBatches],
   );
   const visibleKitchenBatches = useMemo(
