@@ -490,12 +490,15 @@ function FeedbackModal({ onClose, productOptions }: { onClose:()=>void; productO
     if (!canSubmit || productId === null) return
     setStatus('submitting'); setErrMsg('')
     try {
-      const res = await fetch('/api/feedback', { method:'POST', headers:{ 'Content-Type':'application/json' },
-        body: JSON.stringify({ product_id:productId, customer_user_id:userId, rating, comment:message.trim() } satisfies FeedbackPayload) })
-      if (!res.ok) { const d = await res.json().catch(() => null); throw new Error(d?.message || `Error ${res.status}`) }
+      await api.post('/feedback', {
+        product_id: productId,
+        customer_user_id: userId,
+        rating,
+        comment: message.trim(),
+      } satisfies FeedbackPayload)
       setStatus('success')
     } catch(e) {
-      setErrMsg(e instanceof Error ? e.message : 'Could not submit. Please try again.')
+      setErrMsg('Failed to submit feedback. Please try again.')
       setStatus('error')
     }
   }
