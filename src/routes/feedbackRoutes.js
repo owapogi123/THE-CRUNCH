@@ -1,6 +1,32 @@
 const router = require("express").Router();
+const jwt = require("jsonwebtoken");
 const db = require("../config/db");
+
 const MAX_FEEDBACK_LENGTH = 200;
+
+function verifyToken(req, res, next) {
+  const authHeader = req.headers.authorization || "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+
+  if (!token) {
+    return res.status(401).json({
+      success: false,
+      message: "Please log in to submit feedback.",
+    });
+  }
+
+  try {
+    const secret =
+      process.env.JWT_SECRET || process.env.JWT_KEY || "your_jwt_secret";
+    req.user = jwt.verify(token, secret);
+    return next();
+  } catch (error) {
+    return res.status(401).json({
+      success: false,
+      message: "Invalid or expired login session.",
+    });
+  }
+}
 
 function normalizeNullableInt(value) {
   if (value === undefined || value === null || value === "") return null;
@@ -8,26 +34,31 @@ function normalizeNullableInt(value) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : NaN;
 }
 
-router.post("/",verifyToken, async (req, res) => {
+router.post("/", verifyToken, async (req, res) => {
   try {
     const productId = normalizeNullableInt(req.body?.product_id);
-    const customerUserId = normalizeNullableInt(req.body?.customer_user_id);
+    const customerUserId = Number(
+      req.user?.id || req.user?.userId || req.user?.user_id,
+    );
+
     const ratingValue =
       req.body?.rating === undefined ||
       req.body?.rating === null ||
       req.body?.rating === ""
         ? null
         : Number(req.body.rating);
+
     const comment = String(req.body?.comment ?? "").trim();
 
     if (!Number.isInteger(productId) || productId <= 0) {
       return res.status(400).json({ message: "Valid product_id is required" });
     }
 
-    if (customerUserId !== null && Number.isNaN(customerUserId)) {
-      return res
-        .status(400)
-        .json({ message: "customer_user_id must be a valid user ID or null" });
+    if (!Number.isInteger(customerUserId) || customerUserId <= 0) {
+      return res.status(401).json({
+        success: false,
+        message: "Please log in to submit feedback.",
+      });
     }
 
     if (!comment) {
@@ -54,18 +85,26 @@ router.post("/",verifyToken, async (req, res) => {
       "SELECT Product_ID, Product_Name FROM Menu WHERE Product_ID = ? LIMIT 1",
       [productId],
     );
+
     if (productRows.length === 0) {
       return res.status(404).json({ message: "Product not found" });
     }
 
-    if (customerUserId !== null) {
-      const [userRows] = await db.query(
-        "SELECT id FROM users WHERE id = ? LIMIT 1",
-        [customerUserId],
-      );
-      if (userRows.length === 0) {
-        return res.status(404).json({ message: "Customer user not found" });
-      }
+    const [userRows] = await db.query(
+      "SELECT id, username, role FROM users WHERE id = ? LIMIT 1",
+      [customerUserId],
+    );
+
+    if (userRows.length === 0) {
+      return res.status(404).json({ message: "Customer user not found" });
+    }
+
+    const role = String(userRows[0].role || "").toLowerCase();
+    if (role && role !== "customer" && role !== "costumer") {
+      return res.status(403).json({
+        success: false,
+        message: "Only customer accounts can submit feedback.",
+      });
     }
 
     const [result] = await db.query(
@@ -83,7 +122,7 @@ router.post("/",verifyToken, async (req, res) => {
           f.comment,
           f.created_at,
           COALESCE(m.Product_Name, p.name, CONCAT('Product #', f.product_id)) AS product_name,
-          COALESCE(u.username, 'Anonymous') AS customer_name
+          COALESCE(u.username, 'Customer') AS customer_name
        FROM feedback f
        LEFT JOIN Menu m ON m.Product_ID = f.product_id
        LEFT JOIN products p ON p.id = f.product_id
@@ -93,18 +132,14 @@ router.post("/",verifyToken, async (req, res) => {
     );
 
     return res.status(201).json({
+      success: true,
       message: "Feedback submitted successfully",
-      feedback: rows[0] ?? {
-        feedback_id: result.insertId,
-        product_id: productId,
-        customer_user_id: customerUserId,
-        rating: ratingValue,
-        comment,
-      },
+      feedback: rows[0],
     });
   } catch (error) {
     console.error("POST /api/feedback error:", error);
     return res.status(500).json({
+      success: false,
       message: "Failed to submit feedback",
       error: error.message,
     });
@@ -122,7 +157,7 @@ router.get("/", async (_req, res) => {
           f.comment,
           f.created_at,
           COALESCE(m.Product_Name, p.name, CONCAT('Product #', f.product_id)) AS product_name,
-          COALESCE(u.username, 'Anonymous') AS customer_name
+          COALESCE(u.username, 'Customer') AS customer_name
        FROM feedback f
        LEFT JOIN Menu m ON m.Product_ID = f.product_id
        LEFT JOIN products p ON p.id = f.product_id
@@ -134,6 +169,7 @@ router.get("/", async (_req, res) => {
   } catch (error) {
     console.error("GET /api/feedback error:", error);
     return res.status(500).json({
+      success: false,
       message: "Failed to load feedback",
       error: error.message,
     });
