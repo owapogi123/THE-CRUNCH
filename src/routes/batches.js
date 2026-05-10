@@ -698,24 +698,34 @@ router.get("/returned/yesterday", async (_req, res) => {
 router.get("/active", async (_req, res) => {
   try {
     await ensureBatchesTable();
-    const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
-    const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p");
 
     const [rows] = await db.query(
-      `SELECT b.*, p.name AS product_name
+      `SELECT
+         b.batch_id,
+         b.product_id,
+         COALESCE(p.name, m.Product_Name, CONCAT('Product ', b.product_id)) AS product_name,
+         b.quantity,
+         b.remaining_qty,
+         COALESCE(b.unit, 'kg') AS unit,
+         b.received_date,
+         b.expiry_date,
+         LOWER(TRIM(COALESCE(b.status, 'active'))) AS status,
+         COALESCE(b.returned_qty, 0) AS returned_qty,
+         b.notes,
+         b.updated_at
        FROM batches b
-       JOIN products p ON b.product_id = p.id
-       WHERE b.status IN ('active', 'returned')
-         AND ${itemTypeExpr} = ?
-         AND b.remaining_qty > 0
-         AND (b.expiry_date IS NULL OR b.expiry_date >= CURDATE())
-       ORDER BY CASE WHEN b.status = 'returned' THEN 0 ELSE 1 END, b.received_date ASC, b.batch_id ASC`,
-      [STOCK_ITEM],
+       LEFT JOIN products p ON p.id = b.product_id
+       LEFT JOIN Menu m ON m.Product_ID = b.product_id
+       WHERE COALESCE(b.remaining_qty, 0) > 0
+         AND LOWER(TRIM(COALESCE(b.status, 'active'))) <> 'withdrawn'
+       ORDER BY
+         b.received_date ASC,
+         b.batch_id ASC`,
     );
 
     res.json(rows);
   } catch (err) {
-    console.error("Error fetching active batches:", err);
+    console.error("Error fetching delivered batches:", err);
     res.status(500).json({ error: err.message });
   }
 });
