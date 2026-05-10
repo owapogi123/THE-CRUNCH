@@ -254,7 +254,8 @@ interface StockAlertSettings {
 
 // â”€â”€â”€ API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-const API_BASE = "/api";
+const RAW_API_BASE = import.meta.env.VITE_API_URL || "http://localhost:5000";
+const API_BASE = `${RAW_API_BASE.replace(/\/api\/?$/, "").replace(/\/$/, "")}/api`;
 function toNumber(v: unknown, fb = 0): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : fb;
@@ -263,7 +264,11 @@ function fmtInt(v: unknown): string {
   return Math.round(toNumber(v)).toLocaleString();
 }
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  const normalizedPath = cleanPath.startsWith("/api/")
+    ? cleanPath.slice(4)
+    : cleanPath;
+  const res = await fetch(`${API_BASE}${normalizedPath}`, {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
