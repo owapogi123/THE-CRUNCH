@@ -40,6 +40,13 @@ const DEFAULT_FORM: FormState = {
   role: "cashier",
 };
 
+const NAME_MIN_LENGTH = 2;
+const FIELD_MAX_LENGTH = 100;
+const PASSWORD_MIN_LENGTH = 8;
+const NAME_PATTERN = /^[A-Za-z][A-Za-z.' -]*[A-Za-z.]$|^[A-Za-z.]$/;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PASSWORD_PATTERN = /^(?=.*[A-Za-z])(?=.*\d).+$/;
+
 function getAvatarColor(name: string): [string, string] {
   let h = 0;
   for (const c of name) h = (h * 31 + c.charCodeAt(0)) % AVATAR_PALETTE.length;
@@ -62,6 +69,63 @@ function isAuthError(err: unknown): boolean {
   if (typeof err !== "object" || err === null || !("message" in err)) return false;
   const msg = (err as { message?: unknown }).message;
   return typeof msg === "string" && /invalid or expired token|no token provided/i.test(msg);
+}
+
+function sanitizeNameInput(value: string): string {
+  return value.replace(/[^A-Za-z.' -]/g, "").slice(0, FIELD_MAX_LENGTH);
+}
+
+function sanitizeEmailInput(value: string): string {
+  return value.replace(/\s+/g, "").slice(0, FIELD_MAX_LENGTH);
+}
+
+function sanitizePasswordInput(value: string): string {
+  return value.slice(0, FIELD_MAX_LENGTH);
+}
+
+function validateEmployeeForm(form: FormState): string {
+  const trimmedName = form.name.trim();
+  const normalizedEmail = form.email.trim().toLowerCase();
+  const password = form.password;
+
+  if (!trimmedName) return "Full name is required.";
+  if (trimmedName.length < NAME_MIN_LENGTH) {
+    return "Full name must be at least 2 characters.";
+  }
+  if (trimmedName.length > FIELD_MAX_LENGTH) {
+    return "Full name must not exceed 100 characters.";
+  }
+  if (!NAME_PATTERN.test(trimmedName)) {
+    return "Full name may only use letters, spaces, apostrophes, hyphens, and periods.";
+  }
+  if (!/[A-Za-z]/.test(trimmedName)) {
+    return "Full name must include letters.";
+  }
+
+  if (!normalizedEmail) return "Email is required.";
+  if (normalizedEmail.length > FIELD_MAX_LENGTH) {
+    return "Email must not exceed 100 characters.";
+  }
+  if (!EMAIL_PATTERN.test(normalizedEmail)) {
+    return "Please enter a valid email address.";
+  }
+
+  if (!password.trim()) return "Password is required.";
+  if (password.length < PASSWORD_MIN_LENGTH) {
+    return "Password must be at least 8 characters.";
+  }
+  if (password.length > FIELD_MAX_LENGTH) {
+    return "Password must not exceed 100 characters.";
+  }
+  if (!PASSWORD_PATTERN.test(password)) {
+    return "Password must include at least 1 letter and 1 number.";
+  }
+
+  if (!ROLES.includes(form.role)) {
+    return "Please select a valid role.";
+  }
+
+  return "";
 }
 
 const thStyle = {
@@ -91,6 +155,7 @@ export default function StaffAccounts() {
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
   const [error, setError] = useState("");
+  const employeeFormError = validateEmployeeForm(form);
 
   const fetchStaff = useCallback(async (): Promise<void> => {
     if (!user?.token) return;
@@ -134,19 +199,23 @@ export default function StaffAccounts() {
   }, [user?.token, fetchStaff]);
 
   const handleAdd = async (): Promise<void> => {
-    if (!form.name.trim() || !form.email.trim() || !form.password.trim()) {
-      addNotification({ id: crypto.randomUUID(), type: "warning", label: "Name, email, and password are required." });
+    const validationError = validateEmployeeForm(form);
+    if (validationError) {
+      setError(validationError);
+      addNotification({ id: crypto.randomUUID(), type: "warning", label: validationError });
       return;
     }
     if (!user?.token) return;
+    const payload = {
+      username: form.name.trim(),
+      email: form.email.trim().toLowerCase(),
+      password: form.password,
+      role: form.role,
+    };
     setIsLoading(true);
+    setError("");
     try {
-      await staffApi.create(user.token, {
-        username: form.name,
-        email: form.email,
-        password: form.password,
-        role: form.role,
-      });
+      await staffApi.create(user.token, payload);
       await fetchStaff();
       setForm(DEFAULT_FORM);
       setError("");
@@ -338,7 +407,17 @@ export default function StaffAccounts() {
                       type={type}
                       value={form[key as keyof FormState]}
                       placeholder={placeholder}
-                      onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
+                      maxLength={FIELD_MAX_LENGTH}
+                      onChange={(e) => {
+                        const nextValue =
+                          key === "name"
+                            ? sanitizeNameInput(e.target.value)
+                            : key === "email"
+                              ? sanitizeEmailInput(e.target.value)
+                              : sanitizePasswordInput(e.target.value);
+                        setForm((f) => ({ ...f, [key]: nextValue }));
+                        if (error) setError("");
+                      }}
                     />
                   </div>
                 ))}
@@ -348,26 +427,35 @@ export default function StaffAccounts() {
                   <select
                     style={{ width: "100%", padding: "9px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "'Poppins', sans-serif", background: "#f8f9fa", color: "#2d3748", outline: "none" }}
                     value={form.role}
-                    onChange={(e) => setForm((f) => ({ ...f, role: e.target.value as Role }))}
+                    onChange={(e) => {
+                      setForm((f) => ({ ...f, role: e.target.value as Role }));
+                      if (error) setError("");
+                    }}
                   >
                     {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
                   </select>
                 </div>
 
-                {error && <p style={{ fontSize: 11, color: "#e53e3e", margin: "4px 0 6px" }}>{error}</p>}
+                {(error || employeeFormError) && (
+                  <p style={{ fontSize: 11, color: "#e53e3e", margin: "4px 0 6px" }}>
+                    {error || employeeFormError}
+                  </p>
+                )}
 
                 <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 8, marginTop: 20 }}>
                   <button
                     onClick={closeModal}
+                    disabled={isLoading}
                     style={{ flex: 1, background: "#f8f9fa", color: "#718096", border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, fontSize: 13, fontWeight: 600, fontFamily: "'Poppins', sans-serif", cursor: "pointer" }}
                   >
                     Cancel
                   </button>
                   <button
                     onClick={() => void handleAdd()}
-                    style={{ flex: 1, background: "#1a202c", color: "#fff", border: "none", borderRadius: 8, padding: 10, fontSize: 13, fontWeight: 700, fontFamily: "'Poppins', sans-serif", cursor: "pointer" }}
+                    disabled={isLoading || !!employeeFormError}
+                    style={{ flex: 1, background: isLoading || employeeFormError ? "#94a3b8" : "#1a202c", color: "#fff", border: "none", borderRadius: 8, padding: 10, fontSize: 13, fontWeight: 700, fontFamily: "'Poppins', sans-serif", cursor: isLoading || employeeFormError ? "not-allowed" : "pointer", opacity: isLoading || employeeFormError ? 0.8 : 1 }}
                   >
-                    Add Employee
+                    {isLoading ? "Adding..." : "Add Employee"}
                   </button>
                 </div>
               </motion.div>
