@@ -4022,41 +4022,48 @@ function FIFOBatchGrouped({
 }) {
   const [viewMode, setViewMode] = useState<"delivery" | "expiry">("delivery");
 
+  const isDisplayableBatch = useCallback((batch: Batch) => {
+    const status = String(batch.status ?? "")
+      .trim()
+      .toLowerCase();
+    const remainingQty = toNumber(batch.remaining_qty);
+
+    return ["active", "returned", "1"].includes(status) && remainingQty > 0;
+  }, []);
+
+  const visibleBatches = useMemo(
+    () => allBatches.filter(isDisplayableBatch),
+    [allBatches, isDisplayableBatch],
+  );
+
   const grouped = useMemo(() => {
     const map = new Map<string, Batch[]>();
-    for (const b of allBatches) {
-      if (
-        !["active", "returned"].includes(String(b.status)) ||
-        b.remaining_qty <= 0
-      )
-        continue;
-      const key = b.received_date.split("T")[0];
-      map.set(key, [...(map.get(key) ?? []), b]);
+
+    for (const batch of visibleBatches) {
+      const receivedDate = String(batch.received_date ?? "").split("T")[0];
+      const key = receivedDate || "No received date";
+      map.set(key, [...(map.get(key) ?? []), batch]);
     }
+
     return [...map.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([date, batches], idx) => ({ date, batches, idx }));
-  }, [allBatches]);
+  }, [visibleBatches]);
 
   const byExpiry = useMemo(
     () =>
-      allBatches
-        .filter(
-          (b) =>
-            ["active", "returned"].includes(String(b.status)) &&
-            b.remaining_qty > 0,
-        )
-        .sort((a, b) => {
-          if (!a.expiry_date && !b.expiry_date) return 0;
-          if (!a.expiry_date) return 1;
-          if (!b.expiry_date) return -1;
-          return (
-            new Date(a.expiry_date).getTime() -
-            new Date(b.expiry_date).getTime()
-          );
-        }),
-    [allBatches],
+      [...visibleBatches].sort((a, b) => {
+        if (!a.expiry_date && !b.expiry_date) return 0;
+        if (!a.expiry_date) return 1;
+        if (!b.expiry_date) return -1;
+        return (
+          new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime()
+        );
+      }),
+    [visibleBatches],
   );
+
+  const hasVisibleBatches = visibleBatches.length > 0;
 
   return (
     <div className="space-y-3">
@@ -4080,7 +4087,7 @@ function FIFOBatchGrouped({
           </button>
         ))}
       </div>
-      {grouped.length === 0 && (
+      {!hasVisibleBatches && (
         <div className="text-center py-8 text-sm text-slate-400">
           No active batches found.
         </div>
@@ -4122,7 +4129,7 @@ function FIFOBatchGrouped({
                 )}
               </div>
               <div className="divide-y divide-slate-50 bg-white">
-                {batches
+                {[...batches]
                   .sort((a, b) => {
                     if (isExpired(a.expiry_date) && !isExpired(b.expiry_date))
                       return 1;
@@ -4146,7 +4153,7 @@ function FIFOBatchGrouped({
             </div>
           );
         })}
-      {viewMode === "expiry" && (
+      {viewMode === "expiry" && hasVisibleBatches && (
         <div className="rounded-xl border border-slate-100 overflow-hidden">
           <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
@@ -4190,7 +4197,7 @@ function FIFOBatchGrouped({
                   </div>
                   <div className="text-right flex-shrink-0">
                     <p className="text-sm font-bold text-slate-700">
-                      {batch.remaining_qty}
+                      {fmtInt(batch.remaining_qty)}
                       <span className="text-xs font-normal text-slate-400 ml-1">
                         {displayUnit}
                       </span>
@@ -4375,12 +4382,12 @@ export default function StockManager() {
     | "stock-movement"
     | "cook-report"
   >("main-stock");
-type WithdrawalSubTab =
-  | "new-record"
-  | "kitchen-queue"
-  | "delivered-batches"
-  | "currently-withdrawn"
-  | "kitchen-batches";
+  type WithdrawalSubTab =
+    | "new-record"
+    | "kitchen-queue"
+    | "delivered-batches"
+    | "currently-withdrawn"
+    | "kitchen-batches";
   const [withdrawalSubTab, setWithdrawalSubTab] =
     useState<WithdrawalSubTab>("new-record");
   const [products, setProducts] = useState<Product[]>([]);
