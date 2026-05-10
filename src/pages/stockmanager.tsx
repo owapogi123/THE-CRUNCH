@@ -4538,13 +4538,12 @@ export default function StockManager() {
     | "stock-movement"
     | "cook-report"
   >("main-stock");
-  type WithdrawalSubTab =
-    | "new-record"
-    | "kitchen-queue"
-    | "fifo-preview"
-    | "delivered-batches"
-    | "currently-withdrawn"
-    | "kitchen-batches";
+type WithdrawalSubTab =
+  | "new-record"
+  | "kitchen-queue"
+  | "delivered-batches"
+  | "currently-withdrawn"
+  | "kitchen-batches";
   const [withdrawalSubTab, setWithdrawalSubTab] =
     useState<WithdrawalSubTab>("new-record");
   const [products, setProducts] = useState<Product[]>([]);
@@ -6470,10 +6469,6 @@ export default function StockManager() {
                     id: "kitchen-queue" as const,
                   },
                   {
-                    label: "FIFO Withdrawal Preview",
-                    id: "fifo-preview" as const,
-                  },
-                  {
                     label: "Delivered batches",
                     id: "delivered-batches" as const,
                   },
@@ -7301,7 +7296,6 @@ export default function StockManager() {
                       )}
                     </motion.div>
 
-                    {/* ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ Stock Movement Report ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ */}
                     {dashboardSubTab === "stock-movement" && (
                       <div
                         id="dashboard-stock-movement"
@@ -8016,99 +8010,6 @@ export default function StockManager() {
                         </SectionCard>
                       </motion.div>
                     )}
-                    {withdrawalSubTab === "fifo-preview" &&
-                      selectedWithdrawalProduct && (
-                        <motion.div variants={itemVariants}>
-                          <SectionCard
-                            title="FIFO Withdrawal Preview"
-                            subtitle="For the selected item only"
-                          >
-                            <div className="p-4 space-y-4">
-                              <div
-                                className={`rounded-xl border px-4 py-3 text-sm ${
-                                  latestKitchenBatch
-                                    ? kitchenRemaining === 0
-                                      ? "bg-red-50 border-red-200 text-red-700"
-                                      : "bg-emerald-50 border-emerald-200 text-emerald-700"
-                                    : "bg-slate-50 border-slate-200 text-slate-600"
-                                }`}
-                              >
-                                {latestKitchenBatch ? (
-                                  kitchenRemaining === 0 ? (
-                                    <p className="font-medium">
-                                      Kitchen Batch #
-                                      {latestKitchenBatch.kitchen_batch_id} -{" "}
-                                      {latestKitchenBatch.withdrawn_qty}{" "}
-                                      {selectedWithdrawalProduct.unit} withdrawn
-                                      {" \u00B7 "}
-                                      {latestKitchenBatch.used_qty}{" "}
-                                      {selectedWithdrawalProduct.unit} used
-                                      {" \u00B7 "}
-                                      {latestKitchenBatch.returned_qty}{" "}
-                                      {selectedWithdrawalProduct.unit} returned
-                                      {" \u2192 "}
-                                      {Math.max(
-                                        0,
-                                        latestKitchenBatch.withdrawn_qty -
-                                          latestKitchenBatch.used_qty -
-                                          latestKitchenBatch.returned_qty,
-                                      )}{" "}
-                                      {selectedWithdrawalProduct.unit} remaining
-                                      in kitchen. Kitchen stock depleted -
-                                      supplementary needed.
-                                    </p>
-                                  ) : (
-                                    <p className="font-medium">
-                                      Kitchen Batch #
-                                      {latestKitchenBatch.kitchen_batch_id} -{" "}
-                                      {latestKitchenBatch.withdrawn_qty}{" "}
-                                      {selectedWithdrawalProduct.unit} withdrawn
-                                      {" \u00B7 "}
-                                      {latestKitchenBatch.used_qty}{" "}
-                                      {selectedWithdrawalProduct.unit} used
-                                      {" \u00B7 "}
-                                      {latestKitchenBatch.returned_qty}{" "}
-                                      {selectedWithdrawalProduct.unit} returned
-                                      {" \u2192 "}
-                                      {Math.max(
-                                        0,
-                                        latestKitchenBatch.withdrawn_qty -
-                                          latestKitchenBatch.used_qty -
-                                          latestKitchenBatch.returned_qty,
-                                      )}{" "}
-                                      {selectedWithdrawalProduct.unit} remaining
-                                      in kitchen
-                                    </p>
-                                  )
-                                ) : (
-                                  <p className="font-medium">
-                                    No kitchen batch yet today - do an initial
-                                    withdrawal.
-                                  </p>
-                                )}
-                              </div>
-                              <FIFOBatchPreview
-                                batches={selectedProductBatches}
-                                qtyNeeded={Number(wdQty) || 0}
-                                unit={selectedWithdrawalProduct.unit}
-                              />
-                            </div>
-                          </SectionCard>
-                        </motion.div>
-                      )}
-                    {withdrawalSubTab === "fifo-preview" &&
-                      !selectedWithdrawalProduct && (
-                        <motion.div variants={itemVariants}>
-                          <SectionCard
-                            title="FIFO Withdrawal Preview"
-                            subtitle="For the selected item only"
-                          >
-                            <div className="p-4">
-                              <EmptyState message="Select an item in New Withdrawal Record to preview FIFO batches." />
-                            </div>
-                          </SectionCard>
-                        </motion.div>
-                      )}
                     {withdrawalSubTab === "delivered-batches" && (
                       <motion.div variants={itemVariants}>
                         <SectionCard
