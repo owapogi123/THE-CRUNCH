@@ -5,6 +5,79 @@ const jwt = require("jsonwebtoken");
 const db = require("../config/db");
 
 const JWT_SECRET = process.env.JWT_SECRET || "secretkey";
+const STAFF_FIELD_MAX_LENGTH = 100;
+const STAFF_NAME_MIN_LENGTH = 2;
+const STAFF_PASSWORD_MIN_LENGTH = 8;
+const STAFF_ROLES = [
+  "administrator",
+  "cashier",
+  "cook",
+  "inventory_manager",
+];
+const STAFF_NAME_PATTERN = /^[A-Za-z][A-Za-z.' -]*[A-Za-z.]$|^[A-Za-z.]$/;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PASSWORD_PATTERN = /^(?=.*[A-Za-z])(?=.*\d).+$/;
+
+function normalizeStaffName(value) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    throw new Error("Full name is required.");
+  }
+  if (normalized.length < STAFF_NAME_MIN_LENGTH) {
+    throw new Error("Full name must be at least 2 characters.");
+  }
+  if (normalized.length > STAFF_FIELD_MAX_LENGTH) {
+    throw new Error("Full name must not exceed 100 characters.");
+  }
+  if (!STAFF_NAME_PATTERN.test(normalized) || !/[A-Za-z]/.test(normalized)) {
+    throw new Error(
+      "Full name may only use letters, spaces, apostrophes, hyphens, and periods.",
+    );
+  }
+  return normalized;
+}
+
+function normalizeStaffEmail(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized) {
+    throw new Error("Email is required.");
+  }
+  if (normalized.length > STAFF_FIELD_MAX_LENGTH) {
+    throw new Error("Email must not exceed 100 characters.");
+  }
+  if (!EMAIL_PATTERN.test(normalized)) {
+    throw new Error("Please enter a valid email address.");
+  }
+  return normalized;
+}
+
+function normalizeStaffPassword(value) {
+  const normalized = String(value ?? "");
+  if (!normalized.trim()) {
+    throw new Error("Password is required.");
+  }
+  if (normalized.length < STAFF_PASSWORD_MIN_LENGTH) {
+    throw new Error("Password must be at least 8 characters.");
+  }
+  if (normalized.length > STAFF_FIELD_MAX_LENGTH) {
+    throw new Error("Password must not exceed 100 characters.");
+  }
+  if (!PASSWORD_PATTERN.test(normalized)) {
+    throw new Error("Password must include at least 1 letter and 1 number.");
+  }
+  return normalized;
+}
+
+function normalizeStaffRole(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized) {
+    throw new Error("Role is required.");
+  }
+  if (!STAFF_ROLES.includes(normalized)) {
+    throw new Error("Invalid role");
+  }
+  return normalized;
+}
 
 // ─────────────────────────────────────────────
 // MIDDLEWARE - Admin only
@@ -54,23 +127,10 @@ router.get("/staff", verifyAdmin, async (req, res) => {
 // ─────────────────────────────────────────────
 router.post("/staff/create", verifyAdmin, async (req, res) => {
   try {
-    const { username, email, password, role } = req.body;
-
-    // Validate all fields present
-    if (!username || !email || !password || !role) {
-      return res.status(400).json({ message: "All fields are required" });
-    }
-
-    // Only allow staff roles
-    const staffRoles = [
-      "administrator",
-      "cashier",
-      "cook",
-      "inventory_manager",
-    ];
-    if (!staffRoles.includes(role)) {
-      return res.status(400).json({ message: "Invalid role" });
-    }
+    const username = normalizeStaffName(req.body?.username);
+    const email = normalizeStaffEmail(req.body?.email);
+    const password = normalizeStaffPassword(req.body?.password);
+    const role = normalizeStaffRole(req.body?.role);
 
     // Check duplicate
     const [existing] = await db.query(
@@ -98,6 +158,26 @@ router.post("/staff/create", verifyAdmin, async (req, res) => {
       role,
     });
   } catch (err) {
+    if (err instanceof Error) {
+      if (
+        err.message === "Full name is required." ||
+        err.message === "Full name must be at least 2 characters." ||
+        err.message === "Full name must not exceed 100 characters." ||
+        err.message ===
+          "Full name may only use letters, spaces, apostrophes, hyphens, and periods." ||
+        err.message === "Email is required." ||
+        err.message === "Email must not exceed 100 characters." ||
+        err.message === "Please enter a valid email address." ||
+        err.message === "Password is required." ||
+        err.message === "Password must be at least 8 characters." ||
+        err.message === "Password must not exceed 100 characters." ||
+        err.message === "Password must include at least 1 letter and 1 number." ||
+        err.message === "Role is required." ||
+        err.message === "Invalid role"
+      ) {
+        return res.status(400).json({ message: err.message });
+      }
+    }
     res.status(500).json({ message: "Server error", error: err.message });
   }
 });

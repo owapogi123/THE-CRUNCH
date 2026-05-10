@@ -8,7 +8,7 @@ function normalizeNullableInt(value) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : NaN;
 }
 
-router.post("/", async (req, res) => {
+router.post("/", verifyToken, async (req, res) => {
   try {
     const productId = normalizeNullableInt(req.body?.product_id);
     const customerUserId = normalizeNullableInt(req.body?.customer_user_id);
@@ -45,7 +45,9 @@ router.post("/", async (req, res) => {
       ratingValue !== null &&
       (!Number.isInteger(ratingValue) || ratingValue < 1 || ratingValue > 5)
     ) {
-      return res.status(400).json({ message: "Rating must be between 1 and 5" });
+      return res
+        .status(400)
+        .json({ message: "Rating must be between 1 and 5" });
     }
 
     const [productRows] = await db.query(
