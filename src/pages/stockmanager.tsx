@@ -176,7 +176,6 @@ interface RawMaterialForm {
   name: string;
   category: string;
   unit: string;
-  price: string;
   description: string;
   useDefaultThresholds: boolean;
   lowStockThreshold: string;
@@ -575,7 +574,6 @@ const BLANK_RAW_MATERIAL: RawMaterialForm = {
   name: "",
   category: "Sauces",
   unit: "liter",
-  price: "",
   description: "",
   useDefaultThresholds: true,
   lowStockThreshold: "",
@@ -5988,7 +5986,6 @@ export default function StockManager() {
   async function addRawMaterial() {
     const name = rawMaterialForm.name.trim();
     const description = rawMaterialForm.description.trim();
-    const price = Number(rawMaterialForm.price || 0);
     const customLowStockThreshold =
       rawMaterialForm.lowStockThreshold.trim() === ""
         ? null
@@ -6026,10 +6023,6 @@ export default function StockManager() {
       showToast("This material already exists in inventory.", "error");
       return;
     }
-    if (!Number.isFinite(price) || price < 0) {
-      showToast("Price cannot be negative.", "error");
-      return;
-    }
     if (!rawMaterialForm.useDefaultThresholds) {
       if (
         customLowStockThreshold === null ||
@@ -6062,7 +6055,7 @@ export default function StockManager() {
     try {
       await api.createProduct({
         name,
-        price: Number.isFinite(price) ? price : 0,
+        price: 0,
         quantity: 0,
         category: rawMaterialForm.category.trim(),
         description: description || undefined,
@@ -9694,18 +9687,6 @@ export default function StockManager() {
                         </option>
                       ))}
                     </StyledSelect>
-                  </FormField>
-                  <FormField label="Price (optional)">
-                    <StyledInput
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      value={rawMaterialForm.price}
-                      onChange={(v) =>
-                        setRawMaterialForm((p) => ({ ...p, price: v }))
-                      }
-                      placeholder="e.g. 180"
-                    />
                   </FormField>
                   <div className="col-span-2">
                     <FormField label="Description (optional)">
