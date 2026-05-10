@@ -1127,7 +1127,7 @@ function EmailVerificationPanel({
 
 export default function Delicacy() {
   const navigate = useNavigate();
-  const { width, isMobile, isTablet, isNarrowPhone } = useViewport();
+  const { width, isNarrowPhone } = useViewport();
   const isNarrow = width < 900;
   const { user, updateUser, logout } = useAuth();
   const customerUserId = user ? Number(user.userId) : 0;
@@ -1139,7 +1139,6 @@ export default function Delicacy() {
   const [menuItems,  setMenuItems]  = useState<Recipe[]>([]);
   const [flavors,    setFlavors]    = useState<string[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
-  const [mealTypes,  setMealTypes]  = useState<string[]>([]);
   const [loading,    setLoading]    = useState(true);
   const [activeCategory, setActiveCategory] = useState("All");
   const [activeMeal,     setActiveMeal]     = useState("Lunch");
@@ -1260,7 +1259,6 @@ export default function Delicacy() {
         setMenuItems(mergedRecipes);
         setFlavors(flavorList);
         setCategories(allCats);
-        setMealTypes(allMeals);
         setActiveMeal(allMeals.includes("Lunch") ? "Lunch" : (allMeals[0] ?? "Lunch"));
       } catch (err) {
         console.error("Failed to load menu:", err);
@@ -1761,20 +1759,7 @@ export default function Delicacy() {
           ))}
         </motion.div>
 
-        <div style={{ display: "flex", flexDirection: isMobile || isTablet ? "column" : "row", gap: "clamp(20px,4vw,36px)" }}>
-          <div style={{ display: "flex", flexDirection: isMobile || isTablet ? "row" : "column", gap: isMobile || isTablet ? 14 : 44, paddingTop: isMobile || isTablet ? 0 : 8, minWidth: isMobile || isTablet ? 0 : 56, alignItems: "center", position: "relative", overflowX: isMobile || isTablet ? "auto" : "visible", paddingBottom: isMobile || isTablet ? 4 : 0, scrollbarWidth: "none" }}>
-            <div style={{ position: "absolute", top: isMobile || isTablet ? "50%" : 0, bottom: isMobile || isTablet ? "auto" : 0, left: isMobile || isTablet ? 0 : "50%", right: isMobile || isTablet ? 0 : "auto", width: isMobile || isTablet ? "100%" : 1, height: isMobile || isTablet ? 1 : "auto", background: "rgba(240,237,232,0.06)", transform: isMobile || isTablet ? "translateY(-50%)" : "translateX(-50%)" }} />
-            {(loading ? ["Breakfast", "Lunch", "Dinner"] : mealTypes).map((meal, mi) => (
-              <motion.button key={meal} initial={{ opacity: 0, x: -14 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.6, ease: EASE, delay: 0.22 + mi * 0.07 }} onClick={() => setActiveMeal(meal)} whileHover={{ x: 2 }} whileTap={{ scale: 0.9 }}
-                style={{ background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", padding: isMobile || isTablet ? "10px 0" : 0, position: "relative", zIndex: 1 }}>
-                <span style={{ fontSize: 11.5, fontWeight: activeMeal === meal ? 700 : 400, color: activeMeal === meal ? "#f5c842" : "rgba(240,237,232,0.22)", writingMode: isMobile || isTablet ? "horizontal-tb" : "vertical-rl", transform: isMobile || isTablet ? "none" : "rotate(180deg)", letterSpacing: "0.1em", whiteSpace: "nowrap" }}>{meal}</span>
-                <AnimatePresence>
-                  {activeMeal === meal && <motion.div layoutId="mealDot" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }} transition={SP} style={{ position: "absolute", right: isMobile || isTablet ? "50%" : -12, top: isMobile || isTablet ? "auto" : "50%", bottom: isMobile || isTablet ? -4 : "auto", transform: isMobile || isTablet ? "translateX(50%)" : "translateY(-50%)", width: 5, height: 5, borderRadius: "50%", background: "#f5c842" }} />}
-                </AnimatePresence>
-              </motion.button>
-            ))}
-          </div>
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             {loading ? (
               <><RecipeSkeleton /><RecipeSkeleton /><RecipeSkeleton /></>
             ) : (
@@ -1817,7 +1802,6 @@ export default function Delicacy() {
                 )}
               </AnimatePresence>
             )}
-          </div>
         </div>
       </div>
       <AnimatePresence>{orderTypeOpen && <OrderTypeModal onClose={() => setOrderTypeOpen(false)} />}</AnimatePresence>
