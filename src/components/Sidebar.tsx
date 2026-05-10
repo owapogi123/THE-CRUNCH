@@ -27,6 +27,7 @@ import {
   cachePermissions,
   normalizeRole,
 } from "@/lib/permissions";
+import { api } from "@/lib/api";
 
 type Role =
   | "administrator"
@@ -132,9 +133,9 @@ export function Sidebar() {
 
     const loadPermissions = async () => {
       try {
-        const res = await fetch("/api/settings/permissions");
-        if (!res.ok) return;
-        const data = await res.json().catch(() => null);
+        const data = await api.get<Record<string, unknown>>(
+          "/settings/permissions",
+        );
         if (cancelled || !data || typeof data !== "object") return;
         const next = normalizePermissionsMap(
           "permissions" in data

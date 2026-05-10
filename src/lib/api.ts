@@ -2,37 +2,23 @@
 const RAW_API_URL = (import.meta as { env?: { VITE_API_URL?: string } }).env
   ?.VITE_API_URL;
 
-function isLocalHostname(hostname: string): boolean {
-  return (
-    hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1"
-  );
+const DEFAULT_LOCAL_API_ORIGIN = "http://localhost:5000";
+
+function resolveApiOrigin(): string {
+  const trimmed = String(RAW_API_URL || "")
+    .trim()
+    .replace(/\/+$/, "");
+  if (!trimmed) return DEFAULT_LOCAL_API_ORIGIN;
+  return trimmed.replace(/\/api$/i, "");
 }
 
-function resolveApiBaseUrl(): string {
-  if (!RAW_API_URL) return "/api";
-
-  const trimmed = RAW_API_URL.replace(/\/+$/, "");
-  const baseWithApi = /\/api$/i.test(trimmed) ? trimmed : `${trimmed}/api`;
-
-  if (
-    typeof window !== "undefined" &&
-    window.location.protocol === "https:" &&
-    /^http:\/\//i.test(trimmed)
-  ) {
-    try {
-      const parsed = new URL(trimmed);
-      if (isLocalHostname(parsed.hostname)) return "/api";
-      return baseWithApi.replace(/^http:\/\//i, "https://");
-    } catch {
-      return "/api";
-    }
-  }
-
-  return baseWithApi;
+function normalizeEndpoint(endpoint: string): string {
+  const clean = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+  return /^\/api(?:\/|$)/i.test(clean) ? clean : `/api${clean}`;
 }
 
-const API_BASE_URL = resolveApiBaseUrl();
-const API_ASSET_BASE_URL = API_BASE_URL.replace(/\/api$/i, "");
+const API_ORIGIN = resolveApiOrigin();
+const API_ASSET_BASE_URL = API_ORIGIN;
 
 export function resolveAssetUrl(value?: string | null): string {
   const normalized = String(value || "").trim();
@@ -137,11 +123,9 @@ export const apiCall = async <T = unknown>(
   } = options;
 
   const isAbsoluteUrl = /^https?:\/\//i.test(endpoint);
-  const endpointWithoutApiPrefix = endpoint.replace(/^\/?api(?=\/)/i, "");
-  const normalizedEndpoint = endpointWithoutApiPrefix.startsWith("/")
-    ? endpointWithoutApiPrefix
-    : `/${endpointWithoutApiPrefix}`;
-  const url = isAbsoluteUrl ? endpoint : `${API_BASE_URL}${normalizedEndpoint}`;
+  const url = isAbsoluteUrl
+    ? endpoint
+    : `${API_ORIGIN}${normalizeEndpoint(endpoint)}`;
 
   const headers: Record<string, string> = {
     ...((fetchOptions.headers as Record<string, string>) || {}),

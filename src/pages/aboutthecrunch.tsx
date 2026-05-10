@@ -92,11 +92,11 @@ const perks = [
   { num: '03', title: 'Made with Love',   desc: 'Every order is crafted like it\'s going to family.' },
   { num: '04', title: 'Bold Flavors',     desc: '7 signature sauces crafted to satisfy any mood or craving.' },
   { num: '05', title: 'Community First',  desc: 'Built for the neighborhood, grown by the neighborhood.' },
-  { num: '06', title: '250+ Branches',    desc: 'From Luzon to Mindanao â€” The Crunch is everywhere you are.' },
+  { num: '06', title: '250+ Branches',    desc: 'From Luzon to Mindanao - The Crunch is everywhere you are.' },
 ];
 
-const IMG_HERO  = '/src/assets/img/crunch22.png';
-const IMG_STORY = '/src/assets/img/chickchicken.png';
+const IMG_HERO  = '/img/crunch22.png';
+const IMG_STORY = '/img/chickchicken.png';
 
 // â”€â”€ Main Page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export default function AboutTheCrunch() {
@@ -160,7 +160,7 @@ export default function AboutTheCrunch() {
           onClick={() => navigate('/products')}
           style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}
         >
-          <img src="/src/assets/img/logo24.png" alt="The Crunch logo" style={{ width: 32, height: 32, borderRadius: 8, objectFit: 'contain' }} />
+          <img src="/img/logo24.png" alt="The Crunch logo" style={{ width: 32, height: 32, borderRadius: 8, objectFit: 'contain' }} />
           {!isMobile && (
             <span style={{ fontFamily: PP, fontSize: 15, fontWeight: 800, color: '#ede9e2', letterSpacing: '-0.02em' }}>
               The <span style={{ color: '#f5c842' }}>Crunch</span>
@@ -589,7 +589,7 @@ export default function AboutTheCrunch() {
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : isTablet ? '1fr 1fr' : '2fr 1fr 1fr', gap: isMobile ? 36 : 48, marginBottom: 40 }}>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-                <img src="/src/assets/img/logo24.png" alt="The Crunch logo" style={{ width: 34, height: 34, borderRadius: 9, objectFit: 'contain' }} />
+                <img src="/img/logo24.png" alt="The Crunch logo" style={{ width: 34, height: 34, borderRadius: 9, objectFit: 'contain' }} />
                 <span style={{ fontFamily: PP, fontSize: 16, fontWeight: 800, color: '#ede9e2' }}>
                   The <span style={{ color: '#f5c842' }}>Crunch</span>
                 </span>
@@ -628,7 +628,7 @@ export default function AboutTheCrunch() {
 
           <div style={{ borderTop: '1px solid rgba(255,255,255,0.04)', paddingTop: 24, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
             <span style={{ fontFamily: PP, fontSize: 11.5, color: 'rgba(237,233,226,0.1)', fontWeight: 300 }}>
-              Â© {new Date().getFullYear()} The Crunch Fairview Dahlia Quezon City Â· All rights reserved
+              {"\u00A9"} {new Date().getFullYear()} The Crunch Fairview Dahlia Quezon City {"\u00B7"} All rights reserved
             </span>
             <span style={{ fontFamily: PP, fontSize: 11.5, color: 'rgba(237,233,226,0.1)', fontWeight: 300 }}>Fairview, Dahlia, QC 1118</span>
           </div>

@@ -3,7 +3,7 @@ import { motion, AnimatePresence, useScroll, useTransform, useInView } from 'fra
 import { Search, Flame, Crown, Clock, ChevronDown, Droplets, MapPin, Star, X, CalendarDays, MessageSquare, Send, CheckCircle } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useViewport } from '@/hooks/use-tablet'
-import { resolveAssetUrl } from '@/lib/api'
+import { api, resolveAssetUrl } from '@/lib/api'
 
 const formatPHP = (value: number) =>
   new Intl.NumberFormat("en-PH", {
@@ -598,7 +598,7 @@ function FeedbackButton() {
   const [products, setProducts] = useState<FeedbackProductOption[]>([])
 
   useEffect(() => {
-    fetch('/api/products').then(r => r.ok ? r.json() : []).then((data: unknown[]) => {
+    api.get<unknown[]>('/products').then((data: unknown[]) => {
       if (!Array.isArray(data)) return
       setProducts(data.filter((d: any) => Number.isInteger(d.id) && typeof d.name === 'string').map((d: any) => ({ id:+d.id, name:String(d.name).trim() })))
     }).catch(() => {})
@@ -673,7 +673,7 @@ export default function Products({ isAuthenticated=false, onLogout }: ProductsPr
   ) => {
     let cancelled = false
     setLoading(true)
-    fetch(url).then(r => { if(!r.ok) throw new Error(); return r.json() })
+    api.get<unknown[]>(url)
       .then((d:unknown) => {
         if (!cancelled) {
           const rows = Array.isArray(d) ? d : []
@@ -720,7 +720,7 @@ export default function Products({ isAuthenticated=false, onLogout }: ProductsPr
         <div className="pad" style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
           <button onClick={() => window.scrollTo({ top:0, behavior:'smooth' })} style={{ background:'none', border:'none', cursor:'pointer', padding:0 }}>
             <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-  <img src="/src/assets/img/logo24.png" alt="The Crunch logo" style={{ width:32, height:32, objectFit:'contain' }} />
+  <img src="/img/logo24.png" alt="The Crunch logo" style={{ width:32, height:32, objectFit:'contain' }} />
   {!isPhone && <span style={{ fontFamily:'var(--serif)', fontWeight:700, fontSize:22, color:'var(--text)', letterSpacing:'-0.02em' }}>
     The <span style={{ color:'var(--gold)' }}>Crunch</span>
   </span>}

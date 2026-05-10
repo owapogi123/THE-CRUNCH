@@ -16,6 +16,7 @@ import {
   Info,
   XCircle,
 } from "lucide-react";
+import { api } from "@/lib/api";
 
 /* ================= TYPES ================= */
 
@@ -411,9 +412,7 @@ export function NotificationProvider({
 
     const loadSettings = async () => {
       try {
-        const res = await fetch("/api/settings");
-        if (!res.ok) return;
-        const data = await res.json().catch(() => ({}));
+        const data = await api.get<Record<string, unknown>>("/settings");
         applySettings(data && typeof data === "object" ? data : null);
       } catch {
         /* keep cached defaults */

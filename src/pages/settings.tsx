@@ -27,6 +27,7 @@ import { useAuth } from "../context/authcontext";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useViewport } from "@/hooks/use-tablet";
 import { cachePermissions, normalizeRole } from "@/lib/permissions";
+import { api } from "@/lib/api";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -3425,9 +3426,7 @@ export default function SettingsPage() {
     let cancelled = false;
     const loadSettings = async () => {
       try {
-        const res = await fetch("/api/settings");
-        if (!res.ok) throw new Error("Could not load settings");
-        const data = await res.json().catch(() => ({}));
+        const data = await api.get<Record<string, unknown>>("/settings");
         if (cancelled) return;
         hydratingSettings.current = true;
         setSettings((prev) => ({
@@ -3454,9 +3453,9 @@ export default function SettingsPage() {
     if (!isAdministrator) return;
     const loadPermissions = async () => {
       try {
-        const res = await fetch("/api/settings/permissions");
-        if (!res.ok) return;
-        const data = (await res.json().catch(() => null)) as
+        const data = (await api.get<Record<string, unknown>>(
+          "/settings/permissions",
+        )) as
           | PermissionsApiPayload
           | Partial<PermissionsMap>
           | null;
@@ -3490,12 +3489,7 @@ export default function SettingsPage() {
     setFeedbackLoading(true);
     setFeedbackError(null);
     try {
-      const res = await fetch("/api/feedback");
-      if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        throw new Error(data?.message || `${res.status}`);
-      }
-      const data: FeedbackApiEntry[] = await res.json();
+      const data = await api.get<FeedbackApiEntry[]>("/feedback");
       setFeedback(
         Array.isArray(data)
           ? data.map((entry, index) => ({
@@ -3531,16 +3525,11 @@ export default function SettingsPage() {
     setInventoryMastersLoading(true);
     setInventoryMastersError(null);
     try {
-      const [categoriesRes, menuCategoriesRes, unitsRes] = await Promise.all([
-        fetch("/api/settings/inventory-categories"),
-        fetch("/api/settings/menu-categories?activeOnly=0"),
-        fetch("/api/settings/inventory-units"),
+      const [categoriesData, menuCategoriesData, unitsData] = await Promise.all([
+        api.get<InventoryCategoryRecord[]>("/settings/inventory-categories"),
+        api.get<MenuCategoryRecord[]>("/settings/menu-categories?activeOnly=0"),
+        api.get<InventoryUnitRecord[]>("/settings/inventory-units"),
       ]);
-      if (!categoriesRes.ok || !menuCategoriesRes.ok || !unitsRes.ok)
-        throw new Error("Could not load inventory master lists.");
-      const [categoriesData, menuCategoriesData, unitsData] = await Promise.all(
-        [categoriesRes.json(), menuCategoriesRes.json(), unitsRes.json()],
-      );
       setInventoryCategories(
         Array.isArray(categoriesData) ? categoriesData : [],
       );
@@ -3562,9 +3551,9 @@ export default function SettingsPage() {
   const fetchDiscountTypes = useCallback(async () => {
     setBillingMastersLoading(true);
     try {
-      const res = await fetch("/api/settings/discount-types?activeOnly=0");
-      if (!res.ok) throw new Error("Could not load discount types.");
-      const data = await res.json().catch(() => []);
+      const data = await api.get<DiscountTypeRecord[]>(
+        "/settings/discount-types?activeOnly=0",
+      );
       setDiscountTypes(Array.isArray(data) ? data : []);
     } catch {
       setDiscountTypes([]);
@@ -3578,14 +3567,10 @@ export default function SettingsPage() {
       name: string;
       date_tracking_type: "none" | "expiry" | "shelf_life";
     }) => {
-      const res = await fetch("/api/settings/inventory-categories", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok)
-        throw new Error(data?.message || "Failed to create category");
+      const data = await api.post<InventoryCategoryRecord>(
+        "/settings/inventory-categories",
+        payload,
+      );
       setInventoryCategories((prev) => [data, ...prev]);
     },
     [],
@@ -3600,17 +3585,10 @@ export default function SettingsPage() {
         is_active?: boolean;
       },
     ) => {
-      const res = await fetch(
-        `/api/settings/inventory-categories/${categoryId}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        },
+      const data = await api.patch<InventoryCategoryRecord>(
+        `/settings/inventory-categories/${categoryId}`,
+        payload,
       );
-      const data = await res.json().catch(() => null);
-      if (!res.ok)
-        throw new Error(data?.message || "Failed to update category");
       setInventoryCategories((prev) =>
         prev.map((item) => (item.category_id === categoryId ? data : item)),
       );
@@ -3619,16 +3597,10 @@ export default function SettingsPage() {
   );
 
   const disableInventoryCategory = useCallback(async (categoryId: number) => {
-    const res = await fetch(
-      `/api/settings/inventory-categories/${categoryId}`,
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ is_active: false }),
-      },
+    const data = await api.patch<InventoryCategoryRecord>(
+      `/settings/inventory-categories/${categoryId}`,
+      { is_active: false },
     );
-    const data = await res.json().catch(() => null);
-    if (!res.ok) throw new Error(data?.message || "Failed to disable category");
     setInventoryCategories((prev) =>
       prev.map((item) => (item.category_id === categoryId ? data : item)),
     );
@@ -3636,14 +3608,10 @@ export default function SettingsPage() {
 
   const addMenuCategory = useCallback(
     async (payload: { name: string; display_order?: number }) => {
-      const res = await fetch("/api/settings/menu-categories", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok)
-        throw new Error(data?.message || "Failed to create menu category");
+      const data = await api.post<MenuCategoryRecord>(
+        "/settings/menu-categories",
+        payload,
+      );
       setMenuCategories((prev) =>
         [...prev, data].sort(
           (a, b) =>
@@ -3660,14 +3628,10 @@ export default function SettingsPage() {
       categoryId: number,
       payload: { name?: string; display_order?: number; is_active?: boolean },
     ) => {
-      const res = await fetch(`/api/settings/menu-categories/${categoryId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok)
-        throw new Error(data?.message || "Failed to update menu category");
+      const data = await api.patch<MenuCategoryRecord>(
+        `/settings/menu-categories/${categoryId}`,
+        payload,
+      );
       setMenuCategories((prev) =>
         prev
           .map((item) => (item.category_id === categoryId ? data : item))
@@ -3682,14 +3646,10 @@ export default function SettingsPage() {
   );
 
   const disableMenuCategory = useCallback(async (categoryId: number) => {
-    const res = await fetch(`/api/settings/menu-categories/${categoryId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ is_active: false }),
-    });
-    const data = await res.json().catch(() => null);
-    if (!res.ok)
-      throw new Error(data?.message || "Failed to disable menu category");
+    const data = await api.patch<MenuCategoryRecord>(
+      `/settings/menu-categories/${categoryId}`,
+      { is_active: false },
+    );
     setMenuCategories((prev) =>
       prev
         .map((item) => (item.category_id === categoryId ? data : item))
@@ -3703,14 +3663,10 @@ export default function SettingsPage() {
 
   const addDiscountType = useCallback(
     async (payload: { name: string; percentage: number }) => {
-      const res = await fetch("/api/settings/discount-types", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok)
-        throw new Error(data?.message || "Failed to create discount type");
+      const data = await api.post<DiscountTypeRecord>(
+        "/settings/discount-types",
+        payload,
+      );
       setDiscountTypes((prev) =>
         [...prev, data].sort(
           (a, b) =>
@@ -3727,14 +3683,10 @@ export default function SettingsPage() {
       discountId: number,
       payload: { name?: string; percentage?: number; is_active?: boolean },
     ) => {
-      const res = await fetch(`/api/settings/discount-types/${discountId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok)
-        throw new Error(data?.message || "Failed to update discount type");
+      const data = await api.patch<DiscountTypeRecord>(
+        `/settings/discount-types/${discountId}`,
+        payload,
+      );
       setDiscountTypes((prev) =>
         prev
           .map((item) => (item.discount_id === discountId ? data : item))
@@ -3750,14 +3702,10 @@ export default function SettingsPage() {
 
   const toggleDiscountType = useCallback(
     async (discountId: number, nextActive: boolean) => {
-      const res = await fetch(`/api/settings/discount-types/${discountId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ is_active: nextActive }),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok)
-        throw new Error(data?.message || "Failed to update discount type");
+      const data = await api.patch<DiscountTypeRecord>(
+        `/settings/discount-types/${discountId}`,
+        { is_active: nextActive },
+      );
       setDiscountTypes((prev) =>
         prev
           .map((item) => (item.discount_id === discountId ? data : item))
@@ -3778,13 +3726,10 @@ export default function SettingsPage() {
       base_unit?: string | null;
       conversion_to_base?: number | null;
     }) => {
-      const res = await fetch("/api/settings/inventory-units", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.message || "Failed to create unit");
+      const data = await api.post<InventoryUnitRecord>(
+        "/settings/inventory-units",
+        payload,
+      );
       setInventoryUnits((prev) => [data, ...prev]);
     },
     [],
@@ -3801,13 +3746,10 @@ export default function SettingsPage() {
         is_active?: boolean;
       },
     ) => {
-      const res = await fetch(`/api/settings/inventory-units/${unitId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.message || "Failed to update unit");
+      const data = await api.patch<InventoryUnitRecord>(
+        `/settings/inventory-units/${unitId}`,
+        payload,
+      );
       setInventoryUnits((prev) =>
         prev.map((item) => (item.unit_id === unitId ? data : item)),
       );
@@ -3816,13 +3758,10 @@ export default function SettingsPage() {
   );
 
   const disableInventoryUnit = useCallback(async (unitId: number) => {
-    const res = await fetch(`/api/settings/inventory-units/${unitId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ is_active: false }),
-    });
-    const data = await res.json().catch(() => null);
-    if (!res.ok) throw new Error(data?.message || "Failed to disable unit");
+    const data = await api.patch<InventoryUnitRecord>(
+      `/settings/inventory-units/${unitId}`,
+      { is_active: false },
+    );
     setInventoryUnits((prev) =>
       prev.map((item) => (item.unit_id === unitId ? data : item)),
     );
@@ -3909,20 +3848,13 @@ export default function SettingsPage() {
         normalizePermissionRoleLocks(permissionRoleLocks);
       console.log("[Settings] saving permissions", updatedPermissions);
 
-      const res = await fetch("/api/settings/permissions", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const saved = await api.put<PermissionsApiPayload>(
+        "/settings/permissions",
+        {
           permissions: updatedPermissions,
           roleLocks: updatedRoleLocks,
-        }),
-      });
-
-      if (!res.ok) throw new Error("Save failed");
-      const saved = (await res.json().catch(() => ({
-        permissions: updatedPermissions,
-        roleLocks: updatedRoleLocks,
-      }))) as PermissionsApiPayload;
+        },
+      );
       const savedPermissions = normalizePermissionsMap(
         saved.permissions ?? updatedPermissions,
       );
@@ -3945,13 +3877,10 @@ export default function SettingsPage() {
   const handleSave = async () => {
     setSaveStatus("saving");
     try {
-      const res = await fetch("/api/settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(settings),
-      });
-      if (!res.ok) throw new Error("Save failed");
-      const saved = await res.json().catch(() => null);
+      const saved = await api.post<Record<string, unknown>>(
+        "/settings",
+        settings,
+      );
       if (saved && typeof saved === "object")
         setSettings((prev) => ({ ...prev, ...saved }));
       const nextSettings =

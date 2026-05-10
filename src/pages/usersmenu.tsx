@@ -1607,7 +1607,7 @@ export default function Delicacy() {
         style={{ position: "sticky", top: 0, zIndex: 100, background: scrolled ? "rgba(14,12,10,0.96)" : "rgba(14,12,10,0.80)", backdropFilter: "blur(24px)", borderBottom: "1px solid rgba(240,237,232,0.07)", padding: isNarrowPhone ? "10px 14px" : "0 clamp(16px,4vw,40px)", minHeight: 68, display: "flex", justifyContent: "space-between", alignItems: "center", gap: isNarrowPhone ? 10 : 12, flexWrap: isNarrow ? "wrap" : "nowrap", paddingTop: isNarrow && !isNarrowPhone ? 12 : undefined, paddingBottom: isNarrow && !isNarrowPhone ? 12 : undefined }}>
 
         <div style={{ display:'flex', alignItems:'center', gap:8, minWidth: 0 }}>
-  <img src="/src/assets/img/logo24.png" alt={`${restaurantSettings.restaurantName} logo`} style={{ width:32, height:32, objectFit:'contain' }} />
+  <img src="/img/logo24.png" alt={`${restaurantSettings.restaurantName} logo`} style={{ width:32, height:32, objectFit:'contain' }} />
   {!isNarrowPhone && <span style={{ fontSize: 20, fontWeight: 900, color: "#f0ede8" }}>{restaurantSettings.restaurantName}</span>}
 </div>
 
