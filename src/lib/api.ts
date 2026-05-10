@@ -23,18 +23,13 @@ const API_ASSET_BASE_URL = API_ORIGIN;
 export function resolveAssetUrl(value?: string | null): string {
   const normalized = String(value || "").trim();
   if (!normalized) return "/img/placeholder.jpg";
-  if (/^data:image\//i.test(normalized)) return "/img/placeholder.jpg";
-  if (
-    /^(blob:|data:|https?:\/\/)/i.test(normalized) ||
-    normalized.startsWith("/img/") ||
-    normalized.startsWith("/placeholder")
-  ) {
-    return normalized;
-  }
-  if (normalized.startsWith("/uploads/")) {
+  if (/^data:image\//i.test(normalized)) return normalized;
+  if (/^https?:\/\//i.test(normalized)) return normalized;
+  if (normalized.startsWith("/uploads")) {
     return `${API_ASSET_BASE_URL}${normalized}`;
   }
-  return normalized;
+  if (normalized.startsWith("/img")) return normalized;
+  return "/img/placeholder.jpg";
 }
 
 function getStoredAuthToken(): string | null {

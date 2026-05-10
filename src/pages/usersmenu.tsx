@@ -298,7 +298,15 @@ function Avatar({ src, size = 40 }: { src: string; size?: number }) {
   const [err, setErr] = useState(false);
   return (
     <div style={{ width: size, height: size, borderRadius: "50%", overflow: "hidden", flexShrink: 0, border: "1.5px solid rgba(240,237,232,0.1)", background: "#1a1208" }}>
-      <img src={err ? "/img/placeholder.jpg" : src} alt="" onError={() => setErr(true)} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+      <img
+        src={err ? "/img/placeholder.jpg" : src}
+        alt=""
+        onError={(e) => {
+          e.currentTarget.src = "/img/placeholder.jpg";
+          setErr(true);
+        }}
+        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+      />
     </div>
   );
 }
@@ -625,7 +633,14 @@ function HistoryDrawer({ orders, menuItems, onClose }: { orders: CustomerOrder[]
                     <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
                       {order.items.slice(0, 6).map((item, ii) => (
                         <div key={`${order.id}-thumb-${item.name}-${item.quantity}`} title={item.name} style={{ width: 22, height: 22, borderRadius: "50%", overflow: "hidden", border: "1.5px solid rgba(14,12,10,0.9)", flexShrink: 0, marginLeft: ii > 0 ? -6 : 0 }}>
-                          <img src={findImg(item.name)} alt={item.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                          <img
+                            src={findImg(item.name)}
+                            alt={item.name}
+                            onError={(e) => {
+                              e.currentTarget.src = "/img/placeholder.jpg";
+                            }}
+                            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                          />
                         </div>
                       ))}
                       {order.items.length > 6 && (
@@ -967,7 +982,10 @@ function RecipeCard({ recipe, isFav, justAdded, flavorSel, variantSel, onToggleF
         <img
           src={imgErr ? "/img/placeholder.jpg" : recipe.image}
           alt={recipe.name}
-          onError={() => setImgErr(true)}
+          onError={(e) => {
+            e.currentTarget.src = "/img/placeholder.jpg";
+            setImgErr(true);
+          }}
           style={{ width: "100%", height: "100%", objectFit: "cover", filter: isAvailable ? "brightness(0.96) saturate(1.1)" : "brightness(0.45) saturate(0.3)" }}
         />
         {!isAvailable && (
