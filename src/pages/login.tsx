@@ -30,6 +30,7 @@ const ROLE_MAP: Record<string, string> = {
 };
 
 type AuthMode = "signin" | "signup";
+const SIGNUP_FIELD_MAX_LENGTH = 50;
 
 /* ─── floating orbs background ─────────────────────────────────────────── */
 function Orbs() {
@@ -90,12 +91,12 @@ function Field({ label, icon, children }: { label: string; icon?: ReactNode; chi
 
 /* ─── text input ────────────────────────────────────────────────────────── */
 function TextInput({
-  name, type = "text", value, onChange, placeholder, autoComplete, required, icon, rightSlot,
+  name, type = "text", value, onChange, placeholder, autoComplete, required, icon, rightSlot, maxLength,
 }: {
   name: string; type?: string; value: string;
   onChange: (e: ChangeEvent<HTMLInputElement>) => void;
   placeholder: string; autoComplete?: string; required?: boolean;
-  icon?: ReactNode; rightSlot?: ReactNode;
+  icon?: ReactNode; rightSlot?: ReactNode; maxLength?: number;
 }) {
   const [focused, setFocused] = useState(false);
   return (
@@ -125,6 +126,7 @@ function TextInput({
         placeholder={placeholder}
         autoComplete={autoComplete}
         required={required}
+        maxLength={maxLength}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         style={{
@@ -150,11 +152,11 @@ function TextInput({
 
 /* ─── password field ────────────────────────────────────────────────────── */
 function PasswordField({
-  label, name, value, onChange, placeholder, autoComplete,
+  label, name, value, onChange, placeholder, autoComplete, maxLength,
 }: {
   label: string; name: string; value: string;
   onChange: (e: ChangeEvent<HTMLInputElement>) => void;
-  placeholder: string; autoComplete: string;
+  placeholder: string; autoComplete: string; maxLength?: number;
 }) {
   const [visible, setVisible] = useState(false);
   return (
@@ -166,6 +168,7 @@ function PasswordField({
         onChange={onChange}
         placeholder={placeholder}
         autoComplete={autoComplete}
+        maxLength={maxLength}
         required
         icon={<Lock size={15} />}
         rightSlot={
@@ -570,7 +573,7 @@ export default function Login() {
     setIsVerifying(true); setVerificationError(""); setVerificationSuccess("");
     try {
       await authApi.verifyEmail(em, cd);
-      setVerificationSuccess("Email verified! Your account is now active.");
+      setVerificationSuccess("Email verified! Your account has been created.");
       setFormData(c => ({ ...c, email: em, password: "", confirmPassword: "" }));
       switchMode("signin");
       setTimeout(() => { setVerificationOpen(false); setVerificationCode(""); }, 1200);
@@ -664,6 +667,15 @@ export default function Login() {
         login({ token: data.token, username: data.username, email: data.email, role: data.role, userId: String(data.userId), email_verified: data.email_verified });
         navigate(ROLE_MAP[data.role] ?? "/", { replace: true });
         return;
+      }
+      if (formData.name.trim().length > SIGNUP_FIELD_MAX_LENGTH) {
+        throw new Error("Full name must not exceed 50 characters.");
+      }
+      if (formData.email.trim().length > SIGNUP_FIELD_MAX_LENGTH) {
+        throw new Error("Email must not exceed 50 characters.");
+      }
+      if (formData.password.length > SIGNUP_FIELD_MAX_LENGTH) {
+        throw new Error("Password must not exceed 50 characters.");
       }
       if (formData.password.length < 8) throw new Error("Password must be at least 8 characters.");
       if (formData.password !== formData.confirmPassword) throw new Error("Passwords don't match.");
@@ -918,18 +930,18 @@ export default function Login() {
                       <ErrorMessage message={error} />
                       <Field label="Full Name" icon={<User size={11} />}>
                         <TextInput name="name" value={formData.name} onChange={handleChange}
-                          placeholder="Your full name" required icon={<User size={15} />} />
+                          placeholder="Your full name" required icon={<User size={15} />} maxLength={SIGNUP_FIELD_MAX_LENGTH} />
                       </Field>
                       <Field label="Email Address" icon={<Mail size={11} />}>
                         <TextInput name="email" type="email" value={formData.email} onChange={handleChange}
-                          placeholder="you@example.com" autoComplete="email" required icon={<Mail size={15} />} />
+                          placeholder="you@example.com" autoComplete="email" required icon={<Mail size={15} />} maxLength={SIGNUP_FIELD_MAX_LENGTH} />
                       </Field>
                       <PasswordField label="Password" name="password" value={formData.password}
-                        onChange={handleChange} placeholder="Minimum 8 characters" autoComplete="new-password" />
+                        onChange={handleChange} placeholder="Minimum 8 characters" autoComplete="new-password" maxLength={SIGNUP_FIELD_MAX_LENGTH} />
                       <PasswordField label="Confirm Password" name="confirmPassword" value={formData.confirmPassword}
-                        onChange={handleChange} placeholder="Re-enter your password" autoComplete="new-password" />
-                      <PrimaryButton disabled={isLoading}>
-                        {isLoading ? "Creating account…" : "Create Account"}
+                        onChange={handleChange} placeholder="Re-enter your password" autoComplete="new-password" maxLength={SIGNUP_FIELD_MAX_LENGTH} />
+      <PrimaryButton disabled={isLoading}>
+                        {isLoading ? "Sending code…" : "Send Verification Code"}
                       </PrimaryButton>
                     </form>
                     <Footer mode={mode} onSwitch={switchMode} />

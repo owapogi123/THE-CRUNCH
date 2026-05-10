@@ -69,7 +69,7 @@ interface LoginResponse {
 
 interface RegisterResponse {
   message: string;
-  userId: number;
+  userId?: number;
   role: "customer";
   requiresEmailVerification: boolean;
   emailDeliveryFailed?: boolean;

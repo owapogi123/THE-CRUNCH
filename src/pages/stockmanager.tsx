@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import {
@@ -1458,23 +1458,114 @@ function FormField({
   );
 }
 
+function sanitizeNumberInput(
+  value: string,
+  {
+    allowDecimal = true,
+    maxDigits,
+  }: { allowDecimal?: boolean; maxDigits?: number } = {},
+) {
+  if (value === "") return "";
+
+  let cleaned = value.replace(/[^\d.]/g, "");
+  if (!allowDecimal) {
+    cleaned = cleaned.replace(/\./g, "");
+    return maxDigits ? cleaned.slice(0, maxDigits) : cleaned;
+  }
+
+  const firstDot = cleaned.indexOf(".");
+  if (firstDot >= 0) {
+    cleaned =
+      cleaned.slice(0, firstDot + 1) +
+      cleaned.slice(firstDot + 1).replace(/\./g, "");
+  }
+
+  if (maxDigits) {
+    const digitsOnly = cleaned.replace(/\D/g, "").slice(0, maxDigits);
+    if (!cleaned.includes(".")) return digitsOnly;
+    const [integerPart, decimalPart = ""] = cleaned.split(".");
+    const integerDigits = integerPart.replace(/\D/g, "");
+    const integerLength = Math.min(integerDigits.length, digitsOnly.length);
+    const normalizedInteger = digitsOnly.slice(0, integerLength);
+    const normalizedDecimal = digitsOnly.slice(integerLength);
+    cleaned =
+      decimalPart.length > 0 || cleaned.endsWith(".")
+        ? `${normalizedInteger}.${normalizedDecimal}`
+        : normalizedInteger;
+  }
+
+  return cleaned;
+}
+
+const MATERIAL_NAME_MAX_LENGTH = 100;
+const MATERIAL_DESCRIPTION_MAX_LENGTH = 100;
+const PURCHASE_ORDER_NAME_MAX_LENGTH = 100;
+const PURCHASE_ORDER_NUMBER_MAX_DIGITS = 20;
+const MATERIAL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9' -]*[A-Za-z0-9]$|^[A-Za-z0-9]$/;
+
+function sanitizeMaterialNameInput(value: string) {
+  return value.replace(/[^A-Za-z0-9' -]/g, "").slice(0, MATERIAL_NAME_MAX_LENGTH);
+}
+
+function sanitizeShortTextInput(value: string, maxLength: number) {
+  return value.slice(0, maxLength);
+}
+
+function blockInvalidNumberKeys(
+  event: KeyboardEvent<HTMLInputElement>,
+  { allowDecimal = true }: { allowDecimal?: boolean } = {},
+) {
+  if (
+    event.key === "-" ||
+    event.key === "+" ||
+    event.key === "e" ||
+    event.key === "E" ||
+    (!allowDecimal && event.key === ".")
+  ) {
+    event.preventDefault();
+  }
+}
+
 function StyledInput({
   type,
   value,
   onChange,
   placeholder,
+  min,
+  step,
+  maxLength,
 }: {
   type: string;
   value: string;
   onChange: (v: string) => void;
   placeholder: string;
+  min?: number | string;
+  step?: number | string;
+  maxLength?: number;
 }) {
+  const isNumber = type === "number";
+  const allowDecimal = !(step === 1 || step === "1");
   return (
     <input
       type={type}
+      min={min}
+      step={step}
+      maxLength={maxLength}
+      inputMode={isNumber ? (allowDecimal ? "decimal" : "numeric") : undefined}
       value={value}
       placeholder={placeholder}
-      onChange={(e) => onChange(e.target.value)}
+      onChange={(e) =>
+        onChange(
+          isNumber
+            ? sanitizeNumberInput(e.target.value, { allowDecimal })
+            : e.target.value,
+        )
+      }
+      onKeyDown={(e) => {
+        if (isNumber) {
+          blockInvalidNumberKeys(e, { allowDecimal });
+        }
+      }}
       className={inputCls}
     />
   );
@@ -2354,6 +2445,10 @@ function ReceivePOModal({
                           min="0"
                           step="1"
                           value={currentShelfLife.shelfLifeDays}
+                          inputMode="numeric"
+                          onKeyDown={(e) =>
+                            blockInvalidNumberKeys(e, { allowDecimal: false })
+                          }
                           onChange={(e) =>
                             setItemShelfLife((prev) => ({
                               ...prev,
@@ -2362,7 +2457,10 @@ function ReceivePOModal({
                                   shelfLifeDays: "",
                                   shelfLifeHours: "",
                                 }),
-                                shelfLifeDays: e.target.value,
+                                shelfLifeDays: sanitizeNumberInput(
+                                  e.target.value,
+                                  { allowDecimal: false },
+                                ),
                               },
                             }))
                           }
@@ -2379,6 +2477,10 @@ function ReceivePOModal({
                           min="0"
                           step="1"
                           value={currentShelfLife.shelfLifeHours}
+                          inputMode="numeric"
+                          onKeyDown={(e) =>
+                            blockInvalidNumberKeys(e, { allowDecimal: false })
+                          }
                           onChange={(e) =>
                             setItemShelfLife((prev) => ({
                               ...prev,
@@ -2387,7 +2489,10 @@ function ReceivePOModal({
                                   shelfLifeDays: "",
                                   shelfLifeHours: "",
                                 }),
-                                shelfLifeHours: e.target.value,
+                                shelfLifeHours: sanitizeNumberInput(
+                                  e.target.value,
+                                  { allowDecimal: false },
+                                ),
                               },
                             }))
                           }
@@ -2948,6 +3053,17 @@ function CreatePOModal({
       onShowToast("Please fill in all required fields.", "error");
       return;
     }
+    const invalidNameItem = items.find((item) => {
+      const trimmedName = String(item.name ?? "").trim();
+      return !trimmedName || trimmedName.length > PURCHASE_ORDER_NAME_MAX_LENGTH;
+    });
+    if (invalidNameItem) {
+      onShowToast(
+        "Purchase order item name must be between 1 and 100 characters.",
+        "error",
+      );
+      return;
+    }
     const unmatched = items
       .map((i) => i.name.trim())
       .filter(
@@ -2959,6 +3075,47 @@ function CreatePOModal({
     if (unmatched.length > 0) {
       onShowToast(
         `These items don't match any product in inventory: ${unmatched.join(", ")}.`,
+        "error",
+      );
+      return;
+    }
+    const invalidQuantityItem = items.find((item) => {
+      const digitsOnly = String(item.quantity ?? "").replace(/\D/g, "");
+      const quantity = toNumber(item.quantity, Number.NaN);
+      return (
+        digitsOnly.length === 0 ||
+        digitsOnly.length > PURCHASE_ORDER_NUMBER_MAX_DIGITS ||
+        !Number.isFinite(quantity) ||
+        quantity <= 0
+      );
+    });
+    if (invalidQuantityItem) {
+      onShowToast(
+        "Purchase order quantity must be 1 or higher, with up to 20 digits.",
+        "error",
+      );
+      return;
+    }
+    const invalidUnitCostItem = items.find((item) => {
+      const digitsOnly = String(item.unitCost ?? "").replace(/\D/g, "");
+      const unitCost = toNumber(item.unitCost, Number.NaN);
+      return (
+        digitsOnly.length > PURCHASE_ORDER_NUMBER_MAX_DIGITS ||
+        !Number.isFinite(unitCost) ||
+        unitCost < 0
+      );
+    });
+    if (invalidUnitCostItem) {
+      onShowToast(
+        "Purchase order unit cost must be 0 or higher, with up to 20 digits.",
+        "error",
+      );
+      return;
+    }
+    const missingUnitItem = items.find((item) => !String(item.unit ?? "").trim());
+    if (missingUnitItem) {
+      onShowToast(
+        "Purchase order unit must come from a selected inventory material.",
         "error",
       );
       return;
@@ -2977,6 +3134,7 @@ function CreatePOModal({
           items: items.map((item, idx) => ({
             ...item,
             id: idx + 1,
+            name: item.name.trim(),
             quantity: toNumber(item.quantity),
             unitCost: toNumber(item.unitCost),
           })),
@@ -3173,7 +3331,14 @@ function CreatePOModal({
                         <input
                           value={item.name}
                           onChange={(e) => {
-                            updateItem(idx, "name", e.target.value);
+                            updateItem(
+                              idx,
+                              "name",
+                              sanitizeShortTextInput(
+                                e.target.value,
+                                PURCHASE_ORDER_NAME_MAX_LENGTH,
+                              ),
+                            );
                             setActiveItemSuggestionIndex(idx);
                           }}
                           onFocus={() => setActiveItemSuggestionIndex(idx)}
@@ -3184,6 +3349,7 @@ function CreatePOModal({
                               );
                             }, 150);
                           }}
+                          maxLength={PURCHASE_ORDER_NAME_MAX_LENGTH}
                           placeholder="Item name"
                           className="w-full min-w-0 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200 placeholder-gray-300"
                         />
@@ -3214,7 +3380,7 @@ function CreatePOModal({
                       </div>
                     </div>
                     {[
-                      ["Unit", "unit", "kg / pcs"],
+                      ["Unit", "unit", "Auto from material"],
                       ["Qty", "quantity", "0"],
                       ["Unit Cost", "unitCost", `${PESO}0`],
                     ].map(([lbl, field, ph]) => (
@@ -3225,15 +3391,49 @@ function CreatePOModal({
                         <input
                           type={field === "unit" ? "text" : "number"}
                           value={(item as any)[field] || ""}
-                          onChange={(e) =>
+                          onChange={(e) => {
+                            if (field === "unit") return;
                             updateItem(
                               idx,
                               field as keyof Omit<POItem, "id">,
-                              e.target.value,
-                            )
+                              sanitizeNumberInput(e.target.value, {
+                                allowDecimal: field === "unitCost",
+                                maxDigits: PURCHASE_ORDER_NUMBER_MAX_DIGITS,
+                              }),
+                            );
+                          }}
+                          onKeyDown={(e) => {
+                            if (field !== "unit") {
+                              blockInvalidNumberKeys(e, {
+                                allowDecimal: field === "unitCost",
+                              });
+                            }
+                          }}
+                          inputMode={
+                            field === "unit"
+                              ? undefined
+                              : field === "unitCost"
+                                ? "decimal"
+                                : "numeric"
                           }
+                          min={
+                            field === "unitCost"
+                              ? 0
+                              : field === "quantity"
+                                ? 1
+                                : undefined
+                          }
+                          step={
+                            field === "unit"
+                              ? undefined
+                              : field === "unitCost"
+                                ? "0.01"
+                                : "1"
+                          }
+                          readOnly={field === "unit"}
+                          disabled={field === "unit"}
                           placeholder={ph}
-                          className="w-full min-w-0 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200 placeholder-gray-300"
+                          className={`w-full min-w-0 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-200 placeholder-gray-300 ${field === "unit" ? "bg-slate-100 text-slate-500 cursor-not-allowed" : ""}`}
                         />
                       </div>
                     ))}
@@ -5787,6 +5987,7 @@ export default function StockManager() {
 
   async function addRawMaterial() {
     const name = rawMaterialForm.name.trim();
+    const description = rawMaterialForm.description.trim();
     const price = Number(rawMaterialForm.price || 0);
     const customLowStockThreshold =
       rawMaterialForm.lowStockThreshold.trim() === ""
@@ -5800,11 +6001,33 @@ export default function StockManager() {
       showToast("Please enter a raw material name.", "error");
       return;
     }
+    if (name.length < 2 || name.length > MATERIAL_NAME_MAX_LENGTH) {
+      showToast(
+        "Material name must be between 2 and 100 characters.",
+        "error",
+      );
+      return;
+    }
+    if (!MATERIAL_NAME_PATTERN.test(name)) {
+      showToast(
+        "Material name may only use letters, numbers, spaces, apostrophes, and hyphens.",
+        "error",
+      );
+      return;
+    }
+    if (description.length > MATERIAL_DESCRIPTION_MAX_LENGTH) {
+      showToast("Description must not exceed 100 characters.", "error");
+      return;
+    }
     const existing = products.find(
       (p) => p.product_name.trim().toLowerCase() === name.toLowerCase(),
     );
     if (existing) {
       showToast("This material already exists in inventory.", "error");
+      return;
+    }
+    if (!Number.isFinite(price) || price < 0) {
+      showToast("Price cannot be negative.", "error");
       return;
     }
     if (!rawMaterialForm.useDefaultThresholds) {
@@ -5842,7 +6065,7 @@ export default function StockManager() {
         price: Number.isFinite(price) ? price : 0,
         quantity: 0,
         category: rawMaterialForm.category.trim(),
-        description: rawMaterialForm.description.trim() || undefined,
+        description: description || undefined,
         raw_material: isStrictRawMaterialCategory(rawMaterialForm.category),
         item_type: "stock_item",
         use_default_thresholds: rawMaterialForm.useDefaultThresholds,
@@ -6676,6 +6899,8 @@ export default function StockManager() {
                               <div className="relative">
                                 <StyledInput
                                   type="number"
+                                  min={1}
+                                  step="0.01"
                                   value={adjQty}
                                   onChange={handleSpoilageInputChange}
                                   placeholder="0"
@@ -7017,12 +7242,25 @@ export default function StockManager() {
                               <input
                                 type="number"
                                 value={selectedYear}
-                                onChange={(e) =>
-                                  setSelectedYear(Number(e.target.value))
-                                }
+                                onChange={(e) => {
+                                  const nextValue = sanitizeNumberInput(
+                                    e.target.value,
+                                    { allowDecimal: false },
+                                  );
+                                  if (nextValue) {
+                                    setSelectedYear(Number(nextValue));
+                                  }
+                                }}
                                 className={inputCls + " !w-24"}
                                 min={2020}
                                 max={2099}
+                                step="1"
+                                inputMode="numeric"
+                                onKeyDown={(e) =>
+                                  blockInvalidNumberKeys(e, {
+                                    allowDecimal: false,
+                                  })
+                                }
                               />
                             </div>
                           )}
@@ -7447,6 +7685,8 @@ export default function StockManager() {
                                       </StyledSelect>
                                       <StyledInput
                                         type="number"
+                                        min={1}
+                                        step="1"
                                         value={row.qty}
                                         onChange={(value) => {
                                           setActiveWithdrawalRowId(row.id);
@@ -9417,9 +9657,13 @@ export default function StockManager() {
                         type="text"
                         value={rawMaterialForm.name}
                         onChange={(v) =>
-                          setRawMaterialForm((p) => ({ ...p, name: v }))
+                          setRawMaterialForm((p) => ({
+                            ...p,
+                            name: sanitizeMaterialNameInput(v),
+                          }))
                         }
                         placeholder="e.g. Whole Chicken"
+                        maxLength={MATERIAL_NAME_MAX_LENGTH}
                       />
                     </FormField>
                   </div>
@@ -9454,6 +9698,8 @@ export default function StockManager() {
                   <FormField label="Price (optional)">
                     <StyledInput
                       type="number"
+                      min={0}
+                      step="0.01"
                       value={rawMaterialForm.price}
                       onChange={(v) =>
                         setRawMaterialForm((p) => ({ ...p, price: v }))
@@ -9467,9 +9713,16 @@ export default function StockManager() {
                         type="text"
                         value={rawMaterialForm.description}
                         onChange={(v) =>
-                          setRawMaterialForm((p) => ({ ...p, description: v }))
+                          setRawMaterialForm((p) => ({
+                            ...p,
+                            description: sanitizeShortTextInput(
+                              v,
+                              MATERIAL_DESCRIPTION_MAX_LENGTH,
+                            ),
+                          }))
                         }
                         placeholder="Optional notes"
+                        maxLength={MATERIAL_DESCRIPTION_MAX_LENGTH}
                       />
                     </FormField>
                   </div>
@@ -9512,6 +9765,8 @@ export default function StockManager() {
                         <FormField label="Custom low stock threshold">
                           <StyledInput
                             type="number"
+                            min={0}
+                            step="0.01"
                             value={rawMaterialForm.lowStockThreshold}
                             onChange={(v) =>
                               setRawMaterialForm((p) => ({
@@ -9525,6 +9780,8 @@ export default function StockManager() {
                         <FormField label="Custom critical stock threshold">
                           <StyledInput
                             type="number"
+                            min={0}
+                            step="0.01"
                             value={rawMaterialForm.criticalStockThreshold}
                             onChange={(v) =>
                               setRawMaterialForm((p) => ({
@@ -9659,21 +9916,29 @@ export default function StockManager() {
                             <label className="text-xs text-slate-500 whitespace-nowrap w-20 flex-shrink-0">
                               Return qty:
                             </label>
-                            <input
-                              type="number"
-                              value={item.returnQty}
-                              placeholder="0"
-                              min={0}
-                              max={item.withdrawn}
-                              onChange={(e) =>
-                                setReconcileItems((prev) =>
-                                  prev.map((r, j) =>
-                                    j === i
-                                      ? { ...r, returnQty: e.target.value }
-                                      : r,
-                                  ),
-                                )
-                              }
+                              <input
+                                type="number"
+                                value={item.returnQty}
+                                placeholder="0"
+                                min={0}
+                                max={item.withdrawn}
+                                step="0.01"
+                                inputMode="decimal"
+                                onKeyDown={(e) => blockInvalidNumberKeys(e)}
+                                onChange={(e) =>
+                                  setReconcileItems((prev) =>
+                                    prev.map((r, j) =>
+                                      j === i
+                                        ? {
+                                            ...r,
+                                            returnQty: sanitizeNumberInput(
+                                              e.target.value,
+                                            ),
+                                          }
+                                        : r,
+                                    ),
+                                  )
+                                }
                               className="w-28 border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-slate-300"
                             />
                             <span className="text-xs text-slate-400">

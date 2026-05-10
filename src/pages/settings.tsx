@@ -617,14 +617,18 @@ function StyledInput({
   type = "text",
   placeholder = "",
   step,
+  min,
 }: {
   value: string;
   onChange: (v: string) => void;
   type?: string;
   placeholder?: string;
   step?: number | string;
+  min?: number | string;
 }) {
   const [focused, setFocused] = useState(false);
+  const isNumber = type === "number";
+  const allowDecimal = !(step === 1 || step === "1");
   return (
     <input
       style={{
@@ -637,9 +641,40 @@ function StyledInput({
       }}
       type={type}
       step={step}
+      min={min}
+      inputMode={isNumber ? (allowDecimal ? "decimal" : "numeric") : undefined}
       value={value}
       placeholder={placeholder}
-      onChange={(e) => onChange(e.target.value)}
+      onChange={(e) => {
+        if (!isNumber) {
+          onChange(e.target.value);
+          return;
+        }
+        let cleaned = e.target.value.replace(/[^\d.]/g, "");
+        if (!allowDecimal) {
+          cleaned = cleaned.replace(/\./g, "");
+        } else {
+          const firstDot = cleaned.indexOf(".");
+          if (firstDot >= 0) {
+            cleaned =
+              cleaned.slice(0, firstDot + 1) +
+              cleaned.slice(firstDot + 1).replace(/\./g, "");
+          }
+        }
+        onChange(cleaned);
+      }}
+      onKeyDown={(e) => {
+        if (
+          isNumber &&
+          (e.key === "-" ||
+            e.key === "+" ||
+            e.key === "e" ||
+            e.key === "E" ||
+            (!allowDecimal && e.key === "."))
+        ) {
+          e.preventDefault();
+        }
+      }}
       onFocus={() => setFocused(true)}
       onBlur={() => setFocused(false)}
     />

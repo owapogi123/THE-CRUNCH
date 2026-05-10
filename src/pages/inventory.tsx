@@ -160,10 +160,50 @@ const inputClass =
 interface FormInputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   label: string;
 }
-function FormInput({ label, ...rest }: FormInputProps) {
+function FormInput({ label, type, onChange, step, ...rest }: FormInputProps) {
+  const isNumber = type === "number";
+  const allowDecimal = !(step === 1 || step === "1");
   return (
     <FormGroup label={label}>
-      <input className={inputClass} {...rest} />
+      <input
+        className={inputClass}
+        type={type}
+        step={step}
+        inputMode={isNumber ? (allowDecimal ? "decimal" : "numeric") : undefined}
+        onChange={(event) => {
+          if (!isNumber || !onChange) {
+            onChange?.(event);
+            return;
+          }
+          let cleaned = event.target.value.replace(/[^\d.]/g, "");
+          if (!allowDecimal) {
+            cleaned = cleaned.replace(/\./g, "");
+          } else {
+            const firstDot = cleaned.indexOf(".");
+            if (firstDot >= 0) {
+              cleaned =
+                cleaned.slice(0, firstDot + 1) +
+                cleaned.slice(firstDot + 1).replace(/\./g, "");
+            }
+          }
+          event.target.value = cleaned;
+          onChange(event);
+        }}
+        onKeyDown={(event) => {
+          if (
+            isNumber &&
+            (event.key === "-" ||
+              event.key === "+" ||
+              event.key === "e" ||
+              event.key === "E" ||
+              (!allowDecimal && event.key === "."))
+          ) {
+            event.preventDefault();
+          }
+          rest.onKeyDown?.(event);
+        }}
+        {...rest}
+      />
     </FormGroup>
   );
 }
@@ -1332,6 +1372,22 @@ function MenuAdminTab() {
       );
       return;
     }
+    const parsedPrice = Number(fPrice);
+    if (!Number.isFinite(parsedPrice) || parsedPrice < 1) {
+      notify(addNotification, "Price must be at least \u20B11.", "warning");
+      return;
+    }
+    if (fIsPromotional && fPromoPrice.trim()) {
+      const parsedPromoPrice = Number(fPromoPrice);
+      if (!Number.isFinite(parsedPromoPrice) || parsedPromoPrice < 1) {
+        notify(
+          addNotification,
+          "Promo price must be at least \u20B11.",
+          "warning",
+        );
+        return;
+      }
+    }
 
     try {
       setSaving(true);
@@ -1344,7 +1400,7 @@ function MenuAdminTab() {
         name: fName.trim(),
         category: fCat.trim(),
         item_type: "menu_item",
-        price: parseFloat(fPrice),
+        price: parsedPrice,
         unit: UNIT_OPTIONS[0],
         quantity: 0,
         description: fDesc.trim() || null,
@@ -1354,7 +1410,7 @@ function MenuAdminTab() {
         is_promotional: fIsPromotional,
         promo_price:
           fIsPromotional && fPromoPrice.trim()
-            ? parseFloat(fPromoPrice)
+            ? Number(fPromoPrice)
             : null,
         promo_label: fIsPromotional ? fPromoLabel.trim() || null : null,
         ingredients,
@@ -1389,6 +1445,27 @@ function MenuAdminTab() {
       );
       return;
     }
+    const parsedPrice = Number(ePrice);
+    if (!Number.isFinite(parsedPrice) || parsedPrice < 1) {
+      notify(addNotification, "Price must be at least \u20B11.", "warning");
+      return;
+    }
+    const parsedStock = Number(eStock || 0);
+    if (!Number.isFinite(parsedStock) || parsedStock < 0) {
+      notify(addNotification, "Stock quantity cannot be negative.", "warning");
+      return;
+    }
+    if (eIsPromotional && ePromoPrice.trim()) {
+      const parsedPromoPrice = Number(ePromoPrice);
+      if (!Number.isFinite(parsedPromoPrice) || parsedPromoPrice < 1) {
+        notify(
+          addNotification,
+          "Promo price must be at least \u20B11.",
+          "warning",
+        );
+        return;
+      }
+    }
 
     try {
       setSaving(true);
@@ -1403,16 +1480,16 @@ function MenuAdminTab() {
         name: eName.trim(),
         category: eCat.trim(),
         item_type: "menu_item",
-        price: parseFloat(ePrice),
+        price: parsedPrice,
         unit: editProduct.unit || UNIT_OPTIONS[0],
-        quantity: parseFloat(eStock) || 0,
+        quantity: parsedStock,
         description: eDesc.trim() || null,
         ...toOverridePayload(eOverrideMode),
         override_mode: eOverrideMode,
         is_promotional: eIsPromotional,
         promo_price:
           eIsPromotional && ePromoPrice.trim()
-            ? parseFloat(ePromoPrice)
+            ? Number(ePromoPrice)
             : null,
         promo_label: eIsPromotional ? ePromoLabel.trim() || null : null,
         ingredients: buildIngredientPayload(eIngredients),
@@ -1772,6 +1849,8 @@ function MenuAdminTab() {
           <FormInput
             label="Price (P) *"
             type="number"
+            min={1}
+            step="0.01"
             placeholder="0.00"
             value={fPrice}
             onChange={(e) => setFPrice(e.target.value)}
@@ -1795,6 +1874,8 @@ function MenuAdminTab() {
               <FormInput
                 label="Promo Price"
                 type="number"
+                min={1}
+                step="0.01"
                 placeholder="0.00"
                 value={fPromoPrice}
                 onChange={(e) => setFPromoPrice(e.target.value)}
@@ -1903,6 +1984,8 @@ function MenuAdminTab() {
             <FormInput
               label="Price (P) *"
               type="number"
+              min={1}
+              step="0.01"
               placeholder="0.00"
               value={ePrice}
               onChange={(e) => setEPrice(e.target.value)}
@@ -1910,6 +1993,8 @@ function MenuAdminTab() {
             <FormInput
               label="Stock Qty"
               type="number"
+              min={0}
+              step="0.01"
               placeholder="0"
               value={eStock}
               onChange={(e) => setEStock(e.target.value)}
@@ -1937,6 +2022,8 @@ function MenuAdminTab() {
               <FormInput
                 label="Promo Price"
                 type="number"
+                min={1}
+                step="0.01"
                 placeholder="0.00"
                 value={ePromoPrice}
                 onChange={(e) => setEPromoPrice(e.target.value)}

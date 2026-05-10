@@ -37,6 +37,7 @@ interface MenuSection { id:string; title:string; subtext?:string; pills?:{label:
 interface Promo { id:string; title:string; subtitle?:string; description:string; img:string; badge?:string; badgeColor?:string; eventDate?:string; validUntil?:string; tag?:string; highlight?:boolean; discount?:string }
 interface FeedbackPayload { product_id:number; customer_user_id:number|null; rating:number; comment:string }
 interface FeedbackProductOption { id:number; name:string }
+const MAX_FEEDBACK_LENGTH = 200
 
 const normalizeProductCategory = (value: unknown): Category => {
   const raw = String(value ?? '').trim().toLowerCase()
@@ -484,7 +485,8 @@ function FeedbackModal({ onClose, productOptions }: { onClose:()=>void; productO
 
   const rawId = typeof window !== 'undefined' ? window.localStorage.getItem('userId') : null
   const userId = rawId && Number.isInteger(+rawId) && +rawId > 0 ? +rawId : null
-  const canSubmit = productId !== null && rating > 0 && message.trim().length > 0
+  const trimmedMessage = message.trim()
+  const canSubmit = productId !== null && rating > 0 && trimmedMessage.length > 0 && trimmedMessage.length <= MAX_FEEDBACK_LENGTH
 
   const handleSubmit = async () => {
     if (!canSubmit || productId === null) return
@@ -494,11 +496,11 @@ function FeedbackModal({ onClose, productOptions }: { onClose:()=>void; productO
         product_id: productId,
         customer_user_id: userId,
         rating,
-        comment: message.trim(),
+        comment: trimmedMessage,
       } satisfies FeedbackPayload)
       setStatus('success')
-    } catch(e) {
-      setErrMsg('Failed to submit feedback. Please try again.')
+    } catch(e: any) {
+      setErrMsg(e?.message || 'Failed to submit feedback. Please try again.')
       setStatus('error')
     }
   }
@@ -565,8 +567,9 @@ function FeedbackModal({ onClose, productOptions }: { onClose:()=>void; productO
               <div>
                 <p style={{ fontFamily:'var(--sans)', fontSize:10, fontWeight:600, color:'var(--text-dim)', marginBottom:8, letterSpacing:'0.12em', textTransform:'uppercase' }}>Your Feedback</p>
                 <textarea value={message} onChange={e => setMessage(e.target.value)} placeholder="Tell us about your experience…" rows={4}
+                  maxLength={MAX_FEEDBACK_LENGTH}
                   onFocus={() => setFocused('msg')} onBlur={() => setFocused(null)} style={inp('msg')} />
-                <p style={{ fontFamily:'var(--sans)', fontSize:10, color:'var(--text-dim)', marginTop:3, textAlign:'right' }}>{message.length}/500</p>
+                <p style={{ fontFamily:'var(--sans)', fontSize:10, color:'var(--text-dim)', marginTop:3, textAlign:'right' }}>{message.length}/{MAX_FEEDBACK_LENGTH}</p>
               </div>
 
               <AnimatePresence>
@@ -601,9 +604,9 @@ function FeedbackButton() {
   const [products, setProducts] = useState<FeedbackProductOption[]>([])
 
   useEffect(() => {
-    api.get<unknown[]>('/products').then((data: unknown[]) => {
+    api.get<unknown[]>('/products?item_type=menu_item').then((data: unknown[]) => {
       if (!Array.isArray(data)) return
-      setProducts(data.filter((d: any) => Number.isInteger(d.id) && typeof d.name === 'string').map((d: any) => ({ id:+d.id, name:String(d.name).trim() })))
+      setProducts(data.filter((d: any) => Number.isInteger(d.id) && typeof d.name === 'string' && String(d.item_type ?? 'menu_item').trim().toLowerCase() === 'menu_item').map((d: any) => ({ id:+d.id, name:String(d.name).trim() })))
     }).catch(() => {})
   }, [])
 
