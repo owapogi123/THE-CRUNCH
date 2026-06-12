@@ -8,24 +8,17 @@ import {
 import { Sidebar } from "@/components/Sidebar";
 import { useNotifications } from "@/lib/NotificationContext";
 import { useAuth } from "../../context/authcontext";
-import { api, kitchenApi, storageApi } from "./services/api";
+import { api } from "./services/api";
 import type {
-  Batch,
-  DashboardSummaryKey,
   InventoryCategoryMaster,
   InventoryUnitMaster,
-  KitchenBatch,
-  KitchenUsagePayload,
   Product,
   RawMaterialForm,
   ReconcileRow,
-  ReportData,
-  ReportLineItem,
   StockAlertSettings,
   StockStatus,
   StockStatusRecord,
   Tab,
-  WithdrawalFormRow,
   WithdrawalType,
 } from "./types/inventory";
 import { Btn } from "./components/Btn";
@@ -41,6 +34,8 @@ import { SectionCard } from "./components/SectionCard";
 import { StyledInput } from "./components/StyledInput";
 import { StyledSelect } from "./components/StyledSelect";
 import { SupplierProductsModal } from "./components/SupplierProductsModal";
+import { CookReportPanel } from "./components/reports/CookReportPanel";
+import { StockMovementReportPanel } from "./components/reports/StockMovementReportPanel";
 import { PODetailDrawer } from "./components/purchase-orders/PODetailDrawer";
 import { CreatePOModal } from "./components/purchase-orders/CreatePOModal";
 import { POPrintModal } from "./components/purchase-orders/POPrintModal";
@@ -58,20 +53,16 @@ import { PurchaseOrdersTab } from "./components/tabs/PurchaseOrdersTab";
 import { SuppliersTab } from "./components/tabs/SuppliersTab";
 import { WithdrawalTab } from "./components/tabs/WithdrawalTab";
 import { DashboardTab } from "./components/tabs/DashboardTab";
+import { useDashboard } from "./hooks/useDashboard";
+import { useKitchenBatches } from "./hooks/useKitchenBatches";
 import { usePurchaseOrders } from "./hooks/usePurchaseOrders";
+import { useStockReports } from "./hooks/useStockReports";
 import { useSuppliers } from "./hooks/useSuppliers";
+import { useWithdrawals } from "./hooks/useWithdrawals";
 import {
-  isDateInRange,
-} from "./utils/dateUtils";
-import {
-  fmtDate,
   fmtInt,
   toNumber,
 } from "./utils/formatters";
-import {
-  blockInvalidNumberKeys,
-  sanitizeNumberInput,
-} from "./utils/inputUtils";
 import {
   DEFAULT_STOCK_ALERT_SETTINGS,
   getAlertSeverity,
@@ -80,20 +71,10 @@ import {
   getShelfLifeStatus,
   getProductUiStatus,
   getStockStatus,
-  isCountedInTotalProducts,
-  isMainStockDashboardCategory,
   isStrictRawMaterialCategory,
   normalizeInventoryCategoryName,
   normalizeStockAlertSettings,
 } from "./utils/stockUtils";
-
-function createWithdrawalRow(): WithdrawalFormRow {
-  return {
-    id: crypto.randomUUID(),
-    productId: null,
-    qty: "",
-  };
-}
 
 const PESO = "\u20B1";
 
@@ -200,19 +181,6 @@ const getCategoryStyle = (cat: string) => {
   if (c.includes("sauce")) return "bg-rose-50 text-rose-500 border-rose-100";
   return "bg-slate-50 text-slate-500 border-slate-100";
 };
-function normalizeReportData(data: ReportData): ReportData {
-  const deduped = new Map<number, ReportLineItem>();
-  for (const item of data.items) deduped.set(item.product_id, item);
-  const items = Array.from(deduped.values());
-  return {
-    ...data,
-    items,
-    totalReceived: items.reduce((s, i) => s + toNumber(i.received), 0),
-    totalWithdrawn: items.reduce((s, i) => s + toNumber(i.withdrawn), 0),
-    totalReturned: items.reduce((s, i) => s + toNumber(i.returned), 0),
-    totalWasted: items.reduce((s, i) => s + toNumber(i.wasted), 0),
-  };
-}
 const MATERIAL_NAME_MAX_LENGTH = 100;
 const MATERIAL_DESCRIPTION_MAX_LENGTH = 100;
 const MATERIAL_NAME_PATTERN =
@@ -238,13 +206,6 @@ const TrashIcon = () => (
 export default function StockManager() {
   const { user } = useAuth();
   const [tab, setTab] = useState<Tab>("dashboard");
-  const [dashboardSubTab, setDashboardSubTab] = useState<
-    | "main-stock"
-    | "last-updates"
-    | "record-spoilage"
-    | "stock-movement"
-    | "cook-report"
-  >("main-stock");
   type WithdrawalSubTab =
     | "new-record"
     | "kitchen-queue"
@@ -255,9 +216,6 @@ export default function StockManager() {
     useState<WithdrawalSubTab>("new-record");
   const [products, setProducts] = useState<Product[]>([]);
   const [withdrawals, setWithdrawals] = useState<StockStatusRecord[]>([]);
-  const [activeBatches, setActiveBatches] = useState<Batch[]>([]);
-  const [yesterdayReturns, setYesterdayReturns] = useState<Batch[]>([]);
-  const [kitchenBatches, setKitchenBatches] = useState<KitchenBatch[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -265,18 +223,8 @@ export default function StockManager() {
   const [disposingProductId, setDisposingProductId] = useState<number | null>(
     null,
   );
-  const [dashboardSummary, setDashboardSummary] =
-    useState<DashboardSummaryKey | null>(null);
-  const [withdrawalRows, setWithdrawalRows] = useState<WithdrawalFormRow[]>([
-    createWithdrawalRow(),
-  ]);
-  const [activeWithdrawalRowId, setActiveWithdrawalRowId] = useState<string>(
-    () => withdrawalRows[0].id,
-  );
-  const [wdType, setWdType] = useState<WithdrawalType>("initial");
   const [adjProductId, setAdjProductId] = useState<number | null>(null);
   const [adjQty, setAdjQty] = useState("");
-  const [dashboardSearch, setDashboardSearch] = useState("");
   const [showRawMaterialForm, setShowRawMaterialForm] = useState(false);
   const [rawMaterialForm, setRawMaterialForm] =
     useState<RawMaterialForm>(BLANK_RAW_MATERIAL);
@@ -290,28 +238,9 @@ export default function StockManager() {
     useState<StockAlertSettings>(DEFAULT_STOCK_ALERT_SETTINGS);
   const [showReconcile, setShowReconcile] = useState(false);
   const [reconcileItems, setReconcileItems] = useState<ReconcileRow[]>([]);
-  const [cookReport, setCookReport] = useState<KitchenUsagePayload | null>(
-    null,
-  );
-  const [cookReportOpen, setCookReportOpen] = useState(false);
-  const [cookReportFinalizing, setCookReportFinalizing] = useState(false);
-  const [cookReportLoading, setCookReportLoading] = useState(false);
-  const [reportPeriod, setReportPeriod] = useState<"weekly" | "monthly">(
-    "weekly",
-  );
-  const [reportData, setReportData] = useState<ReportData | null>(null);
-  const [reportLoading, setReportLoading] = useState(false);
-  const [selectedWeekStart, setSelectedWeekStart] = useState(
-    () => new Date().toISOString().split("T")[0],
-  );
-  const [selectedMonth, setSelectedMonth] = useState(
-    () => new Date().getMonth() + 1,
-  );
-  const [selectedYear, setSelectedYear] = useState(() =>
-    new Date().getFullYear(),
-  );
   const [showDashboardBackToTop, setShowDashboardBackToTop] = useState(false);
   const dashboardTopRef = useRef<HTMLDivElement | null>(null);
+  const refreshInventoryRef = useRef<() => Promise<void>>(async () => {});
   const currentStaffDisplayName = useMemo(() => {
     const authUser = user as
       | (typeof user & { full_name?: string | null })
@@ -328,6 +257,10 @@ export default function StockManager() {
     },
     [addNotification],
   );
+  const refreshInventory = useCallback(
+    () => refreshInventoryRef.current(),
+    [],
+  );
   const supplier = useSuppliers({
     products,
     tab,
@@ -335,84 +268,14 @@ export default function StockManager() {
     setSubmitting,
     isMenuFoodProduct,
   });
-
-  const normalizeKitchenUsagePayload = useCallback(
-    (payload: KitchenUsagePayload): KitchenUsagePayload => ({
-      report: {
-        ...payload.report,
-        report_id: toNumber(payload.report.report_id),
-        prepared_by:
-          payload.report.prepared_by == null
-            ? null
-            : toNumber(payload.report.prepared_by),
-        finalized_by:
-          payload.report.finalized_by == null
-            ? null
-            : toNumber(payload.report.finalized_by),
-      },
-      items: Array.isArray(payload.items)
-        ? payload.items.map((item) => ({
-            ...item,
-            usage_item_id:
-              (item as { usage_item_id?: unknown }).usage_item_id == null
-                ? undefined
-                : toNumber((item as { usage_item_id?: unknown }).usage_item_id),
-            product_id:
-              item.product_id == null ? null : toNumber(item.product_id),
-            withdrawn_qty: toNumber(item.withdrawn_qty),
-            used_qty: toNumber(item.used_qty),
-            spoilage_qty: toNumber(item.spoilage_qty),
-            returned_qty: toNumber(
-              (item as { returned_qty?: unknown }).returned_qty,
-            ),
-            note: typeof item.note === "string" ? item.note : "",
-          }))
-        : [],
-    }),
-    [],
-  );
-
-  const fetchReport = useCallback(async () => {
-    setReportLoading(true);
-    try {
-      const data =
-        reportPeriod === "weekly"
-          ? await api.reports.getWeekly(selectedWeekStart)
-          : await api.reports.getMonthly(selectedYear, selectedMonth);
-      setReportData(normalizeReportData(data));
-    } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : "Failed to load report.",
-        "error",
-      );
-    } finally {
-      setReportLoading(false);
-    }
-  }, [reportPeriod, selectedWeekStart, selectedMonth, selectedYear, showToast]);
-
-  const fetchCookReport = useCallback(
-    async (silent = false) => {
-      if (!silent) setCookReportLoading(true);
-      try {
-        const payload = await api.getDailyUsageReport();
-        const normalized = normalizeKitchenUsagePayload(payload);
-        setCookReport(normalized);
-        if (normalized.items.length > 0) {
-          setCookReportOpen(true);
-        }
-      } catch (err) {
-        if (!silent) {
-          showToast(
-            err instanceof Error ? err.message : "Failed to load cook report.",
-            "error",
-          );
-        }
-      } finally {
-        if (!silent) setCookReportLoading(false);
-      }
-    },
-    [normalizeKitchenUsagePayload, showToast],
-  );
+  const kitchen = useKitchenBatches({
+    products,
+    showToast,
+    setSubmitting,
+    refreshInventory,
+    isReconcilable,
+  });
+  const reports = useStockReports({ showToast });
 
   const scrollDashboardTo = useCallback((targetId: string) => {
     if (typeof document === "undefined") return;
@@ -471,13 +334,10 @@ export default function StockManager() {
       setInventoryUnits(unitList);
       setStockAlertSettings(nextStockAlertSettings);
 
-      const [batchesRes, returnsRes, kitchenRes, cookReportRes] =
-        await Promise.allSettled([
-          api.getActiveBatches(),
-          api.getYesterdayReturns(),
-          kitchenApi.getAll(),
-          api.getDailyUsageReport(),
-        ]);
+      const [, cookReportRes] = await Promise.allSettled([
+        kitchen.fetchKitchenBatchData(),
+        api.getDailyUsageReport(),
+      ]);
 
       const candidateProducts: Product[] = inv
         .map((p) => ({
@@ -576,62 +436,21 @@ export default function StockManager() {
           quantity: toNumber(r.quantity),
         })),
       );
-      setActiveBatches(
-        batchesRes.status === "fulfilled" ? batchesRes.value : [],
+      reports.applyCookReportPayload(
+        cookReportRes.status === "fulfilled" ? cookReportRes.value : null,
       );
-      setYesterdayReturns(
-        returnsRes.status === "fulfilled" ? returnsRes.value : [],
-      );
-      setKitchenBatches(
-        kitchenRes.status === "fulfilled" ? kitchenRes.value : [],
-      );
-      setCookReport(
-        cookReportRes.status === "fulfilled"
-          ? normalizeKitchenUsagePayload(cookReportRes.value)
-          : null,
-      );
-      if (
-        cookReportRes.status === "fulfilled" &&
-        cookReportRes.value.items.length > 0
-      ) {
-        setCookReportOpen(true);
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load data.");
     } finally {
       setIsRefreshing(false);
       setIsLoading(false);
     }
-  }, [normalizeKitchenUsagePayload, supplier.fetchSuppliers]);
-
-  const handleFinalizeCookReport = useCallback(async () => {
-    if (!cookReport?.report?.report_id) return;
-
-    setCookReportFinalizing(true);
-    try {
-      const rawUserId =
-        typeof window !== "undefined" ? localStorage.getItem("userId") : null;
-      const finalizedBy =
-        rawUserId && Number.isFinite(Number(rawUserId))
-          ? Number(rawUserId)
-          : null;
-      const payload = await api.finalizeKitchenUsage(
-        cookReport.report.report_id,
-        {
-          finalized_by: finalizedBy,
-        },
-      );
-      setCookReport(normalizeKitchenUsagePayload(payload));
-      showToast("Cook report finalized.", "success");
-    } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : "Failed to finalize cook report.",
-        "error",
-      );
-    } finally {
-      setCookReportFinalizing(false);
-    }
-  }, [cookReport, normalizeKitchenUsagePayload, showToast]);
+  }, [
+    kitchen.fetchKitchenBatchData,
+    reports.applyCookReportPayload,
+    supplier.fetchSuppliers,
+  ]);
+  refreshInventoryRef.current = fetchAll;
 
   useEffect(() => {
     fetchAll();
@@ -639,33 +458,15 @@ export default function StockManager() {
   useEffect(() => {
     if (tab !== "dashboard") return;
     const interval = window.setInterval(() => {
-      void fetchCookReport(true);
+      void reports.fetchCookReport(true);
     }, 10000);
     return () => window.clearInterval(interval);
-  }, [tab, fetchCookReport]);
-  useEffect(() => {
-    if (tab !== "dashboard") return;
-    setDashboardSubTab("main-stock");
-  }, [tab]);
+  }, [tab, reports.fetchCookReport]);
   useEffect(() => {
     if (products.length > 0) {
       if (adjProductId === null) setAdjProductId(products[0].product_id);
     }
   }, [products, adjProductId]);
-  useEffect(() => {
-    if (withdrawalRows.length === 0) {
-      const nextRow = createWithdrawalRow();
-      setWithdrawalRows([nextRow]);
-      setActiveWithdrawalRowId(nextRow.id);
-      return;
-    }
-    if (!withdrawalRows.some((row) => row.id === activeWithdrawalRowId)) {
-      setActiveWithdrawalRowId(withdrawalRows[0].id);
-    }
-  }, [withdrawalRows, activeWithdrawalRowId]);
-  useEffect(() => {
-    setReportData(null);
-  }, [reportPeriod]);
   useEffect(() => {
     if (tab !== "dashboard" && tab !== "withdrawal") {
       setShowDashboardBackToTop(false);
@@ -698,133 +499,33 @@ export default function StockManager() {
     showToast,
     addNotification,
   });
-  const outOfStockItems = useMemo(
-    () =>
-      products.filter(
-        (p) =>
-          !isMenuFoodProduct(p) &&
-          getAlertSeverity(p, stockAlertSettings) === "out",
-      ),
-    [products, stockAlertSettings],
-  );
-  const alertCriticalStock = useMemo(
-    () => criticalStock.filter((p) => toNumber(p.mainStock) > 0),
-    [criticalStock],
-  );
-  const attentionItems = useMemo(
-    () =>
-      products.filter(
-        (p) =>
-          !isMenuFoodProduct(p) &&
-          getAlertSeverity(p, stockAlertSettings) !== "normal",
-      ),
-    [products, stockAlertSettings],
-  );
   const mainStockProducts = useMemo(
     () => products.filter((p) => !isMenuFoodProduct(p)),
     [products],
   );
-  const activeWithdrawalRow = useMemo(
-    () =>
-      withdrawalRows.find((row) => row.id === activeWithdrawalRowId) ??
-      withdrawalRows[0] ??
-      null,
-    [withdrawalRows, activeWithdrawalRowId],
-  );
-  const activeWithdrawalProductId = activeWithdrawalRow?.productId ?? null;
-  const selectedKitchenBatches = useMemo(
-    () =>
-      !activeWithdrawalProductId
-        ? []
-        : kitchenBatches
-            .filter((b) => b.product_id === activeWithdrawalProductId)
-            .sort(
-              (a, b) =>
-                new Date(a.withdrawn_at).getTime() -
-                new Date(b.withdrawn_at).getTime(),
-            ),
-    [kitchenBatches, activeWithdrawalProductId],
-  );
-  const todayInitialExists = useMemo(
-    () => selectedKitchenBatches.some((b) => b.status === "active"),
-    [selectedKitchenBatches],
-  );
-  const kitchenRemaining = useMemo(
-    () =>
-      selectedKitchenBatches.reduce(
-        (sum, b) =>
-          sum + Math.max(0, b.withdrawn_qty - b.used_qty - b.returned_qty),
-        0,
-      ),
-    [selectedKitchenBatches],
-  );
-  const visibleKitchenBatches = useMemo(
-    () =>
-      kitchenBatches.filter(
-        (b) =>
-          Math.max(
-            0,
-            toNumber(b.withdrawn_qty) -
-              toNumber(b.used_qty) -
-              toNumber(b.returned_qty),
-          ) > 0,
-      ),
-    [kitchenBatches],
-  );
-  const mainStockProductIds = useMemo(
-    () =>
-      new Set(
-        products
-          .filter((product) => !isMenuFoodProduct(product))
-          .map((product) => product.product_id),
-      ),
-    [products],
-  );
-  const nonReturnableProductIds = useMemo(
-    () =>
-      new Set(
-        products
-          .filter((product) => !isReconcilable(product))
-          .map((product) => product.product_id),
-      ),
-    [products],
-  );
-  const visibleWithdrawalLogs = useMemo(
-    () =>
-      withdrawals.filter(
-        (entry) =>
-          mainStockProductIds.has(entry.product_id) &&
-          ["initial", "supplementary", "return"].includes(
-            String(entry.type).toLowerCase(),
-          ),
-      ),
-    [withdrawals, mainStockProductIds],
-  );
-  const dashboardFilteredProducts = useMemo(() => {
-    const q = dashboardSearch.trim().toLowerCase();
-    const base = products.filter(
-      (p) =>
-        !isMenuFoodProduct(p) &&
-        isMainStockDashboardCategory(
-          p.category,
-          inventoryCategoryDateTrackingLookup,
-        ),
-    );
-    const filtered = !q
-      ? base
-      : base.filter(
-          (p) =>
-            p.product_name.toLowerCase().includes(q) ||
-            p.category.toLowerCase().includes(q),
-        );
-    return [...filtered].sort((a, b) => {
-      const diff = toNumber(b.dailyWithdrawn) - toNumber(a.dailyWithdrawn);
-      return diff !== 0
-        ? diff
-        : a.mainStock / Math.max(1, a.reorderPoint * 2) -
-            b.mainStock / Math.max(1, b.reorderPoint * 2);
-    });
-  }, [products, dashboardSearch]);
+  const dashboard = useDashboard({
+    products,
+    mainStockProducts,
+    stockAlertSettings,
+    inventoryCategoryDateTrackingLookup,
+    isMenuFoodProduct,
+    isWholeChicken,
+    isChoppedChicken,
+  });
+  const withdrawal = useWithdrawals({
+    products,
+    withdrawals,
+    kitchenBatches: kitchen.kitchenBatches,
+    mainStockProducts,
+    stockAlertSettings,
+    fetchAll,
+    showToast,
+    setSubmitting,
+  });
+  useEffect(() => {
+    if (tab !== "dashboard") return;
+    dashboard.selectDashboardSubTab("main-stock");
+  }, [tab, dashboard.selectDashboardSubTab]);
   const activeInventoryCategoryOptions = useMemo(() => {
     const names = inventoryCategories
       .filter(
@@ -841,52 +542,6 @@ export default function StockManager() {
       .filter(Boolean);
     return names.length > 0 ? names : [...RAW_MATERIAL_UNITS];
   }, [inventoryUnits]);
-  const cookReportItems = useMemo(() => cookReport?.items ?? [], [cookReport]);
-  const cookReportVarianceCount = useMemo(
-    () =>
-      cookReportItems.filter(
-        (item) =>
-          Math.abs(
-            toNumber(item.withdrawn_qty) -
-              toNumber(item.used_qty) -
-              toNumber(item.spoilage_qty),
-          ) > 0.009,
-      ).length,
-    [cookReportItems],
-  );
-  const cookReportTotals = useMemo(
-    () =>
-      cookReportItems.reduce(
-        (sum, item) => ({
-          withdrawn: sum.withdrawn + toNumber(item.withdrawn_qty),
-          used: sum.used + toNumber(item.used_qty),
-          spoilage: sum.spoilage + toNumber(item.spoilage_qty),
-          returned: sum.returned + toNumber(item.returned_qty),
-        }),
-        { withdrawn: 0, used: 0, spoilage: 0, returned: 0 },
-      ),
-    [cookReportItems],
-  );
-  const selectedWithdrawalProduct = useMemo(
-    () =>
-      mainStockProducts.find(
-        (p) => p.product_id === activeWithdrawalProductId,
-      ) ?? null,
-    [mainStockProducts, activeWithdrawalProductId],
-  );
-  const selectedWithdrawalStatus = selectedWithdrawalProduct
-    ? getStockStatus(selectedWithdrawalProduct, stockAlertSettings)
-    : "normal";
-  const selectedWithdrawalPct = selectedWithdrawalProduct
-    ? Math.min(
-        100,
-        Math.round(
-          (selectedWithdrawalProduct.mainStock /
-            Math.max(1, selectedWithdrawalProduct.reorderPoint)) *
-            100,
-        ),
-      )
-    : 0;
   const selectedSpoilageProduct = useMemo(
     () => products.find((p) => p.product_id === adjProductId) ?? null,
     [products, adjProductId],
@@ -913,109 +568,6 @@ export default function StockManager() {
       return `Cannot exceed withdrawn amount (${fmtInt(withdrawnToday)} ${selectedSpoilageProduct.unit})`;
     return "";
   }, [selectedSpoilageProduct, withdrawnToday, spoilageAmount]);
-  const totalWithdrawn = products.reduce(
-    (s, p) => s + toNumber(p.dailyWithdrawn),
-    0,
-  );
-  const totalWasted = products.reduce((s, p) => s + toNumber(p.wasted), 0);
-  const totalReturned = products.reduce((s, p) => s + toNumber(p.returned), 0);
-  const totalProductsCounted = useMemo(
-    () =>
-      products.filter(
-        (p) => isCountedInTotalProducts(p.category) && !isMenuFoodProduct(p),
-      ),
-    [products],
-  );
-  const dashboardSummaryConfig = useMemo(() => {
-    const productRows = [...totalProductsCounted]
-      .sort((a, b) => a.product_name.localeCompare(b.product_name))
-      .map((p) => ({
-        id: `product-${p.product_id}`,
-        name: p.product_name,
-        value: `${fmtInt(p.mainStock)} ${p.unit}`,
-        meta: `${p.category} \u00B7 reorder point ${fmtInt(p.reorderPoint)}`,
-      }));
-    const withdrawnRows = [...products]
-      .filter((p) => toNumber(p.dailyWithdrawn) > 0)
-      .sort((a, b) => toNumber(b.dailyWithdrawn) - toNumber(a.dailyWithdrawn))
-      .map((p) => ({
-        id: `withdrawn-${p.product_id}`,
-        name: p.product_name,
-        value: `${fmtInt(p.dailyWithdrawn)} ${p.unit}`,
-        meta: `${p.category} \u00B7 main stock ${fmtInt(p.mainStock)} ${p.unit}`,
-      }));
-    const wastedRows = [...products]
-      .filter((p) => toNumber(p.wasted) > 0)
-      .sort((a, b) => toNumber(b.wasted) - toNumber(a.wasted))
-      .map((p) => ({
-        id: `wasted-${p.product_id}`,
-        name: p.product_name,
-        value: `${fmtInt(p.wasted)} ${p.unit}`,
-        meta: `${p.category} \u00B7 withdrawn today ${fmtInt(p.dailyWithdrawn)} ${p.unit}`,
-      }));
-    const returnedRows = [...products]
-      .filter((p) => toNumber(p.returned) > 0)
-      .sort((a, b) => toNumber(b.returned) - toNumber(a.returned))
-      .map((p) => ({
-        id: `returned-${p.product_id}`,
-        name: p.product_name,
-        value: `${fmtInt(p.returned)} ${p.unit}`,
-        meta: `${p.category} \u00B7 current stock ${fmtInt(p.mainStock)} ${p.unit}`,
-      }));
-
-    return {
-      products: {
-        title: "Total Products Summary",
-        subtitle: "All inventory items currently tracked in stock manager.",
-        totalLabel: "Total Products",
-        totalValue: totalProductsCounted.length.toString(),
-        rows: productRows,
-        emptyMessage: "No products found in inventory.",
-      },
-      withdrawn: {
-        title: "Withdrawn Today Summary",
-        subtitle: "Items pulled from storage for kitchen use today.",
-        totalLabel: "Total Withdrawn",
-        totalValue: fmtInt(totalWithdrawn),
-        rows: withdrawnRows,
-        emptyMessage: "No products have been withdrawn today.",
-      },
-      wasted: {
-        title: "Wasted Today Summary",
-        subtitle: "Recorded spoilage and other waste for the day.",
-        totalLabel: "Total Wasted",
-        totalValue: fmtInt(totalWasted),
-        rows: wastedRows,
-        emptyMessage: "No wasted items recorded today.",
-      },
-      returned: {
-        title: "Returned Today Summary",
-        subtitle: "Items or quantities returned back into stock today.",
-        totalLabel: "Total Returned",
-        totalValue: fmtInt(totalReturned),
-        rows: returnedRows,
-        emptyMessage: "No returned items recorded today.",
-      },
-    } satisfies Record<
-      DashboardSummaryKey,
-      {
-        title: string;
-        subtitle: string;
-        totalLabel: string;
-        totalValue: string;
-        rows: Array<{ id: string; name: string; value: string; meta: string }>;
-        emptyMessage: string;
-      }
-    >;
-  }, [
-    products,
-    totalProductsCounted,
-    totalReturned,
-    totalWasted,
-    totalWithdrawn,
-  ]);
-  const wholeChickenProducts = mainStockProducts.filter(isWholeChicken);
-  const choppedChickenProducts = mainStockProducts.filter(isChoppedChicken);
   const otherMainStockProducts = mainStockProducts.filter((p) => !isChicken(p));
   const productMap = useMemo(
     () =>
@@ -1033,189 +585,6 @@ export default function StockManager() {
     const numValue = parseFloat(value);
     if (!value || isNaN(numValue) || numValue <= maxAllowed) setAdjQty(value);
   };
-
-  async function doWithdraw(
-    product_id: number,
-    qty: number,
-    type: WithdrawalType,
-    options?: {
-      manageSubmitting?: boolean;
-      refreshAfter?: boolean;
-      silentError?: boolean;
-    },
-  ) {
-    const manageSubmitting = options?.manageSubmitting ?? true;
-    const refreshAfter = options?.refreshAfter ?? true;
-    const silentError = options?.silentError ?? false;
-    if (manageSubmitting) setSubmitting(true);
-    try {
-      // Initial or Supplementary: always deduct from storage first (FIFO)
-      if (type === "initial") {
-        const todayBatches = await kitchenApi.getTodayKitchenBatches();
-        const existing = todayBatches
-          .filter((b) => b.product_id === product_id && b.status === "active")
-          .sort((a, b) => b.kitchen_batch_id - a.kitchen_batch_id)[0];
-
-        if (existing) {
-          throw new Error("Initial withdrawal already done today.");
-        }
-
-        const storageResult = await storageApi.withdrawFromStorage({
-          product_id,
-          qty_needed: qty,
-          type: "initial",
-        });
-        const sourceBatchId = storageResult.batches_used[0]?.batch_id;
-
-        // Initial: always create a fresh kitchen batch for today
-        const kitchenBatch = await kitchenApi.createKitchenBatch({
-          product_id,
-          quantity: qty,
-          type,
-          recorded_by: "System",
-          storage_batch_id: sourceBatchId,
-        });
-        showToast(
-          `Initial withdrawal \u00B7 Kitchen Batch #${kitchenBatch.kitchen_batch_id}`,
-          "success",
-        );
-      } else if (type === "supplementary") {
-        const todayBatches = await kitchenApi.getTodayKitchenBatches();
-        const existing = todayBatches
-          .filter((b) => b.product_id === product_id && b.status === "active")
-          .sort((a, b) => b.kitchen_batch_id - a.kitchen_batch_id)[0];
-
-        if (!existing) {
-          throw new Error(
-            "No initial withdrawal found for today. Please do an initial withdrawal first before adding a supplementary.",
-          );
-        }
-
-        const storageResult = await storageApi.withdrawFromStorage({
-          product_id,
-          qty_needed: qty,
-          type: "supplementary",
-        });
-        const sourceBatchId = storageResult.batches_used[0]?.batch_id;
-
-        // Supplementary: find today's existing kitchen batch and add to it
-        await kitchenApi.addSupplementary(existing.kitchen_batch_id, {
-          qty,
-          storage_batch_id: sourceBatchId,
-        });
-        showToast(
-          `Added ${qty} to Kitchen Batch #${existing.kitchen_batch_id}`,
-          "success",
-        );
-      }
-    } catch (err) {
-      if (!silentError) {
-        showToast(
-          err instanceof Error ? err.message : "Withdrawal failed",
-          "error",
-        );
-      }
-      throw err;
-    } finally {
-      if (manageSubmitting) setSubmitting(false);
-      if (refreshAfter) await fetchAll();
-    }
-  }
-
-  function updateWithdrawalRow(
-    rowId: string,
-    patch: Partial<WithdrawalFormRow>,
-  ) {
-    setWithdrawalRows((current) =>
-      current.map((row) => (row.id === rowId ? { ...row, ...patch } : row)),
-    );
-  }
-
-  function addWithdrawalRow() {
-    const nextRow = createWithdrawalRow();
-    setWithdrawalRows((current) => [...current, nextRow]);
-    setActiveWithdrawalRowId(nextRow.id);
-  }
-
-  function removeWithdrawalRow(rowId: string) {
-    setWithdrawalRows((current) => {
-      if (current.length <= 1) return current;
-      return current.filter((row) => row.id !== rowId);
-    });
-  }
-
-  async function submitWithdrawal() {
-    const mergedRows = new Map<number, { product: Product; qty: number }>();
-
-    for (const row of withdrawalRows) {
-      if (row.productId === null) {
-        showToast("Please select an item for every withdrawal row.", "error");
-        return;
-      }
-      if (!row.qty.trim()) {
-        showToast("Please enter a quantity for every withdrawal row.", "error");
-        return;
-      }
-
-      const qty = parseInt(row.qty, 10);
-      if (!Number.isFinite(qty) || qty <= 0) {
-        showToast("Withdrawal quantity must be greater than zero.", "error");
-        return;
-      }
-
-      const product = products.find((p) => p.product_id === row.productId);
-      if (!product) {
-        showToast("One of the selected products could not be found.", "error");
-        return;
-      }
-
-      const existing = mergedRows.get(row.productId);
-      if (existing) {
-        existing.qty += qty;
-      } else {
-        mergedRows.set(row.productId, { product, qty });
-      }
-    }
-
-    if (mergedRows.size === 0) {
-      showToast("Add at least one withdrawal item before submitting.", "error");
-      return;
-    }
-
-    try {
-      setSubmitting(true);
-      for (const { product, qty } of mergedRows.values()) {
-        if (qty > product.mainStock) {
-          showToast(
-            `Insufficient stock for ${product.product_name}. Available: ${product.mainStock} ${product.unit}`,
-            "error",
-          );
-          return;
-        }
-
-        try {
-          await doWithdraw(product.product_id, qty, wdType, {
-            manageSubmitting: false,
-            refreshAfter: false,
-            silentError: true,
-          });
-        } catch (err) {
-          const message =
-            err instanceof Error ? err.message : "Withdrawal failed";
-          showToast(`Failed on ${product.product_name}: ${message}`, "error");
-          return;
-        }
-      }
-
-      const resetRow = createWithdrawalRow();
-      setWithdrawalRows([resetRow]);
-      setActiveWithdrawalRowId(resetRow.id);
-      showToast("Withdrawals submitted successfully.", "success");
-    } finally {
-      await fetchAll();
-      setSubmitting(false);
-    }
-  }
 
   async function submitSpoilage() {
     const qty = parseFloat(adjQty);
@@ -1439,31 +808,6 @@ export default function StockManager() {
     }
   }
 
-  async function handleReturnKitchenBatch(batch: KitchenBatch) {
-    if (nonReturnableProductIds.has(batch.product_id)) {
-      showToast("Sauces and similar items cannot be returned.", "error");
-      return;
-    }
-    try {
-      await kitchenApi.returnUnused(batch.kitchen_batch_id);
-      showToast("Unused portion returned to storage.", "success");
-      await fetchAll();
-    } catch (err) {
-      if (
-        err instanceof Error &&
-        /no unused quantity left to return|return quantity exceeds unused amount/i.test(
-          err.message,
-        )
-      ) {
-        await fetchAll();
-      }
-      showToast(
-        err instanceof Error ? err.message : "Failed to return batch.",
-        "error",
-      );
-    }
-  }
-
   async function handlePastShelfLifeDispose(product: Product) {
     const qty = toNumber(product.dailyWithdrawn);
     if (qty <= 0) {
@@ -1499,69 +843,6 @@ export default function StockManager() {
     }
   }
 
-  async function handlePastShelfLifeReturn(product: Product) {
-    if (nonReturnableProductIds.has(product.product_id)) {
-      showToast(
-        "This expired item cannot be returned with the current flow.",
-        "error",
-      );
-      return;
-    }
-
-    const batchesForProduct = kitchenBatches.filter((batch) => {
-      if (batch.product_id !== product.product_id) return false;
-      const availableQty =
-        toNumber(batch.withdrawn_qty) -
-        toNumber(batch.used_qty) -
-        toNumber(batch.returned_qty);
-      return batch.status === "active" && availableQty > 0;
-    });
-
-    if (batchesForProduct.length === 0) {
-      showToast("No active kitchen batches are available to return.", "error");
-      return;
-    }
-
-    const totalQty = batchesForProduct.reduce(
-      (sum, batch) =>
-        sum +
-        Math.max(
-          0,
-          toNumber(batch.withdrawn_qty) -
-            toNumber(batch.used_qty) -
-            toNumber(batch.returned_qty),
-        ),
-      0,
-    );
-
-    if (
-      !window.confirm(
-        `Return ${fmtInt(totalQty)} ${product.unit} of ${product.product_name} from kitchen batches?`,
-      )
-    ) {
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      for (const batch of batchesForProduct) {
-        await kitchenApi.returnUnused(batch.kitchen_batch_id);
-      }
-      await fetchAll();
-      showToast(
-        "Expired stock returned using existing kitchen return flow.",
-        "success",
-      );
-    } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : "Failed to return expired stock.",
-        "error",
-      );
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
   return (
     <>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap'); @keyframes fadeInRow { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }`}</style>
@@ -1588,13 +869,13 @@ export default function StockManager() {
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
-              {yesterdayReturns.length > 0 && (
+              {kitchen.yesterdayReturns.length > 0 && (
                 <button
                   onClick={() => setTab("withdrawal")}
                   className="px-3.5 py-1.5 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold border border-amber-200 flex items-center gap-1.5"
                 >
-                  {"\u21A9"} {yesterdayReturns.length} return
-                  {yesterdayReturns.length > 1 ? "s" : ""} from yesterday
+                  {"\u21A9"} {kitchen.yesterdayReturns.length} return
+                  {kitchen.yesterdayReturns.length > 1 ? "s" : ""} from yesterday
                 </button>
               )}
               <button
@@ -1603,13 +884,13 @@ export default function StockManager() {
               >
                 End-of-Day Reconciliation
               </button>
-              {attentionItems.length > 0 && (
+              {dashboard.attentionItems.length > 0 && (
                 <button
                   onClick={() => setTab("alerts")}
                   className="px-3.5 py-1.5 rounded-full bg-red-100 text-red-600 text-xs font-semibold border border-red-200 animate-pulse"
                 >
-                  {attentionItems.length} item
-                  {attentionItems.length > 1 ? "s" : ""} need attention
+                  {dashboard.attentionItems.length} item
+                  {dashboard.attentionItems.length > 1 ? "s" : ""} need attention
                 </button>
               )}
               <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg">
@@ -1626,9 +907,9 @@ export default function StockManager() {
             {TABS.map((t) => {
               const badge =
                 t.id === "alerts"
-                  ? attentionItems.length
+                  ? dashboard.attentionItems.length
                   : t.id === "withdrawal"
-                    ? yesterdayReturns.length
+                    ? kitchen.yesterdayReturns.length
                     : t.id === "purchases"
                       ? po.poOrders.filter((o) => o.status === "Draft").length
                       : t.id === "purchase-history"
@@ -1681,9 +962,9 @@ export default function StockManager() {
                 ].map((item) => (
                   <button
                     key={item.id}
-                    onClick={() => setDashboardSubTab(item.id)}
+                    onClick={() => dashboard.selectDashboardSubTab(item.id)}
                     className={`relative border-none bg-transparent px-6 py-3 text-sm font-semibold transition-colors duration-200 ${
-                      dashboardSubTab === item.id
+                      dashboard.dashboardSubTab === item.id
                         ? "text-blue-600"
                         : "text-slate-400 hover:text-slate-600"
                     }`}
@@ -1692,7 +973,7 @@ export default function StockManager() {
                     {item.label}
                     <span
                       className={`absolute inset-x-0 bottom-0 h-0.5 rounded-full transition-opacity duration-200 ${
-                        dashboardSubTab === item.id
+                        dashboard.dashboardSubTab === item.id
                           ? "bg-blue-500 opacity-100"
                           : "bg-transparent opacity-0"
                       }`}
@@ -1770,14 +1051,14 @@ export default function StockManager() {
                   staggerVariants={staggerVariants}
                   itemVariants={itemVariants}
                   dashboardTopRef={dashboardTopRef}
-                  totalProductsValue={totalProductsCounted.length.toString()}
-                  totalWithdrawnValue={fmtInt(totalWithdrawn)}
-                  totalWastedValue={fmtInt(totalWasted)}
-                  totalReturnedValue={fmtInt(totalReturned)}
-                  wholeChickenProducts={wholeChickenProducts}
-                  choppedChickenProducts={choppedChickenProducts}
-                  dashboardSubTab={dashboardSubTab}
-                  onSummarySelect={setDashboardSummary}
+                  totalProductsValue={dashboard.totalProductsCounted.length.toString()}
+                  totalWithdrawnValue={fmtInt(dashboard.totalWithdrawn)}
+                  totalWastedValue={fmtInt(dashboard.totalWasted)}
+                  totalReturnedValue={fmtInt(dashboard.totalReturned)}
+                  wholeChickenProducts={dashboard.wholeChickenProducts}
+                  choppedChickenProducts={dashboard.choppedChickenProducts}
+                  dashboardSubTab={dashboard.dashboardSubTab}
+                  onSummarySelect={dashboard.selectDashboardSummary}
                   mainStockContent={
                       <div
                         id="dashboard-main-stock"
@@ -1792,9 +1073,9 @@ export default function StockManager() {
                             <div className="px-4 pt-4 flex flex-col md:flex-row md:items-center gap-3 md:justify-between">
                               <input
                                 type="text"
-                                value={dashboardSearch}
+                                value={dashboard.dashboardSearch}
                                 onChange={(e) =>
-                                  setDashboardSearch(e.target.value)
+                                  dashboard.setDashboardSearch(e.target.value)
                                 }
                                 placeholder="Search by item name or category..."
                                 className="w-full md:w-96 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
@@ -1831,7 +1112,7 @@ export default function StockManager() {
                                 </tr>
                               </thead>
                               <tbody>
-                                {dashboardFilteredProducts.map((p, i) => {
+                                {dashboard.dashboardFilteredProducts.map((p, i) => {
                                   const shelfLifeStatus = p.isRawMaterial
                                     ? getShelfLifeStatus({
                                         usableUntil: p.usableUntil,
@@ -1841,7 +1122,7 @@ export default function StockManager() {
                                     : null;
                                   const nearestTiming = getNearestTimingInfo(
                                     p,
-                                    activeBatches,
+                                    kitchen.activeBatches,
                                   );
                                   const hasPastShelfLife =
                                     shelfLifeStatus === "Past Shelf Life";
@@ -1971,7 +1252,7 @@ export default function StockManager() {
                                               onClick={(e) => {
                                                 e.preventDefault();
                                                 e.stopPropagation();
-                                                void handlePastShelfLifeReturn(
+                                                void kitchen.handlePastShelfLifeReturn(
                                                   p,
                                                 );
                                               }}
@@ -2002,7 +1283,7 @@ export default function StockManager() {
                                     </tr>
                                   );
                                 })}
-                                {dashboardFilteredProducts.length === 0 && (
+                                {dashboard.dashboardFilteredProducts.length === 0 && (
                                   <tr>
                                     <td
                                       colSpan={10}
@@ -2198,589 +1479,40 @@ export default function StockManager() {
                     </motion.div>
                   }
                   cookReportContent={
-                    <motion.div
-                      variants={itemVariants}
-                      className="grid grid-cols-2 gap-4"
-                    >
-                        <div>
-                          <SectionCard
-                            title="Cook Report"
-                            subtitle={
-                              cookReport?.report
-                                ? `Daily kitchen usage for ${fmtDate(cookReport.report.report_date)}`
-                                : "Manual cook report for daily usage and spoilage"
-                            }
-                          >
-                            <div className="p-5 space-y-4">
-                              {!cookReport ? (
-                                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-400 text-center">
-                                  No cook report is available yet for today.
-                                </div>
-                              ) : (
-                                <>
-                                  <div className="grid gap-3 md:grid-cols-4">
-                                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                                      <p className="text-[11px] uppercase tracking-wide font-semibold text-slate-400">
-                                        Status
-                                      </p>
-                                      <p className="mt-1 text-sm font-semibold text-slate-800 capitalize">
-                                        {cookReport.report.status}
-                                      </p>
-                                    </div>
-                                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                                      <p className="text-[11px] uppercase tracking-wide font-semibold text-slate-400">
-                                        Prepared By
-                                      </p>
-                                      <p className="mt-1 text-sm font-semibold text-slate-800">
-                                        {cookReport.report.prepared_by_name ??
-                                          (cookReport.report.prepared_by
-                                            ? `User #${cookReport.report.prepared_by}`
-                                            : "Not submitted")}
-                                      </p>
-                                    </div>
-                                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                                      <p className="text-[11px] uppercase tracking-wide font-semibold text-slate-400">
-                                        Items Reported
-                                      </p>
-                                      <p className="mt-1 text-sm font-semibold text-slate-800">
-                                        {cookReportItems.length}
-                                      </p>
-                                    </div>
-                                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                                      <p className="text-[11px] uppercase tracking-wide font-semibold text-slate-400">
-                                        Variance Lines
-                                      </p>
-                                      <p className="mt-1 text-sm font-semibold text-slate-800">
-                                        {cookReportVarianceCount}
-                                      </p>
-                                    </div>
-                                  </div>
-
-                                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                                    <span>
-                                      Withdrawn:{" "}
-                                      <span className="font-semibold text-slate-700">
-                                        {fmtInt(cookReportTotals.withdrawn)}
-                                      </span>
-                                    </span>
-                                    <span>{"\u2022"}</span>
-                                    <span>
-                                      Used:{" "}
-                                      <span className="font-semibold text-slate-700">
-                                        {fmtInt(cookReportTotals.used)}
-                                      </span>
-                                    </span>
-                                    <span>{"\u2022"}</span>
-                                    <span>
-                                      Spoilage:{" "}
-                                      <span className="font-semibold text-slate-700">
-                                        {fmtInt(cookReportTotals.spoilage)}
-                                      </span>
-                                    </span>
-                                    <span>{"\u2022"}</span>
-                                    <span>
-                                      Returned:{" "}
-                                      <span className="font-semibold text-slate-700">
-                                        {fmtInt(cookReportTotals.returned)}
-                                      </span>
-                                    </span>
-                                    <span>{"\u2022"}</span>
-                                    <span>
-                                      Last updated:{" "}
-                                      <span className="font-semibold text-slate-700">
-                                        {cookReport.report.updated_at
-                                          ? new Date(
-                                              cookReport.report.updated_at,
-                                            ).toLocaleString()
-                                          : "Not yet updated"}
-                                      </span>
-                                    </span>
-                                  </div>
-
-                                  <div className="flex flex-wrap gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        void fetchCookReport();
-                                      }}
-                                      disabled={cookReportLoading}
-                                      className="px-4 py-2 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                                    >
-                                      {cookReportLoading
-                                        ? "Refreshing..."
-                                        : "Refresh"}
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        setCookReportOpen((open) => !open)
-                                      }
-                                      className="px-4 py-2 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
-                                    >
-                                      {cookReportOpen
-                                        ? "Hide Details"
-                                        : "Review"}
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={handleFinalizeCookReport}
-                                      disabled={
-                                        cookReportFinalizing ||
-                                        cookReport.report.status ===
-                                          "finalized" ||
-                                        cookReportItems.length === 0
-                                      }
-                                      className="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                                    >
-                                      {cookReportFinalizing
-                                        ? "Finalizing..."
-                                        : cookReport.report.status ===
-                                            "finalized"
-                                          ? "Finalized"
-                                          : "Finalize"}
-                                    </button>
-                                  </div>
-
-                                  <AnimatePresence initial={false}>
-                                    {cookReportOpen && (
-                                      <motion.div
-                                        initial={{ opacity: 0, height: 0 }}
-                                        animate={{ opacity: 1, height: "auto" }}
-                                        exit={{ opacity: 0, height: 0 }}
-                                        transition={{ duration: 0.18 }}
-                                        className="overflow-hidden"
-                                      >
-                                        <div className="rounded-2xl border border-slate-200 overflow-hidden">
-                                          <div className="grid grid-cols-[1.4fr_repeat(5,minmax(0,0.8fr))] gap-3 bg-slate-50 px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                                            <span>Raw Material</span>
-                                            <span>Withdrawn</span>
-                                            <span>Used</span>
-                                            <span>Spoilage</span>
-                                            <span>Returned</span>
-                                            <span>Variance</span>
-                                          </div>
-                                          <div className="divide-y divide-slate-100">
-                                            {cookReportItems.map((item) => {
-                                              const variance =
-                                                toNumber(item.withdrawn_qty) -
-                                                toNumber(item.used_qty) -
-                                                toNumber(item.spoilage_qty) -
-                                                toNumber(item.returned_qty);
-
-                                              return (
-                                                <div
-                                                  key={item.product_id}
-                                                  className="px-4 py-3"
-                                                >
-                                                  <div className="grid grid-cols-[1.4fr_repeat(5,minmax(0,0.8fr))] gap-3 items-start text-sm text-slate-700">
-                                                    <div>
-                                                      <p className="font-semibold text-slate-800">
-                                                        {item.product_name}
-                                                      </p>
-                                                      <p className="text-xs text-slate-400 mt-1">
-                                                        {item.category}{" "}
-                                                        {"\u00B7"} {item.unit}
-                                                      </p>
-                                                      {item.note && (
-                                                        <p className="text-xs text-slate-500 mt-2">
-                                                          Note: {item.note}
-                                                        </p>
-                                                      )}
-                                                    </div>
-                                                    <p>
-                                                      {fmtInt(
-                                                        item.withdrawn_qty,
-                                                      )}{" "}
-                                                      {item.unit}
-                                                    </p>
-                                                    <p>
-                                                      {fmtInt(item.used_qty)}{" "}
-                                                      {item.unit}
-                                                    </p>
-                                                    <p>
-                                                      {fmtInt(
-                                                        item.spoilage_qty,
-                                                      )}{" "}
-                                                      {item.unit}
-                                                    </p>
-                                                    <p>
-                                                      {fmtInt(
-                                                        item.returned_qty,
-                                                      )}{" "}
-                                                      {item.unit}
-                                                    </p>
-                                                    <p
-                                                      className={
-                                                        Math.abs(variance) >
-                                                        0.009
-                                                          ? "font-semibold text-amber-600"
-                                                          : "font-semibold text-emerald-600"
-                                                      }
-                                                    >
-                                                      {fmtInt(variance)}{" "}
-                                                      {item.unit}
-                                                    </p>
-                                                  </div>
-                                                </div>
-                                              );
-                                            })}
-                                          </div>
-                                        </div>
-                                      </motion.div>
-                                    )}
-                                  </AnimatePresence>
-
-                                  {cookReport.report.status === "finalized" && (
-                                    <p className="text-xs font-medium text-emerald-600">
-                                      Finalized by{" "}
-                                      {cookReport.report.finalized_by_name ??
-                                        (cookReport.report.finalized_by
-                                          ? `User #${cookReport.report.finalized_by}`
-                                          : "manager")}
-                                      {cookReport.report.finalized_at
-                                        ? ` on ${new Date(cookReport.report.finalized_at).toLocaleString()}`
-                                        : ""}
-                                    </p>
-                                  )}
-                                </>
-                              )}
-                            </div>
-                          </SectionCard>
-                        </div>
-                    </motion.div>
+                    <CookReportPanel
+                      itemVariants={itemVariants}
+                      cookReport={reports.cookReport}
+                      cookReportItems={reports.cookReportItems}
+                      cookReportVarianceCount={reports.cookReportVarianceCount}
+                      cookReportTotals={reports.cookReportTotals}
+                      cookReportOpen={reports.cookReportOpen}
+                      cookReportLoading={reports.cookReportLoading}
+                      cookReportFinalizing={reports.cookReportFinalizing}
+                      onRefresh={() => {
+                        void reports.fetchCookReport();
+                      }}
+                      onToggleOpen={reports.toggleCookReportOpen}
+                      onFinalize={reports.handleFinalizeCookReport}
+                    />
                   }
                   stockMovementContent={
-                    <>
-                      <div
-                        id="dashboard-stock-movement"
-                        className="scroll-mt-44"
-                        style={{ scrollMarginTop: "180px" }}
-                      >
-                        <motion.div variants={itemVariants}>
-                          <div className="flex items-center justify-between mb-4">
-                            <div>
-                              <p className="text-sm font-semibold text-slate-800">
-                                Stock Movement Report
-                              </p>
-                              <p className="text-xs text-slate-400 mt-0.5">
-                                Summarizes received, withdrawn, wasted, and
-                                returned per item
-                              </p>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <div className="flex bg-slate-100 rounded-xl p-1 gap-1">
-                                {(["weekly", "monthly"] as const).map((p) => (
-                                  <button
-                                    key={p}
-                                    onClick={() => setReportPeriod(p)}
-                                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all ${reportPeriod === p ? "bg-white text-slate-800 shadow-sm" : "text-slate-400 hover:text-slate-600"}`}
-                                  >
-                                    {p}
-                                  </button>
-                                ))}
-                              </div>
-                              {reportPeriod === "weekly" ? (
-                                <input
-                                  type="date"
-                                  value={selectedWeekStart}
-                                  onChange={(e) =>
-                                    setSelectedWeekStart(e.target.value)
-                                  }
-                                  className={inputCls + " !w-40"}
-                                />
-                              ) : (
-                                <div className="flex gap-2">
-                                  <select
-                                    value={selectedMonth}
-                                    onChange={(e) =>
-                                      setSelectedMonth(Number(e.target.value))
-                                    }
-                                    className={inputCls + " !w-32"}
-                                  >
-                                    {Array.from({ length: 12 }, (_, i) => (
-                                      <option key={i + 1} value={i + 1}>
-                                        {new Date(2000, i).toLocaleString(
-                                          "default",
-                                          { month: "long" },
-                                        )}
-                                      </option>
-                                    ))}
-                                  </select>
-                                  <input
-                                    type="number"
-                                    value={selectedYear}
-                                    onChange={(e) => {
-                                      const nextValue = sanitizeNumberInput(
-                                        e.target.value,
-                                        { allowDecimal: false },
-                                      );
-                                      if (nextValue) {
-                                        setSelectedYear(Number(nextValue));
-                                      }
-                                    }}
-                                    className={inputCls + " !w-24"}
-                                    min={2020}
-                                    max={2099}
-                                    step="1"
-                                    inputMode="numeric"
-                                    onKeyDown={(e) =>
-                                      blockInvalidNumberKeys(e, {
-                                        allowDecimal: false,
-                                      })
-                                    }
-                                  />
-                                </div>
-                              )}
-                              <button
-                                onClick={fetchReport}
-                                disabled={reportLoading}
-                                className="px-4 py-2 bg-slate-900 text-white text-xs font-semibold rounded-xl hover:bg-slate-700 transition-colors disabled:opacity-60"
-                              >
-                                {reportLoading
-                                  ? "Generating..."
-                                  : "Generate Report"}
-                              </button>
-                              {reportData && (
-                                <button
-                                  onClick={() => {
-                                    const headers = [
-                                      "Product",
-                                      "Category",
-                                      "Unit",
-                                      "Received",
-                                      "Withdrawn",
-                                      "Returned",
-                                      "Wasted",
-                                      "Remaining",
-                                    ];
-                                    const rows = reportData.items.map((i) =>
-                                      [
-                                        i.product_name,
-                                        i.category,
-                                        i.unit,
-                                        i.received,
-                                        i.withdrawn,
-                                        i.returned,
-                                        i.wasted,
-                                        i.remaining,
-                                      ].join(","),
-                                    );
-                                    const csv = [
-                                      headers.join(","),
-                                      ...rows,
-                                    ].join("\n");
-                                    const blob = new Blob([csv], {
-                                      type: "text/csv",
-                                    });
-                                    const url = URL.createObjectURL(blob);
-                                    const a = document.createElement("a");
-                                    a.href = url;
-                                    a.download = `stock-report-${reportData.period}.csv`;
-                                    a.click();
-                                    URL.revokeObjectURL(url);
-                                  }}
-                                  className="px-4 py-2 bg-emerald-600 text-white text-xs font-semibold rounded-xl hover:bg-emerald-700 transition-colors"
-                                >
-                                  Export CSV
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        </motion.div>
-                      </div>
-                      <motion.div variants={itemVariants}>
-                        {!reportData && !reportLoading && (
-                          <div className="bg-white border border-slate-100 rounded-2xl p-10 text-center shadow-sm">
-                            <div className="w-10 h-10 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto mb-3">
-                              <svg
-                                className="w-5 h-5 text-slate-400"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M9 17v-2m3 2v-4m3 4v-6M4 20h16a2 2 0 002-2V6a2 2 0 00-2-2H4a2 2 0 00-2 2v12a2 2 0 002 2z"
-                                />
-                              </svg>
-                            </div>
-                            <p className="text-sm text-slate-400">
-                              Select a period and click{" "}
-                              <span className="font-semibold text-slate-600">
-                                Generate Report
-                              </span>{" "}
-                              to view stock movement.
-                            </p>
-                          </div>
-                        )}
-                        {reportLoading && (
-                          <div className="bg-white border border-slate-100 rounded-2xl p-10 text-center shadow-sm animate-pulse">
-                            <p className="text-sm text-slate-400">
-                              Building your report...
-                            </p>
-                          </div>
-                        )}
-                        {reportData && !reportLoading && (
-                          <div className="space-y-4">
-                            <div className="grid grid-cols-4 gap-4">
-                              {[
-                                {
-                                  label: "Total Received",
-                                  value: fmtInt(reportData.totalReceived),
-                                  accent: "border-t-emerald-400",
-                                  text: "text-emerald-600",
-                                },
-                                {
-                                  label: "Total Withdrawn",
-                                  value: fmtInt(reportData.totalWithdrawn),
-                                  accent: "border-t-indigo-400",
-                                  text: "text-indigo-600",
-                                },
-                                {
-                                  label: "Total Returned",
-                                  value: fmtInt(reportData.totalReturned),
-                                  accent: "border-t-amber-400",
-                                  text: "text-amber-600",
-                                },
-                                {
-                                  label: "Total Wasted",
-                                  value: fmtInt(reportData.totalWasted),
-                                  accent: "border-t-rose-400",
-                                  text: "text-rose-500",
-                                },
-                              ].map((k) => (
-                                <div
-                                  key={k.label}
-                                  className={`bg-white rounded-2xl p-5 shadow-sm border border-slate-100 border-t-4 ${k.accent}`}
-                                >
-                                  <p className="text-xs text-slate-400 font-medium">
-                                    {k.label}
-                                  </p>
-                                  <p
-                                    className={`text-3xl font-bold mt-1 leading-none ${k.text}`}
-                                  >
-                                    {k.value}
-                                  </p>
-                                  <p className="text-xs text-slate-400 mt-1">
-                                    {reportData.period}
-                                  </p>
-                                </div>
-                              ))}
-                            </div>
-                            <SectionCard
-                              title={`Stock Movement \u2014 ${reportData.period}`}
-                              subtitle={`Generated ${new Date(reportData.generatedAt).toLocaleString()} \u00B7 ${reportData.items.length} items`}
-                            >
-                              <table className="w-full text-sm">
-                                <thead>
-                                  <tr className="border-b border-slate-100">
-                                    {[
-                                      "Item",
-                                      "Category",
-                                      "Received",
-                                      "Withdrawn",
-                                      "Returned",
-                                      "Wasted",
-                                      "Remaining",
-                                      "Efficiency",
-                                    ].map((h) => (
-                                      <th
-                                        key={h}
-                                        className={`py-3 px-4 text-[11px] font-semibold text-slate-400 uppercase tracking-wider ${["Item", "Category"].includes(h) ? "text-left" : "text-right"}`}
-                                      >
-                                        {h}
-                                      </th>
-                                    ))}
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {reportData.items.map((item, i) => {
-                                    const efficiency =
-                                      item.withdrawn > 0
-                                        ? Math.round(
-                                            ((item.withdrawn - item.wasted) /
-                                              item.withdrawn) *
-                                              100,
-                                          )
-                                        : 100;
-                                    const effColor =
-                                      efficiency >= 90
-                                        ? "text-emerald-600 bg-emerald-50"
-                                        : efficiency >= 70
-                                          ? "text-amber-600 bg-amber-50"
-                                          : "text-rose-500 bg-rose-50";
-                                    return (
-                                      <tr
-                                        key={item.product_id}
-                                        style={{
-                                          opacity: 0,
-                                          animation:
-                                            "fadeInRow 0.28s ease forwards",
-                                          animationDelay: `${i * 0.04}s`,
-                                        }}
-                                        className="border-b border-slate-50 hover:bg-slate-50/70 transition-colors"
-                                      >
-                                        <td className="py-3.5 px-4 font-medium text-slate-800">
-                                          {item.product_name}
-                                        </td>
-                                        <td className="py-3.5 px-4">
-                                          <span
-                                            className={`text-[11px] font-medium px-2 py-0.5 rounded-md border ${getCategoryStyle(item.category)}`}
-                                          >
-                                            {item.category}
-                                          </span>
-                                        </td>
-                                        {[
-                                          {
-                                            v: item.received,
-                                            c: "text-emerald-600",
-                                          },
-                                          {
-                                            v: item.withdrawn,
-                                            c: "text-indigo-500",
-                                          },
-                                          {
-                                            v: item.returned,
-                                            c: "text-amber-500",
-                                          },
-                                          {
-                                            v: item.wasted,
-                                            c: "text-rose-500",
-                                          },
-                                          {
-                                            v: item.remaining,
-                                            c: "text-slate-700",
-                                          },
-                                        ].map(({ v, c }, ci) => (
-                                          <td
-                                            key={ci}
-                                            className={`py-3.5 px-4 text-right font-semibold ${c}`}
-                                          >
-                                            {v}{" "}
-                                            <span className="text-slate-400 font-normal text-xs">
-                                              {item.unit}
-                                            </span>
-                                          </td>
-                                        ))}
-                                        <td className="py-3.5 px-4 text-right">
-                                          <span
-                                            className={`px-2.5 py-1 rounded-full text-[11px] font-semibold ${effColor}`}
-                                          >
-                                            {efficiency}%
-                                          </span>
-                                        </td>
-                                      </tr>
-                                    );
-                                  })}
-                                </tbody>
-                              </table>
-                            </SectionCard>
-                          </div>
-                        )}
-                      </motion.div>
-                    </>
+                    <StockMovementReportPanel
+                      itemVariants={itemVariants}
+                      inputCls={inputCls}
+                      reportPeriod={reports.reportPeriod}
+                      reportData={reports.reportData}
+                      reportLoading={reports.reportLoading}
+                      selectedWeekStart={reports.selectedWeekStart}
+                      selectedMonth={reports.selectedMonth}
+                      selectedYear={reports.selectedYear}
+                      onReportPeriodChange={reports.setReportPeriod}
+                      onSelectedWeekStartChange={reports.setSelectedWeekStart}
+                      onSelectedMonthChange={reports.setSelectedMonth}
+                      onSelectedYearChange={reports.setSelectedYear}
+                      onFetchReport={reports.fetchReport}
+                      onExportCsv={reports.exportReportCsv}
+                      getCategoryStyle={getCategoryStyle}
+                    />
                   }
                 />
               )}
@@ -2792,25 +1524,25 @@ export default function StockManager() {
                   staggerVariants={staggerVariants}
                   itemVariants={itemVariants}
                   withdrawalSubTab={withdrawalSubTab}
-                  wdType={wdType}
-                  todayInitialExists={todayInitialExists}
-                  kitchenRemaining={kitchenRemaining}
-                  selectedWithdrawalProduct={selectedWithdrawalProduct}
-                  withdrawalRows={withdrawalRows}
-                  activeWithdrawalRowId={activeWithdrawalRowId}
-                  wholeChickenProducts={wholeChickenProducts}
-                  choppedChickenProducts={choppedChickenProducts}
+                  wdType={withdrawal.wdType}
+                  todayInitialExists={withdrawal.todayInitialExists}
+                  kitchenRemaining={withdrawal.kitchenRemaining}
+                  selectedWithdrawalProduct={withdrawal.selectedWithdrawalProduct}
+                  withdrawalRows={withdrawal.withdrawalRows}
+                  activeWithdrawalRowId={withdrawal.activeWithdrawalRowId}
+                  wholeChickenProducts={dashboard.wholeChickenProducts}
+                  choppedChickenProducts={dashboard.choppedChickenProducts}
                   otherMainStockProducts={otherMainStockProducts}
-                  selectedWithdrawalStatus={selectedWithdrawalStatus}
-                  selectedWithdrawalPct={selectedWithdrawalPct}
-                  visibleWithdrawalLogs={visibleWithdrawalLogs}
+                  selectedWithdrawalStatus={withdrawal.selectedWithdrawalStatus}
+                  selectedWithdrawalPct={withdrawal.selectedWithdrawalPct}
+                  visibleWithdrawalLogs={withdrawal.visibleWithdrawalLogs}
                   products={products}
                   submitting={submitting}
                   typeBadge={TYPE_BADGE}
                   yesterdayReturnsBanner={
-                    yesterdayReturns.length > 0 ? (
+                    kitchen.yesterdayReturns.length > 0 ? (
                       <motion.div variants={itemVariants}>
-                        <YesterdayReturnsBanner batches={yesterdayReturns} />
+                        <YesterdayReturnsBanner batches={kitchen.yesterdayReturns} />
                       </motion.div>
                     ) : null
                   }
@@ -2821,10 +1553,12 @@ export default function StockManager() {
                         subtitle="Shows batches currently withdrawn to kitchen."
                       >
                         <div className="p-4">
-                          {visibleKitchenBatches.length > 0 ? (
+                          {kitchen.visibleKitchenBatches.length > 0 ? (
                             <KitchenBatchQueuePreview
-                              batches={visibleKitchenBatches}
-                              unit={selectedWithdrawalProduct?.unit ?? ""}
+                              batches={kitchen.visibleKitchenBatches}
+                              unit={
+                                withdrawal.selectedWithdrawalProduct?.unit ?? ""
+                              }
                             />
                           ) : (
                             <EmptyState message="No kitchen batches are currently queued." />
@@ -2841,7 +1575,7 @@ export default function StockManager() {
                       >
                         <div className="p-4">
                           <FIFOBatchGrouped
-                            allBatches={activeBatches}
+                            allBatches={kitchen.activeBatches}
                             productMap={productMap}
                           />
                         </div>
@@ -2853,20 +1587,20 @@ export default function StockManager() {
                       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm">
                         <div className="p-4">
                           <KitchenBatchesSection
-                            kitchenBatches={visibleKitchenBatches}
-                            nonReturnableProductIds={nonReturnableProductIds}
-                            onReturn={handleReturnKitchenBatch}
+                            kitchenBatches={kitchen.visibleKitchenBatches}
+                            nonReturnableProductIds={kitchen.nonReturnableProductIds}
+                            onReturn={kitchen.handleReturnKitchenBatch}
                           />
                         </div>
                       </div>
                     </motion.div>
                   }
-                  setWdType={setWdType}
-                  setActiveWithdrawalRowId={setActiveWithdrawalRowId}
-                  updateWithdrawalRow={updateWithdrawalRow}
-                  removeWithdrawalRow={removeWithdrawalRow}
-                  addWithdrawalRow={addWithdrawalRow}
-                  submitWithdrawal={submitWithdrawal}
+                  setWdType={withdrawal.setWdType}
+                  setActiveWithdrawalRowId={withdrawal.setActiveWithdrawalRowId}
+                  updateWithdrawalRow={withdrawal.updateWithdrawalRow}
+                  removeWithdrawalRow={withdrawal.removeWithdrawalRow}
+                  addWithdrawalRow={withdrawal.addWithdrawalRow}
+                  submitWithdrawal={withdrawal.submitWithdrawal}
                   isReconcilable={isReconcilable}
                 />
               )}
@@ -2880,8 +1614,8 @@ export default function StockManager() {
                   stockAlertSettings={stockAlertSettings}
                   products={products}
                   lowStock={lowStock}
-                  alertCriticalStock={alertCriticalStock}
-                  outOfStockItems={outOfStockItems}
+                  alertCriticalStock={dashboard.alertCriticalStock}
+                  outOfStockItems={dashboard.outOfStockItems}
                   setTab={setTab}
                   handleOrderNow={po.handleOrderNow}
                   isMenuFoodProduct={isMenuFoodProduct}
@@ -3122,16 +1856,16 @@ export default function StockManager() {
             />
           )}
         </AnimatePresence>
-        {dashboardSummary && (
+        {dashboard.dashboardSummary && dashboard.selectedSummaryConfig && (
           <DashboardSummaryModal
-            open={dashboardSummary !== null}
-            title={dashboardSummaryConfig[dashboardSummary].title}
-            subtitle={dashboardSummaryConfig[dashboardSummary].subtitle}
-            totalLabel={dashboardSummaryConfig[dashboardSummary].totalLabel}
-            totalValue={dashboardSummaryConfig[dashboardSummary].totalValue}
-            rows={dashboardSummaryConfig[dashboardSummary].rows}
-            emptyMessage={dashboardSummaryConfig[dashboardSummary].emptyMessage}
-            onClose={() => setDashboardSummary(null)}
+            open={dashboard.dashboardSummary !== null}
+            title={dashboard.selectedSummaryConfig.title}
+            subtitle={dashboard.selectedSummaryConfig.subtitle}
+            totalLabel={dashboard.selectedSummaryConfig.totalLabel}
+            totalValue={dashboard.selectedSummaryConfig.totalValue}
+            rows={dashboard.selectedSummaryConfig.rows}
+            emptyMessage={dashboard.selectedSummaryConfig.emptyMessage}
+            onClose={dashboard.closeDashboardSummary}
           />
         )}
       </div>
