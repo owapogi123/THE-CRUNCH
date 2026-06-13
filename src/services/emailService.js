@@ -1,6 +1,34 @@
 const { Resend } = require("resend");
 const db = require("../config/db");
 
+function getEmailProvider() {
+  return String(process.env.EMAIL_PROVIDER || "").trim().toLowerCase();
+}
+
+function shouldUseConsoleEmailFallback() {
+  return (
+    getEmailProvider() === "console" ||
+    String(process.env.NODE_ENV || "").trim().toLowerCase() === "development"
+  );
+}
+
+function logDevelopmentOtpEmail({
+  flow,
+  to,
+  code,
+  customerName,
+}) {
+  console.log(
+    [
+      "[EMAIL DEV FALLBACK]",
+      `Flow: ${flow}`,
+      `To: ${to}`,
+      `Customer: ${customerName || "Customer"}`,
+      `OTP: ${code}`,
+    ].join("\n"),
+  );
+}
+
 function getResendClient() {
   const apiKey = String(process.env.RESEND_API_KEY || "").trim();
   if (!apiKey) {
@@ -68,8 +96,6 @@ async function sendVerificationEmail({
   code,
   customerName,
 }) {
-  const resend = getResendClient();
-  const from = getSender();
   const recipient = String(to || "").trim();
   const safeName = String(customerName || "Customer").trim() || "Customer";
   const verificationCode = String(code || "").trim();
@@ -82,6 +108,22 @@ async function sendVerificationEmail({
     throw new Error("Verification code is required");
   }
 
+  if (shouldUseConsoleEmailFallback()) {
+    logDevelopmentOtpEmail({
+      flow: "registration_verification",
+      to: recipient,
+      code: verificationCode,
+      customerName: safeName,
+    });
+    return {
+      id: "console-dev-verification",
+      provider: "console",
+      to: recipient,
+    };
+  }
+
+  const resend = getResendClient();
+  const from = getSender();
   const result = await resend.emails.send({
     from,
     to: recipient,
@@ -258,13 +300,9 @@ async function sendPasswordResetEmail({
   code,
   customerName,
 }) {
-  const resend = getResendClient();
-  const from = getSender();
   const recipient = String(to || "").trim();
   const safeName = String(customerName || "Customer").trim() || "Customer";
   const resetCode = String(code || "").trim();
-  const restaurantSettings = await loadRestaurantSettings();
-  const restaurantName = restaurantSettings.restaurantName;
 
   if (!recipient) {
     throw new Error("Password reset email recipient is required");
@@ -274,6 +312,24 @@ async function sendPasswordResetEmail({
     throw new Error("Password reset code is required");
   }
 
+  if (shouldUseConsoleEmailFallback()) {
+    logDevelopmentOtpEmail({
+      flow: "password_reset",
+      to: recipient,
+      code: resetCode,
+      customerName: safeName,
+    });
+    return {
+      id: "console-dev-password-reset",
+      provider: "console",
+      to: recipient,
+    };
+  }
+
+  const resend = getResendClient();
+  const from = getSender();
+  const restaurantSettings = await loadRestaurantSettings();
+  const restaurantName = restaurantSettings.restaurantName;
   const result = await resend.emails.send({
     from,
     to: recipient,
