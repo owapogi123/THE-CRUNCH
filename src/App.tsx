@@ -22,9 +22,6 @@ import StockManager from "./pages/stockmanager";
 import Products from "./pages/products";
 import Settings from "./pages/settings";
 
-// ── Cashier / Cook pages
-import Order from "./pages/Order";
-
 // ── Shared / Auth
 import Login from "./pages/login";
 import ForgotPassword from "./pages/forgotpassword";
@@ -51,7 +48,6 @@ const ROLE_MAP: Record<string, string> = {
 
 const PERMISSION_ROUTE_MAP: Partial<Record<PermissionKey, string>> = {
   overview: "/dashboard",
-  orders: "/orders",
   menuManagement: "/inventory",
   menus: "/menu",
   stockManager: "/stockmanager",
@@ -302,19 +298,6 @@ export default function App() {
         path="/stockmanager"
         element={protect(<StockManager />, "stockManager")}
       />
-
-      {/* ── Administrator + Cashier + Cook ───────────────────── */}
-      <Route
-        path="/orders"
-        element={protect(<Order />, "orders")}
-      />
-
-      {/* ── Cook ─────────────────────────────────────────────── */}
-      <Route
-        path="/cook/orders"
-        element={protect(<Order />, "orders")}
-      />
-
       {/* ── Fallbacks ────────────────────────────────────────── */}
       <Route path="/unauthorized" element={<Unauthorized />} />
       <Route path="*" element={<Navigate to="/" replace />} />

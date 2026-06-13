@@ -62,12 +62,6 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
     icon: LayoutDashboard,
   },
   {
-    label: "Order",
-    path: "/orders",
-    permissionKey: "orders",
-    icon: ShoppingCart,
-  },
-  {
     label: "Menu Management",
     path: "/inventory",
     permissionKey: "menuManagement",
