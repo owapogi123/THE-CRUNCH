@@ -15,13 +15,6 @@ function isPaidPaymentStatus(value) {
   return normalizePaymentStatus(value) === "Paid";
 }
 
-function normalizeOrderStatus(value) {
-  const v = String(value || "").toLowerCase().trim();
-  if (!v) return "Queued";
-  if (v === "completed") return "Completed";
-  return value;
-}
-
 function isForceAvailableMenuItem(menuItem) {
   const manualOverride =
     menuItem?.manual_override === true ||
@@ -128,145 +121,176 @@ async function deductStockForOrder(
   );
 }
 
-async function deductSalesStockForCompletedOrder(
+async function deductStockForPaidOrder(
   orderId,
   recordedBy = null,
-  connection = db,
+  connection = null,
 ) {
   const numericOrderId = Number(orderId) || 0;
   if (numericOrderId <= 0) {
     throw new Error("Invalid order ID for stock deduction");
   }
 
-  const [orderRows] = await connection.query(
-    `SELECT
-       Order_ID AS orderId,
-       Status AS orderStatus,
-       payment_status AS paymentStatus,
-       COALESCE(stock_deducted, 0) AS stockDeducted
-     FROM orders
-     WHERE Order_ID = ?
-     LIMIT 1`,
-    [numericOrderId],
-  );
+  let conn = connection;
+  let ownsConnection = false;
+  let txStarted = false;
 
-  if (!orderRows.length) {
-    throw new Error("Order not found for stock deduction");
-  }
-
-  const order = orderRows[0];
-  if (!isPaidPaymentStatus(order.paymentStatus)) {
-    throw new Error("Cannot deduct stock for an unpaid order");
-  }
-  if (normalizeOrderStatus(order.orderStatus) !== "Completed") {
-    throw new Error("Cannot deduct stock before the order is completed");
-  }
-  if (Number(order.stockDeducted) === 1) {
-    return false;
-  }
-
-  const [items] = await connection.query(
-    `SELECT
-       oi.Product_ID AS productId,
-       oi.Quantity AS quantity,
-       COALESCE(m.manual_override, 0) AS manual_override,
-       COALESCE(m.manual_status, '') AS manual_status,
-       COALESCE(p.availability_status, 'Available') AS availability_status,
-       COALESCE(p.item_type, 'menu_item') AS item_type
-     FROM order_item oi
-     LEFT JOIN Menu m ON m.Product_ID = oi.Product_ID
-     LEFT JOIN products p ON p.id = oi.Product_ID
-     WHERE oi.Order_ID = ?`,
-    [numericOrderId],
-  );
-
-  const menuProductIds = items
-    .map((item) => Number(item.productId) || 0)
-    .filter((productId) => productId > 0);
-  const ingredientMap = await fetchMenuIngredients(connection, menuProductIds);
-  const deductions = new Map();
-
-  for (const item of items) {
-    const productId = Number(item.productId) || 0;
-    const orderedQty = Number(item.quantity) || 0;
-    const isForceAvailable = isForceAvailableMenuItem(item);
-
-    if (productId <= 0 || orderedQty <= 0) {
-      throw new Error(`Invalid order item for stock deduction on order ${numericOrderId}`);
+  try {
+    if (!conn) {
+      conn = await db.getConnection();
+      ownsConnection = true;
+      await conn.beginTransaction();
+      txStarted = true;
     }
 
-    if (isForceAvailable) {
-      console.warn(
-        `[inventoryService] Skipping Daily_Withdrawn deduction for force-available menu product ${productId}.`,
-      );
-      continue;
-    }
-
-    const ingredients = ingredientMap.get(productId) ?? [];
-    if (ingredients.length === 0) {
-      throw new Error(`Menu item has no ingredient mapping. Product ${productId}.`);
-    }
-
-    for (const ingredient of ingredients) {
-      const ingredientProductId = Number(ingredient.product_id) || 0;
-      const quantityRequired = Number(ingredient.quantity_required) || 0;
-      const ingredientItemType = String(ingredient.item_type || STOCK_ITEM);
-      if (ingredientProductId <= 0 || quantityRequired <= 0) {
-        throw new Error(
-          `Invalid ingredient configuration for menu product ${productId}`,
-        );
-      }
-      if (ingredientItemType !== STOCK_ITEM) {
-        throw new Error(
-          `Ingredient product ${ingredientProductId} must be ${STOCK_ITEM}, found ${ingredientItemType}.`,
-        );
-      }
-      const totalRequired = orderedQty * quantityRequired;
-      const currentRequiredQty = Number(deductions.get(ingredientProductId) ?? 0);
-      deductions.set(ingredientProductId, currentRequiredQty + totalRequired);
-    }
-  }
-
-  const deductionEntries = Array.from(deductions.entries());
-  const availableQtyByProductId = new Map();
-  for (const [productId, requiredQty] of deductionEntries) {
-    const [inventoryRows] = await connection.query(
-      `SELECT COALESCE(Daily_Withdrawn, 0) AS dailyWithdrawn
-       FROM Inventory
-       WHERE Product_ID = ?
-       LIMIT 1`,
-      [productId],
+    const [orderRows] = await conn.query(
+      `SELECT
+         Order_ID AS orderId,
+         Status AS orderStatus,
+         payment_status AS paymentStatus,
+         COALESCE(stock_deducted, 0) AS stockDeducted
+       FROM orders
+       WHERE Order_ID = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [numericOrderId],
     );
 
-    const availableQty = Number(inventoryRows[0]?.dailyWithdrawn ?? 0);
-    availableQtyByProductId.set(productId, availableQty);
+    if (!orderRows.length) {
+      throw new Error("Order not found for stock deduction");
+    }
 
-    if (availableQty < Number(requiredQty || 0)) {
-      throw new Error(
-        `Insufficient Daily_Withdrawn for product ${productId}. Required ${Number(requiredQty || 0)}, available ${availableQty}.`,
+    const order = orderRows[0];
+    if (!isPaidPaymentStatus(order.paymentStatus)) {
+      return false;
+    }
+    if (Number(order.stockDeducted) === 1) {
+      return false;
+    }
+
+    const [items] = await conn.query(
+      `SELECT
+         oi.Product_ID AS productId,
+         oi.Quantity AS quantity,
+         COALESCE(m.manual_override, 0) AS manual_override,
+         COALESCE(m.manual_status, '') AS manual_status,
+         COALESCE(p.availability_status, 'Available') AS availability_status,
+         COALESCE(p.item_type, 'menu_item') AS item_type
+       FROM order_item oi
+       LEFT JOIN Menu m ON m.Product_ID = oi.Product_ID
+       LEFT JOIN products p ON p.id = oi.Product_ID
+       WHERE oi.Order_ID = ?`,
+      [numericOrderId],
+    );
+
+    const menuProductIds = items
+      .map((item) => Number(item.productId) || 0)
+      .filter((productId) => productId > 0);
+    const ingredientMap = await fetchMenuIngredients(conn, menuProductIds);
+    const deductions = new Map();
+
+    for (const item of items) {
+      const productId = Number(item.productId) || 0;
+      const orderedQty = Number(item.quantity) || 0;
+      const isForceAvailable = isForceAvailableMenuItem(item);
+
+      if (productId <= 0 || orderedQty <= 0) {
+        throw new Error(
+          `Invalid order item for stock deduction on order ${numericOrderId}`,
+        );
+      }
+
+      if (isForceAvailable) {
+        console.warn(
+          `[inventoryService] Skipping Daily_Withdrawn deduction for force-available menu product ${productId}.`,
+        );
+        continue;
+      }
+
+      const ingredients = ingredientMap.get(productId) ?? [];
+      if (ingredients.length === 0) {
+        throw new Error(
+          `Menu item has no ingredient mapping. Product ${productId}.`,
+        );
+      }
+
+      for (const ingredient of ingredients) {
+        const ingredientProductId = Number(ingredient.product_id) || 0;
+        const quantityRequired = Number(ingredient.quantity_required) || 0;
+        const ingredientItemType = String(ingredient.item_type || STOCK_ITEM);
+        if (ingredientProductId <= 0 || quantityRequired <= 0) {
+          throw new Error(
+            `Invalid ingredient configuration for menu product ${productId}`,
+          );
+        }
+        if (ingredientItemType !== STOCK_ITEM) {
+          throw new Error(
+            `Ingredient product ${ingredientProductId} must be ${STOCK_ITEM}, found ${ingredientItemType}.`,
+          );
+        }
+        const totalRequired = orderedQty * quantityRequired;
+        const currentRequiredQty = Number(
+          deductions.get(ingredientProductId) ?? 0,
+        );
+        deductions.set(ingredientProductId, currentRequiredQty + totalRequired);
+      }
+    }
+
+    const deductionEntries = Array.from(deductions.entries());
+    for (const [productId, requiredQty] of deductionEntries) {
+      const [inventoryRows] = await conn.query(
+        `SELECT COALESCE(Daily_Withdrawn, 0) AS dailyWithdrawn
+         FROM Inventory
+         WHERE Product_ID = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [productId],
       );
+
+      const availableQty = Number(inventoryRows[0]?.dailyWithdrawn ?? 0);
+
+      if (availableQty < Number(requiredQty || 0)) {
+        throw new Error(
+          `Insufficient Daily_Withdrawn for product ${productId}. Required ${Number(requiredQty || 0)}, available ${availableQty}.`,
+        );
+      }
+    }
+
+    for (const [productId, requiredQty] of deductionEntries) {
+      const strictRequiredQty = Number(requiredQty) || 0;
+      if (strictRequiredQty > 0) {
+        await deductStockForOrder(productId, strictRequiredQty, recordedBy, conn);
+      }
+    }
+
+    const [updateResult] = await conn.query(
+      `UPDATE orders
+       SET stock_deducted = 1
+       WHERE Order_ID = ?
+         AND COALESCE(stock_deducted, 0) = 0`,
+      [numericOrderId],
+    );
+
+    if (txStarted) {
+      await conn.commit();
+      txStarted = false;
+    }
+
+    return updateResult.affectedRows > 0;
+  } catch (error) {
+    if (txStarted) {
+      await conn.rollback();
+      txStarted = false;
+    }
+    throw error;
+  } finally {
+    if (ownsConnection && conn) {
+      conn.release();
     }
   }
-
-  for (const [productId, requiredQty] of deductionEntries) {
-    const strictRequiredQty = Number(requiredQty) || 0;
-    if (strictRequiredQty > 0) {
-      await deductStockForOrder(productId, strictRequiredQty, recordedBy, connection);
-    }
-  }
-
-  const [updateResult] = await connection.query(
-    `UPDATE orders
-     SET stock_deducted = 1
-     WHERE Order_ID = ?
-       AND COALESCE(stock_deducted, 0) = 0`,
-    [numericOrderId],
-  );
-
-  return updateResult.affectedRows > 0;
 }
 
 module.exports = {
   deductStockForOrder,
-  deductSalesStockForCompletedOrder,
+  deductStockForPaidOrder,
 };

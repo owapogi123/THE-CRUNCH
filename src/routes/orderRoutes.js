@@ -6,7 +6,7 @@ const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const { sendCustomerOrderReceiptEmail } = require("../services/emailService");
 const {
-  deductSalesStockForCompletedOrder,
+  deductStockForPaidOrder,
 } = require("../services/inventoryService");
 const fetchFn = (...args) =>
   (typeof fetch === "function"
@@ -1507,6 +1507,7 @@ router.post("/", async (req, res) => {
         "UPDATE payments SET Payment_Status = 'Completed' WHERE Order_ID = ?",
         [orderId]
       );
+      await deductStockForPaidOrder(orderId, resolvedCashierId, conn);
     }
 
     await conn.commit();
@@ -1801,17 +1802,12 @@ router.patch("/:id", async (req, res) => {
     );
 
     const shouldDeductStockNow =
-      hasStatusUpdate &&
-      currentStatus !== "Completed" &&
-      nextStatus === "Completed" &&
+      !isPaidPaymentStatus(effectiveCurrentPaymentStatus) &&
+      isPaidPaymentStatus(nextPaymentStatus) &&
       Number(existingRows[0].stockDeducted) === 0;
 
     if (shouldDeductStockNow) {
-      if (!isPaidPaymentStatus(nextPaymentStatus)) {
-        throw new Error("Cannot deduct stock for an unpaid completed order");
-      }
-
-      await deductSalesStockForCompletedOrder(id, resolvedCashierId, conn);
+      await deductStockForPaidOrder(id, resolvedCashierId, conn);
     }
 
     if (hasPaymentStatusUpdate || nextStatus === "Completed") {
@@ -1847,7 +1843,6 @@ router.patch("/:id", async (req, res) => {
     }, null, 2));
     const errorMessage = String(err?.message || "Unknown error");
     const isClientError =
-      /cannot deduct stock for an unpaid order/i.test(errorMessage) ||
       /cannot move to the cook queue until payment is confirmed as paid/i.test(errorMessage) ||
       /insufficient daily_withdrawn/i.test(errorMessage) ||
       /must be stock_item/i.test(errorMessage) ||
