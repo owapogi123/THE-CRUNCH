@@ -1,6 +1,9 @@
 ﻿import {
-  useEffect, useState,
-  type ChangeEvent, type ReactNode,
+  useEffect,
+  useMemo,
+  useState,
+  type ChangeEvent,
+  type ReactNode,
 } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Eye, EyeOff, Mail, Lock, User } from "lucide-react";
@@ -10,101 +13,328 @@ import { useAuth } from "../context/authcontext";
 import crunchImg from "../assets/img/crunch22.png";
 import crunchLogo from "../assets/img/crunchlogo.png";
 
-/* ─── tokens ─── */
-const G    = "#FFD65A";
-const BG   = "#131010";
-const CARD = "rgba(19,16,16,0.78)";
-const SURF = "rgba(255,214,90,0.06)";
-const BORD = "rgba(255,214,90,0.14)";
-const T1   = "#F5F3EE";
-const T2   = "rgba(245,243,238,0.55)";
-const T3   = "rgba(245,243,238,0.30)";
-const ERR  = "#e05c5c";
-const OK   = "#4ade80";
+/* ─── tokens ──────────────────────────────────────────────────────────── */
+const Y = "#F5C518";
+const Y_DIM = "rgba(245,197,24,0.15)";
+const SURFACE = "rgba(16,10,3,0.82)";
+const PANEL = "rgba(22,14,5,0.90)";
+const BORDER = "rgba(245,197,24,0.12)";
+const TEXT_MUTED = "rgba(255,255,255,0.45)";
 
 const ROLE_MAP: Record<string, string> = {
-  administrator: "/dashboard", cashier: "/orders",
-  cook: "/orders", inventory_manager: "/inventory", customer: "/products",
+  administrator: "/dashboard",
+  cashier: "/orders",
+  cook: "/orders",
+  inventory_manager: "/inventory",
+  customer: "/products",
 };
-const DEV = [{ email: "admin@crunch.dev", password: "Crunch@2024!", role: "administrator", username: "Dev Admin" }];
-type Mode = "signin" | "signup";
-const MAX = 50;
-const SPRING = { type: "spring", stiffness: 360, damping: 30 } as const;
 
-/* ─── Field ─── */
-function Field({ label, name, type = "text", value, onChange, placeholder, autoComplete, icon, rightSlot, maxLength, required }: {
-  label: string; name: string; type?: string; value: string;
-  onChange: (e: ChangeEvent<HTMLInputElement>) => void;
-  placeholder: string; autoComplete?: string; icon?: ReactNode;
-  rightSlot?: ReactNode; maxLength?: number; required?: boolean;
-}) {
-  const [focused, setFocused] = useState(false);
+type AuthMode = "signin" | "signup";
+const SIGNUP_FIELD_MAX_LENGTH = 50;
+
+/* ─── floating orbs background ─────────────────────────────────────────── */
+function Orbs() {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-      <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.10em", textTransform: "uppercase", color: focused ? G : T3, transition: "color 0.18s" }}>{label}</span>
-      <div style={{ display: "flex", alignItems: "center", background: focused ? "rgba(255,214,90,0.08)" : SURF, border: `1px solid ${focused ? "rgba(255,214,90,0.36)" : BORD}`, borderRadius: 12, transition: "all 0.2s", padding: "0 13px" }}>
-        {icon && <span style={{ color: focused ? G : T3, display: "flex", flexShrink: 0, transition: "color 0.18s" }}>{icon}</span>}
-        <input name={name} type={type} value={value} onChange={onChange} placeholder={placeholder}
-          autoComplete={autoComplete} required={required} maxLength={maxLength}
-          onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
-          style={{ flex: 1, border: "none", background: "transparent", color: T1, padding: icon ? "13px 9px" : "13px 0", fontSize: 13.5, fontFamily: "inherit", outline: "none", width: "100%" }} />
-        {rightSlot && <span style={{ display: "flex", flexShrink: 0 }}>{rightSlot}</span>}
-      </div>
+    <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0, overflow: "hidden" }}>
+      {[
+        { x: "10%", y: "15%", size: 420, opacity: 0.05, delay: 0 },
+        { x: "75%", y: "60%", size: 320, opacity: 0.04, delay: 1.2 },
+        { x: "50%", y: "85%", size: 260, opacity: 0.03, delay: 2.4 },
+      ].map((orb, i) => (
+        <motion.div
+          key={i}
+          animate={{ scale: [1, 1.12, 1], opacity: [orb.opacity, orb.opacity * 1.4, orb.opacity] }}
+          transition={{ duration: 7 + i * 1.5, repeat: Infinity, delay: orb.delay, ease: "easeInOut" }}
+          style={{
+            position: "absolute",
+            left: orb.x,
+            top: orb.y,
+            width: orb.size,
+            height: orb.size,
+            borderRadius: "50%",
+            background: `radial-gradient(circle, ${Y}, transparent 70%)`,
+            transform: "translate(-50%, -50%)",
+            filter: "blur(2px)",
+          }}
+        />
+      ))}
     </div>
   );
 }
 
-/* ─── Password Field ─── */
-function PwField({ label, name, value, onChange, placeholder, autoComplete, maxLength }: {
+/* ─── field wrapper ─────────────────────────────────────────────────────── */
+function Field({ label, icon, children }: { label: string; icon?: ReactNode; children: ReactNode }) {
+  return (
+    <motion.label
+      initial={{ opacity: 0, x: -8 }}
+      animate={{ opacity: 1, x: 0 }}
+      style={{ display: "flex", flexDirection: "column", gap: 6 }}
+    >
+      <span style={{
+        fontSize: 10,
+        letterSpacing: "0.18em",
+        textTransform: "uppercase",
+        color: TEXT_MUTED,
+        fontWeight: 700,
+        fontFamily: "'Poppins', sans-serif",
+        display: "flex",
+        alignItems: "center",
+        gap: 5,
+      }}>
+        {icon && <span style={{ opacity: 0.6 }}>{icon}</span>}
+        {label}
+      </span>
+      {children}
+    </motion.label>
+  );
+}
+
+/* ─── text input ────────────────────────────────────────────────────────── */
+function TextInput({
+  name, type = "text", value, onChange, placeholder, autoComplete, required, icon, rightSlot, maxLength,
+}: {
+  name: string; type?: string; value: string;
+  onChange: (e: ChangeEvent<HTMLInputElement>) => void;
+  placeholder: string; autoComplete?: string; required?: boolean;
+  icon?: ReactNode; rightSlot?: ReactNode; maxLength?: number;
+}) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <motion.div
+      animate={{ boxShadow: focused ? `0 0 0 2px ${Y}55` : "0 0 0 1px rgba(255,255,255,0.08)" }}
+      style={{
+        position: "relative",
+        borderRadius: 14,
+        background: "rgba(255,255,255,0.05)",
+        overflow: "hidden",
+        transition: "box-shadow 0.2s",
+      }}
+    >
+      {icon && (
+        <span style={{
+          position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)",
+          color: focused ? Y : TEXT_MUTED, transition: "color 0.2s", pointerEvents: "none",
+        }}>
+          {icon}
+        </span>
+      )}
+      <input
+        name={name}
+        type={type}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        autoComplete={autoComplete}
+        required={required}
+        maxLength={maxLength}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        style={{
+          width: "100%",
+          border: "none",
+          background: "transparent",
+          color: "#fff",
+          padding: icon ? "13px 42px 13px 42px" : rightSlot ? "13px 42px 13px 14px" : "13px 14px",
+          fontSize: 14,
+          fontFamily: "'Poppins', sans-serif",
+          outline: "none",
+          boxSizing: "border-box",
+        }}
+      />
+      {rightSlot && (
+        <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)" }}>
+          {rightSlot}
+        </span>
+      )}
+    </motion.div>
+  );
+}
+
+/* ─── password field ────────────────────────────────────────────────────── */
+function PasswordField({
+  label, name, value, onChange, placeholder, autoComplete, maxLength,
+}: {
   label: string; name: string; value: string;
   onChange: (e: ChangeEvent<HTMLInputElement>) => void;
   placeholder: string; autoComplete: string; maxLength?: number;
 }) {
-  const [vis, setVis] = useState(false);
+  const [visible, setVisible] = useState(false);
   return (
-    <Field label={label} name={name} type={vis ? "text" : "password"} value={value}
-      onChange={onChange} placeholder={placeholder} autoComplete={autoComplete}
-      maxLength={maxLength} required icon={<Lock size={14} />}
-      rightSlot={
-        <button type="button" onClick={() => setVis(v => !v)}
-          style={{ border: "none", background: "none", color: T3, cursor: "pointer", display: "flex", padding: 0, transition: "color 0.15s" }}
-          onMouseEnter={e => (e.currentTarget.style.color = T2)}
-          onMouseLeave={e => (e.currentTarget.style.color = T3)}>
-          {vis ? <EyeOff size={14} /> : <Eye size={14} />}
-        </button>
-      } />
+    <Field label={label} icon={<Lock size={11} />}>
+      <TextInput
+        name={name}
+        type={visible ? "text" : "password"}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        autoComplete={autoComplete}
+        maxLength={maxLength}
+        required
+        icon={<Lock size={15} />}
+        rightSlot={
+          <button
+            type="button"
+            onClick={() => setVisible(v => !v)}
+            style={{ border: "none", background: "none", color: TEXT_MUTED, cursor: "pointer", display: "flex", padding: 0 }}
+          >
+            {visible ? <EyeOff size={15} /> : <Eye size={15} />}
+          </button>
+        }
+      />
+    </Field>
   );
 }
 
-/* ─── Gold Button ─── */
-function GoldBtn({ children, disabled, onClick, type = "submit" }: {
+/* ─── primary button ────────────────────────────────────────────────────── */
+function PrimaryButton({ children, disabled, onClick, type = "submit" }: {
   children: ReactNode; disabled?: boolean; onClick?: () => void; type?: "submit" | "button";
 }) {
   return (
-    <motion.button type={type} onClick={onClick} disabled={disabled}
-      whileHover={disabled ? {} : { scale: 1.015, boxShadow: "0 10px 36px rgba(255,214,90,0.26)" }}
+    <motion.button
+      type={type}
+      onClick={onClick}
+      disabled={disabled}
+      whileHover={disabled ? {} : { scale: 1.015, boxShadow: `0 8px 32px ${Y}55` }}
       whileTap={disabled ? {} : { scale: 0.985 }}
-      style={{ border: "none", borderRadius: 12, background: disabled ? "rgba(255,214,90,0.14)" : "linear-gradient(135deg,#ffe270,#FFD65A,#d4a800)", color: disabled ? "rgba(255,255,255,0.22)" : "#1a1000", padding: "14px", fontWeight: 800, fontSize: 13.5, cursor: disabled ? "not-allowed" : "pointer", width: "100%", letterSpacing: "0.07em", fontFamily: "inherit" }}>
+      style={{
+        marginTop: 6,
+        border: "none",
+        borderRadius: 14,
+        background: disabled ? "rgba(245,197,24,0.4)" : `linear-gradient(135deg, ${Y} 0%, #e6b800 100%)`,
+        color: "#111",
+        padding: "14px 16px",
+        fontWeight: 700,
+        fontFamily: "'Poppins', sans-serif",
+        fontSize: 14,
+        cursor: disabled ? "not-allowed" : "pointer",
+        width: "100%",
+        letterSpacing: "0.03em",
+        transition: "background 0.2s",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+      }}
+    >
       {children}
     </motion.button>
   );
 }
 
-/* ─── Modal ─── */
-function Modal({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: ReactNode }) {
+/* ─── verify email modal ──────────────────────────────────────────────── */
+function VerifyEmailModal({
+  open, email, code, error, success, isVerifying, isResending,
+  onClose, onCodeChange, onVerify, onResend,
+}: {
+  open: boolean; email: string; code: string; error: string; success: string;
+  isVerifying: boolean; isResending: boolean;
+  onClose: () => void; onCodeChange: (v: string) => void;
+  onVerify: () => void; onResend: () => void;
+}) {
   return (
     <AnimatePresence>
       {open && (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(10,8,8,0.85)", backdropFilter: "blur(20px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-          <motion.div initial={{ opacity: 0, y: 22, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.97 }} transition={SPRING}
-            style={{ width: "min(400px,100%)", background: "rgba(22,18,18,0.98)", border: `1px solid ${BORD}`, borderRadius: 20, boxShadow: "0 40px 80px rgba(0,0,0,0.75)", padding: "28px 24px 22px" }}>
-            <h2 style={{ margin: "0 0 14px", color: T1, fontSize: 17, fontWeight: 700 }}>{title}</h2>
-            {children}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          style={{
+            position: "fixed", inset: 0, zIndex: 50,
+            background: "rgba(0,0,0,0.82)", backdropFilter: "blur(14px)",
+            display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+          }}
+        >
+          <motion.div
+            initial={{ opacity: 0, y: 24, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 12, scale: 0.97 }}
+            transition={{ type: "spring", stiffness: 320, damping: 28 }}
+            style={{
+              width: "min(460px, 100%)",
+              background: PANEL,
+              border: `1px solid ${BORDER}`,
+              borderRadius: 22,
+              boxShadow: `0 30px 80px rgba(0,0,0,0.6), 0 0 60px ${Y}18`,
+              padding: "28px 28px 24px",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
+              <div style={{ width: 38, height: 38, borderRadius: 10, background: Y_DIM, border: `1px solid ${Y}30`, display: "grid", placeItems: "center" }}>
+                <Mail size={17} color={Y} />
+              </div>
+              <div>
+                <p style={{ margin: 0, fontSize: 10, fontWeight: 800, letterSpacing: "0.18em", textTransform: "uppercase", color: Y, fontFamily: "'Poppins', sans-serif" }}>
+                  Verify Email
+                </p>
+                <h2 style={{ margin: 0, color: "#fff", fontSize: 20, fontFamily: "'Poppins', sans-serif", fontWeight: 700 }}>
+                  Enter your 6-digit code
+                </h2>
+              </div>
+            </div>
+
+            <p style={{ margin: "0 0 18px", color: TEXT_MUTED, fontSize: 13, lineHeight: 1.7, fontFamily: "'Poppins', sans-serif" }}>
+              We sent a code to <strong style={{ color: "#fff" }}>{email || "your email"}</strong>. Expires in 10 minutes.
+            </p>
+
+            <AnimatePresence mode="wait">
+              {error && (
+                <motion.p key="e" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                  style={{ margin: "0 0 12px", color: "#fca5a5", fontSize: 12, textAlign: "center", fontFamily: "'Poppins', sans-serif" }}>
+                  {error}
+                </motion.p>
+              )}
+              {success && (
+                <motion.p key="s" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                  style={{ margin: "0 0 12px", color: "#86efac", fontSize: 12, textAlign: "center", fontFamily: "'Poppins', sans-serif" }}>
+                  {success}
+                </motion.p>
+              )}
+            </AnimatePresence>
+
+            <Field label="Verification Code">
+              <motion.input
+                value={code}
+                onChange={(e) => onCodeChange(e.target.value)}
+                inputMode="numeric"
+                maxLength={6}
+                placeholder="• • • • • •"
+                whileFocus={{ boxShadow: `0 0 0 2px ${Y}55` }}
+                style={{
+                  width: "100%", borderRadius: 14, border: "none",
+                  background: "rgba(255,255,255,0.05)",
+                  color: Y, padding: "16px 14px", fontSize: 24, fontWeight: 700,
+                  fontFamily: "'Poppins', sans-serif", textAlign: "center",
+                  letterSpacing: "0.5em", outline: "none", boxSizing: "border-box",
+                  boxShadow: "0 0 0 1px rgba(255,255,255,0.08)",
+                }}
+              />
+            </Field>
+
+            <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+              <PrimaryButton onClick={onVerify} disabled={isVerifying || code.trim().length !== 6} type="button">
+                {isVerifying ? "Verifying…" : "Verify"}
+              </PrimaryButton>
+              <motion.button
+                type="button"
+                onClick={onResend}
+                disabled={isResending || !email}
+                whileHover={isResending ? {} : { borderColor: `${Y}55` }}
+                style={{
+                  flex: 1, borderRadius: 14,
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  background: "rgba(255,255,255,0.04)", color: "#fff",
+                  padding: "14px", fontWeight: 700, fontFamily: "'Poppins', sans-serif",
+                  cursor: isResending ? "not-allowed" : "pointer", opacity: isResending ? 0.7 : 1, fontSize: 14,
+                }}
+              >
+                {isResending ? "Sending…" : "Resend"}
+              </motion.button>
+            </div>
+
             <button type="button" onClick={onClose}
-              style={{ marginTop: 12, width: "100%", background: "none", border: `1px solid ${BORD}`, borderRadius: 10, color: T3, cursor: "pointer", fontSize: 13, fontFamily: "inherit", padding: "10px", transition: "border-color 0.15s,color 0.15s" }}
-              onMouseEnter={e => { e.currentTarget.style.borderColor = T2; e.currentTarget.style.color = T2; }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = BORD; e.currentTarget.style.color = T3; }}>Close</button>
+              style={{ marginTop: 14, width: "100%", background: "none", border: "none", color: TEXT_MUTED, cursor: "pointer", fontSize: 12, fontFamily: "'Poppins', sans-serif" }}>
+              Close
+            </button>
           </motion.div>
         </motion.div>
       )}
@@ -112,330 +342,696 @@ function Modal({ open, onClose, title, children }: { open: boolean; onClose: () 
   );
 }
 
-/* ─── Google Icon ─── */
-const GoogleIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden>
-    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-  </svg>
-);
+function ForgotPasswordModal({
+  open,
+  email,
+  code,
+  newPassword,
+  confirmPassword,
+  message,
+  error,
+  step,
+  isSubmitting,
+  onClose,
+  onEmailChange,
+  onCodeChange,
+  onNewPasswordChange,
+  onConfirmPasswordChange,
+  onSendCode,
+  onResetPassword,
+}: {
+  open: boolean;
+  email: string;
+  code: string;
+  newPassword: string;
+  confirmPassword: string;
+  message: string;
+  error: string;
+  step: 1 | 2;
+  isSubmitting: boolean;
+  onClose: () => void;
+  onEmailChange: (value: string) => void;
+  onCodeChange: (value: string) => void;
+  onNewPasswordChange: (value: string) => void;
+  onConfirmPasswordChange: (value: string) => void;
+  onSendCode: () => void;
+  onResetPassword: () => void;
+}) {
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          style={{
+            position: "fixed", inset: 0, zIndex: 60,
+            background: "rgba(0,0,0,0.82)", backdropFilter: "blur(14px)",
+            display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+          }}
+        >
+          <motion.div
+            initial={{ opacity: 0, y: 24, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 12, scale: 0.97 }}
+            transition={{ type: "spring", stiffness: 320, damping: 28 }}
+            style={{
+              width: "min(460px, 100%)",
+              background: PANEL,
+              border: `1px solid ${BORDER}`,
+              borderRadius: 22,
+              boxShadow: `0 30px 80px rgba(0,0,0,0.6), 0 0 60px ${Y}18`,
+              padding: "28px 28px 24px",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
+              <div style={{ width: 38, height: 38, borderRadius: 10, background: Y_DIM, border: `1px solid ${Y}30`, display: "grid", placeItems: "center" }}>
+                <Lock size={17} color={Y} />
+              </div>
+              <div>
+                <p style={{ margin: 0, fontSize: 10, fontWeight: 800, letterSpacing: "0.18em", textTransform: "uppercase", color: Y, fontFamily: "'Poppins', sans-serif" }}>
+                  Forgot Password
+                </p>
+                <h2 style={{ margin: 0, color: "#fff", fontSize: 20, fontFamily: "'Poppins', sans-serif", fontWeight: 700 }}>
+                  {step === 1 ? "Send reset code" : "Reset your password"}
+                </h2>
+              </div>
+            </div>
 
-/* ─── Main ─── */
+            <p style={{ margin: "0 0 18px", color: TEXT_MUTED, fontSize: 13, lineHeight: 1.7, fontFamily: "'Poppins', sans-serif" }}>
+              {step === 1
+                ? "Enter your email and we’ll send a 6-digit reset code if the account exists."
+                : "Enter the reset code from your email and choose a new password."}
+            </p>
+
+            <AnimatePresence mode="wait">
+              {error && (
+                <motion.p key="forgot-e" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                  style={{ margin: "0 0 12px", color: "#fca5a5", fontSize: 12, textAlign: "center", fontFamily: "'Poppins', sans-serif" }}>
+                  {error}
+                </motion.p>
+              )}
+              {message && (
+                <motion.p key="forgot-m" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                  style={{ margin: "0 0 12px", color: "#86efac", fontSize: 12, textAlign: "center", fontFamily: "'Poppins', sans-serif" }}>
+                  {message}
+                </motion.p>
+              )}
+            </AnimatePresence>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <Field label="Email Address" icon={<Mail size={11} />}>
+                <TextInput
+                  name="forgotEmail"
+                  type="email"
+                  value={email}
+                  onChange={(e) => onEmailChange(e.target.value)}
+                  placeholder="you@example.com"
+                  autoComplete="email"
+                  required
+                  icon={<Mail size={15} />}
+                />
+              </Field>
+
+              {step === 2 && (
+                <>
+                  <Field label="Reset Code" icon={<Mail size={11} />}>
+                    <TextInput
+                      name="resetCode"
+                      value={code}
+                      onChange={(e) => onCodeChange(e.target.value)}
+                      placeholder="6-digit code"
+                      required
+                      icon={<Mail size={15} />}
+                    />
+                  </Field>
+                  <PasswordField
+                    label="New Password"
+                    name="newPassword"
+                    value={newPassword}
+                    onChange={(e) => onNewPasswordChange(e.target.value)}
+                    placeholder="Minimum 8 characters"
+                    autoComplete="new-password"
+                  />
+                  <PasswordField
+                    label="Confirm Password"
+                    name="confirmNewPassword"
+                    value={confirmPassword}
+                    onChange={(e) => onConfirmPasswordChange(e.target.value)}
+                    placeholder="Re-enter your new password"
+                    autoComplete="new-password"
+                  />
+                </>
+              )}
+            </div>
+
+            <PrimaryButton
+              type="button"
+              onClick={step === 1 ? onSendCode : onResetPassword}
+              disabled={
+                isSubmitting ||
+                !email.trim() ||
+                (step === 2 &&
+                  (!code.trim() || !newPassword.trim() || !confirmPassword.trim()))
+              }
+            >
+              {isSubmitting
+                ? step === 1
+                  ? "Sending…"
+                  : "Resetting…"
+                : step === 1
+                  ? "Send reset code"
+                  : "Reset password"}
+            </PrimaryButton>
+
+            <button type="button" onClick={onClose}
+              style={{ marginTop: 14, width: "100%", background: "none", border: "none", color: TEXT_MUTED, cursor: "pointer", fontSize: 12, fontFamily: "'Poppins', sans-serif" }}>
+              Close
+            </button>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+/* ─── main component ─────────────────────────────────────────────────────── */
 export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
   const { login } = useAuth();
 
-  const [mode, setMode] = useState<Mode>("signin");
-  const [loading, setLoading] = useState(false);
+  const [mode, setMode] = useState<AuthMode>("signin");
+  const [direction, setDirection] = useState(1);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
-  const [form, setForm] = useState({ name: "", email: "", password: "", confirmPassword: "" });
+  const [formData, setFormData] = useState({ name: "", email: "", password: "", confirmPassword: "" });
 
-  const [vOpen, setVOpen] = useState(false);
-  const [vEmail, setVEmail] = useState("");
-  const [vCode, setVCode] = useState("");
-  const [vErr, setVErr] = useState("");
-  const [vOk, setVOk] = useState("");
-  const [vBusy, setVBusy] = useState(false);
-  const [vResend, setVResend] = useState(false);
-
-  const [fOpen, setFOpen] = useState(false);
-  const [fStep, setFStep] = useState<1 | 2>(1);
-  const [fEmail, setFEmail] = useState("");
-  const [fCode, setFCode] = useState("");
-  const [fPw, setFPw] = useState("");
-  const [fCPw, setFCPw] = useState("");
-  const [fMsg, setFMsg] = useState("");
-  const [fErr, setFErr] = useState("");
-  const [fBusy, setFBusy] = useState(false);
+  const [verificationOpen, setVerificationOpen] = useState(false);
+  const [verificationEmail, setVerificationEmail] = useState("");
+  const [verificationCode, setVerificationCode] = useState("");
+  const [verificationError, setVerificationError] = useState("");
+  const [verificationSuccess, setVerificationSuccess] = useState("");
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [isResendingVerification, setIsResendingVerification] = useState(false);
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotStep, setForgotStep] = useState<1 | 2>(1);
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotCode, setForgotCode] = useState("");
+  const [forgotNewPassword, setForgotNewPassword] = useState("");
+  const [forgotConfirmPassword, setForgotConfirmPassword] = useState("");
+  const [forgotMessage, setForgotMessage] = useState("");
+  const [forgotError, setForgotError] = useState("");
+  const [forgotSubmitting, setForgotSubmitting] = useState(false);
 
   useEffect(() => {
-    const p = new URLSearchParams(location.search);
-    if (p.get("tab") === "signup") switchMode("signup");
-    const e = p.get("verifyEmail");
-    if (e) { setVEmail(e.trim().toLowerCase()); setVOpen(true); }
+    const params = new URLSearchParams(location.search);
+    if (params.get("tab") === "signup") switchMode("signup");
+    const email = params.get("verifyEmail");
+    if (email) {
+      setVerificationEmail(email.trim().toLowerCase());
+      setVerificationOpen(true);
+    }
   }, [location.search]);
 
-  const switchMode = (next: Mode) => { setMode(next); setError(""); setForm(c => ({ ...c, password: "", confirmPassword: "" })); };
-  const ch = (e: ChangeEvent<HTMLInputElement>) => setForm(c => ({ ...c, [e.target.name]: e.target.value }));
-
-  const openForgot = () => { setFEmail(form.email.trim().toLowerCase()); setFCode(""); setFPw(""); setFCPw(""); setFMsg(""); setFErr(""); setFStep(1); setFOpen(true); };
-  const closeForgot = () => { setFOpen(false); setFStep(1); setFCode(""); setFPw(""); setFCPw(""); setFMsg(""); setFErr(""); };
-
-  const sendReset = async () => {
-    if (!fEmail.trim()) { setFErr("Enter your email."); return; }
-    setFBusy(true); setFErr(""); setFMsg("");
-    try { const d = await authApi.forgotPassword(fEmail.trim().toLowerCase()); setFMsg(d.message || "Code sent if email exists."); setFStep(2); }
-    catch (e: any) { setFErr(e.message || "Could not send code."); }
-    finally { setFBusy(false); }
+  const switchMode = (next: AuthMode) => {
+    const order: AuthMode[] = ["signin", "signup"];
+    const d = order.indexOf(next) > order.indexOf(mode) ? 1 : -1;
+    setDirection(d);
+    setMode(next);
+    setError("");
+    setFormData(c => ({ ...c, password: "", confirmPassword: "" }));
   };
 
-  const doReset = async () => {
-    if (fPw.length < 8) { setFErr("Password must be at least 8 characters."); return; }
-    if (fPw !== fCPw) { setFErr("Passwords don't match."); return; }
-    setFBusy(true); setFErr(""); setFMsg("");
-    try { await authApi.resetPassword(fEmail.trim().toLowerCase(), fCode, fPw); closeForgot(); switchMode("signin"); setError("Password reset. Sign in now."); }
-    catch (e: any) { setFErr(e.message || "Could not reset password."); }
-    finally { setFBusy(false); }
+  const handleChange = (e: ChangeEvent<HTMLInputElement>) =>
+    setFormData(c => ({ ...c, [e.target.name]: e.target.value }));
+
+  const handleVerifyEmail = async () => {
+    const em = verificationEmail.trim().toLowerCase();
+    const cd = verificationCode.replace(/\D/g, "").slice(0, 6);
+    if (!em || cd.length !== 6) { setVerificationError("Enter the 6-digit code."); return; }
+    setIsVerifying(true); setVerificationError(""); setVerificationSuccess("");
+    try {
+      await authApi.verifyEmail(em, cd);
+      setVerificationSuccess("Email verified! Your account has been created.");
+      setFormData(c => ({ ...c, email: em, password: "", confirmPassword: "" }));
+      switchMode("signin");
+      setTimeout(() => { setVerificationOpen(false); setVerificationCode(""); }, 1200);
+    } catch (err: any) { setVerificationError(err.message || "Could not verify."); }
+    finally { setIsVerifying(false); }
   };
 
-  const verifyEmail = async () => {
-    const cd = vCode.replace(/\D/g, "").slice(0, 6);
-    if (cd.length !== 6) { setVErr("Enter the 6-digit code."); return; }
-    setVBusy(true); setVErr(""); setVOk("");
-    try { await authApi.verifyEmail(vEmail, cd); setVOk("Verified! You can sign in."); switchMode("signin"); setTimeout(() => { setVOpen(false); setVCode(""); }, 1200); }
-    catch (e: any) { setVErr(e.message || "Could not verify."); }
-    finally { setVBusy(false); }
+  const handleResendVerification = async () => {
+    const em = verificationEmail.trim().toLowerCase();
+    if (!em) { setVerificationError("Enter your email first."); return; }
+    setIsResendingVerification(true);
+    try {
+      await authApi.resendVerification(em);
+      setVerificationSuccess("New code sent.");
+    } catch (err: any) { setVerificationError(err.message || "Could not resend."); }
+    finally { setIsResendingVerification(false); }
   };
 
-  const resendVerify = async () => {
-    setVResend(true);
-    try { await authApi.resendVerification(vEmail); setVOk("New code sent."); }
-    catch (e: any) { setVErr(e.message || "Could not resend."); }
-    finally { setVResend(false); }
+  const closeForgotModal = () => {
+    setForgotOpen(false);
+    setForgotStep(1);
+    setForgotCode("");
+    setForgotNewPassword("");
+    setForgotConfirmPassword("");
+    setForgotMessage("");
+    setForgotError("");
+    setForgotSubmitting(false);
   };
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault(); setError(""); setLoading(true);
-    if (mode === "signin") {
-      const dev = DEV.find(a => a.email === form.email.trim().toLowerCase() && a.password === form.password);
-      if (dev) { login({ token: "dev-token", username: dev.username, email: dev.email, role: dev.role, userId: "0", email_verified: true }); navigate(ROLE_MAP[dev.role] ?? "/", { replace: true }); setLoading(false); return; }
+  const handleSendResetCode = async () => {
+    const email = forgotEmail.trim().toLowerCase();
+    if (!email) {
+      setForgotError("Enter your email first.");
+      return;
     }
+    setForgotSubmitting(true);
+    setForgotError("");
+    setForgotMessage("");
+    try {
+      const data = await authApi.forgotPassword(email);
+      setForgotMessage(data.message || "If that email is registered, a reset code has been sent.");
+      setForgotStep(2);
+    } catch (err: any) {
+      setForgotError(err.message || "Could not send reset code.");
+    } finally {
+      setForgotSubmitting(false);
+    }
+  };
+
+  const handleResetPassword = async () => {
+    const email = forgotEmail.trim().toLowerCase();
+    const code = forgotCode.replace(/\D/g, "").slice(0, 6);
+    if (!email || !code || !forgotNewPassword || !forgotConfirmPassword) {
+      setForgotError("Complete all fields first.");
+      return;
+    }
+    if (forgotNewPassword.length < 8) {
+      setForgotError("Password must be at least 8 characters.");
+      return;
+    }
+    if (forgotNewPassword !== forgotConfirmPassword) {
+      setForgotError("Passwords don't match.");
+      return;
+    }
+    setForgotSubmitting(true);
+    setForgotError("");
+    setForgotMessage("");
+    try {
+      await authApi.resetPassword(email, code, forgotNewPassword);
+      closeForgotModal();
+      switchMode("signin");
+      setError("Password reset successfully. You can sign in now.");
+      setFormData((current) => ({
+        ...current,
+        email,
+        password: "",
+        confirmPassword: "",
+      }));
+    } catch (err: any) {
+      setForgotError(err.message || "Could not reset password.");
+    } finally {
+      setForgotSubmitting(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault(); setError(""); setIsLoading(true);
     try {
       if (mode === "signin") {
-        const d = await authApi.login(form.email, form.password);
-        login({ token: d.token, username: d.username, email: d.email, role: d.role, userId: String(d.userId), email_verified: d.email_verified });
-        navigate(ROLE_MAP[d.role] ?? "/", { replace: true }); return;
+        const data = await authApi.login(formData.email, formData.password);
+        login({ token: data.token, username: data.username, email: data.email, role: data.role, userId: String(data.userId), email_verified: data.email_verified });
+        navigate(ROLE_MAP[data.role] ?? "/", { replace: true });
+        return;
       }
-      if (form.password.length < 8) throw new Error("Password must be at least 8 characters.");
-      if (form.password !== form.confirmPassword) throw new Error("Passwords don't match.");
-      const reg = await authApi.register(form.name, form.email, form.password);
-      const em = form.email.trim().toLowerCase();
-      setVEmail(em); setVCode(""); setVErr(""); setVOk("Code sent. Check your email.");
-      setVOpen(Boolean(reg.requiresEmailVerification));
+      if (formData.name.trim().length > SIGNUP_FIELD_MAX_LENGTH) {
+        throw new Error("Full name must not exceed 50 characters.");
+      }
+      if (formData.email.trim().length > SIGNUP_FIELD_MAX_LENGTH) {
+        throw new Error("Email must not exceed 50 characters.");
+      }
+      if (formData.password.length > SIGNUP_FIELD_MAX_LENGTH) {
+        throw new Error("Password must not exceed 50 characters.");
+      }
+      if (formData.password.length < 8) throw new Error("Password must be at least 8 characters.");
+      if (formData.password !== formData.confirmPassword) throw new Error("Passwords don't match.");
+      const reg = await authApi.register(formData.name, formData.email, formData.password);
+      const em = formData.email.trim().toLowerCase();
+      setFormData({ name: formData.name, email: em, password: "", confirmPassword: "" });
+      setVerificationEmail(em);
+      setVerificationCode(""); setVerificationError("");
+      setVerificationSuccess("Code sent. Enter it to activate your account.");
+      setVerificationOpen(Boolean(reg.requiresEmailVerification));
     } catch (err: any) {
       if (mode === "signin" && err?.status === 403 && err?.data?.requiresEmailVerification) {
-        const em = err.data.email?.trim().toLowerCase() || form.email.trim().toLowerCase();
-        setVEmail(em); setVCode(""); setVErr(err.message || "Verify your email first."); setVOk(""); setVOpen(true); setError(""); return;
+        const blockedEmail = err.data.email?.trim().toLowerCase() || formData.email.trim().toLowerCase();
+        setVerificationEmail(blockedEmail); setVerificationCode("");
+        setVerificationError(err.message || "Please verify your email first.");
+        setVerificationSuccess(""); setVerificationOpen(true); setError("");
+        return;
       }
       setError(err.message || "Authentication failed.");
-    } finally { setLoading(false); }
+    } finally { setIsLoading(false); }
   };
 
-  const isSignup = mode === "signup";
-  const codeInputStyle: React.CSSProperties = {
-    width: "100%", borderRadius: 12, border: `1px solid ${BORD}`, background: SURF,
-    color: G, padding: "14px", fontSize: 22, fontWeight: 700, fontFamily: "inherit",
-    textAlign: "center", letterSpacing: "0.5em", outline: "none", boxSizing: "border-box", marginBottom: 12,
-  };
+  /* left panel content per mode */
+  const leftContent = useMemo(() => ({
+    signin: {
+      eyebrow: "Welcome Back",
+      heading: "Sign in to\ncontinue your order",
+      sub: "Customer accounts must verify their email first before sign-in is allowed.",
+    },
+    signup: {
+      eyebrow: "New Here?",
+      heading: "Create your\naccount today",
+      sub: "We'll send a 6-digit code via email. Your account stays inactive until verified.",
+    },
+  })[mode], [mode]);
 
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-        *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-        .cr *{font-family:'Inter',sans-serif;}
-        input::placeholder{color:rgba(245,243,238,0.20);}
-        ::-webkit-scrollbar{display:none;}
-        input:-webkit-autofill,
-        input:-webkit-autofill:hover,
-        input:-webkit-autofill:focus,
-        input:-webkit-autofill:active{
-          -webkit-box-shadow:0 0 0 999px rgba(30,22,22,0.95) inset !important;
-          -webkit-text-fill-color:#F5F3EE !important;
-          caret-color:#F5F3EE;
-          transition:background-color 9999s ease-in-out 0s;
-        }
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800;900&display=swap');
+        * { box-sizing: border-box; }
+        input::placeholder { color: rgba(255,255,255,0.25); }
+        ::-webkit-scrollbar { display: none; }
       `}</style>
 
-      <div className="cr" style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: "28px 16px", background: BG, position: "relative", overflow: "hidden" }}>
+      <div style={{
+        minHeight: "100vh", display: "grid", placeItems: "center",
+        padding: "24px 16px", fontFamily: "'Poppins', sans-serif",
+        background: "radial-gradient(ellipse at 20% 10%, rgba(245,197,24,0.05), transparent 40%), radial-gradient(ellipse at 80% 90%, rgba(245,197,24,0.03), transparent 40%), linear-gradient(135deg, #0a0600 0%, #060402 55%, #0c0802 100%)",
+        position: "relative",
+      }}>
+        <Orbs />
 
-        {/* ── Background: sharp left → blurred right ── */}
-        <div style={{ position: "fixed", inset: 0, zIndex: 0, overflow: "hidden" }}>
-
-          {/* Layer 1 — sharp base image (visible on the left) */}
-          <img
-            src={crunchImg}
-            alt=""
-            style={{
-              position: "absolute", inset: 0,
-              width: "100%", height: "100%",
-              objectFit: "cover", objectPosition: "center",
-              filter: "blur(1px) saturate(0.55) brightness(0.38)",
-            }}
-          />
-
-          {/* Layer 2 — blurred image masked to reveal only on the right */}
-          <div
-            style={{
-              position: "absolute", inset: 0,
-              backgroundImage: `url(${crunchImg})`,
-              backgroundSize: "cover",
-              backgroundPosition: "center",
-              filter: "blur(7px) saturate(0.55) brightness(0.38)",
-              transform: "scale(1.06)",
-              WebkitMaskImage: "linear-gradient(to right, transparent 15%, rgba(0,0,0,0.5) 40%, black 65%)",
-              maskImage:       "linear-gradient(to right, transparent 15%, rgba(0,0,0,0.5) 40%, black 65%)",
-            }}
-          />
-
-          {/* Color overlays — preserved from original */}
-          <div style={{ position: "absolute", inset: 0, background: "linear-gradient(135deg, rgba(19,16,16,0.72) 0%, rgba(232,153,81,0.18) 50%, rgba(19,16,16,0.85) 100%)" }} />
-          <div style={{ position: "absolute", inset: 0, background: "radial-gradient(ellipse at 30% 20%, rgba(255,214,90,0.10) 0%, transparent 55%)" }} />
-          <div style={{ position: "absolute", inset: 0, background: "radial-gradient(ellipse at 75% 80%, rgba(232,153,81,0.14) 0%, transparent 50%)" }} />
-        </div>
-
-        {/* ── Card ── */}
         <motion.div
-          initial={{ opacity: 0, y: 28, scale: 0.97 }}
+          initial={{ opacity: 0, y: 30, scale: 0.97 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
-          transition={{ duration: 0.52, ease: [0.22, 1, 0.36, 1] }}
-          style={{ position: "relative", zIndex: 1, width: "min(415px,100%)", background: CARD, border: `1px solid ${BORD}`, borderRadius: 24, overflow: "hidden", backdropFilter: "blur(24px) saturate(1.4)", boxShadow: "0 0 0 1px rgba(255,214,90,0.06), 0 32px 80px rgba(0,0,0,0.65)" }}>
+          transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+          style={{
+            width: "min(1000px, 100%)", position: "relative", zIndex: 1,
+            display: "grid", gridTemplateColumns: "minmax(280px, 0.9fr) minmax(340px, 1fr)",
+            background: SURFACE,
+            border: `1px solid ${BORDER}`,
+            borderRadius: 28,
+            overflow: "hidden",
+            boxShadow: `0 40px 100px rgba(0,0,0,0.55), 0 0 0 1px rgba(245,197,24,0.06), inset 0 1px 0 rgba(255,255,255,0.06)`,
+            backdropFilter: "blur(24px)",
+            perspective: 1200,
+          }}
+        >
+          {/* ── LEFT PANEL ── */}
+          <div style={{
+            position: "relative", overflow: "hidden", minHeight: 580,
+            background: "#0a0600",
+            display: "flex", flexDirection: "column",
+          }}>
 
-          {/* Image header */}
-          <div style={{ position: "relative", height: 180, overflow: "hidden" }}>
-            <img src={crunchImg} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 55%", filter: "brightness(0.42) saturate(0.55)" }} />
-            <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to bottom, rgba(232,153,81,0.18) 0%, transparent 35%, rgba(19,16,16,0.70) 72%, rgba(19,16,16,0.97) 100%)" }} />
-            <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: "linear-gradient(90deg, transparent, rgba(255,214,90,0.7), rgba(232,153,81,0.5), transparent)" }} />
-
-            {/* Logo */}
-            <div style={{ position: "absolute", top: 14, left: 16, display: "flex", alignItems: "center", gap: 11 }}>
-              <div style={{ width: 38, height: 38, display: "grid", placeItems: "center" }}>
-                <img src={crunchLogo} alt="Logo" style={{ width: 38, height: 38, objectFit: "contain" }} />
-              </div>
-              <div>
-                <div style={{ fontSize: 13.5, fontWeight: 800, color: T1, letterSpacing: "-0.02em" }}>The Crunch Fairview</div>
-                <div style={{ fontSize: 9.5, color: "rgba(255,214,90,0.55)", letterSpacing: "0.10em", marginTop: 2 }}>FAIRVIEW DAHLIA QUEZON CITY</div>
-              </div>
+            {/* ── TOP BAR: logo + eyebrow ── */}
+            <div style={{
+              position: "relative", zIndex: 4,
+              padding: "24px 24px 0",
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              flexShrink: 0,
+            }}>
+              <motion.div
+                whileHover={{ scale: 1.08 }}
+                whileTap={{ scale: 0.95 }}
+                style={{ width: 44, height: 44, cursor: "default" }}
+              >
+                <img src={crunchLogo} alt="The Crunch" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+              </motion.div>
+              <AnimatePresence mode="wait">
+                <motion.span
+                  key={mode}
+                  initial={{ opacity: 0, y: -5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 5 }}
+                  transition={{ duration: 0.3 }}
+                  style={{
+                    color: Y, fontSize: 9, fontWeight: 800,
+                    letterSpacing: "0.22em", textTransform: "uppercase",
+                    fontFamily: "'Poppins', sans-serif",
+                  }}
+                >
+                  {leftContent.eyebrow}
+                </motion.span>
+              </AnimatePresence>
             </div>
 
-            {/* Heading */}
-            <div style={{ position: "absolute", bottom: 16, left: 18 }}>
+            {/* ── HERO IMAGE ── */}
+            <motion.div
+              initial={{ opacity: 0, scale: 1.04 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1], delay: 0.1 }}
+              style={{
+                position: "relative", zIndex: 2,
+                flex: 1,
+                margin: "16px 16px 0",
+                borderRadius: 18,
+                overflow: "hidden",
+                minHeight: 0,
+              }}
+            >
+              <img
+                src={crunchImg}
+                alt="Boneless Crunchy Savory"
+                style={{
+                  width: "100%", height: "100%",
+                  objectFit: "cover",
+                  objectPosition: "center top",
+                  display: "block",
+                }}
+              />
+              <div style={{
+                position: "absolute", inset: 0,
+                background: "linear-gradient(to bottom, transparent 55%, rgba(8,5,1,0.85) 100%)",
+                pointerEvents: "none",
+              }} />
+            </motion.div>
+
+            {/* ── BOTTOM TEXT BLOCK ── */}
+            <div style={{ position: "relative", zIndex: 4, padding: "14px 24px 24px", flexShrink: 0 }}>
               <AnimatePresence mode="wait">
-                <motion.div key={mode} initial={{ opacity: 0, y: 7 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }} transition={{ duration: 0.22 }}>
-                  <h1 style={{ margin: 0, color: T1, fontSize: 22, fontWeight: 800, letterSpacing: "-0.03em" }}>
-                    {isSignup ? "Create account" : "Sign in"}
+                <motion.div
+                  key={mode}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.38, ease: [0.22, 1, 0.36, 1] }}
+                >
+                  <h1 style={{
+                    margin: "0 0 6px", color: "#fff",
+                    fontSize: "clamp(20px, 2.2vw, 28px)", lineHeight: 1.15,
+                    fontWeight: 800, fontFamily: "'Poppins', sans-serif",
+                    whiteSpace: "pre-line",
+                  }}>
+                    {leftContent.heading}
                   </h1>
-                  <p style={{ margin: "3px 0 0", color: T2, fontSize: 12.5 }}>
-                    {isSignup ? "Staff access for The Crunch Fairview" : "Welcome back — your dashboard awaits"}
+                  <p style={{
+                    margin: 0, color: "rgba(255,255,255,0.5)",
+                    fontSize: 12, lineHeight: 1.75,
+                    fontFamily: "'Poppins', sans-serif",
+                  }}>
+                    {leftContent.sub}
                   </p>
                 </motion.div>
               </AnimatePresence>
+
+              <motion.div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 14 }}>
+                {[
+                  { label: "Boneless" },
+                  { label: "Crunchy" },
+                  { label: "Savory" },
+                ].map((tag, i) => (
+                  <motion.span
+                    key={tag.label}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.4 + i * 0.08, duration: 0.35 }}
+                    style={{
+                      padding: "5px 13px", borderRadius: 999,
+                      background: "rgba(245,197,24,0.08)",
+                      border: "1px solid rgba(245,197,24,0.18)",
+                      color: "rgba(255,255,255,0.7)",
+                      fontSize: 11, fontWeight: 600,
+                      fontFamily: "'Poppins', sans-serif",
+                      display: "flex", alignItems: "center", gap: 5,
+                    }}
+                  >
+                    {tag.label}
+                  </motion.span>
+                ))}
+              </motion.div>
             </div>
           </div>
 
-          {/* Form body */}
-          <div style={{ padding: "22px 22px 20px" }}>
-            <AnimatePresence>
-              {error && (
-                <motion.p initial={{ opacity: 0, height: 0, marginBottom: 0 }} animate={{ opacity: 1, height: "auto", marginBottom: 14 }} exit={{ opacity: 0, height: 0, marginBottom: 0 }}
-                  style={{ color: ERR, fontSize: 12, textAlign: "center", background: "rgba(224,92,92,0.09)", border: "1px solid rgba(224,92,92,0.18)", borderRadius: 8, padding: "8px 12px" }}>{error}</motion.p>
-              )}
+          {/* ── RIGHT PANEL (book-page flip) ── */}
+          <div style={{ background: PANEL, position: "relative", overflow: "hidden" }}>
+            {/* edge shadow for book feel */}
+            <div style={{
+              position: "absolute", left: 0, top: 0, bottom: 0, width: 12,
+              background: "linear-gradient(to right, rgba(0,0,0,0.3), transparent)",
+              pointerEvents: "none", zIndex: 2,
+            }} />
+
+            <AnimatePresence mode="wait" custom={direction}>
+              <motion.div
+                key={mode}
+                custom={direction}
+                initial={{ rotateY: direction * -90, opacity: 0 }}
+                animate={{ rotateY: 0, opacity: 1 }}
+                exit={{ rotateY: direction * 90, opacity: 0 }}
+                transition={{ type: "spring", stiffness: 220, damping: 26 }}
+                style={{ padding: "36px 32px", transformStyle: "preserve-3d", perspective: 1000 }}
+              >
+                {/* ── SIGN IN ── */}
+                {mode === "signin" && (
+                  <>
+                    <TabSwitcher mode={mode} onSwitch={switchMode} />
+                    <form onSubmit={handleSubmit} style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 14 }}>
+                      <ErrorMessage message={error} />
+                      <Field label="Email Address" icon={<Mail size={11} />}>
+                        <TextInput name="email" type="email" value={formData.email} onChange={handleChange}
+                          placeholder="you@example.com" autoComplete="email" required icon={<Mail size={15} />} />
+                      </Field>
+                      <PasswordField label="Password" name="password" value={formData.password}
+                        onChange={handleChange} placeholder="Enter your password" autoComplete="current-password" />
+
+                      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                        <button type="button" onClick={() => {
+                          setForgotEmail(formData.email.trim().toLowerCase());
+                          setForgotCode(""); setForgotNewPassword(""); setForgotConfirmPassword("");
+                          setForgotMessage(""); setForgotError(""); setForgotStep(1); setForgotOpen(true);
+                        }}
+                          style={{ border: "none", background: "none", color: TEXT_MUTED, cursor: "pointer", fontSize: 12, fontFamily: "'Poppins', sans-serif", padding: 0 }}>
+                          Forgot password?
+                        </button>
+                      </div>
+
+                      <PrimaryButton disabled={isLoading}>
+                        {isLoading ? "Signing in…" : "Sign In"}
+                      </PrimaryButton>
+                    </form>
+                    <Footer mode={mode} onSwitch={switchMode} />
+                  </>
+                )}
+
+                {/* ── SIGN UP ── */}
+                {mode === "signup" && (
+                  <>
+                    <TabSwitcher mode={mode} onSwitch={switchMode} />
+                    <form onSubmit={handleSubmit} style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 14 }}>
+                      <ErrorMessage message={error} />
+                      <Field label="Full Name" icon={<User size={11} />}>
+                        <TextInput name="name" value={formData.name} onChange={handleChange}
+                          placeholder="Your full name" required icon={<User size={15} />} maxLength={SIGNUP_FIELD_MAX_LENGTH} />
+                      </Field>
+                      <Field label="Email Address" icon={<Mail size={11} />}>
+                        <TextInput name="email" type="email" value={formData.email} onChange={handleChange}
+                          placeholder="you@example.com" autoComplete="email" required icon={<Mail size={15} />} maxLength={SIGNUP_FIELD_MAX_LENGTH} />
+                      </Field>
+                      <PasswordField label="Password" name="password" value={formData.password}
+                        onChange={handleChange} placeholder="Minimum 8 characters" autoComplete="new-password" maxLength={SIGNUP_FIELD_MAX_LENGTH} />
+                      <PasswordField label="Confirm Password" name="confirmPassword" value={formData.confirmPassword}
+                        onChange={handleChange} placeholder="Re-enter your password" autoComplete="new-password" maxLength={SIGNUP_FIELD_MAX_LENGTH} />
+      <PrimaryButton disabled={isLoading}>
+                        {isLoading ? "Sending code…" : "Send Verification Code"}
+                      </PrimaryButton>
+                    </form>
+                    <Footer mode={mode} onSwitch={switchMode} />
+                  </>
+                )}
+              </motion.div>
             </AnimatePresence>
-
-            <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 13 }}>
-              <AnimatePresence>
-                {isSignup && (
-                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.22 }}>
-                    <Field label="Full Name" name="name" value={form.name} onChange={ch} placeholder="Your full name" required icon={<User size={14} />} maxLength={MAX} />
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              <Field label="Email" name="email" type="email" value={form.email} onChange={ch} placeholder="you@crunch.ph" autoComplete="email" required icon={<Mail size={14} />} maxLength={MAX} />
-              <PwField label="Password" name="password" value={form.password} onChange={ch} placeholder="Your password" autoComplete={isSignup ? "new-password" : "current-password"} maxLength={MAX} />
-
-              <AnimatePresence>
-                {isSignup && (
-                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.22 }}>
-                    <PwField label="Confirm Password" name="confirmPassword" value={form.confirmPassword} onChange={ch} placeholder="Re-enter password" autoComplete="new-password" maxLength={MAX} />
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              {!isSignup && (
-                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: -4 }}>
-                  <button type="button" onClick={openForgot}
-                    style={{ border: "none", background: "none", color: T3, cursor: "pointer", fontSize: 12, fontFamily: "inherit", padding: 0, transition: "color 0.15s" }}
-                    onMouseEnter={e => (e.currentTarget.style.color = G)}
-                    onMouseLeave={e => (e.currentTarget.style.color = T3)}>Forgot password?</button>
-                </div>
-              )}
-
-              <div style={{ marginTop: 4 }}>
-                <GoldBtn disabled={loading}>
-                  {loading ? (isSignup ? "Sending code…" : "Signing in…") : (isSignup ? "CREATE ACCOUNT" : "SIGN IN")}
-                </GoldBtn>
-              </div>
-            </form>
-
-            <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "16px 0" }}>
-              <div style={{ flex: 1, height: 1, background: BORD }} />
-              <span style={{ fontSize: 11, color: T3 }}>or</span>
-              <div style={{ flex: 1, height: 1, background: BORD }} />
-            </div>
-
-            <motion.button type="button"
-              whileHover={{ scale: 1.008, borderColor: "rgba(255,214,90,0.24)" }}
-              whileTap={{ scale: 0.993 }}
-              style={{ width: "100%", border: `1px solid ${BORD}`, borderRadius: 12, background: SURF, color: T1, padding: "13px", fontFamily: "inherit", fontWeight: 500, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 9, transition: "border-color 0.18s, background 0.18s" }}>
-              <GoogleIcon /> Continue with Google
-            </motion.button>
-
-            <p style={{ marginTop: 16, textAlign: "center", fontSize: 13, color: T3 }}>
-              {isSignup ? "Already have an account? " : "No account yet? "}
-              <button type="button" onClick={() => switchMode(isSignup ? "signin" : "signup")}
-                style={{ border: "none", background: "none", color: G, cursor: "pointer", fontWeight: 700, fontSize: 13, fontFamily: "inherit", padding: 0 }}>
-                {isSignup ? "Sign in" : "Sign up free"}
-              </button>
-            </p>
-            <p style={{ marginTop: 8, textAlign: "center", fontSize: 11, color: T3 }}>Trouble signing in?</p>
           </div>
         </motion.div>
       </div>
 
-      {/* ── Verify Modal ── */}
-      <Modal open={vOpen} onClose={() => { setVOpen(false); setVCode(""); setVOk(""); setVErr(""); }} title="Verify your email">
-        <p style={{ margin: "0 0 14px", color: T2, fontSize: 13, lineHeight: 1.7 }}>
-          Code sent to <strong style={{ color: T1 }}>{vEmail || "your email"}</strong>. Expires in 10 minutes.
-        </p>
-        {vErr && <p style={{ margin: "0 0 8px", color: ERR, fontSize: 12, textAlign: "center" }}>{vErr}</p>}
-        {vOk  && <p style={{ margin: "0 0 8px", color: OK,  fontSize: 12, textAlign: "center" }}>{vOk}</p>}
-        <input value={vCode} onChange={e => { setVCode(e.target.value.replace(/\D/g,"").slice(0,6)); setVErr(""); }}
-          inputMode="numeric" maxLength={6} placeholder="• • • • • •" style={codeInputStyle} />
-        <div style={{ display: "flex", gap: 8 }}>
-          <GoldBtn onClick={verifyEmail} disabled={vBusy || vCode.length !== 6} type="button">{vBusy ? "Verifying…" : "Verify"}</GoldBtn>
-          <button type="button" onClick={resendVerify} disabled={vResend}
-            style={{ flex: 1, borderRadius: 12, border: `1px solid ${BORD}`, background: SURF, color: T1, padding: "12px", fontWeight: 600, fontFamily: "inherit", cursor: vResend ? "not-allowed" : "pointer", opacity: vResend ? 0.5 : 1, fontSize: 13 }}>
-            {vResend ? "Sending…" : "Resend"}
-          </button>
-        </div>
-      </Modal>
-
-      {/* ── Forgot Password Modal ── */}
-      <Modal open={fOpen} onClose={closeForgot} title={fStep === 1 ? "Reset your password" : "Set new password"}>
-        <p style={{ margin: "0 0 14px", color: T2, fontSize: 13, lineHeight: 1.7 }}>
-          {fStep === 1 ? "Enter your email and we'll send a reset code." : "Enter the code and your new password."}
-        </p>
-        {fErr && <p style={{ margin: "0 0 8px", color: ERR, fontSize: 12, textAlign: "center" }}>{fErr}</p>}
-        {fMsg && <p style={{ margin: "0 0 8px", color: OK,  fontSize: 12, textAlign: "center" }}>{fMsg}</p>}
-        <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
-          <Field label="Email" name="fe" type="email" value={fEmail} onChange={e => { setFEmail(e.target.value); setFErr(""); }} placeholder="you@crunch.ph" icon={<Mail size={14} />} />
-          {fStep === 2 && (<>
-            <Field label="Reset Code" name="fc" value={fCode} onChange={e => { setFCode(e.target.value.replace(/\D/g,"").slice(0,6)); setFErr(""); }} placeholder="6-digit code" icon={<Lock size={14} />} />
-            <PwField label="New Password" name="fp" value={fPw} onChange={e => { setFPw(e.target.value); setFErr(""); }} placeholder="Min 8 characters" autoComplete="new-password" />
-            <PwField label="Confirm Password" name="fcp" value={fCPw} onChange={e => { setFCPw(e.target.value); setFErr(""); }} placeholder="Re-enter password" autoComplete="new-password" />
-          </>)}
-        </div>
-        <div style={{ marginTop: 18 }}>
-          <GoldBtn type="button" onClick={fStep === 1 ? sendReset : doReset}
-            disabled={fBusy || !fEmail.trim() || (fStep === 2 && (!fCode || !fPw || !fCPw))}>
-            {fBusy ? (fStep === 1 ? "Sending…" : "Resetting…") : (fStep === 1 ? "Send reset code" : "Reset password")}
-          </GoldBtn>
-        </div>
-      </Modal>
+      <VerifyEmailModal
+        open={verificationOpen} email={verificationEmail} code={verificationCode}
+        error={verificationError} success={verificationSuccess}
+        isVerifying={isVerifying} isResending={isResendingVerification}
+        onClose={() => { setVerificationOpen(false); setVerificationCode(""); setVerificationSuccess(""); setVerificationError(""); }}
+        onCodeChange={(v) => { setVerificationCode(v.replace(/\D/g, "").slice(0, 6)); setVerificationError(""); }}
+        onVerify={handleVerifyEmail}
+        onResend={handleResendVerification}
+      />
+      <ForgotPasswordModal
+        open={forgotOpen}
+        email={forgotEmail}
+        code={forgotCode}
+        newPassword={forgotNewPassword}
+        confirmPassword={forgotConfirmPassword}
+        message={forgotMessage}
+        error={forgotError}
+        step={forgotStep}
+        isSubmitting={forgotSubmitting}
+        onClose={closeForgotModal}
+        onEmailChange={(value) => { setForgotEmail(value); setForgotError(""); }}
+        onCodeChange={(value) => { setForgotCode(value.replace(/\D/g, "").slice(0, 6)); setForgotError(""); }}
+        onNewPasswordChange={(value) => { setForgotNewPassword(value); setForgotError(""); }}
+        onConfirmPasswordChange={(value) => { setForgotConfirmPassword(value); setForgotError(""); }}
+        onSendCode={handleSendResetCode}
+        onResetPassword={handleResetPassword}
+      />
     </>
+  );
+}
+
+/* ─── small sub-components ──────────────────────────────────────────────── */
+function TabSwitcher({ mode, onSwitch }: { mode: AuthMode; onSwitch: (m: AuthMode) => void }) {
+  return (
+    <div style={{ display: "inline-flex", gap: 6, padding: 5, borderRadius: 999, background: "rgba(255,255,255,0.05)", border: `1px solid rgba(255,255,255,0.08)` }}>
+      {(["signin", "signup"] as const).map(tab => (
+        <motion.button
+          key={tab}
+          type="button"
+          onClick={() => onSwitch(tab)}
+          animate={{ background: mode === tab ? Y : "transparent", color: mode === tab ? "#111" : "rgba(255,255,255,0.5)" }}
+          transition={{ duration: 0.22 }}
+          style={{ border: "none", borderRadius: 999, padding: "9px 20px", fontWeight: 700, fontFamily: "'Poppins', sans-serif", cursor: "pointer", fontSize: 13 }}
+        >
+          {tab === "signin" ? "Sign In" : "Sign Up"}
+        </motion.button>
+      ))}
+    </div>
+  );
+}
+
+function Footer({ mode, onSwitch }: { mode: AuthMode; onSwitch: (m: AuthMode) => void }) {
+  return (
+    <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-start", gap: 12, flexWrap: "wrap" }}>
+      <p style={{ margin: 0, color: TEXT_MUTED, fontSize: 12, fontFamily: "'Poppins', sans-serif" }}>
+        {mode === "signin" ? "Need an account? " : "Have an account? "}
+        <button type="button" onClick={() => onSwitch(mode === "signin" ? "signup" : "signin")}
+          style={{ border: "none", background: "none", color: Y, cursor: "pointer", fontWeight: 700, padding: 0, fontFamily: "'Poppins', sans-serif", fontSize: 12 }}>
+          {mode === "signin" ? "Sign up" : "Sign in"}
+        </button>
+      </p>
+    </div>
+  );
+}
+
+function ErrorMessage({ message }: { message: string }) {
+  return (
+    <AnimatePresence>
+      {message && (
+        <motion.p
+          key={message}
+          initial={{ opacity: 0, y: -6, height: 0 }}
+          animate={{ opacity: 1, y: 0, height: "auto" }}
+          exit={{ opacity: 0, y: -4, height: 0 }}
+          style={{ margin: 0, color: "#fca5a5", fontSize: 12, textAlign: "center", fontFamily: "'Poppins', sans-serif" }}
+        >
+          {message}
+        </motion.p>
+      )}
+    </AnimatePresence>
   );
 }

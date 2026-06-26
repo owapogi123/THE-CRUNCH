@@ -557,7 +557,6 @@ export default function Products({isAuthenticated=false,onLogout}:ProductsProps)
 
         {!loadingP&&filtered.length===0&&(
           <motion.div initial={{opacity:0,y:18}} animate={{opacity:1,y:0}} style={{textAlign:'center',padding:'70px 0'}}>
-            <div style={{fontSize:44,marginBottom:12}}>🍗</div>
             <p style={{fontFamily:'var(--f)',fontSize:20,fontWeight:700,color:'var(--tm)',marginBottom:5}}>Nothing found</p>
             <p style={s.body({fontSize:12.5})}>Try a different search or category</p>
             {search&&<motion.button whileHover={{scale:1.04}} whileTap={{scale:.96}} onClick={()=>setSearch('')} style={{marginTop:16,background:'var(--gd)',border:'1px solid var(--gb)',borderRadius:10,padding:'8px 20px',fontSize:11.5,fontWeight:600,color:G,cursor:'pointer',fontFamily:'var(--f)'}}>Clear search</motion.button>}
@@ -571,7 +570,7 @@ export default function Products({isAuthenticated=false,onLogout}:ProductsProps)
             <h2 style={{fontFamily:'var(--f)',fontSize:'clamp(28px,4vw,50px)',fontWeight:800,color:'var(--t)',letterSpacing:'-.02em',lineHeight:1.05}}>Deals &amp; <em style={{color:G,fontStyle:'italic'}}>Promos</em></h2>
             <p style={s.body({maxWidth:220,fontSize:12.5})}>Holiday specials, payday bundles, and limited-time flavors.</p>
           </div>
-          {loadingR?<div className="gp">{Array.from({length:3}).map((_,i)=><Skel key={i} h={280}/>)}</div>:promos.length===0?<p style={{textAlign:'center',padding:'50px 0',...s.body({fontSize:13.5})}}>No active promos right now — check back soon! 🍗</p>:(
+          {loadingR?<div className="gp">{Array.from({length:3}).map((_,i)=><Skel key={i} h={280}/>)}</div>:promos.length===0?<p style={{textAlign:'center',padding:'50px 0',...s.body({fontSize:13.5})}}>No active promos right now. Check back soon!</p>:(
             <>
               {promos.filter(p=>p.highlight).length>0&&<div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(min(100%,500px),1fr))',gap:18,marginBottom:18}}>{promos.filter(p=>p.highlight).map((p,i)=><PromoCard key={p.id} promo={p} index={i} large/>)}</div>}
               {promos.filter(p=>!p.highlight).length>0&&<div className="gp">{promos.filter(p=>!p.highlight).map((p,i)=><PromoCard key={p.id} promo={p} index={promos.filter(x=>x.highlight).length+i}/>)}</div>}
