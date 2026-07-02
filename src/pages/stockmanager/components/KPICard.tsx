@@ -16,6 +16,12 @@ const KPI_ACCENT: Record<
     bg: "bg-indigo-50",
     borderColor: "border-indigo-200",
   },
+  yellow: {
+    border: "border-t-yellow-500",
+    value: "text-yellow-700",
+    bg: "bg-yellow-50",
+    borderColor: "border-yellow-200",
+  },
   rose: {
     border: "border-t-rose-500",
     value: "text-rose-500",
@@ -46,11 +52,12 @@ export function KPICard({
   itemVariants: Variants;
 }) {
   const interactive = typeof onClick === "function";
+  const theme = KPI_ACCENT[accent] ?? KPI_ACCENT.slate;
 
   return (
     <motion.div
       variants={itemVariants}
-      className={`rounded-2xl p-5 shadow-sm border-2 border-t-4 ${KPI_ACCENT[accent].bg} ${KPI_ACCENT[accent].borderColor} ${KPI_ACCENT[accent].border} ${interactive ? "cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md" : ""}`}
+      className={`rounded-2xl p-5 shadow-sm border-2 border-t-4 ${theme.bg} ${theme.borderColor} ${theme.border} ${interactive ? "cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md" : ""}`}
       onClick={onClick}
       role={interactive ? "button" : undefined}
       tabIndex={interactive ? 0 : undefined}
@@ -66,9 +73,7 @@ export function KPICard({
       }
     >
       <p className="text-xs text-slate-400 font-medium">{label}</p>
-      <p
-        className={`text-3xl font-bold mt-1 leading-none ${KPI_ACCENT[accent].value}`}
-      >
+      <p className={`text-3xl font-bold mt-1 leading-none ${theme.value}`}>
         {value}
       </p>
       <p className="text-xs text-slate-400 mt-1">{sub}</p>

@@ -17,9 +17,9 @@ export type Tab =
 
 export type DashboardSummaryKey =
   | "products"
-  | "withdrawn"
-  | "wasted"
-  | "returned";
+  | "low"
+  | "critical"
+  | "attention";
 
 export type POStatus = "Draft" | "Ordered" | "Received" | "Cancelled";
 
@@ -55,6 +55,7 @@ export interface Product {
   product_id: number;
   item_type?: string;
   product_name: string;
+  description?: string;
   category: string;
   unit: string;
   mainStock: number;
@@ -168,6 +169,8 @@ export interface RawMaterialForm {
   lowStockThreshold: string;
   criticalStockThreshold: string;
 }
+
+export type RawMaterialModalMode = "add" | "edit";
 
 export interface ReportLineItem {
   product_id: number;

@@ -11,6 +11,7 @@ export function StyledInput({
   min,
   step,
   maxLength,
+  disabled = false,
 }: {
   type: string;
   value: string;
@@ -19,6 +20,7 @@ export function StyledInput({
   min?: number | string;
   step?: number | string;
   maxLength?: number;
+  disabled?: boolean;
 }) {
   const isNumber = type === "number";
   const allowDecimal = !(step === 1 || step === "1");
@@ -31,6 +33,7 @@ export function StyledInput({
       inputMode={isNumber ? (allowDecimal ? "decimal" : "numeric") : undefined}
       value={value}
       placeholder={placeholder}
+      disabled={disabled}
       onChange={(e) =>
         onChange(
           isNumber
@@ -43,7 +46,7 @@ export function StyledInput({
           blockInvalidNumberKeys(e, { allowDecimal });
         }
       }}
-      className={inputCls}
+      className={`${inputCls} disabled:opacity-50 disabled:cursor-not-allowed`}
     />
   );
 }

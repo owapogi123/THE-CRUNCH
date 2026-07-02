@@ -9,43 +9,32 @@ export function DashboardTab({
   itemVariants,
   dashboardTopRef,
   totalProductsValue,
-  totalWithdrawnValue,
-  totalWastedValue,
-  totalReturnedValue,
+  lowStockValue,
+  criticalStockValue,
+  attentionValue,
   wholeChickenProducts,
   choppedChickenProducts,
   dashboardSubTab,
   onSummarySelect,
   mainStockContent,
   lastUpdatesContent,
-  recordSpoilageContent,
-  cookReportContent,
-  stockMovementContent,
 }: {
   pageVariants: Variants;
   staggerVariants: Variants;
   itemVariants: Variants;
   dashboardTopRef: RefObject<HTMLDivElement | null>;
   totalProductsValue: string;
-  totalWithdrawnValue: string;
-  totalWastedValue: string;
-  totalReturnedValue: string;
+  lowStockValue: string;
+  criticalStockValue: string;
+  attentionValue: string;
   wholeChickenProducts: Product[];
   choppedChickenProducts: Product[];
-  dashboardSubTab:
-    | "main-stock"
-    | "last-updates"
-    | "record-spoilage"
-    | "stock-movement"
-    | "cook-report";
+  dashboardSubTab: "main-stock" | "last-updates";
   onSummarySelect: (
-    key: "products" | "withdrawn" | "wasted" | "returned",
+    key: "products" | "low" | "critical" | "attention",
   ) => void;
   mainStockContent: ReactNode;
   lastUpdatesContent: ReactNode;
-  recordSpoilageContent: ReactNode;
-  cookReportContent: ReactNode;
-  stockMovementContent: ReactNode;
 }) {
   return (
     <motion.div
@@ -74,27 +63,27 @@ export function DashboardTab({
           />
           <KPICard
             itemVariants={itemVariants}
-            label="Released Today"
-            value={totalWithdrawnValue}
-            sub="units sent to kitchen"
-            accent="indigo"
-            onClick={() => onSummarySelect("withdrawn")}
+            label="Low Stock"
+            value={lowStockValue}
+            sub="warning threshold"
+            accent="yellow"
+            onClick={() => onSummarySelect("low")}
           />
           <KPICard
             itemVariants={itemVariants}
-            label="Wasted Today"
-            value={totalWastedValue}
-            sub="units spoiled"
+            label="Critical Stock"
+            value={criticalStockValue}
+            sub="urgent restock"
             accent="rose"
-            onClick={() => onSummarySelect("wasted")}
+            onClick={() => onSummarySelect("critical")}
           />
           <KPICard
             itemVariants={itemVariants}
-            label="Returned Today"
-            value={totalReturnedValue}
-            sub="units returned"
-            accent="emerald"
-            onClick={() => onSummarySelect("returned")}
+            label="Needs Attention"
+            value={attentionValue}
+            sub="low or out of stock"
+            accent="indigo"
+            onClick={() => onSummarySelect("attention")}
           />
         </motion.div>
 
@@ -157,9 +146,6 @@ export function DashboardTab({
 
         {dashboardSubTab === "main-stock" && mainStockContent}
         {dashboardSubTab === "last-updates" && lastUpdatesContent}
-        {dashboardSubTab === "record-spoilage" && recordSpoilageContent}
-        {dashboardSubTab === "cook-report" && cookReportContent}
-        {dashboardSubTab === "stock-movement" && stockMovementContent}
       </motion.div>
     </motion.div>
   );

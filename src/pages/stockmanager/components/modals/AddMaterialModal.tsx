@@ -3,7 +3,10 @@ import { motion } from "framer-motion";
 import { FormField } from "../FormField";
 import { StyledInput } from "../StyledInput";
 import { StyledSelect } from "../StyledSelect";
-import type { RawMaterialForm } from "../../types/inventory";
+import type {
+  RawMaterialForm,
+  RawMaterialModalMode,
+} from "../../types/inventory";
 import {
   sanitizeMaterialNameInput,
   sanitizeShortTextInput,
@@ -16,7 +19,10 @@ type AddMaterialModalProps = {
   activeInventoryUnitOptions: string[];
   materialNameMaxLength: number;
   materialDescriptionMaxLength: number;
+  defaultLowStockThreshold: number;
+  defaultCriticalStockThreshold: number;
   submitting: boolean;
+  mode?: RawMaterialModalMode;
   onClose: () => void;
   onSave: () => void | Promise<void>;
 };
@@ -28,10 +34,15 @@ export function AddMaterialModal({
   activeInventoryUnitOptions,
   materialNameMaxLength,
   materialDescriptionMaxLength,
+  defaultLowStockThreshold,
+  defaultCriticalStockThreshold,
   submitting,
+  mode = "add",
   onClose,
   onSave,
 }: AddMaterialModalProps) {
+  const isEditMode = mode === "edit";
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -47,9 +58,13 @@ export function AddMaterialModal({
       >
         <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
           <div>
-            <p className="font-semibold text-slate-800">Add Material</p>
+            <p className="font-semibold text-slate-800">
+              {isEditMode ? "Edit Material" : "Add Material"}
+            </p>
             <p className="text-xs text-slate-400 mt-0.5">
-              Add items like chicken, sauces, and other ingredients.
+              {isEditMode
+                ? "Update material details and stock alert thresholds."
+                : "Add items like chicken, sauces, and other ingredients."}
             </p>
           </div>
           <button
@@ -94,6 +109,7 @@ export function AddMaterialModal({
             <StyledSelect
               value={rawMaterialForm.unit}
               onChange={(v) => setRawMaterialForm((p) => ({ ...p, unit: v }))}
+              disabled={isEditMode}
             >
               {activeInventoryUnitOptions.map((u) => (
                 <option key={u} value={u}>
@@ -128,8 +144,8 @@ export function AddMaterialModal({
                   Use default alert thresholds
                 </p>
                 <p className="mt-1 text-xs text-slate-500">
-                  Turn this off to set custom warning and critical levels for
-                  this material.
+                  Turn this on to use the default warning and critical levels
+                  from Settings instead of custom values for this material.
                 </p>
               </div>
               <button
@@ -155,39 +171,49 @@ export function AddMaterialModal({
                 />
               </button>
             </div>
-            {!rawMaterialForm.useDefaultThresholds && (
-              <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-                <FormField label="Custom low stock threshold">
-                  <StyledInput
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={rawMaterialForm.lowStockThreshold}
-                    onChange={(v) =>
-                      setRawMaterialForm((p) => ({
-                        ...p,
-                        lowStockThreshold: v,
-                      }))
-                    }
-                    placeholder="e.g. 10"
-                  />
-                </FormField>
-                <FormField label="Custom critical stock threshold">
-                  <StyledInput
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={rawMaterialForm.criticalStockThreshold}
-                    onChange={(v) =>
-                      setRawMaterialForm((p) => ({
-                        ...p,
-                        criticalStockThreshold: v,
-                      }))
-                    }
-                    placeholder="e.g. 5"
-                  />
-                </FormField>
-              </div>
+            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <FormField label="Warning Stock Level">
+                <StyledInput
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={rawMaterialForm.lowStockThreshold}
+                  onChange={(v) =>
+                    setRawMaterialForm((p) => ({
+                      ...p,
+                      lowStockThreshold: v,
+                    }))
+                  }
+                  placeholder="e.g. 10"
+                  disabled={rawMaterialForm.useDefaultThresholds}
+                />
+              </FormField>
+              <FormField label="Critical Stock Level">
+                <StyledInput
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={rawMaterialForm.criticalStockThreshold}
+                  onChange={(v) =>
+                    setRawMaterialForm((p) => ({
+                      ...p,
+                      criticalStockThreshold: v,
+                    }))
+                  }
+                  placeholder="e.g. 5"
+                  disabled={rawMaterialForm.useDefaultThresholds}
+                />
+              </FormField>
+            </div>
+            {rawMaterialForm.useDefaultThresholds ? (
+              <p className="mt-3 text-xs text-emerald-700">
+                Using default thresholds: Warning = {defaultLowStockThreshold},
+                {" "}Critical = {defaultCriticalStockThreshold}
+              </p>
+            ) : (
+              <p className="mt-3 text-xs text-slate-500">
+                Custom thresholds will be saved for this material.
+              </p>
             )}
           </div>
         </div>
@@ -203,7 +229,11 @@ export function AddMaterialModal({
             disabled={submitting}
             className="px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition-colors disabled:opacity-60"
           >
-            {submitting ? "Saving..." : "Save Material"}
+            {submitting
+              ? "Saving..."
+              : isEditMode
+                ? "Save Changes"
+                : "Save Material"}
           </button>
         </div>
       </motion.div>

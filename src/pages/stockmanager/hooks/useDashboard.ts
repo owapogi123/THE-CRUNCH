@@ -11,18 +11,16 @@ import {
   isMainStockDashboardCategory,
 } from "../utils/stockUtils";
 
-type DashboardSubTab =
-  | "main-stock"
-  | "last-updates"
-  | "record-spoilage"
-  | "stock-movement"
-  | "cook-report";
+type DashboardSubTab = "main-stock" | "last-updates";
 
 type UseDashboardParams = {
   products: Product[];
   mainStockProducts: Product[];
   stockAlertSettings: StockAlertSettings;
-  inventoryCategoryDateTrackingLookup: Map<string, "none" | "expiry" | "shelf_life">;
+  inventoryCategoryDateTrackingLookup: Map<
+    string,
+    "none" | "expiry" | "shelf_life"
+  >;
   isMenuFoodProduct: (product: Pick<Product, "item_type">) => boolean;
   isWholeChicken: (product: Product) => boolean;
   isChoppedChicken: (product: Product) => boolean;
@@ -64,6 +62,16 @@ export function useDashboard({
     [products, stockAlertSettings, isMenuFoodProduct],
   );
 
+  const lowStockItems = useMemo(
+    () =>
+      products.filter(
+        (product) =>
+          !isMenuFoodProduct(product) &&
+          getAlertSeverity(product, stockAlertSettings) === "low",
+      ),
+    [products, stockAlertSettings, isMenuFoodProduct],
+  );
+
   const attentionItems = useMemo(
     () =>
       products.filter(
@@ -91,27 +99,23 @@ export function useDashboard({
             product.product_name.toLowerCase().includes(q) ||
             product.category.toLowerCase().includes(q),
         );
-    return [...filtered].sort((a, b) => {
-      const diff = toNumber(b.dailyWithdrawn) - toNumber(a.dailyWithdrawn);
-      return diff !== 0
-        ? diff
-        : a.mainStock / Math.max(1, a.reorderPoint * 2) -
-            b.mainStock / Math.max(1, b.reorderPoint * 2);
-    });
-  }, [products, dashboardSearch, isMenuFoodProduct, inventoryCategoryDateTrackingLookup]);
 
-  const totalWithdrawn = products.reduce(
-    (sum, product) => sum + toNumber(product.dailyWithdrawn),
-    0,
-  );
-  const totalWasted = products.reduce(
-    (sum, product) => sum + toNumber(product.wasted),
-    0,
-  );
-  const totalReturned = products.reduce(
-    (sum, product) => sum + toNumber(product.returned),
-    0,
-  );
+    return [...filtered].sort((a, b) => {
+      const stockDiff = toNumber(a.mainStock) - toNumber(b.mainStock);
+      if (stockDiff !== 0) return stockDiff;
+
+      const alertDiff =
+        toNumber(a.reorderPoint) - toNumber(b.reorderPoint);
+      if (alertDiff !== 0) return alertDiff;
+
+      return a.product_name.localeCompare(b.product_name);
+    });
+  }, [
+    products,
+    dashboardSearch,
+    isMenuFoodProduct,
+    inventoryCategoryDateTrackingLookup,
+  ]);
 
   const totalProductsCounted = useMemo(
     () =>
@@ -130,36 +134,34 @@ export function useDashboard({
         id: `product-${product.product_id}`,
         name: product.product_name,
         value: `${fmtInt(product.mainStock)} ${product.unit}`,
-        meta: `${product.category} · reorder point ${fmtInt(product.reorderPoint)}`,
+        meta: `${product.category} - reorder point ${fmtInt(product.reorderPoint)}`,
       }));
-    const withdrawnRows = [...products]
-      .filter((product) => toNumber(product.dailyWithdrawn) > 0)
-      .sort(
-        (a, b) => toNumber(b.dailyWithdrawn) - toNumber(a.dailyWithdrawn),
-      )
+
+    const lowRows = [...lowStockItems]
+      .sort((a, b) => toNumber(a.mainStock) - toNumber(b.mainStock))
       .map((product) => ({
-        id: `withdrawn-${product.product_id}`,
+        id: `low-${product.product_id}`,
         name: product.product_name,
-        value: `${fmtInt(product.dailyWithdrawn)} ${product.unit}`,
-        meta: `${product.category} · main stock ${fmtInt(product.mainStock)} ${product.unit}`,
+        value: `${fmtInt(product.mainStock)} ${product.unit}`,
+        meta: `${product.category} - warning level ${fmtInt(product.reorderPoint)}`,
       }));
-    const wastedRows = [...products]
-      .filter((product) => toNumber(product.wasted) > 0)
-      .sort((a, b) => toNumber(b.wasted) - toNumber(a.wasted))
+
+    const criticalRows = [...alertCriticalStock]
+      .sort((a, b) => toNumber(a.mainStock) - toNumber(b.mainStock))
       .map((product) => ({
-        id: `wasted-${product.product_id}`,
+        id: `critical-${product.product_id}`,
         name: product.product_name,
-        value: `${fmtInt(product.wasted)} ${product.unit}`,
-        meta: `${product.category} · withdrawn today ${fmtInt(product.dailyWithdrawn)} ${product.unit}`,
+        value: `${fmtInt(product.mainStock)} ${product.unit}`,
+        meta: `${product.category} - critical level ${fmtInt(product.criticalPoint)}`,
       }));
-    const returnedRows = [...products]
-      .filter((product) => toNumber(product.returned) > 0)
-      .sort((a, b) => toNumber(b.returned) - toNumber(a.returned))
+
+    const attentionRows = [...attentionItems]
+      .sort((a, b) => toNumber(a.mainStock) - toNumber(b.mainStock))
       .map((product) => ({
-        id: `returned-${product.product_id}`,
+        id: `attention-${product.product_id}`,
         name: product.product_name,
-        value: `${fmtInt(product.returned)} ${product.unit}`,
-        meta: `${product.category} · current stock ${fmtInt(product.mainStock)} ${product.unit}`,
+        value: `${fmtInt(product.mainStock)} ${product.unit}`,
+        meta: `${product.category} - ${getAlertSeverity(product, stockAlertSettings)} stock`,
       }));
 
     return {
@@ -171,29 +173,29 @@ export function useDashboard({
         rows: productRows,
         emptyMessage: "No products found in inventory.",
       },
-      withdrawn: {
-        title: "Released Today Summary",
-        subtitle: "Items released from storage for kitchen use today.",
-        totalLabel: "Total Released",
-        totalValue: fmtInt(totalWithdrawn),
-        rows: withdrawnRows,
-        emptyMessage: "No products have been released today.",
+      low: {
+        title: "Low Stock Summary",
+        subtitle: "Items approaching their warning threshold.",
+        totalLabel: "Low Stock Items",
+        totalValue: lowRows.length.toString(),
+        rows: lowRows,
+        emptyMessage: "No low stock items found.",
       },
-      wasted: {
-        title: "Wasted Today Summary",
-        subtitle: "Recorded spoilage and other waste for the day.",
-        totalLabel: "Total Wasted",
-        totalValue: fmtInt(totalWasted),
-        rows: wastedRows,
-        emptyMessage: "No wasted items recorded today.",
+      critical: {
+        title: "Critical Stock Summary",
+        subtitle: "Items already at or below their critical threshold.",
+        totalLabel: "Critical Items",
+        totalValue: criticalRows.length.toString(),
+        rows: criticalRows,
+        emptyMessage: "No critical stock items found.",
       },
-      returned: {
-        title: "Returned Today Summary",
-        subtitle: "Items or quantities returned back into stock today.",
-        totalLabel: "Total Returned",
-        totalValue: fmtInt(totalReturned),
-        rows: returnedRows,
-        emptyMessage: "No returned items recorded today.",
+      attention: {
+        title: "Needs Attention Summary",
+        subtitle: "All low, critical, and out-of-stock items.",
+        totalLabel: "Attention Items",
+        totalValue: attentionRows.length.toString(),
+        rows: attentionRows,
+        emptyMessage: "No attention items right now.",
       },
     } satisfies Record<
       DashboardSummaryKey,
@@ -207,11 +209,11 @@ export function useDashboard({
       }
     >;
   }, [
-    products,
+    alertCriticalStock,
+    attentionItems,
+    lowStockItems,
+    stockAlertSettings,
     totalProductsCounted,
-    totalReturned,
-    totalWasted,
-    totalWithdrawn,
   ]);
 
   const wholeChickenProducts = useMemo(
@@ -249,9 +251,7 @@ export function useDashboard({
     alertCriticalStock,
     attentionItems,
     dashboardFilteredProducts,
-    totalWithdrawn,
-    totalWasted,
-    totalReturned,
+    lowStockItems,
     totalProductsCounted,
     dashboardSummaryConfig,
     selectedSummaryConfig,

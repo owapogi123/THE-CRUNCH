@@ -94,6 +94,8 @@ interface KitchenUsagePayload {
   report: KitchenUsageReport;
   items: KitchenUsageItem[];
 }
+const SHOW_LEGACY_USAGE_PANEL = false;
+
 interface UsageProductOption {
   product_id: number;
   product_name: string;
@@ -332,7 +334,11 @@ export default function Order() {
 
   useEffect(() => { fetchAll(); const i = setInterval(fetchAll, 3000); return () => clearInterval(i); }, []);
   useEffect(() => { const t = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(t); }, []);
-  useEffect(() => { void fetchUsage(); }, []);
+  useEffect(() => {
+    if (SHOW_LEGACY_USAGE_PANEL) {
+      void fetchUsage();
+    }
+  }, []);
   useEffect(() => {
     let cancelled = false;
     void fetchGeneralSettings().then((settings) => {
@@ -667,6 +673,7 @@ export default function Order() {
         )}
 
         {/* ── Queue ── */}
+        {SHOW_LEGACY_USAGE_PANEL && (
         <div style={{ padding: isMobile ? "16px 14px 0" : isTablet ? "16px 18px 0" : "16px 32px 0", display: "none" }}>
           <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
             style={{ background: "#fff", borderRadius: 16, border: "1px solid #e5e7eb", overflow: "hidden" }}>
@@ -702,6 +709,7 @@ export default function Order() {
             </AnimatePresence>
           </motion.div>
         </div>
+        )}
 
         <div style={{ padding: isMobile ? "18px 14px 28px" : isTablet ? "20px 18px 32px" : "24px 32px 40px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 14 }}>
@@ -916,6 +924,7 @@ export default function Order() {
             </div>
           )}
 
+          {SHOW_LEGACY_USAGE_PANEL && (
           <div style={{ paddingTop: 24 }}>
             <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
               style={{ background: "#fff", borderRadius: 16, border: "1px solid #e5e7eb", overflow: "hidden" }}>
@@ -951,6 +960,7 @@ export default function Order() {
               </AnimatePresence>
             </motion.div>
           </div>
+          )}
         </div>
       </div>
     </div>

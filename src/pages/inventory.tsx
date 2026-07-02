@@ -1269,7 +1269,7 @@ function MenuAdminTab() {
           name: String(item.product_name ?? item.name ?? "Unnamed Product"),
           category: String(item.category ?? "Uncategorized"),
           unit: String(item.unit ?? "piece"),
-          stock: Number(item.dailyWithdrawn ?? item.quantity ?? item.stock ?? 0),
+          stock: Number(item.stock ?? item.quantity ?? item.dailyWithdrawn ?? 0),
         }))
         .filter((item) => item.id > 0)
         .sort((a, b) => a.name.localeCompare(b.name));

@@ -107,6 +107,21 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  updateProduct: (
+    id: number,
+    body: {
+      name?: string;
+      category?: string;
+      description?: string;
+      use_default_thresholds?: boolean;
+      low_stock_threshold?: number | null;
+      critical_stock_threshold?: number | null;
+    },
+  ) =>
+    apiFetch<{ message: string }>(`/products/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
   deleteProduct: (id: number) =>
     apiFetch<{ message: string }>(`/products/${id}`, { method: "DELETE" }),
   getActiveBatches: () => apiFetch<Batch[]>("/batches/active"),
