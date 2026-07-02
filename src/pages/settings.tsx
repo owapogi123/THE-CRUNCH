@@ -1,479 +1,361 @@
-﻿import { useState, useEffect } from "react";
+﻿import { useState, useEffect, useRef, useCallback } from "react";
 import { Lock, ChevronDown, ChevronUp, Star, MessageSquare } from "lucide-react";
 import { useAuth } from "../context/authcontext";
-
-// ─── Constants ────────────────────────────────────────────────────────────────
-export const FONT = "'Poppins', sans-serif";
-export const ACCENT = "#e05a1e";
+import { api } from "../lib/api";
+import {
+  fetchGeneralSettings,
+  normalizeGeneralSettings,
+  type GeneralRestaurantSettings,
+} from "../lib/restaurantSettings";
+import { useNotifications } from "../lib/NotificationContext";
+import { Sidebar } from "@/components/Sidebar";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-export type UserRole = "administrator" | "manager" | "staff";
-export type TabKey =
-  | "business" | "users" | "roles" | "inventory" | "products"
-  | "ordering" | "payment" | "receipt" | "billing" | "notifications"
-  | "kitchen" | "delivery" | "reports" | "security" | "backup"
-  | "audit" | "personal" | "feedback";
-
-export interface RestaurantSettings {
-  restaurantName: string; tagline: string; email: string; phone: string; address: string;
-  weekdayOpenTime: string; weekdayCloseTime: string; weekendOpenTime: string; weekendCloseTime: string;
-  storeStatusMode: "auto" | "manual_open" | "manual_closed";
-  defaultLowStockThreshold: string; defaultCriticalStockThreshold: string;
-  taxRate: string; serviceCharge: string; enableToastNotifications: boolean;
-  toastPosition: "top-right" | "top-left" | "bottom-right" | "bottom-left";
-  toastDuration: string; enableConfirmDialogs: boolean;
-  acceptOnlineOrders: boolean; minimumOrderAmount: string;
-  deliveryRadius: string; deliveryFee: string; sessionTimeout: string;
-}
-
-export const DEFAULT: RestaurantSettings = {
-  restaurantName: "The Crunch", tagline: "", email: "", phone: "", address: "",
-  weekdayOpenTime: "10:00", weekdayCloseTime: "22:00",
-  weekendOpenTime: "11:00", weekendCloseTime: "20:30",
-  storeStatusMode: "auto", defaultLowStockThreshold: "", defaultCriticalStockThreshold: "",
-  taxRate: "", serviceCharge: "", enableToastNotifications: true,
-  toastPosition: "top-right", toastDuration: "4000", enableConfirmDialogs: true,
-  acceptOnlineOrders: true, minimumOrderAmount: "", deliveryRadius: "", deliveryFee: "",
-  sessionTimeout: "30",
-};
+export type UserRole = "administrator" | "cashier" | "cook" | "inventory_manager";
+export type TabKey = "business" | "inventory" | "billing" | "ordering" | "notifications" | "delivery" | "security" | "feedback" | "personal" | "receipt" | "kitchen" | "reports" | "roles";
 
 export interface FeedbackEntry {
-  id: string; reviewerName: string; productName: string;
-  rating: number; message: string; createdAt: string;
+  id: string;
+  reviewerName: string;
+  productName: string;
+  rating: number;
+  message: string;
+  createdAt: string;
 }
 
-// ─── RBAC ─────────────────────────────────────────────────────────────────────
-const ADMIN_ONLY: TabKey[] = ["users", "roles", "security", "backup", "audit"];
+// ─── Constants ────────────────────────────────────────────────────────────────
+const FONT = "'Poppins', sans-serif";
+const ACCENT = "#e05a1e";
 
-export function canAccess(role: UserRole, tab: TabKey): boolean {
-  if (role === "administrator") return true;
-  if (role === "manager") return !ADMIN_ONLY.includes(tab);
-  return tab === "personal";
-}
+const ADMIN_ONLY: TabKey[] = ["security", "roles"];
+const COMING_SOON: TabKey[] = ["personal", "receipt", "kitchen", "reports", "roles"];
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-const S = {
-  input: {
-    fontFamily: FONT, fontSize: "0.85rem", color: "#1c1a18", background: "#f7f6f5",
-    border: "1px solid #ececec", borderRadius: 8, padding: "9px 12px",
-    width: "100%", outline: "none", transition: "border-color .15s, box-shadow .15s",
-  } as React.CSSProperties,
-  pillSelect: {
-    fontFamily: FONT, fontSize: "0.85rem", fontWeight: 500, color: "#1c1a18",
-    background: "#f0eeec", border: "none", borderRadius: 99, padding: "9px 16px",
-    cursor: "pointer", outline: "none", appearance: "none" as const,
-  } as React.CSSProperties,
-  btn: {
-    fontFamily: FONT, fontSize: "0.82rem", fontWeight: 500, cursor: "pointer",
-    borderRadius: 10, padding: "10px 16px", border: "none",
-    background: "#f0eeec", color: "#1c1a18", textAlign: "left" as const,
-    transition: "all .15s",
-  } as React.CSSProperties,
-  accentBtn: {
-    fontFamily: FONT, fontSize: "0.82rem", fontWeight: 500, cursor: "pointer",
-    borderRadius: 10, padding: "10px 16px", border: "none",
-    background: "#1c1a18", color: "#fff", textAlign: "left" as const,
-    transition: "all .15s",
-  } as React.CSSProperties,
+const NAV_ITEMS: { key: TabKey; label: string }[] = [
+  { key: "business",      label: "Business Info" },
+  { key: "ordering",      label: "Online Ordering" },
+  { key: "delivery",      label: "Delivery" },
+  { key: "inventory",     label: "Inventory" },
+  { key: "billing",       label: "Tax & Charges" },
+  { key: "notifications", label: "Notifications" },
+  { key: "security",      label: "Security" },
+  { key: "feedback",      label: "Customer Feedback" },
+  { key: "personal",      label: "Personal Settings" },
+  { key: "receipt",       label: "Receipt" },
+  { key: "kitchen",       label: "Kitchen Settings" },
+  { key: "reports",       label: "Reports" },
+  { key: "roles",         label: "Roles & Permissions" },
+];
+
+const TAB_META: Record<TabKey, { title: string; desc: string }> = {
+  business:      { title: "Business Info",         desc: "Restaurant name, contact details, and operating hours." },
+  inventory:     { title: "Inventory",             desc: "Stock alert thresholds." },
+  billing:       { title: "Tax & Charges",         desc: "VAT rate and service charge." },
+  ordering:      { title: "Online Ordering",       desc: "Accept orders and store status." },
+  notifications: { title: "Notifications",         desc: "Toast alerts and confirmation dialogs." },
+  delivery:      { title: "Delivery",              desc: "Delivery radius, fee, and driver assignment." },
+  security:      { title: "Security",              desc: "Session timeout and login monitoring." },
+  feedback:      { title: "Customer Feedback",     desc: "Reviews and ratings from customers." },
+  personal:      { title: "Personal Settings",     desc: "Your profile, password, and preferences." },
+  receipt:       { title: "Receipt",               desc: "Customize header, footer, and QR code on receipts." },
+  kitchen:       { title: "Kitchen Settings",      desc: "Kitchen Display layout, order priority, and prep times." },
+  reports:       { title: "Reports",               desc: "Export sales and inventory reports." },
+  roles:         { title: "Roles & Permissions",   desc: "Control what each role can access." },
 };
 
+function canAccess(role: UserRole, tab: TabKey): boolean {
+  if (role === "administrator") return true;
+  return !ADMIN_ONLY.includes(tab);
+}
+
+// ─── Shared field settings that go to /api/settings ──────────────────────────
+// We extend GeneralRestaurantSettings with extra fields the tabs need
+interface AppSettings extends GeneralRestaurantSettings {
+  // Inventory
+  lowStockThreshold: string;
+  criticalStockThreshold: string;
+  // Billing
+  taxRate: string;
+  serviceCharge: string;
+  // Ordering
+  acceptOnlineOrders: boolean;
+  minimumOrderAmount: string;
+  storeStatusMode: "auto" | "manual_open" | "manual_closed";
+  // Notifications
+  enableToastNotifications: boolean;
+  toastPosition: "top-right" | "top-left" | "bottom-right" | "bottom-left";
+  toastDuration: string;
+  enableConfirmDialogs: boolean;
+  // Delivery
+  deliveryRadius: string;
+  deliveryFee: string;
+  // Security
+  sessionTimeout: string;
+  loginMonitoring: boolean;
+}
+
+const DEFAULTS: AppSettings = {
+  restaurantName: "The Crunch",
+  tagline: "",
+  email: "",
+  phone: "",
+  address: "",
+  currency: "PHP",
+  timezone: "Asia/Manila",
+  openTime: "08:00",
+  closeTime: "22:00",
+  lowStockThreshold: "",
+  criticalStockThreshold: "",
+  taxRate: "",
+  serviceCharge: "",
+  acceptOnlineOrders: true,
+  minimumOrderAmount: "",
+  storeStatusMode: "auto",
+  enableToastNotifications: true,
+  toastPosition: "top-right",
+  toastDuration: "4000",
+  enableConfirmDialogs: true,
+  deliveryRadius: "",
+  deliveryFee: "",
+  sessionTimeout: "30",
+  loginMonitoring: true,
+};
+
+function normalizeAppSettings(raw: Record<string, unknown>): AppSettings {
+  const base = normalizeGeneralSettings(raw);
+  const str  = (k: string, fb = "") => String(raw[k] ?? "").trim() || fb;
+  const bool = (k: string, fb: boolean) => (k in raw ? Boolean(raw[k]) : fb);
+  return {
+    ...base,
+    lowStockThreshold:      str("lowStockThreshold"),
+    criticalStockThreshold: str("criticalStockThreshold"),
+    taxRate:                str("taxRate"),
+    serviceCharge:          str("serviceCharge"),
+    acceptOnlineOrders:     bool("acceptOnlineOrders", true),
+    minimumOrderAmount:     str("minimumOrderAmount"),
+    storeStatusMode:        (str("storeStatusMode") || "auto") as AppSettings["storeStatusMode"],
+    enableToastNotifications: bool("enableToastNotifications", true),
+    toastPosition:          (str("toastPosition") || "top-right") as AppSettings["toastPosition"],
+    toastDuration:          str("toastDuration", "4000"),
+    enableConfirmDialogs:   bool("enableConfirmDialogs", true),
+    deliveryRadius:         str("deliveryRadius"),
+    deliveryFee:            str("deliveryFee"),
+    sessionTimeout:         str("sessionTimeout", "30"),
+    loginMonitoring:        bool("loginMonitoring", true),
+  };
+}
+
 // ─── Primitives ───────────────────────────────────────────────────────────────
-export function SI({ value, onChange, type = "text", placeholder = "" }: {
-  value: string; onChange: (v: string) => void; type?: string; placeholder?: string;
+const inputStyle: React.CSSProperties = {
+  fontFamily: FONT, fontSize: "0.85rem", color: "#1c1a18",
+  background: "#f7f6f5", border: "1px solid #ececec",
+  borderRadius: 8, padding: "9px 12px", width: "100%",
+  outline: "none", boxSizing: "border-box",
+};
+
+const selectStyle: React.CSSProperties = {
+  fontFamily: FONT, fontSize: "0.85rem", color: "#1c1a18",
+  background: "#f0eeec", border: "none", borderRadius: 99,
+  padding: "9px 16px", cursor: "pointer", outline: "none",
+};
+
+function SI({ value, onChange, type = "text", placeholder = "", disabled = false }: {
+  value: string; onChange: (v: string) => void;
+  type?: string; placeholder?: string; disabled?: boolean;
 }) {
-  const [f, setF] = useState(false);
+  const [focused, setFocused] = useState(false);
   return (
     <input
-      style={{ ...S.input, borderColor: f ? ACCENT : "#ececec", boxShadow: f ? `0 0 0 3px rgba(224,90,30,.1)` : "none" }}
-      type={type} value={value} placeholder={placeholder}
+      style={{ ...inputStyle, borderColor: focused ? ACCENT : "#ececec", boxShadow: focused ? `0 0 0 3px rgba(224,90,30,.1)` : "none", opacity: disabled ? 0.5 : 1 }}
+      type={type} value={value} placeholder={placeholder} disabled={disabled}
       onChange={(e) => onChange(e.target.value)}
-      onFocus={() => setF(true)} onBlur={() => setF(false)}
+      onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
     />
   );
 }
 
-export function SS({ value, onChange, options }: {
-  value: string; onChange: (v: string) => void; options: { value: string; label: string }[];
+function SS({ value, onChange, options }: {
+  value: string; onChange: (v: string) => void;
+  options: { value: string; label: string }[];
 }) {
   return (
     <div style={{ position: "relative", display: "inline-block" }}>
-      <select
-        style={{ ...S.pillSelect, paddingRight: 34 }}
-        value={value} onChange={(e) => onChange(e.target.value)}
-      >
+      <select style={{ ...selectStyle, paddingRight: 34 }} value={value} onChange={(e) => onChange(e.target.value)}>
         {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
-      <ChevronDown size={14} color="#9e9891" style={{
-        position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none",
-      }} />
+      <ChevronDown size={14} color="#9e9891" style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
     </div>
   );
 }
 
-export function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+function Toggle({ value, onChange, disabled = false }: { value: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
-    <button
-      type="button" role="switch" aria-checked={value} onClick={() => onChange(!value)}
-      style={{
-        position: "relative", width: 44, height: 24, borderRadius: 99, border: "none",
-        cursor: "pointer", background: value ? "#1c1a18" : "#e4e1dc", padding: 0, flexShrink: 0,
-        transition: "background .2s",
-      }}
-    >
-      <span style={{
-        position: "absolute", top: 3, left: value ? 23 : 3,
-        width: 18, height: 18, borderRadius: "50%", background: "#fff",
-        boxShadow: "0 1px 3px rgba(0,0,0,.18)", transition: "left .18s",
-      }} />
+    <button type="button" role="switch" aria-checked={value} onClick={() => !disabled && onChange(!value)}
+      style={{ position: "relative", width: 44, height: 24, borderRadius: 99, border: "none", cursor: disabled ? "not-allowed" : "pointer", background: value ? "#1c1a18" : "#e4e1dc", padding: 0, flexShrink: 0, transition: "background .2s", opacity: disabled ? 0.5 : 1 }}>
+      <span style={{ position: "absolute", top: 3, left: value ? 23 : 3, width: 18, height: 18, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,.18)", transition: "left .18s" }} />
     </button>
   );
 }
 
-export function FR({ label, last = false, children }: { label: string; last?: boolean; children: React.ReactNode }) {
+// ─── Field Row & Toggle Row ───────────────────────────────────────────────────
+function FR({ label, last = false, children }: { label: string; last?: boolean; children: React.ReactNode }) {
   return (
-    <div style={{
-      display: "grid", gridTemplateColumns: "175px minmax(0,1fr)", alignItems: "center",
-      gap: 16, padding: "20px 0", borderBottom: last ? "none" : "1px solid #ececec",
-    }}>
+    <div style={{ display: "grid", gridTemplateColumns: "175px minmax(0,1fr)", alignItems: "center", gap: 16, padding: "18px 0", borderBottom: last ? "none" : "1px solid #ececec" }}>
       <p style={{ fontFamily: FONT, fontSize: "0.85rem", fontWeight: 500, color: "#1c1a18", margin: 0 }}>{label}</p>
       {children}
     </div>
   );
 }
 
-export function TR({ label, desc, value, onChange, last = false }: {
-  label: string; desc?: string; value: boolean; onChange: (v: boolean) => void; last?: boolean;
+function TR({ label, desc, value, onChange, last = false, disabled = false }: {
+  label: string; desc?: string; value: boolean; onChange: (v: boolean) => void; last?: boolean; disabled?: boolean;
 }) {
   return (
-    <div style={{
-      display: "flex", alignItems: "center", justifyContent: "space-between",
-      padding: "20px 0", borderBottom: last ? "none" : "1px solid #ececec", gap: 16,
-    }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 0", borderBottom: last ? "none" : "1px solid #ececec", gap: 16 }}>
       <div>
         <p style={{ fontFamily: FONT, fontSize: "0.85rem", fontWeight: 500, color: "#1c1a18", margin: 0 }}>{label}</p>
         {desc && <p style={{ fontFamily: FONT, fontSize: "0.74rem", color: "#9e9891", margin: "3px 0 0", lineHeight: 1.6 }}>{desc}</p>}
       </div>
-      <Toggle value={value} onChange={onChange} />
+      <Toggle value={value} onChange={onChange} disabled={disabled} />
     </div>
   );
 }
 
-export function Card({ title, children }: { title: string; children: React.ReactNode }) {
+// ─── Section card ─────────────────────────────────────────────────────────────
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div style={{ marginBottom: 8 }}>
+    <div style={{ marginBottom: 24, background: "#fff", borderRadius: 14, border: "1px solid #ececec", padding: "0 20px" }}>
+      <p style={{ fontFamily: FONT, fontSize: "0.7rem", fontWeight: 700, color: "#b0aaa3", textTransform: "uppercase", letterSpacing: ".08em", margin: 0, padding: "16px 0 0" }}>{title}</p>
       {children}
     </div>
   );
 }
 
-export function Hint({ children }: { children: React.ReactNode }) {
-  return <p style={{ fontFamily: FONT, fontSize: "0.74rem", color: "#b0aaa3", padding: "10px 0 18px", lineHeight: 1.6, margin: 0 }}>{children}</p>;
+// ─── Save status indicator ────────────────────────────────────────────────────
+function SaveStatus({ status }: { status: "idle" | "saving" | "saved" | "error" }) {
+  if (status === "idle") return null;
+  const map = { saving: ["#9e9891", "Saving…"], saved: ["#15803d", "Saved"], error: ["#b91c1c", "Failed to save"] };
+  const [color, label] = map[status];
+  return <span style={{ fontFamily: FONT, fontSize: "0.75rem", color, transition: "color .2s" }}>{label}</span>;
+}
+
+// ─── Coming Soon ──────────────────────────────────────────────────────────────
+function ComingSoon({ title, desc }: { title: string; desc: string }) {
+  return (
+    <div style={{ background: "#f7f6f5", borderRadius: 16, padding: "48px 32px", textAlign: "center" }}>
+      <div style={{ width: 52, height: 52, borderRadius: 12, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", fontSize: 22 }}>
+        🚧
+      </div>
+      <p style={{ fontFamily: FONT, fontSize: "0.9rem", fontWeight: 600, color: "#1c1a18", margin: "0 0 8px" }}>{title} — Coming Soon</p>
+      <p style={{ fontFamily: FONT, fontSize: "0.78rem", color: "#9e9891", margin: 0, lineHeight: 1.7, maxWidth: 300, marginInline: "auto" }}>
+        {desc} This section will be available once the API is ready.
+      </p>
+    </div>
+  );
 }
 
 // ─── Locked overlay ───────────────────────────────────────────────────────────
-export function LockedSection({ tabLabel }: { tabLabel: string }) {
+function LockedSection({ tabLabel }: { tabLabel: string }) {
   return (
-    <div style={{
-      background: "#f7f6f5", borderRadius: 16,
-      padding: "48px 32px", textAlign: "center",
-    }}>
-      <div style={{
-        width: 52, height: 52, borderRadius: 12, background: "#fff",
-        display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px",
-      }}>
+    <div style={{ background: "#f7f6f5", borderRadius: 16, padding: "48px 32px", textAlign: "center" }}>
+      <div style={{ width: 52, height: 52, borderRadius: 12, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
         <Lock size={22} color={ACCENT} />
       </div>
       <p style={{ fontFamily: FONT, fontSize: "0.9rem", fontWeight: 600, color: "#1c1a18", margin: "0 0 8px" }}>Access Restricted</p>
       <p style={{ fontFamily: FONT, fontSize: "0.78rem", color: "#9e9891", margin: 0, lineHeight: 1.7, maxWidth: 300, marginInline: "auto" }}>
-        You do not have permission to access <strong style={{ color: "#5a5652" }}>{tabLabel}</strong>. Contact your administrator.
+        You don't have permission to view <strong style={{ color: "#5a5652" }}>{tabLabel}</strong>. Contact your administrator.
       </p>
     </div>
   );
 }
 
 // ─── Tab panels ───────────────────────────────────────────────────────────────
-export function BusinessTab({ s, setStr }: { s: RestaurantSettings; setStr: (k: keyof RestaurantSettings, v: string) => void }) {
+function BusinessTab({ s, set }: { s: AppSettings; set: (k: keyof AppSettings, v: string) => void }) {
   return <>
-    <Card title="Restaurant Identity">
-      <FR label="Business name"><SI value={s.restaurantName} onChange={(v) => setStr("restaurantName", v)} placeholder="The Crunch" /></FR>
-      <FR label="Tagline" last><SI value={s.tagline} onChange={(v) => setStr("tagline", v)} placeholder="Crunch into flavor" /></FR>
-    </Card>
-    <Card title="Contact Details">
-      <FR label="Email"><SI value={s.email} onChange={(v) => setStr("email", v)} type="email" placeholder="contact@thecrunch.ph" /></FR>
-      <FR label="Phone"><SI value={s.phone} onChange={(v) => setStr("phone", v)} placeholder="+63 912 345 6789" /></FR>
-      <FR label="Address" last><SI value={s.address} onChange={(v) => setStr("address", v)} placeholder="123 Food St, Manila" /></FR>
-    </Card>
-    <Card title="Operating Hours">
-      <FR label="Weekday open"><SI value={s.weekdayOpenTime} onChange={(v) => setStr("weekdayOpenTime", v)} type="time" /></FR>
-      <FR label="Weekday close"><SI value={s.weekdayCloseTime} onChange={(v) => setStr("weekdayCloseTime", v)} type="time" /></FR>
-      <FR label="Weekend open"><SI value={s.weekendOpenTime} onChange={(v) => setStr("weekendOpenTime", v)} type="time" /></FR>
-      <FR label="Weekend close" last><SI value={s.weekendCloseTime} onChange={(v) => setStr("weekendCloseTime", v)} type="time" /></FR>
-    </Card>
+    <Section title="Identity">
+      <FR label="Business name"><SI value={s.restaurantName} onChange={(v) => set("restaurantName", v)} placeholder="The Crunch" /></FR>
+      <FR label="Tagline" last><SI value={s.tagline} onChange={(v) => set("tagline", v)} placeholder="Crunch into flavor" /></FR>
+    </Section>
+    <Section title="Contact">
+      <FR label="Email"><SI value={s.email} onChange={(v) => set("email", v)} type="email" placeholder="contact@thecrunch.ph" /></FR>
+      <FR label="Phone"><SI value={s.phone} onChange={(v) => set("phone", v)} placeholder="+63 912 345 6789" /></FR>
+      <FR label="Address" last><SI value={s.address} onChange={(v) => set("address", v)} placeholder="123 Food St, Manila" /></FR>
+    </Section>
+    <Section title="Operating Hours">
+      <FR label="Open time"><SI value={s.openTime} onChange={(v) => set("openTime", v)} type="time" /></FR>
+      <FR label="Close time" last><SI value={s.closeTime} onChange={(v) => set("closeTime", v)} type="time" /></FR>
+    </Section>
   </>;
 }
 
-export function UsersTab() {
+function InventoryTab({ s, set }: { s: AppSettings; set: (k: keyof AppSettings, v: string) => void }) {
   return (
-    <Card title="User Management">
-      <div style={{ padding: "20px", color: "#9e9891", fontFamily: FONT, fontSize: "0.78rem", lineHeight: 1.7 }}>
-        Connect <strong style={{ color: "#5a5652" }}>/api/users</strong> to enable user creation, editing, deactivation, and password reset.
-      </div>
-      <div style={{ display: "flex", gap: 8, padding: "0 20px 20px", flexWrap: "wrap" }}>
-        {["Create user", "Edit user", "Deactivate", "Reset password"].map((a) => (
-          <button key={a} style={S.btn}>{a}</button>
-        ))}
-      </div>
-    </Card>
+    <Section title="Stock Alerts">
+      <FR label="Low stock threshold"><SI value={s.lowStockThreshold} onChange={(v) => set("lowStockThreshold", v)} type="number" placeholder="e.g. 10" /></FR>
+      <FR label="Critical threshold" last><SI value={s.criticalStockThreshold} onChange={(v) => set("criticalStockThreshold", v)} type="number" placeholder="e.g. 5" /></FR>
+    </Section>
   );
 }
 
-export function RolesTab() {
-  const roles = ["Administrator", "Manager", "Staff"];
-  const matrix: [string, boolean, boolean, boolean][] = [
-    ["Business Info", true, true, false],
-    ["User Management", true, false, false],
-    ["Inventory", true, true, false],
-    ["Products", true, true, false],
-    ["Online Orders", true, true, false],
-    ["Payment Config", true, false, false],
-    ["Tax & Charges", true, true, false],
-    ["Reports", true, true, false],
-    ["Security", true, false, false],
-    ["Backup & Restore", true, false, false],
-    ["Audit Logs", true, false, false],
-  ];
+function BillingTab({ s, set }: { s: AppSettings; set: (k: keyof AppSettings, v: string) => void }) {
   return (
-    <Card title="Permission Matrix">
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: FONT, fontSize: "0.78rem" }}>
-          <thead>
-            <tr style={{ borderBottom: "1px solid #f0ede8" }}>
-              <th style={{ padding: "11px 20px", textAlign: "left", color: "#9e9891", fontWeight: 500, width: "50%" }}>Feature</th>
-              {roles.map((r) => <th key={r} style={{ padding: "11px 14px", textAlign: "center", color: "#5a5652", fontWeight: 600 }}>{r}</th>)}
-            </tr>
-          </thead>
-          <tbody>
-            {matrix.map(([perm, a, m, st], i) => (
-              <tr key={perm} style={{ borderBottom: i < matrix.length - 1 ? "1px solid #f0ede8" : "none" }}>
-                <td style={{ padding: "10px 20px", color: "#484340", fontWeight: 500 }}>{perm}</td>
-                {[a, m, st].map((has, j) => (
-                  <td key={j} style={{ padding: "10px 14px", textAlign: "center" }}>
-                    <span style={{
-                      display: "inline-flex", alignItems: "center", justifyContent: "center",
-                      width: 20, height: 20, borderRadius: 5,
-                      background: has ? "rgba(224,90,30,.1)" : "#f5f4f2",
-                      color: has ? ACCENT : "#c8c4be", fontSize: "0.68rem", fontWeight: 700,
-                    }}>{has ? "✓" : "—"}</span>
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </Card>
+    <Section title="Tax & Charges">
+      <FR label="VAT rate (%)"><SI value={s.taxRate} onChange={(v) => set("taxRate", v)} type="number" placeholder="e.g. 12" /></FR>
+      <FR label="Service charge (%)" last><SI value={s.serviceCharge} onChange={(v) => set("serviceCharge", v)} type="number" placeholder="e.g. 10" /></FR>
+    </Section>
   );
 }
 
-export function InventoryTab({ s, setStr }: { s: RestaurantSettings; setStr: (k: keyof RestaurantSettings, v: string) => void }) {
+function OrderingTab({ s, set, setBool }: { s: AppSettings; set: (k: keyof AppSettings, v: string) => void; setBool: (k: keyof AppSettings, v: boolean) => void }) {
   return <>
-    <Card title="Stock Alert Thresholds">
-      <FR label="Low stock threshold"><SI value={s.defaultLowStockThreshold} onChange={(v) => setStr("defaultLowStockThreshold", v)} type="number" placeholder="e.g. 10" /></FR>
-      <FR label="Critical threshold" last><SI value={s.defaultCriticalStockThreshold} onChange={(v) => setStr("defaultCriticalStockThreshold", v)} type="number" placeholder="e.g. 5" /></FR>
-    </Card>
-    <Card title="Unit Types & Suppliers">
-      <div style={{ padding: "16px 20px", color: "#9e9891", fontFamily: FONT, fontSize: "0.78rem", lineHeight: 1.7 }}>
-        Unit types and supplier management connect to <strong style={{ color: "#5a5652" }}>/api/inventory/config</strong>.
-      </div>
-    </Card>
-  </>;
-}
-
-export function ProductsTab() {
-  const cats = ["Boneless Chicken", "Drinks", "Sides", "Combos"];
-  return (
-    <Card title="Product Categories">
-      <div style={{ padding: "12px 20px", display: "flex", flexDirection: "column", gap: 6 }}>
-        {cats.map((c) => (
-          <div key={c} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: "#fafaf9", border: "1px solid #eae7e2", borderRadius: 8 }}>
-            <span style={{ fontFamily: FONT, fontSize: "0.8rem", fontWeight: 500, color: "#484340" }}>{c}</span>
-            <span style={{ fontFamily: FONT, fontSize: "0.67rem", color: "#15803d", background: "rgba(34,197,94,.1)", padding: "2px 9px", borderRadius: 99, fontWeight: 500 }}>Active</span>
-          </div>
-        ))}
-      </div>
-      <Hint>Manage variants, add-ons, and availability via <strong style={{ color: "#7a7470" }}>/api/products/config</strong>.</Hint>
-    </Card>
-  );
-}
-
-export function OrderingTab({ s, setStr, setBool }: { s: RestaurantSettings; setStr: (k: keyof RestaurantSettings, v: string) => void; setBool: (k: keyof RestaurantSettings, v: boolean) => void }) {
-  return <>
-    <Card title="Online Ordering">
+    <Section title="Online Orders">
       <TR label="Accept online orders" desc="Allow customers to place orders from your online menu." value={s.acceptOnlineOrders} onChange={(v) => setBool("acceptOnlineOrders", v)} />
-      <FR label="Minimum order (₱)" last><SI value={s.minimumOrderAmount} onChange={(v) => setStr("minimumOrderAmount", v)} type="number" placeholder="e.g. 150" /></FR>
-    </Card>
-    <Card title="Order Mode">
-      <FR label="Store status">
-        <SS value={s.storeStatusMode} onChange={(v) => setStr("storeStatusMode", v as RestaurantSettings["storeStatusMode"])}
+      <FR label="Minimum order (₱)" last><SI value={s.minimumOrderAmount} onChange={(v) => set("minimumOrderAmount", v)} type="number" placeholder="e.g. 150" /></FR>
+    </Section>
+    <Section title="Store Status">
+      <FR label="Status mode" last>
+        <SS value={s.storeStatusMode} onChange={(v) => set("storeStatusMode", v)}
           options={[{ value: "auto", label: "Auto (follow schedule)" }, { value: "manual_open", label: "Force Open" }, { value: "manual_closed", label: "Force Closed" }]} />
       </FR>
-      <FR label="Scheduling" last>
-        <span style={{ fontFamily: FONT, fontSize: "0.78rem", color: "#9e9891" }}>Connects to <strong style={{ color: "#7a7470" }}>/api/orders/schedule</strong>.</span>
-      </FR>
-    </Card>
+    </Section>
   </>;
 }
 
-export function PaymentTab() {
-  const methods = [
-    { name: "Cash", enabled: true },
-    { name: "GCash", enabled: true },
-    { name: "Maya", enabled: false },
-    { name: "QR Payment", enabled: true },
-  ];
-  return (
-    <Card title="Payment Methods">
-      <div style={{ padding: "12px 20px", display: "flex", flexDirection: "column", gap: 6 }}>
-        {methods.map((m) => (
-          <div key={m.name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: "#fafaf9", border: "1px solid #eae7e2", borderRadius: 8 }}>
-            <span style={{ fontFamily: FONT, fontSize: "0.8rem", fontWeight: 500, color: "#484340" }}>{m.name}</span>
-            <span style={{ fontFamily: FONT, fontSize: "0.67rem", fontWeight: 500, color: m.enabled ? "#15803d" : "#9e9891", background: m.enabled ? "rgba(34,197,94,.1)" : "#f5f4f2", padding: "2px 9px", borderRadius: 99 }}>
-              {m.enabled ? "Enabled" : "Disabled"}
-            </span>
-          </div>
-        ))}
-      </div>
-      <Hint>Payment toggles sync with <strong style={{ color: "#7a7470" }}>/api/payment/methods</strong>.</Hint>
-    </Card>
-  );
-}
-
-export function ReceiptTab() {
-  return (
-    <Card title="Receipt Customization">
-      {[["Receipt header", "e.g. Thank you for choosing The Crunch!"], ["Receipt footer", "e.g. Follow us @thecrunch"], ["QR code URL", "https://thecrunch.ph/menu"]].map(([lbl, ph], i, arr) => (
-        <FR key={lbl} label={lbl} last={i === arr.length - 1}><SI value="" onChange={() => {}} placeholder={ph} /></FR>
-      ))}
-    </Card>
-  );
-}
-
-export function BillingTab({ s, setStr }: { s: RestaurantSettings; setStr: (k: keyof RestaurantSettings, v: string) => void }) {
-  return (
-    <Card title="Tax & Charges">
-      <FR label="VAT rate (%)"><SI value={s.taxRate} onChange={(v) => setStr("taxRate", v)} type="number" placeholder="e.g. 12" /></FR>
-      <FR label="Service charge (%)" last><SI value={s.serviceCharge} onChange={(v) => setStr("serviceCharge", v)} type="number" placeholder="e.g. 10" /></FR>
-    </Card>
-  );
-}
-
-export function NotifTab({ s, setStr, setBool }: { s: RestaurantSettings; setStr: (k: keyof RestaurantSettings, v: string) => void; setBool: (k: keyof RestaurantSettings, v: boolean) => void }) {
+function NotificationsTab({ s, set, setBool }: { s: AppSettings; set: (k: keyof AppSettings, v: string) => void; setBool: (k: keyof AppSettings, v: boolean) => void }) {
   return <>
-    <Card title="Alert Channels">
+    <Section title="Alerts">
       <TR label="Toast notifications" value={s.enableToastNotifications} onChange={(v) => setBool("enableToastNotifications", v)} />
-      <TR label="New order alerts" desc="Sound and visual alerts for incoming orders." value={true} onChange={() => {}} />
-      <TR label="Low stock alerts" desc="Notify when inventory falls below threshold." value={true} onChange={() => {}} />
-      <TR label="Email notifications" value={false} onChange={() => {}} />
-      <TR label="SMS notifications" value={false} onChange={() => {}} last />
-    </Card>
-    <Card title="Toast Settings">
+      <TR label="Confirm dialogs" desc="Show a confirmation prompt before destructive actions." value={s.enableConfirmDialogs} onChange={(v) => setBool("enableConfirmDialogs", v)} last />
+    </Section>
+    <Section title="Toast Settings">
       <FR label="Position">
-        <SS value={s.toastPosition} onChange={(v) => setStr("toastPosition", v)}
+        <SS value={s.toastPosition} onChange={(v) => set("toastPosition", v)}
           options={[{ value: "top-right", label: "Top Right" }, { value: "top-left", label: "Top Left" }, { value: "bottom-right", label: "Bottom Right" }, { value: "bottom-left", label: "Bottom Left" }]} />
       </FR>
       <FR label="Duration" last>
-        <SS value={s.toastDuration} onChange={(v) => setStr("toastDuration", v)}
+        <SS value={s.toastDuration} onChange={(v) => set("toastDuration", v)}
           options={[{ value: "2000", label: "2 seconds" }, { value: "3000", label: "3 seconds" }, { value: "4000", label: "4 seconds" }, { value: "5000", label: "5 seconds" }]} />
       </FR>
-    </Card>
+    </Section>
   </>;
 }
 
-export function KitchenTab() {
+function DeliveryTab({ s, set }: { s: AppSettings; set: (k: keyof AppSettings, v: string) => void }) {
   return (
-    <Card title="Kitchen Display Settings">
-      {([["KDS layout", ["Single column", "Two column", "Grid"]], ["Order priority", ["First in, first out", "Priority by prep time", "Manual"]], ["Default prep time (min)", null]] as [string, string[] | null][]).map(([lbl, opts], i, arr) => (
-        <FR key={lbl} label={lbl} last={i === arr.length - 1}>
-          {opts
-            ? <SS value={opts[0]} onChange={() => {}} options={opts.map((o) => ({ value: o, label: o }))} />
-            : <SI value="" onChange={() => {}} type="number" placeholder="e.g. 15" />}
-        </FR>
-      ))}
-    </Card>
+    <Section title="Delivery">
+      <FR label="Radius (km)"><SI value={s.deliveryRadius} onChange={(v) => set("deliveryRadius", v)} type="number" placeholder="e.g. 5" /></FR>
+      <FR label="Fee (₱)" last><SI value={s.deliveryFee} onChange={(v) => set("deliveryFee", v)} type="number" placeholder="e.g. 50" /></FR>
+    </Section>
   );
 }
 
-export function DeliveryTab({ s, setStr }: { s: RestaurantSettings; setStr: (k: keyof RestaurantSettings, v: string) => void }) {
-  return (
-    <Card title="Delivery Configuration">
-      <FR label="Delivery radius (km)"><SI value={s.deliveryRadius} onChange={(v) => setStr("deliveryRadius", v)} type="number" placeholder="e.g. 5" /></FR>
-      <FR label="Delivery fee (₱)"><SI value={s.deliveryFee} onChange={(v) => setStr("deliveryFee", v)} type="number" placeholder="e.g. 50" /></FR>
-      <FR label="Driver assignment" last>
-        <SS value="manual" onChange={() => {}} options={[{ value: "manual", label: "Manual" }, { value: "auto", label: "Auto-assign" }]} />
-      </FR>
-    </Card>
-  );
-}
-
-export function ReportsTab() {
-  return (
-    <Card title="Export & Scheduling">
-      <div style={{ padding: "14px 20px", display: "flex", flexDirection: "column", gap: 8 }}>
-        {[["Export as PDF", "pdf"], ["Export as Excel", "excel"]].map(([lbl, fmt]) => (
-          <button key={fmt} onClick={() => {}} style={S.accentBtn}>↓ {lbl}</button>
-        ))}
-      </div>
-      <Hint>Scheduled reports connect to <strong style={{ color: "#7a7470" }}>/api/reports/schedule</strong>.</Hint>
-    </Card>
-  );
-}
-
-export function SecurityTab({ s, setStr }: { s: RestaurantSettings; setStr: (k: keyof RestaurantSettings, v: string) => void }) {
+function SecurityTab({ s, set, setBool }: { s: AppSettings; set: (k: keyof AppSettings, v: string) => void; setBool: (k: keyof AppSettings, v: boolean) => void }) {
   return <>
-    <Card title="Session & Access">
-      <FR label="Session timeout (min)" last><SI value={s.sessionTimeout} onChange={(v) => setStr("sessionTimeout", v)} type="number" placeholder="e.g. 30" /></FR>
-    </Card>
-    <Card title="Advanced Security">
-      <TR label="Two-factor authentication" desc="Require 2FA for all admin logins." value={false} onChange={() => {}} />
-      <TR label="Login activity monitoring" desc="Log all login attempts to audit trail." value={true} onChange={() => {}} last />
-    </Card>
-  </>;
-}
-
-export function BackupTab() {
-  return (
-    <Card title="Backup & Restore">
-      <div style={{ padding: "14px 20px", display: "flex", flexDirection: "column", gap: 8 }}>
-        <button onClick={() => {}} style={{ ...S.btn, background: "#1a3a2a", color: "#fff", borderColor: "#1a3a2a", boxShadow: "0 1px 4px rgba(26,58,42,.2)" }}>↓ Run manual backup</button>
-        <button onClick={() => {}} style={S.btn}>↺ Restore from backup</button>
-      </div>
-      <Hint>Backup scheduling connects to <strong style={{ color: "#7a7470" }}>/api/backup/schedule</strong>.</Hint>
-    </Card>
-  );
-}
-
-export function AuditTab() {
-  return (
-    <Card title="Audit Logs">
-      <div style={{ padding: "18px 20px", color: "#9e9891", fontFamily: FONT, fontSize: "0.78rem", lineHeight: 1.7 }}>
-        User activity tracking, transaction logs, and system change history stream from <strong style={{ color: "#5a5652" }}>/api/audit/logs</strong>.
-      </div>
-    </Card>
-  );
-}
-
-export function PersonalTab() {
-  return <>
-    <Card title="Profile Information">
-      {([["Display name", "text", "e.g. Juan dela Cruz"], ["Email", "email", "juan@thecrunch.ph"]] as [string, string, string][]).map(([lbl, t, ph]) => (
-        <FR key={lbl} label={lbl}><SI value="" onChange={() => {}} type={t} placeholder={ph} /></FR>
-      ))}
-      <FR label="New password" last><SI value="" onChange={() => {}} type="password" placeholder="Leave blank to keep current" /></FR>
-    </Card>
-    <Card title="Preferences">
-      <TR label="Dark mode" desc="Toggle between light and dark interface." value={false} onChange={() => {}} />
-      <TR label="Notification preferences" value={true} onChange={() => {}} last />
-    </Card>
+    <Section title="Session">
+      <FR label="Timeout (minutes)" last><SI value={s.sessionTimeout} onChange={(v) => set("sessionTimeout", v)} type="number" placeholder="e.g. 30" /></FR>
+    </Section>
+    <Section title="Monitoring">
+      <TR label="Login activity monitoring" desc="Log all login attempts." value={s.loginMonitoring} onChange={(v) => setBool("loginMonitoring", v)} last />
+    </Section>
   </>;
 }
 
@@ -488,7 +370,7 @@ function StarDisplay({ rating }: { rating: number }) {
   );
 }
 
-export function FeedbackTab({ feedback, loading, error, onRetry }: {
+function FeedbackTab({ feedback, loading, error, onRetry }: {
   feedback: FeedbackEntry[]; loading: boolean; error: string | null; onRetry: () => void;
 }) {
   const [sort, setSort] = useState<"newest" | "oldest" | "highest" | "lowest">("newest");
@@ -497,31 +379,29 @@ export function FeedbackTab({ feedback, loading, error, onRetry }: {
   const sorted = [...feedback]
     .filter((e) => filter === 0 || e.rating === filter)
     .sort((a, b) => {
-      if (sort === "newest") return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-      if (sort === "oldest") return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      if (sort === "newest")  return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      if (sort === "oldest")  return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
       if (sort === "highest") return b.rating - a.rating;
       return a.rating - b.rating;
     });
 
   if (loading) return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {[1, 2, 3].map((i) => (
-        <div key={i} style={{ height: 88, background: "#fff", border: "1px solid #eae7e2", borderRadius: 10, opacity: 0.5 + i * 0.1 }} />
-      ))}
+      {[1, 2, 3].map((i) => <div key={i} style={{ height: 88, background: "#f7f6f5", borderRadius: 10, opacity: 0.4 + i * 0.1 }} />)}
     </div>
   );
 
   if (error) return (
     <div style={{ background: "#fff", border: "1px solid #eae7e2", borderRadius: 10, padding: "28px 20px", textAlign: "center" }}>
       <p style={{ fontFamily: FONT, fontSize: "0.8rem", color: "#b91c1c", marginBottom: 10 }}>{error}</p>
-      <button onClick={onRetry} style={S.accentBtn}>Try again</button>
+      <button onClick={onRetry} style={{ fontFamily: FONT, fontSize: "0.82rem", fontWeight: 500, background: "#1c1a18", color: "#fff", border: "none", borderRadius: 10, padding: "9px 18px", cursor: "pointer" }}>Try again</button>
     </div>
   );
 
   if (!feedback.length) return (
     <div style={{ background: "#fff", border: "1px solid #eae7e2", borderRadius: 10, padding: "44px 20px", textAlign: "center" }}>
       <MessageSquare size={26} color="#d1cdc7" style={{ marginBottom: 8 }} />
-      <p style={{ fontFamily: FONT, fontSize: "0.82rem", fontWeight: 500, color: "#b0aaa3" }}>No feedback yet</p>
+      <p style={{ fontFamily: FONT, fontSize: "0.82rem", fontWeight: 500, color: "#b0aaa3" }}>No feedback yet.</p>
     </div>
   );
 
@@ -532,252 +412,189 @@ export function FeedbackTab({ feedback, loading, error, onRetry }: {
           fontFamily: FONT, fontSize: "0.69rem", fontWeight: filter === r ? 600 : 400,
           padding: "4px 10px", borderRadius: 99, border: "1px solid #e4e1dc",
           background: filter === r ? ACCENT : "#fafaf9", color: filter === r ? "#fff" : "#7a7470",
-          cursor: "pointer", boxShadow: filter === r ? "0 1px 4px rgba(224,90,30,.2)" : "0 1px 3px rgba(0,0,0,.06)",
-          transition: "all .15s",
+          cursor: "pointer", transition: "all .15s",
         }}>{r === 0 ? "All" : `${r}★`}</button>
       ))}
       <div style={{ flex: 1 }} />
-      <select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)} style={{ ...S.input, width: "auto", padding: "5px 10px" }}>
+      <select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)}
+        style={{ fontFamily: FONT, fontSize: "0.8rem", padding: "5px 10px", border: "1px solid #ececec", borderRadius: 8, background: "#f7f6f5", outline: "none" }}>
         <option value="newest">Newest</option>
         <option value="oldest">Oldest</option>
-        <option value="highest">Highest</option>
-        <option value="lowest">Lowest</option>
+        <option value="highest">Highest rated</option>
+        <option value="lowest">Lowest rated</option>
       </select>
     </div>
     <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-      {sorted.map((e) => (
-        <div key={e.id} style={{ background: "#fff", border: "1px solid #eae7e2", borderRadius: 10, padding: "12px 16px", boxShadow: "0 1px 4px rgba(0,0,0,.04)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 5 }}>
-            <span style={{ fontFamily: FONT, fontSize: "0.8rem", fontWeight: 600, color: "#1c1a18" }}>{e.reviewerName}</span>
-            <span style={{ fontFamily: FONT, fontSize: "0.66rem", color: "#b0aaa3" }}>
-              {new Date(e.createdAt).toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" })}
-            </span>
-            <span style={{ fontFamily: FONT, fontSize: "0.64rem", fontWeight: 500, color: "#7a7470", background: "#f5f2ee", border: "1px solid #ece6de", borderRadius: 99, padding: "2px 8px" }}>
-              {e.productName}
-            </span>
+      {sorted.length === 0
+        ? <p style={{ textAlign: "center", padding: "24px 0", color: "#b0aaa3", fontFamily: FONT, fontSize: "0.78rem" }}>No reviews match this filter.</p>
+        : sorted.map((e) => (
+          <div key={e.id} style={{ background: "#fff", border: "1px solid #eae7e2", borderRadius: 10, padding: "12px 16px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 5 }}>
+              <span style={{ fontFamily: FONT, fontSize: "0.8rem", fontWeight: 600, color: "#1c1a18" }}>{e.reviewerName}</span>
+              <span style={{ fontFamily: FONT, fontSize: "0.66rem", color: "#b0aaa3" }}>
+                {new Date(e.createdAt).toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" })}
+              </span>
+              <span style={{ fontFamily: FONT, fontSize: "0.64rem", fontWeight: 500, color: "#7a7470", background: "#f5f2ee", border: "1px solid #ece6de", borderRadius: 99, padding: "2px 8px" }}>{e.productName}</span>
+            </div>
+            <StarDisplay rating={e.rating} />
+            {e.message && <p style={{ fontFamily: FONT, fontSize: "0.76rem", color: "#5a5652", lineHeight: 1.7, margin: "6px 0 0" }}>{e.message}</p>}
           </div>
-          <StarDisplay rating={e.rating} />
-          {e.message && <p style={{ fontFamily: FONT, fontSize: "0.76rem", color: "#5a5652", lineHeight: 1.7, margin: "6px 0 0" }}>{e.message}</p>}
-        </div>
-      ))}
-      {!sorted.length && (
-        <p style={{ textAlign: "center", padding: "24px 0", color: "#b0aaa3", fontFamily: FONT, fontSize: "0.78rem" }}>No reviews match this filter.</p>
-      )}
+        ))
+      }
     </div>
   </>;
 }
 
-// ─── Nav data ─────────────────────────────────────────────────────────────────
-export interface NavGroup { label: string; items: { key: TabKey; label: string }[] }
-
-export const NAV_GROUPS: NavGroup[] = [
-  { label: "Store", items: [{ key: "business", label: "Business Info" }, { key: "ordering", label: "Online Ordering" }, { key: "kitchen", label: "Kitchen Settings" }, { key: "delivery", label: "Delivery" }] },
-  { label: "Catalog", items: [{ key: "products", label: "Products" }, { key: "inventory", label: "Inventory" }] },
-  { label: "Finance", items: [{ key: "billing", label: "Tax & Charges" }, { key: "payment", label: "Payment Methods" }, { key: "receipt", label: "Receipt" }, { key: "reports", label: "Reports" }] },
-  { label: "Admin", items: [{ key: "users", label: "User Management" }, { key: "roles", label: "Roles & Permissions" }, { key: "security", label: "Security" }, { key: "backup", label: "Backup & Restore" }, { key: "audit", label: "Audit Logs" }] },
-  { label: "System", items: [{ key: "notifications", label: "Notifications" }, { key: "feedback", label: "Customer Feedback" }, { key: "personal", label: "Personal Settings" }] },
-];
-
-export const TAB_META: Record<TabKey, { title: string; desc: string }> = {
-  business:      { title: "Business Information",    desc: "Restaurant identity, contact details, and operating hours." },
-  users:         { title: "User Management",         desc: "Create, edit, deactivate users and reset passwords." },
-  roles:         { title: "Roles & Permissions",     desc: "Feature access controls and permission matrix." },
-  inventory:     { title: "Inventory Configuration", desc: "Stock thresholds, unit types, and supplier management." },
-  products:      { title: "Product Configuration",   desc: "Categories, variants, add-ons, and availability." },
-  ordering:      { title: "Online Ordering",         desc: "Accept orders, pickup, delivery, and scheduling settings." },
-  payment:       { title: "Payment Configuration",   desc: "Cash, GCash, Maya, and QR payment methods." },
-  receipt:       { title: "Receipt Customization",   desc: "Header, footer, and QR code on printed receipts." },
-  billing:       { title: "Tax & Charges",           desc: "VAT configuration and service charge rules." },
-  notifications: { title: "Notifications",           desc: "Alert channels and confirmation dialog settings." },
-  kitchen:       { title: "Kitchen Settings",        desc: "KDS configuration, order priority, and prep times." },
-  delivery:      { title: "Delivery Settings",       desc: "Radius, fees, and driver assignment options." },
-  reports:       { title: "Reports",                 desc: "Export PDF/Excel and configure scheduled reports." },
-  security:      { title: "Security Settings",       desc: "2FA, session timeout, and login monitoring." },
-  backup:        { title: "Backup & Restore",        desc: "Manual and scheduled backups, database restore." },
-  audit:         { title: "Audit Logs",              desc: "User activity, transaction, and system change history." },
-  personal:      { title: "Personal Settings",       desc: "Profile, password, theme, and notification preferences." },
-  feedback:      { title: "Customer Feedback",       desc: "Customer reviews and ratings from the menu page." },
-};
-
-// ─── Sidebar group ────────────────────────────────────────────────────────────
-export function SidebarGroup({ group, active, role, feedbackCount, onSelect }: {
-  group: NavGroup; active: TabKey; role: UserRole; feedbackCount: number; onSelect: (k: TabKey) => void;
-}) {
-  const [open, setOpen] = useState(true);
-
-  return (
-    <div style={{ marginBottom: 4 }}>
-      <button
-        onClick={() => setOpen((p) => !p)}
-        style={{
-          width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "8px 10px", background: "none", border: "none", cursor: "pointer",
-          fontFamily: FONT, fontSize: "0.62rem", fontWeight: 600, letterSpacing: ".09em",
-          textTransform: "uppercase", color: "#b0aaa3",
-        }}
-      >
-        {group.label}
-        {open ? <ChevronUp size={11} color="#c8c4be" /> : <ChevronDown size={11} color="#c8c4be" />}
-      </button>
-
-      {open && group.items.map(({ key, label }) => {
-        const locked = !canAccess(role, key);
-        const isActive = active === key;
-        return (
-          <button
-            key={key}
-            onClick={() => onSelect(key)}
-            style={{
-              width: "100%", display: "flex", alignItems: "center", gap: 10,
-              padding: "11px 14px", background: isActive ? "#f0eeec" : "none",
-              border: "none", borderRadius: 14, cursor: locked ? "default" : "pointer",
-              fontFamily: FONT, fontSize: "0.85rem", fontWeight: isActive ? 600 : 500,
-              color: isActive ? "#1c1a18" : locked ? "#c8c4be" : "#5a5652",
-              textAlign: "left", transition: "background .12s, color .12s", marginBottom: 2,
-            }}
-          >
-            {locked && <Lock size={13} color="#d1cdc7" style={{ flexShrink: 0 }} />}
-            <span style={{ flex: 1 }}>{label}</span>
-            {key === "feedback" && feedbackCount > 0 && !locked && (
-              <span style={{
-                fontSize: "0.62rem", fontWeight: 700, background: ACCENT, color: "#fff",
-                borderRadius: 99, padding: "2px 6px", minWidth: 17, textAlign: "center",
-              }}>
-                {feedbackCount > 99 ? "99+" : feedbackCount}
-              </span>
-            )}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-// ─── Main Settings Page ────────────────────────────────────────────────────────
+// ─── Main Settings Page ───────────────────────────────────────────────────────
 export default function Settings() {
   const { user } = useAuth();
-  const role = (user?.role as UserRole) || "staff";
+  const { addNotification } = useNotifications();
+  const role = (user?.role as UserRole) ?? "cashier";
 
-  const [activeTab, setActiveTab] = useState<TabKey>(
-    canAccess(role, "business") ? "business" : "personal"
-  );
+  const firstAllowed = NAV_ITEMS.find((item) => canAccess(role, item.key))?.key ?? "business";
+  const [activeTab, setActiveTab] = useState<TabKey>(firstAllowed);
+  const [navOpen, setNavOpen] = useState(true);
 
-  const [settings, setSettings] = useState<RestaurantSettings>(DEFAULT);
+  const [settings, setSettings] = useState<AppSettings>(DEFAULTS);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
 
-  const [feedback, setFeedback] = useState<FeedbackEntry[]>([]);
-  const [feedbackLoading, setFeedbackLoading] = useState(true);
-  const [feedbackError, setFeedbackError] = useState<string | null>(null);
+  const [feedback, setFeedback]           = useState<FeedbackEntry[]>([]);
+  const [feedbackLoading, setFbLoading]   = useState(true);
+  const [feedbackError, setFbError]       = useState<string | null>(null);
 
-  const fetchFeedback = () => {
-    setFeedbackLoading(true);
-    setFeedbackError(null);
-
-    fetch("/api/feedback")
-      .then((res) => {
-        if (!res.ok) throw new Error("Request failed");
-        return res.json();
-      })
-      .then((data: FeedbackEntry[]) => setFeedback(data))
-      .catch(() => setFeedbackError("Failed to load feedback. Please try again."))
-      .finally(() => setFeedbackLoading(false));
-  };
-
+  // ── Load settings on mount ─────────────────────────────────────────────────
   useEffect(() => {
-    fetchFeedback();
+    fetchGeneralSettings()
+      .then((data) => {
+        // fetchGeneralSettings already returns normalized base fields
+        // merge with full AppSettings defaults for extended fields
+        setSettings((prev) => ({ ...prev, ...data }));
+      })
+      .catch(() => setLoadError("Failed to load settings."));
   }, []);
 
-  const setStr = (k: keyof RestaurantSettings, v: string) =>
-    setSettings((prev) => ({ ...prev, [k]: v }));
+  // ── Load feedback on mount ─────────────────────────────────────────────────
+  const fetchFeedback = useCallback(() => {
+    setFbLoading(true);
+    setFbError(null);
+    api.get<FeedbackEntry[]>("/feedback")
+      .then((data) => setFeedback(data))
+      .catch(() => setFbError("Failed to load feedback. Please try again."))
+      .finally(() => setFbLoading(false));
+  }, []);
 
-  const setBool = (k: keyof RestaurantSettings, v: boolean) =>
-    setSettings((prev) => ({ ...prev, [k]: v }));
+  useEffect(() => { fetchFeedback(); }, [fetchFeedback]);
 
-  const locked = !canAccess(role, activeTab);
-  const meta = TAB_META[activeTab];
-  const feedbackCount = feedback.length;
+  // ── Auto-save with debounce ────────────────────────────────────────────────
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const autoSave = useCallback((updated: AppSettings) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    setSaveStatus("saving");
+    debounceRef.current = setTimeout(async () => {
+      try {
+        await api.put("/settings", updated);
+        setSaveStatus("saved");
+        setTimeout(() => setSaveStatus("idle"), 2000);
+      } catch {
+        setSaveStatus("error");
+        addNotification({ id: crypto.randomUUID(), type: "error", label: "Failed to save settings." });
+      }
+    }, 600);
+  }, [addNotification]);
+
+  // ── Field updaters ─────────────────────────────────────────────────────────
+  const set = useCallback((key: keyof AppSettings, value: string) => {
+    setSettings((prev) => {
+      const next = { ...prev, [key]: value };
+      autoSave(next);
+      return next;
+    });
+  }, [autoSave]);
+
+  const setBool = useCallback((key: keyof AppSettings, value: boolean) => {
+    setSettings((prev) => {
+      const next = { ...prev, [key]: value };
+      autoSave(next);
+      return next;
+    });
+  }, [autoSave]);
+
+  // ── Render active tab ──────────────────────────────────────────────────────
   const renderTab = () => {
-    if (locked) return <LockedSection tabLabel={meta.title} />;
-
+    if (!canAccess(role, activeTab)) return <LockedSection tabLabel={TAB_META[activeTab].title} />;
+    if (COMING_SOON.includes(activeTab)) return <ComingSoon title={TAB_META[activeTab].title} desc={TAB_META[activeTab].desc} />;
     switch (activeTab) {
-      case "business":      return <BusinessTab s={settings} setStr={setStr} />;
-      case "users":         return <UsersTab />;
-      case "roles":         return <RolesTab />;
-      case "inventory":     return <InventoryTab s={settings} setStr={setStr} />;
-      case "products":      return <ProductsTab />;
-      case "ordering":      return <OrderingTab s={settings} setStr={setStr} setBool={setBool} />;
-      case "payment":       return <PaymentTab />;
-      case "receipt":       return <ReceiptTab />;
-      case "billing":       return <BillingTab s={settings} setStr={setStr} />;
-      case "notifications": return <NotifTab s={settings} setStr={setStr} setBool={setBool} />;
-      case "kitchen":       return <KitchenTab />;
-      case "delivery":      return <DeliveryTab s={settings} setStr={setStr} />;
-      case "reports":       return <ReportsTab />;
-      case "security":      return <SecurityTab s={settings} setStr={setStr} />;
-      case "backup":        return <BackupTab />;
-      case "audit":         return <AuditTab />;
-      case "personal":      return <PersonalTab />;
-      case "feedback":
-        return (
-          <FeedbackTab
-            feedback={feedback}
-            loading={feedbackLoading}
-            error={feedbackError}
-            onRetry={fetchFeedback}
-          />
-        );
-      default: return null;
+      case "business":      return <BusinessTab s={settings} set={set} />;
+      case "inventory":     return <InventoryTab s={settings} set={set} />;
+      case "billing":       return <BillingTab s={settings} set={set} />;
+      case "ordering":      return <OrderingTab s={settings} set={set} setBool={setBool} />;
+      case "notifications": return <NotificationsTab s={settings} set={set} setBool={setBool} />;
+      case "delivery":      return <DeliveryTab s={settings} set={set} />;
+      case "security":      return <SecurityTab s={settings} set={set} setBool={setBool} />;
+      case "feedback":      return <FeedbackTab feedback={feedback} loading={feedbackLoading} error={feedbackError} onRetry={fetchFeedback} />;
     }
   };
 
-  return (
-    <div style={{
-      display: "flex", height: "100%", fontFamily: FONT, background: "#f0eeec",
-      padding: 24, boxSizing: "border-box",
-    }}>
-      <div style={{
-        display: "flex", width: "100%", maxWidth: 1100, margin: "0 auto",
-        background: "#fff", borderRadius: 24, overflow: "hidden",
-        boxShadow: "0 4px 24px rgba(0,0,0,.05)",
-      }}>
-        {/* Settings sidebar */}
-        <div style={{
-          width: 230, flexShrink: 0, background: "#fff",
-          overflowY: "auto", padding: "24px 14px",
-        }}>
-          <div style={{ padding: "0 10px 18px" }}>
-            <h2 style={{ fontFamily: FONT, fontSize: "1.1rem", fontWeight: 700, color: "#1c1a18", margin: 0 }}>
-              Settings
-            </h2>
-          </div>
-          {NAV_GROUPS.map((group) => (
-            <SidebarGroup
-              key={group.label}
-              group={group}
-              active={activeTab}
-              role={role}
-              feedbackCount={feedbackCount}
-              onSelect={setActiveTab}
-            />
-          ))}
-        </div>
+  const meta = TAB_META[activeTab];
 
-        {/* Content */}
-        <div style={{
-          flex: 1, overflowY: "auto", padding: "32px 36px",
-          borderLeft: "1px solid #f0eeec",
-        }}>
-          <div style={{ marginBottom: 8 }}>
-            <h1 style={{ fontFamily: FONT, fontSize: "1.4rem", fontWeight: 700, color: "#1c1a18", margin: "0 0 4px" }}>
-              {meta.title}
-            </h1>
-            <p style={{ fontFamily: FONT, fontSize: "0.82rem", color: "#9e9891", margin: "0 0 8px" }}>
-              {meta.desc}
-            </p>
+  // ─── Render ────────────────────────────────────────────────────────────────
+  return (
+    <>
+      <Sidebar />
+      <div style={{ display: "flex", height: "100%", fontFamily: FONT, background: "#f0eeec", padding: 24, boxSizing: "border-box" }}>
+        <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet" />
+        <div style={{ display: "flex", width: "100%", maxWidth: 1100, margin: "0 auto", background: "#fff", borderRadius: 24, overflow: "hidden", boxShadow: "0 4px 24px rgba(0,0,0,.05)" }}>
+
+          {/* Sidebar nav (settings tab list) */}
+          <div style={{ width: 220, flexShrink: 0, background: "#fff", overflowY: "auto", padding: "24px 14px", borderRight: "1px solid #f0eeec" }}>
+            <button onClick={() => setNavOpen((p) => !p)}
+              style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 10px 18px", background: "none", border: "none", cursor: "pointer" }}>
+              <h2 style={{ fontFamily: FONT, fontSize: "1.05rem", fontWeight: 700, color: "#1c1a18", margin: 0 }}>Settings</h2>
+              {navOpen ? <ChevronUp size={14} color="#b0aaa3" /> : <ChevronDown size={14} color="#b0aaa3" />}
+            </button>
+
+            {navOpen && NAV_ITEMS.map(({ key, label }) => {
+              const locked   = !canAccess(role, key);
+              const soon     = COMING_SOON.includes(key);
+              const isActive = activeTab === key;
+              return (
+                <button key={key} onClick={() => !locked && setActiveTab(key)}
+                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "11px 14px", background: isActive ? "#f0eeec" : "none", border: "none", borderRadius: 14, cursor: locked ? "default" : "pointer", fontFamily: FONT, fontSize: "0.85rem", fontWeight: isActive ? 600 : 500, color: isActive ? "#1c1a18" : locked ? "#c8c4be" : "#5a5652", textAlign: "left", marginBottom: 2 }}>
+                  {locked && <Lock size={13} color="#d1cdc7" style={{ flexShrink: 0 }} />}
+                  <span style={{ flex: 1 }}>{label}</span>
+                  {soon && !locked && (
+                    <span style={{ fontSize: "0.58rem", fontWeight: 700, background: "#f0eeec", color: "#b0aaa3", borderRadius: 99, padding: "2px 7px", letterSpacing: ".04em" }}>SOON</span>
+                  )}
+                  {key === "feedback" && feedback.length > 0 && !locked && !soon && (
+                    <span style={{ fontSize: "0.62rem", fontWeight: 700, background: ACCENT, color: "#fff", borderRadius: 99, padding: "2px 6px" }}>
+                      {feedback.length > 99 ? "99+" : feedback.length}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
-          {renderTab()}
+
+          {/* Content */}
+          <div style={{ flex: 1, overflowY: "auto", padding: "32px 36px" }}>
+            {loadError
+              ? <p style={{ fontFamily: FONT, fontSize: "0.85rem", color: "#b91c1c" }}>{loadError}</p>
+              : <>
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24, gap: 12 }}>
+                  <div>
+                    <h1 style={{ fontFamily: FONT, fontSize: "1.3rem", fontWeight: 700, color: "#1c1a18", margin: "0 0 4px" }}>{meta.title}</h1>
+                    <p style={{ fontFamily: FONT, fontSize: "0.82rem", color: "#9e9891", margin: 0 }}>{meta.desc}</p>
+                  </div>
+                  <SaveStatus status={saveStatus} />
+                </div>
+                {renderTab()}
+              </>
+            }
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }
