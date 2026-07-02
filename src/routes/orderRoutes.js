@@ -7,6 +7,7 @@ const jwt = require("jsonwebtoken");
 const { sendCustomerOrderReceiptEmail } = require("../services/emailService");
 const {
   deductStockForPaidOrder,
+  restoreStockForRefundedOrder,
 } = require("../services/inventoryService");
 const fetchFn = (...args) =>
   (typeof fetch === "function"
@@ -89,16 +90,8 @@ function canUpdateTimerForStatus(value) {
 function isStrictKitchenTransitionAllowed(currentStatus, nextStatus) {
   if (currentStatus === nextStatus) return true;
 
-  if (nextStatus === "Cancelled") {
-    return (
-      currentStatus === "Awaiting Cashier Review" ||
-      currentStatus === "Queued" ||
-      currentStatus === "Preparing"
-    );
-  }
-
-  if (nextStatus === "Refunded") {
-    return currentStatus === "Completed";
+  if (nextStatus === "Cancelled" || nextStatus === "Refunded") {
+    return true;
   }
 
   const allowedTransitions = {
@@ -1671,6 +1664,35 @@ router.patch("/:id", async (req, res) => {
       }
     }
 
+    if (hasStatusUpdate && (nextStatus === "Cancelled" || nextStatus === "Refunded")) {
+      if (currentStatus === "Completed") {
+        console.warn(
+          `[orderRoutes] Blocked completed refund for order ${id}. Requested status: ${nextStatus}.`,
+        );
+        return res.status(400).json({
+          message: "Completed orders cannot be cancelled or refunded",
+        });
+      }
+
+      if (currentStatus === "Refunded" || currentStatus === "Cancelled") {
+        return res.status(400).json({
+          message: `${currentStatus} orders cannot be cancelled or refunded again`,
+        });
+      }
+
+      if (nextStatus === "Cancelled" && isPaidPaymentStatus(effectiveCurrentPaymentStatus)) {
+        return res.status(400).json({
+          message: "Paid orders must be refunded instead of cancelled",
+        });
+      }
+
+      if (nextStatus === "Refunded" && !isPaidPaymentStatus(effectiveCurrentPaymentStatus)) {
+        return res.status(400).json({
+          message: "Only paid orders can be refunded",
+        });
+      }
+    }
+
     if (
       (nextStatus === "Queued" || nextStatus === "Preparing") &&
       !isPaidPaymentStatus(nextPaymentStatus)
@@ -1802,6 +1824,7 @@ router.patch("/:id", async (req, res) => {
     );
 
     const shouldDeductStockNow =
+      nextStatus !== "Refunded" &&
       !isPaidPaymentStatus(effectiveCurrentPaymentStatus) &&
       isPaidPaymentStatus(nextPaymentStatus) &&
       Number(existingRows[0].stockDeducted) === 0;
@@ -1810,9 +1833,28 @@ router.patch("/:id", async (req, res) => {
       await deductStockForPaidOrder(id, resolvedCashierId, conn);
     }
 
-    if (hasPaymentStatusUpdate || nextStatus === "Completed") {
+    if (hasStatusUpdate && nextStatus === "Cancelled") {
+      console.info(
+        `[orderRoutes] Recorded unpaid cancellation for order ${id}.`,
+      );
+    }
+
+    if (hasStatusUpdate && nextStatus === "Refunded") {
+      console.info(
+        `[orderRoutes] Recorded paid refund for order ${id}.`,
+      );
+      await restoreStockForRefundedOrder(id, resolvedCashierId, conn);
+    }
+
+    if (
+      hasPaymentStatusUpdate ||
+      nextStatus === "Completed" ||
+      nextStatus === "Refunded"
+    ) {
       const paymentRecordStatus =
-        isPaidPaymentStatus(nextPaymentStatus) || nextStatus === "Completed"
+        nextStatus === "Refunded"
+          ? "Refunded"
+          : isPaidPaymentStatus(nextPaymentStatus) || nextStatus === "Completed"
           ? "Completed"
           : "Pending";
       await conn.query(

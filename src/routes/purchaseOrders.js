@@ -24,6 +24,14 @@ function hasValidNumericLength(value, maxDigits = PURCHASE_ORDER_NUMBER_MAX_DIGI
   return digitsOnly.length > 0 && digitsOnly.length <= maxDigits;
 }
 
+function hasProvidedValue(value) {
+  return !(
+    value === undefined ||
+    value === null ||
+    String(value).trim() === ""
+  );
+}
+
 function formatPOId(counter) {
   return `PO-${String(counter).padStart(4, "0")}`;
 }
@@ -421,16 +429,19 @@ router.post("/", async (req, res) => {
         error: "Purchase order item quantity must be greater than 0",
       });
     }
-    if (!hasValidNumericLength(item.unitCost ?? item.unit_cost)) {
-      return res.status(400).json({
-        error: "Purchase order item unit cost is too long or invalid",
-      });
-    }
-    const safeUnitCost = toNumber(item.unitCost ?? item.unit_cost, Number.NaN);
-    if (!Number.isFinite(safeUnitCost) || safeUnitCost < 0) {
-      return res.status(400).json({
-        error: "Purchase order item unit cost cannot be negative",
-      });
+    const submittedUnitCost = item.unitCost ?? item.unit_cost;
+    if (hasProvidedValue(submittedUnitCost)) {
+      if (!hasValidNumericLength(submittedUnitCost)) {
+        return res.status(400).json({
+          error: "Purchase order item unit cost is too long or invalid",
+        });
+      }
+      const safeUnitCost = toNumber(submittedUnitCost, Number.NaN);
+      if (!Number.isFinite(safeUnitCost) || safeUnitCost < 0) {
+        return res.status(400).json({
+          error: "Purchase order item unit cost cannot be negative",
+        });
+      }
     }
     if (!String(item.unit ?? "").trim()) {
       return res.status(400).json({
@@ -484,7 +495,7 @@ router.post("/", async (req, res) => {
           (item.category || "").trim(),
           (item.unit || "").trim(),
           toNumber(item.quantity),
-          toNumber(item.unitCost ?? item.unit_cost),
+          toNumber(item.unitCost ?? item.unit_cost, 0),
           toDateString(item.expectedExpiryDate ?? item.expected_expiry_date) ||
             null,
         ],

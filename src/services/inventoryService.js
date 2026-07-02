@@ -121,6 +121,114 @@ async function deductStockForOrder(
   );
 }
 
+async function restoreStockForOrder(
+  productId,
+  quantityUsed,
+  recordedBy = null,
+  connection = db,
+) {
+  const qty = Number(quantityUsed) || 0;
+  if (qty <= 0) return;
+  const safeRecordedBy = await resolveRecordedByAdminId(recordedBy, connection);
+
+  await connection.query(
+    `INSERT INTO Inventory (Product_ID, Quantity, Stock, Item_Purchased)
+     SELECT p.id, COALESCE(p.quantity, 0), COALESCE(p.quantity, 0), p.name
+     FROM products p
+     WHERE p.id = ?
+       AND NOT EXISTS (
+         SELECT 1 FROM Inventory i WHERE i.Product_ID = p.id
+       )`,
+    [productId],
+  );
+
+  await connection.query(
+    `UPDATE Inventory
+     SET Daily_Withdrawn = COALESCE(Daily_Withdrawn, 0) + ?,
+         Last_Update = NOW()
+     WHERE Product_ID = ?`,
+    [qty, productId],
+  );
+
+  await connection.query(
+    `INSERT INTO Stock_Status (Product_ID, Type, Quantity, Status_Date, RecordedBy)
+     VALUES (?, 'Stock In', ?, NOW(), ?)`,
+    [productId, qty, safeRecordedBy],
+  );
+}
+
+async function getOrderIngredientDeductions(orderId, connection) {
+  const [items] = await connection.query(
+    `SELECT
+       oi.Product_ID AS productId,
+       oi.Quantity AS quantity,
+       COALESCE(m.manual_override, 0) AS manual_override,
+       COALESCE(m.manual_status, '') AS manual_status,
+       COALESCE(p.availability_status, 'Available') AS availability_status,
+       COALESCE(p.item_type, 'menu_item') AS item_type
+     FROM order_item oi
+     LEFT JOIN Menu m ON m.Product_ID = oi.Product_ID
+     LEFT JOIN products p ON p.id = oi.Product_ID
+     WHERE oi.Order_ID = ?`,
+    [orderId],
+  );
+
+  const menuProductIds = items
+    .map((item) => Number(item.productId) || 0)
+    .filter((productId) => productId > 0);
+  const ingredientMap = await fetchMenuIngredients(connection, menuProductIds);
+  const deductions = new Map();
+
+  for (const item of items) {
+    const productId = Number(item.productId) || 0;
+    const orderedQty = Number(item.quantity) || 0;
+    const isForceAvailable = isForceAvailableMenuItem(item);
+
+    if (productId <= 0 || orderedQty <= 0) {
+      throw new Error(
+        `Invalid order item for stock deduction on order ${Number(orderId) || 0}`,
+      );
+    }
+
+    if (isForceAvailable) {
+      console.warn(
+        `[inventoryService] Skipping Daily_Withdrawn deduction for force-available menu product ${productId}.`,
+      );
+      continue;
+    }
+
+    const ingredients = ingredientMap.get(productId) ?? [];
+    if (ingredients.length === 0) {
+      throw new Error(
+        `Menu item has no ingredient mapping. Product ${productId}.`,
+      );
+    }
+
+    for (const ingredient of ingredients) {
+      const ingredientProductId = Number(ingredient.product_id) || 0;
+      const quantityRequired = Number(ingredient.quantity_required) || 0;
+      const ingredientItemType = String(ingredient.item_type || STOCK_ITEM);
+      if (ingredientProductId <= 0 || quantityRequired <= 0) {
+        throw new Error(
+          `Invalid ingredient configuration for menu product ${productId}`,
+        );
+      }
+      if (ingredientItemType !== STOCK_ITEM) {
+        throw new Error(
+          `Ingredient product ${ingredientProductId} must be ${STOCK_ITEM}, found ${ingredientItemType}.`,
+        );
+      }
+      const totalRequired = orderedQty * quantityRequired;
+      const currentRequiredQty = Number(
+        deductions.get(ingredientProductId) ?? 0,
+      );
+      deductions.set(ingredientProductId, currentRequiredQty + totalRequired);
+    }
+  }
+
+  return deductions;
+}
+
 async function deductStockForPaidOrder(
   orderId,
   recordedBy = null,
@@ -162,80 +270,19 @@ async function deductStockForPaidOrder(
 
     const order = orderRows[0];
     if (!isPaidPaymentStatus(order.paymentStatus)) {
+      console.info(
+        `[inventoryService] Order ${numericOrderId} stock deduction skipped: payment is not confirmed as paid yet.`,
+      );
       return false;
     }
     if (Number(order.stockDeducted) === 1) {
+      console.info(
+        `[inventoryService] Order ${numericOrderId} stock deduction skipped: order already deducted.`,
+      );
       return false;
     }
 
-    const [items] = await conn.query(
-      `SELECT
-         oi.Product_ID AS productId,
-         oi.Quantity AS quantity,
-         COALESCE(m.manual_override, 0) AS manual_override,
-         COALESCE(m.manual_status, '') AS manual_status,
-         COALESCE(p.availability_status, 'Available') AS availability_status,
-         COALESCE(p.item_type, 'menu_item') AS item_type
-       FROM order_item oi
-       LEFT JOIN Menu m ON m.Product_ID = oi.Product_ID
-       LEFT JOIN products p ON p.id = oi.Product_ID
-       WHERE oi.Order_ID = ?`,
-      [numericOrderId],
-    );
-
-    const menuProductIds = items
-      .map((item) => Number(item.productId) || 0)
-      .filter((productId) => productId > 0);
-    const ingredientMap = await fetchMenuIngredients(conn, menuProductIds);
-    const deductions = new Map();
-
-    for (const item of items) {
-      const productId = Number(item.productId) || 0;
-      const orderedQty = Number(item.quantity) || 0;
-      const isForceAvailable = isForceAvailableMenuItem(item);
-
-      if (productId <= 0 || orderedQty <= 0) {
-        throw new Error(
-          `Invalid order item for stock deduction on order ${numericOrderId}`,
-        );
-      }
-
-      if (isForceAvailable) {
-        console.warn(
-          `[inventoryService] Skipping Daily_Withdrawn deduction for force-available menu product ${productId}.`,
-        );
-        continue;
-      }
-
-      const ingredients = ingredientMap.get(productId) ?? [];
-      if (ingredients.length === 0) {
-        throw new Error(
-          `Menu item has no ingredient mapping. Product ${productId}.`,
-        );
-      }
-
-      for (const ingredient of ingredients) {
-        const ingredientProductId = Number(ingredient.product_id) || 0;
-        const quantityRequired = Number(ingredient.quantity_required) || 0;
-        const ingredientItemType = String(ingredient.item_type || STOCK_ITEM);
-        if (ingredientProductId <= 0 || quantityRequired <= 0) {
-          throw new Error(
-            `Invalid ingredient configuration for menu product ${productId}`,
-          );
-        }
-        if (ingredientItemType !== STOCK_ITEM) {
-          throw new Error(
-            `Ingredient product ${ingredientProductId} must be ${STOCK_ITEM}, found ${ingredientItemType}.`,
-          );
-        }
-        const totalRequired = orderedQty * quantityRequired;
-        const currentRequiredQty = Number(
-          deductions.get(ingredientProductId) ?? 0,
-        );
-        deductions.set(ingredientProductId, currentRequiredQty + totalRequired);
-      }
-    }
-
+    const deductions = await getOrderIngredientDeductions(numericOrderId, conn);
     const deductionEntries = Array.from(deductions.entries());
     for (const [productId, requiredQty] of deductionEntries) {
       const [inventoryRows] = await conn.query(
@@ -276,6 +323,108 @@ async function deductStockForPaidOrder(
       txStarted = false;
     }
 
+    if (updateResult.affectedRows > 0) {
+      console.info(
+        `[inventoryService] Order ${numericOrderId} stock deduction recorded after payment confirmation.`,
+      );
+    }
+
+    return updateResult.affectedRows > 0;
+  } catch (error) {
+    if (txStarted) {
+      await conn.rollback();
+      txStarted = false;
+    }
+    throw error;
+  } finally {
+    if (ownsConnection && conn) {
+      conn.release();
+    }
+  }
+}
+
+async function restoreStockForRefundedOrder(
+  orderId,
+  recordedBy = null,
+  connection = null,
+) {
+  const numericOrderId = Number(orderId) || 0;
+  if (numericOrderId <= 0) {
+    throw new Error("Invalid order ID for stock restoration");
+  }
+
+  let conn = connection;
+  let ownsConnection = false;
+  let txStarted = false;
+
+  try {
+    if (!conn) {
+      conn = await db.getConnection();
+      ownsConnection = true;
+      await conn.beginTransaction();
+      txStarted = true;
+    }
+
+    const [orderRows] = await conn.query(
+      `SELECT
+         Order_ID AS orderId,
+         payment_status AS paymentStatus,
+         COALESCE(stock_deducted, 0) AS stockDeducted
+       FROM orders
+       WHERE Order_ID = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [numericOrderId],
+    );
+
+    if (!orderRows.length) {
+      throw new Error("Order not found for stock restoration");
+    }
+
+    const order = orderRows[0];
+    if (Number(order.stockDeducted) !== 1) {
+      console.info(
+        `[inventoryService] Order ${numericOrderId} inventory restore skipped: already restored or never deducted.`,
+      );
+      return false;
+    }
+
+    const deductions = await getOrderIngredientDeductions(numericOrderId, conn);
+    for (const [productId, requiredQty] of deductions.entries()) {
+      const strictRequiredQty = Number(requiredQty) || 0;
+      if (strictRequiredQty > 0) {
+        await restoreStockForOrder(
+          productId,
+          strictRequiredQty,
+          recordedBy,
+          conn,
+        );
+      }
+    }
+
+    const [updateResult] = await conn.query(
+      `UPDATE orders
+       SET stock_deducted = 0
+       WHERE Order_ID = ?
+         AND COALESCE(stock_deducted, 0) = 1`,
+      [numericOrderId],
+    );
+
+    if (txStarted) {
+      await conn.commit();
+      txStarted = false;
+    }
+
+    if (updateResult.affectedRows > 0) {
+      console.info(
+        `[inventoryService] Order ${numericOrderId} inventory restored after refund.`,
+      );
+    } else {
+      console.info(
+        `[inventoryService] Order ${numericOrderId} inventory restore skipped: already restored.`,
+      );
+    }
+
     return updateResult.affectedRows > 0;
   } catch (error) {
     if (txStarted) {
@@ -293,4 +442,5 @@ async function deductStockForPaidOrder(
 module.exports = {
   deductStockForOrder,
   deductStockForPaidOrder,
+  restoreStockForRefundedOrder,
 };

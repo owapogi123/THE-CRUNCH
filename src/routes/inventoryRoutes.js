@@ -60,6 +60,82 @@ function normalizeBooleanFlag(value, fallback = true) {
   return fallback;
 }
 
+const DEFAULT_BACKEND_LOW_STOCK_THRESHOLD = 10;
+const DEFAULT_BACKEND_CRITICAL_STOCK_THRESHOLD = 5;
+
+async function readStockAlertDefaults() {
+  try {
+    const [rows] = await db.query(
+      `SELECT settings_json
+         FROM system_settings
+        WHERE setting_key = 'restaurant_settings'
+        LIMIT 1`,
+    );
+
+    if (!rows.length || !rows[0].settings_json) {
+      return {
+        low: DEFAULT_BACKEND_LOW_STOCK_THRESHOLD,
+        critical: DEFAULT_BACKEND_CRITICAL_STOCK_THRESHOLD,
+      };
+    }
+
+    const parsed = JSON.parse(rows[0].settings_json);
+    const critical = Math.max(
+      0,
+      Number(
+        parsed?.defaultCriticalStockThreshold ??
+          parsed?.criticalStockThreshold ??
+          DEFAULT_BACKEND_CRITICAL_STOCK_THRESHOLD,
+      ) || DEFAULT_BACKEND_CRITICAL_STOCK_THRESHOLD,
+    );
+    const low = Math.max(
+      critical,
+      Number(
+        parsed?.defaultLowStockThreshold ??
+          parsed?.lowStockThreshold ??
+          DEFAULT_BACKEND_LOW_STOCK_THRESHOLD,
+      ) || DEFAULT_BACKEND_LOW_STOCK_THRESHOLD,
+    );
+
+    return { low, critical };
+  } catch {
+    return {
+      low: DEFAULT_BACKEND_LOW_STOCK_THRESHOLD,
+      critical: DEFAULT_BACKEND_CRITICAL_STOCK_THRESHOLD,
+    };
+  }
+}
+
+function getAppliedInventoryAlertThresholds(row, defaults) {
+  const useDefaultThresholds = normalizeBooleanFlag(
+    row?.useDefaultThresholds,
+    true,
+  );
+  const critical = useDefaultThresholds
+    ? defaults.critical
+    : Math.max(
+        0,
+        Number(row?.criticalStockThreshold) || defaults.critical,
+      );
+  const low = useDefaultThresholds
+    ? defaults.low
+    : Math.max(critical, Number(row?.lowStockThreshold) || defaults.low);
+
+  return {
+    useDefaultThresholds,
+    low,
+    critical,
+  };
+}
+
+function getInventoryAlertSeverity(stockValue, thresholds) {
+  const stock = Number(stockValue) || 0;
+  if (stock <= 0) return "out";
+  if (stock <= thresholds.critical) return "critical";
+  if (stock <= thresholds.low) return "low";
+  return "normal";
+}
+
 async function ensureProductsImageColumn() {
   if (!(await hasColumn("products", "image"))) {
     await db.query("ALTER TABLE products ADD COLUMN image LONGTEXT NULL");
@@ -641,6 +717,92 @@ router.get("/", async (req, res) => {
     );
   } catch (err) {
     console.error("Error fetching inventory:", err);
+    res.status(500).json({ message: "DB error", error: err.message });
+  }
+});
+
+router.get("/alerts", async (_req, res) => {
+  try {
+    await ensureInventoryAlertColumns();
+    await ensureMenuManagementColumns();
+    const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+    const productItemTypeExpr = getProductItemTypeExpression(
+      hasItemTypeColumn,
+      "p",
+      "m",
+    );
+
+    const defaults = await readStockAlertDefaults();
+    const [rows] = await db.query(
+      `SELECT
+         i.Inventory_ID AS inventory_id,
+         i.Product_ID AS product_id,
+         COALESCE(m.Product_Name, i.Item_Purchased, 'Unnamed Product') AS product_name,
+         COALESCE(m.Category_Name, 'Uncategorized') AS category,
+         COALESCE(bu.unit, 'piece') AS unit,
+         COALESCE(i.Stock, 0) AS mainStock,
+         COALESCE(i.use_default_thresholds, 1) AS useDefaultThresholds,
+         i.low_stock_threshold AS lowStockThreshold,
+         i.critical_stock_threshold AS criticalStockThreshold,
+         ${productItemTypeExpr} AS item_type
+       FROM Inventory i
+       LEFT JOIN Menu m ON m.Product_ID = i.Product_ID
+       LEFT JOIN products p ON p.id = i.Product_ID
+       LEFT JOIN (
+         SELECT product_id, MAX(unit) AS unit
+         FROM batches
+         GROUP BY product_id
+       ) bu ON bu.product_id = i.Product_ID
+       WHERE ${productItemTypeExpr} = ?
+       ORDER BY product_name ASC`,
+      [STOCK_ITEM],
+    );
+
+    const items = rows.map((row) => {
+      const thresholds = getAppliedInventoryAlertThresholds(row, defaults);
+      const severity = getInventoryAlertSeverity(row.mainStock, thresholds);
+
+      return {
+        inventory_id: Number(row.inventory_id),
+        product_id: Number(row.product_id),
+        product_name: String(row.product_name || ""),
+        category: String(row.category || ""),
+        unit: String(row.unit || "piece"),
+        mainStock: Number(row.mainStock) || 0,
+        severity,
+        thresholds,
+      };
+    });
+
+    const summary = items.reduce(
+      (acc, item) => {
+        acc.totalItems += 1;
+        if (item.severity === "out") acc.outOfStock += 1;
+        else if (item.severity === "critical") acc.critical += 1;
+        else if (item.severity === "low") acc.low += 1;
+        else acc.normal += 1;
+        return acc;
+      },
+      {
+        totalItems: 0,
+        normal: 0,
+        low: 0,
+        critical: 0,
+        outOfStock: 0,
+      },
+    );
+
+    res.json({
+      generatedAt: new Date().toISOString(),
+      defaults,
+      summary: {
+        ...summary,
+        attention: summary.low + summary.critical + summary.outOfStock,
+      },
+      items: items.filter((item) => item.severity !== "normal"),
+    });
+  } catch (err) {
+    console.error("GET /inventory/alerts error:", err);
     res.status(500).json({ message: "DB error", error: err.message });
   }
 });
