@@ -1,3 +1,5 @@
+import { formatInSettingsTimezone } from "@/lib/restaurantSettings";
+
 export function toNumber(v: unknown, fb = 0): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : fb;
@@ -12,7 +14,7 @@ export const fmtDate = (v?: string | null) => {
   const d = new Date(v);
   return isNaN(d.getTime())
     ? "No expiry"
-    : d.toLocaleDateString(undefined, {
+    : formatInSettingsTimezone(d, undefined, {
         year: "numeric",
         month: "short",
         day: "numeric",
@@ -23,7 +25,7 @@ export const fmtReceivedDate = (v: string) => {
   const d = new Date(v);
   return isNaN(d.getTime())
     ? v
-    : d.toLocaleDateString(undefined, {
+    : formatInSettingsTimezone(d, undefined, {
         month: "short",
         day: "numeric",
         year: "numeric",
@@ -40,7 +42,7 @@ export function fmtDateTime(v?: string | null) {
   const d = new Date(v);
   return isNaN(d.getTime())
     ? "Not set"
-    : d.toLocaleString(undefined, {
+    : formatInSettingsTimezone(d, undefined, {
         year: "numeric",
         month: "short",
         day: "numeric",

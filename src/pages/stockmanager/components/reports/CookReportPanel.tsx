@@ -1,4 +1,5 @@
 import { AnimatePresence, motion, type Variants } from "framer-motion";
+import { formatInSettingsTimezone } from "@/lib/restaurantSettings";
 import { SectionCard } from "../SectionCard";
 import type {
   KitchenUsageItem,
@@ -42,11 +43,11 @@ export function CookReportPanel({
     <motion.div variants={itemVariants} className="grid grid-cols-2 gap-4">
       <div>
         <SectionCard
-          title="Cook Report"
+          title="Kitchen Usage Report"
           subtitle={
             cookReport?.report
               ? `Daily kitchen usage for ${fmtDate(cookReport.report.report_date)}`
-              : "Manual cook report for daily usage and spoilage"
+              : "Kitchen usage summary for daily release, usage, and spoilage"
           }
         >
           <div className="p-5 space-y-4">
@@ -96,7 +97,7 @@ export function CookReportPanel({
 
                 <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
                   <span>
-                    Withdrawn:{" "}
+                    Released:{" "}
                     <span className="font-semibold text-slate-700">
                       {fmtInt(cookReportTotals.withdrawn)}
                     </span>
@@ -127,7 +128,14 @@ export function CookReportPanel({
                     Last updated:{" "}
                     <span className="font-semibold text-slate-700">
                       {cookReport.report.updated_at
-                        ? new Date(cookReport.report.updated_at).toLocaleString()
+                        ? formatInSettingsTimezone(cookReport.report.updated_at, undefined, {
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            hour12: true,
+                          })
                         : "Not yet updated"}
                     </span>
                   </span>
@@ -179,7 +187,7 @@ export function CookReportPanel({
                       <div className="rounded-2xl border border-slate-200 overflow-hidden">
                         <div className="grid grid-cols-[1.4fr_repeat(5,minmax(0,0.8fr))] gap-3 bg-slate-50 px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                           <span>Raw Material</span>
-                          <span>Withdrawn</span>
+                          <span>Released</span>
                           <span>Used</span>
                           <span>Spoilage</span>
                           <span>Returned</span>
@@ -248,7 +256,14 @@ export function CookReportPanel({
                         ? `User #${cookReport.report.finalized_by}`
                         : "manager")}
                     {cookReport.report.finalized_at
-                      ? ` on ${new Date(cookReport.report.finalized_at).toLocaleString()}`
+                      ? ` on ${formatInSettingsTimezone(cookReport.report.finalized_at, undefined, {
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          hour12: true,
+                        })}`
                       : ""}
                   </p>
                 )}

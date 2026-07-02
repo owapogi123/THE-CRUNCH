@@ -74,9 +74,9 @@ export function DashboardTab({
           />
           <KPICard
             itemVariants={itemVariants}
-            label="Withdrawn Today"
+            label="Released Today"
             value={totalWithdrawnValue}
-            sub="units pulled"
+            sub="units sent to kitchen"
             accent="indigo"
             onClick={() => onSummarySelect("withdrawn")}
           />

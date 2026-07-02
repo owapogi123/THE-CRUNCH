@@ -29,7 +29,7 @@ export interface POItem {
   category: string;
   unit: string;
   quantity: number;
-  unitCost: number;
+  unitCost?: number | null;
   expectedExpiryDate?: string;
   isRawMaterial?: boolean | number;
   shelfLifeDays?: number | null;
@@ -241,6 +241,34 @@ export interface InventoryUnitMaster {
 export interface StockAlertSettings {
   defaultLowStockThreshold: number;
   defaultCriticalStockThreshold: number;
+}
+
+export interface InventoryAlertItem {
+  inventory_id: number;
+  product_id: number;
+  product_name: string;
+  category: string;
+  supplier_name: string;
+  unit: string;
+  mainStock: number;
+  severity: "out" | "critical" | "low" | "normal";
+  useDefaultThresholds: boolean;
+  lowStockThreshold: number;
+  criticalStockThreshold: number;
+}
+
+export interface InventoryAlertsPayload {
+  generatedAt: string;
+  defaults: StockAlertSettings;
+  summary: {
+    totalItems: number;
+    normal: number;
+    low: number;
+    critical: number;
+    outOfStock: number;
+    attention: number;
+  };
+  items: InventoryAlertItem[];
 }
 
 export interface NearestTimingInfo {

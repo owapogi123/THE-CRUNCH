@@ -28,6 +28,11 @@ import {
   normalizeRole,
 } from "@/lib/permissions";
 import { api } from "@/lib/api";
+import {
+  fetchGeneralSettings,
+  readCachedGeneralSettings,
+  GENERAL_SETTINGS_EVENT,
+} from "@/lib/restaurantSettings";
 
 type Role =
   | "administrator"
@@ -55,6 +60,12 @@ const ROLE_LABELS: Record<Exclude<Role, null>, string> = {
 };
 
 const SIDEBAR_ITEMS: SidebarItem[] = [
+  {
+    label: "Orders",
+    path: "/orders",
+    permissionKey: "orders",
+    icon: ShoppingCart,
+  },
   {
     label: "Overview",
     path: "/dashboard",
@@ -103,6 +114,9 @@ export function Sidebar() {
   const [isOpen, setIsOpen] = useState(false);
   const [permissions, setPermissions] = useState<PermissionsMap>(() =>
     readCachedPermissions(),
+  );
+  const [restaurantName, setRestaurantName] = useState(
+    () => readCachedGeneralSettings().restaurantName,
   );
   const navigate = useNavigate();
   const { user, logout, isOnline } = useAuth();
@@ -155,6 +169,36 @@ export function Sidebar() {
       window.removeEventListener("storage", syncPermissions);
     };
   }, [normalizedRole, userRole]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    const syncGeneralSettings = (event?: Event) => {
+      if (event instanceof CustomEvent && event.detail) {
+        setRestaurantName(
+          readCachedGeneralSettings().restaurantName ||
+            String(event.detail.restaurantName || "").trim() ||
+            "The Crunch",
+        );
+        return;
+      }
+
+      setRestaurantName(readCachedGeneralSettings().restaurantName);
+    };
+
+    void fetchGeneralSettings().then((settings) => {
+      if (!cancelled) {
+        setRestaurantName(settings.restaurantName);
+      }
+    });
+
+    window.addEventListener(GENERAL_SETTINGS_EVENT, syncGeneralSettings);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener(GENERAL_SETTINGS_EVENT, syncGeneralSettings);
+    };
+  }, []);
 
   const visibleItems = useMemo(() => {
     if (!userRole || userRole === "customer") return [];
@@ -255,7 +299,7 @@ export function Sidebar() {
                   isMobile ? "text-xl" : "text-2xl",
                 )}
               >
-                The Crunch
+                {restaurantName}
               </span>
             </motion.div>
 

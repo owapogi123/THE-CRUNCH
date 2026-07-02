@@ -1,4 +1,5 @@
 import { AnimatePresence, motion, type Variants } from "framer-motion";
+import { formatInSettingsTimezone } from "@/lib/restaurantSettings";
 import type { Dispatch, SetStateAction } from "react";
 import { Btn } from "../Btn";
 import { EmptyState } from "../EmptyState";
@@ -436,16 +437,17 @@ export function SuppliersTab({
                     const dt = new Date(h.created_at);
                     const dateStr = isNaN(dt.getTime())
                       ? h.created_at
-                      : dt.toLocaleDateString(undefined, {
+                      : formatInSettingsTimezone(dt, undefined, {
                           month: "short",
                           day: "numeric",
                           year: "numeric",
                         });
                     const timeStr = isNaN(dt.getTime())
                       ? ""
-                      : dt.toLocaleTimeString(undefined, {
+                      : formatInSettingsTimezone(dt, undefined, {
                           hour: "2-digit",
                           minute: "2-digit",
+                          hour12: true,
                         });
                     return (
                       <div

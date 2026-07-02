@@ -1,13 +1,21 @@
 ﻿import { useState, useEffect } from "react";
 import { Lock, ChevronDown, ChevronUp, Star, MessageSquare } from "lucide-react";
 import { useAuth } from "../context/authcontext";
+import { api } from "../lib/api";
+import { saveGeneralSettings, syncGeneralSettings } from "../lib/restaurantSettings";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 export const FONT = "'Poppins', sans-serif";
 export const ACCENT = "#e05a1e";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-export type UserRole = "administrator" | "manager" | "staff";
+export type UserRole =
+  | "administrator"
+  | "manager"
+  | "staff"
+  | "cashier"
+  | "cook"
+  | "inventory_manager";
 export type TabKey =
   | "business" | "users" | "roles" | "inventory" | "products"
   | "ordering" | "payment" | "receipt" | "billing" | "notifications"
@@ -16,6 +24,7 @@ export type TabKey =
 
 export interface RestaurantSettings {
   restaurantName: string; tagline: string; email: string; phone: string; address: string;
+  currency: string; timezone: string;
   weekdayOpenTime: string; weekdayCloseTime: string; weekendOpenTime: string; weekendCloseTime: string;
   storeStatusMode: "auto" | "manual_open" | "manual_closed";
   defaultLowStockThreshold: string; defaultCriticalStockThreshold: string;
@@ -27,7 +36,7 @@ export interface RestaurantSettings {
 }
 
 export const DEFAULT: RestaurantSettings = {
-  restaurantName: "The Crunch", tagline: "", email: "", phone: "", address: "",
+  restaurantName: "The Crunch", tagline: "", email: "", phone: "", address: "", currency: "PHP", timezone: "Asia/Manila",
   weekdayOpenTime: "10:00", weekdayCloseTime: "22:00",
   weekendOpenTime: "11:00", weekendCloseTime: "20:30",
   storeStatusMode: "auto", defaultLowStockThreshold: "", defaultCriticalStockThreshold: "",
@@ -40,6 +49,76 @@ export const DEFAULT: RestaurantSettings = {
 export interface FeedbackEntry {
   id: string; reviewerName: string; productName: string;
   rating: number; message: string; createdAt: string;
+}
+
+function readString(value: unknown, fallback = ""): string {
+  const normalized = String(value ?? "").trim();
+  return normalized || fallback;
+}
+
+function readBoolean(value: unknown, fallback = false): boolean {
+  if (typeof value === "boolean") return value;
+  if (value === 1 || value === "1" || value === "true") return true;
+  if (value === 0 || value === "0" || value === "false") return false;
+  return fallback;
+}
+
+function normalizeSettingsState(
+  source: Record<string, unknown> | null | undefined,
+): RestaurantSettings {
+  return {
+    restaurantName: readString(source?.restaurantName, DEFAULT.restaurantName),
+    tagline: readString(source?.tagline),
+    email: readString(source?.email),
+    phone: readString(source?.phone),
+    address: readString(source?.address),
+    currency: readString(source?.currency, DEFAULT.currency),
+    timezone: readString(source?.timezone, DEFAULT.timezone),
+    weekdayOpenTime: readString(
+      source?.weekdayOpenTime,
+      DEFAULT.weekdayOpenTime,
+    ),
+    weekdayCloseTime: readString(
+      source?.weekdayCloseTime,
+      DEFAULT.weekdayCloseTime,
+    ),
+    weekendOpenTime: readString(
+      source?.weekendOpenTime,
+      DEFAULT.weekendOpenTime,
+    ),
+    weekendCloseTime: readString(
+      source?.weekendCloseTime,
+      DEFAULT.weekendCloseTime,
+    ),
+    storeStatusMode:
+      source?.storeStatusMode === "manual_open" ||
+      source?.storeStatusMode === "manual_closed"
+        ? source.storeStatusMode
+        : "auto",
+    defaultLowStockThreshold: readString(source?.defaultLowStockThreshold),
+    defaultCriticalStockThreshold: readString(
+      source?.defaultCriticalStockThreshold,
+    ),
+    taxRate: readString(source?.taxRate),
+    serviceCharge: readString(source?.serviceCharge),
+    enableToastNotifications: readBoolean(
+      source?.enableToastNotifications,
+      true,
+    ),
+    toastPosition:
+      source?.toastPosition === "top-left" ||
+      source?.toastPosition === "bottom-right" ||
+      source?.toastPosition === "bottom-left"
+        ? source.toastPosition
+        : "top-right",
+    toastDuration: readString(source?.toastDuration, DEFAULT.toastDuration),
+    enableConfirmDialogs: readBoolean(source?.enableConfirmDialogs, true),
+    acceptOnlineOrders: readBoolean(source?.acceptOnlineOrders, true),
+    minimumOrderAmount: readString(source?.minimumOrderAmount),
+    deliveryRadius: readString(source?.deliveryRadius),
+    deliveryFee: readString(source?.deliveryFee),
+    sessionTimeout: readString(source?.sessionTimeout, DEFAULT.sessionTimeout),
+  };
 }
 
 // ─── RBAC ─────────────────────────────────────────────────────────────────────
@@ -158,7 +237,7 @@ export function TR({ label, desc, value, onChange, last = false }: {
   );
 }
 
-export function Card({ title, children }: { title: string; children: React.ReactNode }) {
+export function Card({ title: _title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 8 }}>
       {children}
@@ -197,6 +276,22 @@ export function BusinessTab({ s, setStr }: { s: RestaurantSettings; setStr: (k: 
     <Card title="Restaurant Identity">
       <FR label="Business name"><SI value={s.restaurantName} onChange={(v) => setStr("restaurantName", v)} placeholder="The Crunch" /></FR>
       <FR label="Tagline" last><SI value={s.tagline} onChange={(v) => setStr("tagline", v)} placeholder="Crunch into flavor" /></FR>
+    </Card>
+    <Card title="Regional Settings">
+      <FR label="Currency">
+        <SS
+          value={s.currency}
+          onChange={(v) => setStr("currency", v)}
+          options={[
+            { value: "PHP", label: "Philippine Peso (PHP)" },
+            { value: "USD", label: "US Dollar (USD)" },
+            { value: "EUR", label: "Euro (EUR)" },
+          ]}
+        />
+      </FR>
+      <FR label="Time zone" last>
+        <SI value={s.timezone} onChange={(v) => setStr("timezone", v)} placeholder="Asia/Manila" />
+      </FR>
     </Card>
     <Card title="Contact Details">
       <FR label="Email"><SI value={s.email} onChange={(v) => setStr("email", v)} type="email" placeholder="contact@thecrunch.ph" /></FR>
@@ -663,6 +758,10 @@ export default function Settings() {
   );
 
   const [settings, setSettings] = useState<RestaurantSettings>(DEFAULT);
+  const [settingsLoading, setSettingsLoading] = useState(true);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [saveNotice, setSaveNotice] = useState<string | null>(null);
 
   const [feedback, setFeedback] = useState<FeedbackEntry[]>([]);
   const [feedbackLoading, setFeedbackLoading] = useState(true);
@@ -686,6 +785,34 @@ export default function Settings() {
     fetchFeedback();
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    api.get<Record<string, unknown>>("/settings")
+      .then((data) => {
+        if (cancelled) return;
+        setSettings((prev) => ({ ...prev, ...normalizeSettingsState(data) }));
+        syncGeneralSettings(data);
+        setSettingsError(null);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSettingsError(
+            "Failed to load saved settings. Showing the current form values.",
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setSettingsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const setStr = (k: keyof RestaurantSettings, v: string) =>
     setSettings((prev) => ({ ...prev, [k]: v }));
 
@@ -695,6 +822,29 @@ export default function Settings() {
   const locked = !canAccess(role, activeTab);
   const meta = TAB_META[activeTab];
   const feedbackCount = feedback.length;
+
+  const handleSaveSettings = async () => {
+    setSettingsSaving(true);
+    setSettingsError(null);
+    setSaveNotice(null);
+
+    try {
+      const saved = await saveGeneralSettings(
+        settings as unknown as Record<string, unknown>,
+      );
+      setSettings((prev) => ({
+        ...prev,
+        ...normalizeSettingsState(saved as unknown as Record<string, unknown>),
+      }));
+      setSaveNotice("Settings saved.");
+    } catch (error) {
+      setSettingsError(
+        error instanceof Error ? error.message : "Failed to save settings.",
+      );
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
 
   const renderTab = () => {
     if (locked) return <LockedSection tabLabel={meta.title} />;
@@ -767,6 +917,38 @@ export default function Settings() {
           flex: 1, overflowY: "auto", padding: "32px 36px",
           borderLeft: "1px solid #f0eeec",
         }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+            <div>
+              {settingsLoading && (
+                <p style={{ fontFamily: FONT, fontSize: "0.76rem", color: "#9e9891", margin: "0 0 6px" }}>
+                  Loading saved settings...
+                </p>
+              )}
+              {settingsError && (
+                <p style={{ fontFamily: FONT, fontSize: "0.76rem", color: "#b91c1c", margin: "0 0 6px" }}>
+                  {settingsError}
+                </p>
+              )}
+              {saveNotice && !settingsError && (
+                <p style={{ fontFamily: FONT, fontSize: "0.76rem", color: "#15803d", margin: "0 0 6px" }}>
+                  {saveNotice}
+                </p>
+              )}
+            </div>
+            <button
+              onClick={handleSaveSettings}
+              disabled={settingsSaving || settingsLoading}
+              style={{
+                ...S.accentBtn,
+                textAlign: "center",
+                opacity: settingsSaving || settingsLoading ? 0.55 : 1,
+                cursor:
+                  settingsSaving || settingsLoading ? "not-allowed" : "pointer",
+              }}
+            >
+              {settingsSaving ? "Saving..." : "Save Settings"}
+            </button>
+          </div>
           <div style={{ marginBottom: 8 }}>
             <h1 style={{ fontFamily: FONT, fontSize: "1.4rem", fontWeight: 700, color: "#1c1a18", margin: "0 0 4px" }}>
               {meta.title}

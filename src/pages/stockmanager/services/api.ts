@@ -1,5 +1,6 @@
 import type {
   Batch,
+  InventoryAlertsPayload,
   InventoryCategoryMaster,
   InventoryUnitMaster,
   KitchenBatch,
@@ -41,6 +42,7 @@ export async function apiFetch<T>(
 
 export const api = {
   getInventory: () => apiFetch<Product[]>("/inventory"),
+  getInventoryAlerts: () => apiFetch<InventoryAlertsPayload>("/inventory/alerts"),
   getSettings: () => apiFetch<Record<string, unknown>>("/settings"),
   getWithdrawals: () => apiFetch<StockStatusRecord[]>("/stock-status/today"),
   postWithdrawal: (body: {

@@ -1,4 +1,5 @@
 import { motion, type Variants } from "framer-motion";
+import { formatInSettingsTimezone } from "@/lib/restaurantSettings";
 import type { ReactNode } from "react";
 import { Btn } from "../Btn";
 import { EmptyState } from "../EmptyState";
@@ -103,11 +104,11 @@ export function WithdrawalTab({
         {withdrawalSubTab === "new-record" && (
           <motion.div variants={itemVariants} className="grid grid-cols-2 gap-6">
             <SectionCard
-              title="New Withdrawal Record"
+              title="New Kitchen Stock Release"
               subtitle={
                 wdType === "initial"
-                  ? "Opening withdrawal - sets the day's reference"
-                  : "FIFO - oldest batch pulled first"
+                  ? "Opening kitchen release - sets the day's reference"
+                  : "FIFO - oldest batch released first"
               }
             >
               <div className="p-5 space-y-4">
@@ -142,9 +143,9 @@ export function WithdrawalTab({
                   className={`text-xs px-3 py-2 rounded-xl border ${wdType === "initial" ? "bg-indigo-50 text-indigo-600 border-indigo-100" : "bg-sky-50 text-sky-600 border-sky-100"}`}
                 >
                   {wdType === "initial" &&
-                    "Opening withdrawal for today - recorded as the initial pull."}
+                    "Opening kitchen release for today - recorded as the initial pull."}
                   {wdType === "supplementary" &&
-                    "Additional pull on top of the opening withdrawal."}
+                    "Additional kitchen release on top of the opening pull."}
                 </div>
                 {wdType === "supplementary" &&
                   kitchenRemaining > 0 &&
@@ -152,10 +153,10 @@ export function WithdrawalTab({
                     <div className="text-xs px-3 py-2 rounded-xl border bg-amber-50 text-amber-700 border-amber-200">
                       Warning: Kitchen still has {kitchenRemaining}{" "}
                       {selectedWithdrawalProduct.unit} remaining for this
-                      product. Are you sure you need a supplementary withdrawal?
+                      product. Are you sure you need a supplementary release?
                     </div>
                   )}
-                <FormField label="Withdrawal Items">
+                <FormField label="Release Items">
                   <div className="space-y-3">
                     {withdrawalRows.map((row, index) => {
                       const rowProduct =
@@ -283,16 +284,16 @@ export function WithdrawalTab({
                   variant="primary"
                   loading={submitting}
                 >
-                  {submitting ? "Saving..." : "Submit Withdrawals"}
+                  {submitting ? "Saving..." : "Submit Release"}
                 </Btn>
               </div>
             </SectionCard>
             <SectionCard
-              title="Today's Withdrawal Log"
+              title="Today's Kitchen Release Log"
               subtitle={`${visibleWithdrawalLogs.length} entries`}
             >
               {visibleWithdrawalLogs.length === 0 ? (
-                <EmptyState message="No withdrawals recorded today." />
+                <EmptyState message="No kitchen releases recorded today." />
               ) : (
                 <div className="divide-y divide-slate-50 max-h-96 overflow-y-auto">
                   {visibleWithdrawalLogs.map((w) => (
@@ -308,9 +309,10 @@ export function WithdrawalTab({
                           {w.product_name}
                         </p>
                         <p className="text-xs text-slate-400 mt-0.5">
-                          {new Date(w.status_date).toLocaleTimeString(undefined, {
+                          {formatInSettingsTimezone(w.status_date, undefined, {
                             hour: "2-digit",
                             minute: "2-digit",
+                            hour12: true,
                           })}
                           {w.recorded_by && (
                             <>
@@ -348,11 +350,11 @@ export function WithdrawalTab({
         {withdrawalSubTab === "currently-withdrawn" && (
           <motion.div variants={itemVariants}>
             <SectionCard
-              title="Currently Withdrawn"
-              subtitle="Stock pulled for today's preparation - net of returns"
+              title="Released for Kitchen Today"
+              subtitle="Stock sent to kitchen for today's preparation - net of returns"
             >
               {products.filter((p) => p.dailyWithdrawn > 0).length === 0 ? (
-                <EmptyState message="No stock withdrawn today." />
+                <EmptyState message="No stock released today." />
               ) : (
                 <div className="grid grid-cols-4 divide-x divide-slate-100">
                   {products

@@ -1,4 +1,5 @@
 import { motion, type Variants } from "framer-motion";
+import { formatInSettingsTimezone } from "@/lib/restaurantSettings";
 import { SectionCard } from "../SectionCard";
 import type { ReportData } from "../../types/inventory";
 import { fmtInt } from "../../utils/formatters";
@@ -56,7 +57,7 @@ export function StockMovementReportPanel({
                 Stock Movement Report
               </p>
               <p className="text-xs text-slate-400 mt-0.5">
-                Summarizes received, withdrawn, wasted, and returned per item
+                Summarizes received, released, wasted, and returned per item
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -177,7 +178,7 @@ export function StockMovementReportPanel({
                   text: "text-emerald-600",
                 },
                 {
-                  label: "Total Withdrawn",
+                  label: "Total Released",
                   value: fmtInt(reportData.totalWithdrawn),
                   accent: "border-t-indigo-400",
                   text: "text-indigo-600",
@@ -215,7 +216,14 @@ export function StockMovementReportPanel({
             </div>
             <SectionCard
               title={`Stock Movement \u2014 ${reportData.period}`}
-              subtitle={`Generated ${new Date(reportData.generatedAt).toLocaleString()} \u00B7 ${reportData.items.length} items`}
+              subtitle={`Generated ${formatInSettingsTimezone(reportData.generatedAt, undefined, {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: true,
+              })} \u00B7 ${reportData.items.length} items`}
             >
               <table className="w-full text-sm">
                 <thead>
@@ -224,7 +232,7 @@ export function StockMovementReportPanel({
                       "Item",
                       "Category",
                       "Received",
-                      "Withdrawn",
+                      "Released",
                       "Returned",
                       "Wasted",
                       "Remaining",

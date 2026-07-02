@@ -4,13 +4,10 @@ import { CloseBtn } from "../CloseBtn";
 import { POBadge } from "../POBadge";
 import type { POItem, POStatus, PurchaseOrder } from "../../types/inventory";
 import {
-  calcPOTotal,
   getPOItemDateTrackingType,
   getPOItemUsableUntil,
 } from "../../utils/purchaseOrderUtils";
 import { fmtDate, fmtDateTime, formatShelfLife } from "../../utils/formatters";
-
-const PESO = "\u20B1";
 
 function TrashIcon() {
   return (
@@ -51,8 +48,6 @@ export function PODetailDrawer({
   onPrint: (order: PurchaseOrder) => void;
 }) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const total = calcPOTotal(order.items);
-  const tax = total * 0.12;
   const nextStatus: Partial<Record<POStatus, POStatus>> = {
     Draft: "Ordered",
     Ordered: "Received",
@@ -217,45 +212,10 @@ export function PODetailDrawer({
                         )}
                       </div>
                     </div>
-                    <div className="text-right flex-shrink-0">
-                      <p className="text-sm font-semibold text-gray-800">
-                        {PESO}
-                        {(item.quantity * item.unitCost).toLocaleString()}
-                      </p>
-                      <p className="text-xs text-gray-400">
-                        {PESO}
-                        {item.unitCost}/{item.unit}
-                      </p>
-                    </div>
                   </div>
                 </div>
               );
             })}
-          </div>
-        </div>
-        <div className="bg-gray-50 rounded-xl p-4 space-y-2">
-          <div className="flex justify-between text-sm text-gray-500">
-            <span>Subtotal</span>
-            <span>
-              {PESO}
-              {total.toLocaleString()}
-            </span>
-          </div>
-          <div className="flex justify-between text-sm text-gray-500">
-            <span>VAT (12%)</span>
-            <span>
-              {PESO}
-              {tax.toFixed(2)}
-            </span>
-          </div>
-          <div className="flex justify-between font-semibold text-gray-800 pt-2 border-t border-gray-200">
-            <span>Total</span>
-            <span>
-              {PESO}
-              {(total + tax).toLocaleString(undefined, {
-                maximumFractionDigits: 2,
-              })}
-            </span>
           </div>
         </div>
         {order.receiptNo && (

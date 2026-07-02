@@ -1,7 +1,6 @@
 import { motion, type Variants } from "framer-motion";
 import { EmptyState } from "../EmptyState";
 import { POBadge } from "../POBadge";
-import { calcPOTotal } from "../../utils/purchaseOrderUtils";
 import { fmtFilterDate, fmtReceivedDate } from "../../utils/formatters";
 import type { PurchaseOrder } from "../../types/inventory";
 
@@ -19,7 +18,6 @@ export function PurchaseHistoryTab({
   poHistoryPage,
   poHistoryTotalPages,
   poHistoryPageSize,
-  peso,
   setPoHistoryDateFrom,
   setPoHistoryDateTo,
   setPoHistoryPage,
@@ -39,7 +37,6 @@ export function PurchaseHistoryTab({
   poHistoryPage: number;
   poHistoryTotalPages: number;
   poHistoryPageSize: number;
-  peso: string;
   setPoHistoryDateFrom: React.Dispatch<React.SetStateAction<string>>;
   setPoHistoryDateTo: React.Dispatch<React.SetStateAction<string>>;
   setPoHistoryPage: React.Dispatch<React.SetStateAction<number>>;
@@ -200,7 +197,7 @@ export function PurchaseHistoryTab({
               <span>Receipt</span>
               <span>Received By</span>
               <span>Received On</span>
-              <span>Total</span>
+              <span>Items</span>
               <span className="text-right">Status</span>
             </div>
             <div className="divide-y divide-slate-50">
@@ -217,7 +214,12 @@ export function PurchaseHistoryTab({
                   }
                 />
               ) : (
-                paginatedCompletedPOs.map((order, i) => (
+                paginatedCompletedPOs.map((order, i) => {
+                  const totalQuantity = order.items.reduce(
+                    (sum, item) => sum + Number(item.quantity || 0),
+                    0,
+                  );
+                  return (
                   <div key={order.id}>
                     <div
                       className="hidden lg:grid grid-cols-[1.5fr_2fr_1.5fr_1.5fr_1.5fr_1.5fr_auto] px-5 py-4 transition-colors items-center hover:bg-slate-50/70 cursor-pointer"
@@ -266,13 +268,7 @@ export function PurchaseHistoryTab({
                             : "-"}
                         </span>
                         <span className="text-sm font-semibold text-slate-800">
-                          {peso}
-                          {(calcPOTotal(order.items) * 1.12).toLocaleString(
-                            undefined,
-                            {
-                              maximumFractionDigits: 0,
-                            },
-                          )}
+                          {totalQuantity} unit{totalQuantity !== 1 ? "s" : ""}
                         </span>
                         <span className="flex justify-end">
                           <POBadge status={order.status} />
@@ -316,18 +312,12 @@ export function PurchaseHistoryTab({
                             : "-"}
                         </span>
                         <span className="font-semibold text-slate-700">
-                          {peso}
-                          {(calcPOTotal(order.items) * 1.12).toLocaleString(
-                            undefined,
-                            {
-                              maximumFractionDigits: 0,
-                            },
-                          )}
+                          {totalQuantity} unit{totalQuantity !== 1 ? "s" : ""}
                         </span>
                       </div>
                     </motion.div>
                   </div>
-                ))
+                )})
               )}
             </div>
             {!poLoading && filteredCompletedPOs.length > 0 && (

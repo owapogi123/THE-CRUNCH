@@ -6,10 +6,17 @@ import {
   type Transition,
 } from "framer-motion";
 import { Sidebar } from "@/components/Sidebar";
+import { UserIdentityBanner } from "@/components/UserIdentityBanner";
 import { useNotifications } from "@/lib/NotificationContext";
 import { useAuth } from "../../context/authcontext";
+import {
+  fetchGeneralSettings,
+  GENERAL_SETTINGS_DEFAULTS,
+  formatInSettingsTimezone,
+} from "@/lib/restaurantSettings";
 import { api } from "./services/api";
 import type {
+  InventoryAlertsPayload,
   InventoryCategoryMaster,
   InventoryUnitMaster,
   Product,
@@ -76,11 +83,9 @@ import {
   normalizeStockAlertSettings,
 } from "./utils/stockUtils";
 
-const PESO = "\u20B1";
-
 const TABS: { id: Tab; label: string }[] = [
   { id: "dashboard", label: "Dashboard" },
-  { id: "withdrawal", label: "Withdrawal" },
+  { id: "withdrawal", label: "Kitchen Stock" },
   { id: "alerts", label: "Alerts" },
   { id: "suppliers", label: "Suppliers" },
   { id: "purchases", label: "Purchase Orders" },
@@ -205,6 +210,9 @@ const TrashIcon = () => (
 
 export default function StockManager() {
   const { user } = useAuth();
+  const [restaurantSettings, setRestaurantSettings] = useState(
+    GENERAL_SETTINGS_DEFAULTS,
+  );
   const [tab, setTab] = useState<Tab>("dashboard");
   type WithdrawalSubTab =
     | "new-record"
@@ -236,6 +244,8 @@ export default function StockManager() {
   );
   const [stockAlertSettings, setStockAlertSettings] =
     useState<StockAlertSettings>(DEFAULT_STOCK_ALERT_SETTINGS);
+  const [backendAlerts, setBackendAlerts] =
+    useState<InventoryAlertsPayload | null>(null);
   const [showReconcile, setShowReconcile] = useState(false);
   const [reconcileItems, setReconcileItems] = useState<ReconcileRow[]>([]);
   const [showDashboardBackToTop, setShowDashboardBackToTop] = useState(false);
@@ -257,6 +267,19 @@ export default function StockManager() {
     },
     [addNotification],
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchGeneralSettings().then((settings) => {
+      if (!cancelled) {
+        setRestaurantSettings(settings);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const refreshInventory = useCallback(
     () => refreshInventoryRef.current(),
     [],
@@ -291,7 +314,15 @@ export default function StockManager() {
     setIsRefreshing(true);
     setError(null);
     try {
-      const [invRes, wdRes, supRes, categoryRes, unitRes, settingsRes] =
+      const [
+        invRes,
+        wdRes,
+        supRes,
+        categoryRes,
+        unitRes,
+        settingsRes,
+        alertRes,
+      ] =
         await Promise.allSettled([
           api.getInventory(),
           api.getWithdrawals(),
@@ -299,6 +330,7 @@ export default function StockManager() {
           api.getInventoryCategories(),
           api.getInventoryUnits(),
           api.getSettings(),
+          api.getInventoryAlerts(),
         ]);
 
       if (
@@ -318,6 +350,7 @@ export default function StockManager() {
         settingsRes.status === "fulfilled"
           ? normalizeStockAlertSettings(settingsRes.value)
           : DEFAULT_STOCK_ALERT_SETTINGS;
+      setBackendAlerts(alertRes.status === "fulfilled" ? alertRes.value : null);
       inventoryCategoryNameLookup.clear();
       inventoryCategoryDateTrackingLookup.clear();
       for (const category of categoryList) {
@@ -860,7 +893,7 @@ export default function StockManager() {
                 Stock Manager
               </h2>
               <p className="text-xs text-slate-400 font-light mt-0.5">
-                {new Date().toLocaleDateString(undefined, {
+                {formatInSettingsTimezone(new Date(), restaurantSettings, {
                   weekday: "long",
                   year: "numeric",
                   month: "long",
@@ -902,6 +935,12 @@ export default function StockManager() {
                 </span>
               </div>
             </div>
+          </div>
+          <div className="px-4 pb-3 md:px-6 lg:px-8 lg:pl-24">
+            <UserIdentityBanner
+              title="Stock Operations"
+              subtitle={`${restaurantSettings.restaurantName} inventory control`}
+            />
           </div>
           <div className="flex items-center justify-start gap-2 overflow-x-auto px-4 pb-3 md:px-6 lg:justify-center lg:px-8 lg:pl-24">
             {TABS.map((t) => {
@@ -957,7 +996,7 @@ export default function StockManager() {
                   },
                   {
                     id: "cook-report" as const,
-                    label: "Cook Report",
+                    label: "Kitchen Usage Report",
                   },
                 ].map((item) => (
                   <button
@@ -988,7 +1027,7 @@ export default function StockManager() {
               <div className="mx-auto flex w-full max-w-5xl items-end justify-center gap-6 border-b border-slate-200">
                 {[
                   {
-                    label: "New Withdrawal Record",
+                    label: "New Kitchen Release",
                     id: "new-record" as const,
                   },
                   {
@@ -1000,7 +1039,7 @@ export default function StockManager() {
                     id: "delivered-batches" as const,
                   },
                   {
-                    label: "Currently Withdrawn",
+                    label: "Released Today",
                     id: "currently-withdrawn" as const,
                   },
                   {
@@ -1095,7 +1134,7 @@ export default function StockManager() {
                                     "Category",
                                     "Main Stock",
                                     "Qty Purchased",
-                                    "Withdrawn",
+                                    "Released",
                                     "Shelf Life / Expiry",
                                     "Nearest Expiry / Shelf Life",
                                     "Returned",
@@ -1338,9 +1377,7 @@ export default function StockManager() {
                                       </p>
                                     </div>
                                     <span className="text-xs text-slate-500 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-lg">
-                                      {new Date(
-                                        p.last_update,
-                                      ).toLocaleDateString(undefined, {
+                                      {formatInSettingsTimezone(p.last_update, restaurantSettings, {
                                         month: "short",
                                         day: "numeric",
                                       })}
@@ -1612,6 +1649,7 @@ export default function StockManager() {
                   staggerVariants={staggerVariants}
                   itemVariants={itemVariants}
                   stockAlertSettings={stockAlertSettings}
+                  backendAlerts={backendAlerts}
                   products={products}
                   lowStock={lowStock}
                   alertCriticalStock={dashboard.alertCriticalStock}
@@ -1679,7 +1717,6 @@ export default function StockManager() {
                   poLoading={po.poLoading}
                   products={products}
                   stockAlertSettings={stockAlertSettings}
-                  peso={PESO}
                   statusDot={STATUS_DOT}
                   statusBar={STATUS_BAR}
                   restockBanner={
@@ -1715,7 +1752,6 @@ export default function StockManager() {
                   poHistoryPage={po.poHistoryPage}
                   poHistoryTotalPages={po.poHistoryTotalPages}
                   poHistoryPageSize={po.poHistoryPageSize}
-                  peso={PESO}
                   setPoHistoryDateFrom={po.setPoHistoryDateFrom}
                   setPoHistoryDateTo={po.setPoHistoryDateTo}
                   setPoHistoryPage={po.setPoHistoryPage}

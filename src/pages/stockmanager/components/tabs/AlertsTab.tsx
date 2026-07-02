@@ -1,6 +1,12 @@
 import { motion, type Variants } from "framer-motion";
+import { formatInSettingsTimezone } from "@/lib/restaurantSettings";
 import { EmptyState } from "../EmptyState";
-import type { Product, StockAlertSettings, Tab } from "../../types/inventory";
+import type {
+  InventoryAlertsPayload,
+  Product,
+  StockAlertSettings,
+  Tab,
+} from "../../types/inventory";
 
 function CartIcon() {
   return (
@@ -25,6 +31,7 @@ export function AlertsTab({
   staggerVariants,
   itemVariants,
   stockAlertSettings,
+  backendAlerts,
   products,
   lowStock,
   alertCriticalStock,
@@ -43,6 +50,7 @@ export function AlertsTab({
   staggerVariants: Variants;
   itemVariants: Variants;
   stockAlertSettings: StockAlertSettings;
+  backendAlerts: InventoryAlertsPayload | null;
   products: Product[];
   lowStock: Product[];
   alertCriticalStock: Product[];
@@ -91,19 +99,43 @@ export function AlertsTab({
           variants={itemVariants}
           className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm"
         >
-          <div className="flex flex-col gap-2 text-sm text-slate-600 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
-            <span>
-              Warning threshold:{" "}
-              <strong className="text-slate-800">
-                {stockAlertSettings.defaultLowStockThreshold}
-              </strong>
-            </span>
-            <span>
-              Critical threshold:{" "}
-              <strong className="text-slate-800">
-                {stockAlertSettings.defaultCriticalStockThreshold}
-              </strong>
-            </span>
+          <div className="flex flex-col gap-3 text-sm text-slate-600">
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
+              <span>
+                Warning threshold:{" "}
+                <strong className="text-slate-800">
+                  {stockAlertSettings.defaultLowStockThreshold}
+                </strong>
+              </span>
+              <span>
+                Critical threshold:{" "}
+                <strong className="text-slate-800">
+                  {stockAlertSettings.defaultCriticalStockThreshold}
+                </strong>
+              </span>
+            </div>
+            {backendAlerts && (
+              <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs text-blue-700">
+                <strong className="text-blue-900">Backend stock alert sync:</strong>{" "}
+                {backendAlerts.summary.attention} item
+                {backendAlerts.summary.attention !== 1 ? "s" : ""} need attention
+                {" · "}
+                {backendAlerts.summary.outOfStock} out of stock
+                {" · "}
+                {backendAlerts.summary.critical} critical
+                {" · "}
+                {backendAlerts.summary.low} warning
+                {" · updated "}
+                {formatInSettingsTimezone(backendAlerts.generatedAt, undefined, {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  hour12: true,
+                })}
+              </div>
+            )}
           </div>
         </motion.div>
         <motion.div variants={itemVariants} className="grid grid-cols-4 gap-4">

@@ -77,7 +77,7 @@ export function EndOfDayReconciliationModal({
         <div className="p-6 space-y-3 max-h-[26rem] overflow-y-auto">
           {reconcileItems.length === 0 ? (
             <p className="text-sm text-slate-400 text-center py-8">
-              No reconcilable items currently withdrawn.
+              No reconcilable items currently released.
             </p>
           ) : (
             reconcileItems.map((item, i) => {
@@ -102,7 +102,7 @@ export function EndOfDayReconciliationModal({
                           {item.product_name}
                         </p>
                         <p className="text-xs text-slate-400 mt-0.5">
-                          Withdrawn today:{" "}
+                          Released today:{" "}
                           <span className="font-medium text-slate-600">
                             {item.withdrawn} {item.unit}
                           </span>

@@ -2,12 +2,17 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { api, authApi, resolveAssetUrl } from "../lib/api";
-import { fetchGeneralSettings, GENERAL_SETTINGS_DEFAULTS } from "../lib/restaurantSettings";
+import {
+  fetchGeneralSettings,
+  GENERAL_SETTINGS_DEFAULTS,
+  formatCurrencyAmount,
+  formatInSettingsTimezone,
+} from "../lib/restaurantSettings";
 import { useAuth } from "../context/authcontext";
 import { useViewport } from "@/hooks/use-tablet";
 
 // ── Types ──────────────────────────────────────────────────────────────────
-const formatPHP = (v: number) => new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(v || 0);
+const formatPHP = (v: number) => formatCurrencyAmount(v);
 const SP  = { type: "spring" as const, stiffness: 340, damping: 30 };
 const SPG = { type: "spring" as const, stiffness: 200, damping: 24 };
 const EASE: [number,number,number,number] = [0.22,1,0.36,1];
@@ -280,7 +285,7 @@ function TrackingPanel({ orders }: { orders:CustomerOrder[] }) {
                 <span style={{ fontSize:18,fontWeight:900,color:"#f0ede8" }}>{order.orderNumber}</span>
                 <span style={{ fontSize:11,fontWeight:700,padding:"4px 10px",borderRadius:999,background:"rgba(245,200,66,0.1)",border:"1px solid rgba(245,200,66,0.22)",color:"#f5c842" }}>{order.trackingStatus}</span>
               </div>
-              <p style={{ margin:0,fontSize:12,color:"rgba(240,237,232,0.35)" }}>{new Date(order.createdAt).toLocaleString("en-PH",{ month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit",hour12:true })}</p>
+              <p style={{ margin:0,fontSize:12,color:"rgba(240,237,232,0.35)" }}>{formatInSettingsTimezone(order.createdAt, undefined, { month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit",hour12:true })}</p>
             </div>
           </div>
           <div style={{ display:"flex",gap:8,flexWrap:"wrap" }}>
@@ -316,7 +321,7 @@ function HistoryDrawer({ orders,menuItems,onClose }: { orders:CustomerOrder[];me
                   <div style={{ width:34,height:34,borderRadius:"50%",background:isOpen?"#f5c842":"rgba(240,237,232,0.07)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}><span style={{ fontSize:10.5,fontWeight:800,color:isOpen?"#111":"rgba(240,237,232,0.38)" }}>{order.orderNumber.replace("#","")}</span></div>
                   <div style={{ flex:1,minWidth:0 }}>
                     <div style={{ display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:4 }}><span style={{ fontSize:12.5,fontWeight:700,color:"#f0ede8" }}>{order.orderNumber}</span><span style={{ fontSize:10,fontWeight:700,padding:"3px 8px",borderRadius:999,background:cancelled?"rgba(239,68,68,0.12)":"rgba(34,197,94,0.12)",color:cancelled?"#f87171":"#4ade80",border:`1px solid ${cancelled?"rgba(239,68,68,0.22)":"rgba(34,197,94,0.22)"}` }}>{order.trackingStatus}</span></div>
-                    <div style={{ fontSize:11,color:"rgba(240,237,232,0.32)",marginBottom:6 }}>{new Date(order.createdAt).toLocaleString("en-PH",{ month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit",hour12:true })}</div>
+                    <div style={{ fontSize:11,color:"rgba(240,237,232,0.32)",marginBottom:6 }}>{formatInSettingsTimezone(order.createdAt, undefined, { month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit",hour12:true })}</div>
                     <div style={{ display:"flex",alignItems:"center",gap:3 }}>
                       {order.items.slice(0,6).map((item,ii)=><div key={`${order.id}-th-${ii}`} style={{ width:22,height:22,borderRadius:"50%",overflow:"hidden",border:"1.5px solid rgba(14,12,10,0.9)",flexShrink:0,marginLeft:ii>0?-6:0 }}><img src={findImg(item.name)} alt={item.name} onError={e=>{e.currentTarget.src="/img/placeholder.jpg";}} style={{ width:"100%",height:"100%",objectFit:"cover" }} /></div>)}
                       {order.items.length>6&&<div style={{ width:22,height:22,borderRadius:"50%",background:"rgba(240,237,232,0.1)",border:"1.5px solid rgba(14,12,10,0.9)",display:"flex",alignItems:"center",justifyContent:"center",marginLeft:-6 }}><span style={{ fontSize:7.5,fontWeight:800,color:"rgba(240,237,232,0.5)" }}>+{order.items.length-6}</span></div>}

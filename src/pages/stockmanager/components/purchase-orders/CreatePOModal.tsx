@@ -9,14 +9,11 @@ import {
   sanitizeShortTextInput,
 } from "../../utils/inputUtils";
 import { parseSupplierProducts } from "../../utils/supplierUtils";
-
-const PESO = "\u20B1";
 const EMPTY_PO_ITEM: Omit<POItem, "id"> = {
   name: "",
   category: "",
   unit: "",
   quantity: 0,
-  unitCost: 0,
 };
 const PURCHASE_ORDER_NAME_MAX_LENGTH = 100;
 const PURCHASE_ORDER_NUMBER_MAX_DIGITS = 20;
@@ -88,7 +85,6 @@ export function CreatePOModal({
           category: prefillProduct.category,
           unit: prefillProduct.unit,
           quantity: 0,
-          unitCost: 0,
         },
       ];
     }
@@ -177,7 +173,6 @@ export function CreatePOModal({
           1,
           Math.ceil(toNumber(product.reorderPoint) - toNumber(product.mainStock)),
         ),
-        unitCost: 0,
       },
       ...p,
     ]);
@@ -200,16 +195,10 @@ export function CreatePOModal({
               Math.ceil(toNumber(match.reorderPoint) - toNumber(match.mainStock)),
             )
           : 1,
-        unitCost: 0,
       },
       ...prev,
     ]);
   };
-
-  const subtotal = items.reduce(
-    (s, i) => s + toNumber(i.quantity) * toNumber(i.unitCost),
-    0,
-  );
 
   const handleSubmit = async () => {
     if (!supplierName.trim() || items.some((i) => !i.name.trim())) {
@@ -259,22 +248,6 @@ export function CreatePOModal({
       );
       return;
     }
-    const invalidUnitCostItem = items.find((item) => {
-      const digitsOnly = String(item.unitCost ?? "").replace(/\D/g, "");
-      const unitCost = toNumber(item.unitCost, Number.NaN);
-      return (
-        digitsOnly.length > PURCHASE_ORDER_NUMBER_MAX_DIGITS ||
-        !Number.isFinite(unitCost) ||
-        unitCost < 0
-      );
-    });
-    if (invalidUnitCostItem) {
-      onShowToast(
-        "Purchase order unit cost must be 0 or higher, with up to 20 digits.",
-        "error",
-      );
-      return;
-    }
     const missingUnitItem = items.find((item) => !String(item.unit ?? "").trim());
     if (missingUnitItem) {
       onShowToast(
@@ -299,7 +272,6 @@ export function CreatePOModal({
             id: idx + 1,
             name: item.name.trim(),
             quantity: toNumber(item.quantity),
-            unitCost: toNumber(item.unitCost),
           })),
         },
         {
@@ -543,7 +515,6 @@ export function CreatePOModal({
                     {[
                       ["Unit", "unit", "Auto from material"],
                       ["Qty", "quantity", "0"],
-                      ["Unit Cost", "unitCost", `${PESO}0`],
                     ].map(([lbl, field, ph]) => (
                       <div key={field} className="min-w-0">
                         <label className="block text-[11px] text-gray-400 mb-1">
@@ -558,7 +529,7 @@ export function CreatePOModal({
                               idx,
                               field as keyof Omit<POItem, "id">,
                               sanitizeNumberInput(e.target.value, {
-                                allowDecimal: field === "unitCost",
+                                allowDecimal: false,
                                 maxDigits: PURCHASE_ORDER_NUMBER_MAX_DIGITS,
                               }),
                             );
@@ -566,30 +537,24 @@ export function CreatePOModal({
                           onKeyDown={(e) => {
                             if (field !== "unit") {
                               blockInvalidNumberKeys(e, {
-                                allowDecimal: field === "unitCost",
+                                allowDecimal: false,
                               });
                             }
                           }}
                           inputMode={
                             field === "unit"
                               ? undefined
-                              : field === "unitCost"
-                                ? "decimal"
-                                : "numeric"
+                              : "numeric"
                           }
                           min={
-                            field === "unitCost"
-                              ? 0
-                              : field === "quantity"
-                                ? 1
-                                : undefined
+                            field === "quantity"
+                              ? 1
+                              : undefined
                           }
                           step={
                             field === "unit"
                               ? undefined
-                              : field === "unitCost"
-                                ? "0.01"
-                                : "1"
+                              : "1"
                           }
                           readOnly={field === "unit"}
                           disabled={field === "unit"}
@@ -610,15 +575,6 @@ export function CreatePOModal({
               </AnimatePresence>
             </div>
           </div>
-          {subtotal > 0 && (
-            <div className="bg-gray-50 rounded-xl px-4 py-3 flex justify-between items-center">
-              <span className="text-sm text-gray-500">Estimated Subtotal</span>
-              <span className="text-sm font-semibold text-gray-800">
-                {PESO}
-                {subtotal.toLocaleString()}
-              </span>
-            </div>
-          )}
           <div>
             <label className="text-xs text-gray-400 font-medium block mb-1">
               Notes (optional)

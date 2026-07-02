@@ -27,6 +27,8 @@ import { Sidebar } from "@/components/Sidebar";
 import { api } from "@/lib/api";
 import {
   fetchGeneralSettings,
+  formatCurrencyAmount,
+  formatInSettingsTimezone,
   GENERAL_SETTINGS_DEFAULTS,
   type GeneralRestaurantSettings,
 } from "@/lib/restaurantSettings";
@@ -185,10 +187,28 @@ function daysInMonth(month: number, year: number): number {
 }
 
 function formatDisplayDate(d: Date): string {
-  return d.toLocaleDateString("en-US", {
+  return formatInSettingsTimezone(d, undefined, {
     month: "short",
     day: "numeric",
     year: "numeric",
+  });
+}
+
+function formatDisplayTime(value: Date | string | number): string {
+  return formatInSettingsTimezone(value, undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
+function formatReportCurrency(
+  value: number,
+  settings?: GeneralRestaurantSettings,
+): string {
+  return formatCurrencyAmount(value, settings, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
   });
 }
 
@@ -497,16 +517,8 @@ function processRawRows(rows: RawOrderRow[]): {
       id: `${orderId}-${resolvedTxnId}`,
       transactionId: resolvedTxnId,
       orderId,
-      date: orderDate.toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      }),
-      time: orderDate.toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: true,
-      }),
+      date: formatDisplayDate(orderDate),
+      time: formatDisplayTime(orderDate),
       type: normalizeLogType(status),
       product: productNames || `Order #${orderId}`,
       category: order.orderType,
@@ -533,11 +545,7 @@ function processRawRows(rows: RawOrderRow[]): {
       })),
       total: order.total,
       date: order.date ?? "",
-      time: orderDate.toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: true,
-      }),
+      time: formatDisplayTime(orderDate),
       orderType: order.orderType,
       status,
       paymentCategory: order.paymentMethod,
@@ -564,7 +572,6 @@ function triggerPrint(
   orders: Order[],
   restaurantSettings: GeneralRestaurantSettings,
 ) {
-  const currency = restaurantSettings.currency || "PHP";
   const paidCompleted = logs.filter(
     (l) => l.status === "Completed" && isPaidPaymentStatus(l.paymentStatus),
   );
@@ -578,12 +585,12 @@ function triggerPrint(
     (l) => normalizePaymentMethod(l.paymentMethod) === "Cash on Pickup",
   );
   const now = new Date();
-  const dateLabel = now.toLocaleDateString("en-US", {
+  const dateLabel = formatInSettingsTimezone(now, restaurantSettings, {
     month: "long",
     day: "numeric",
     year: "numeric",
   });
-  const timeLabel = now.toLocaleTimeString("en-US", {
+  const timeLabel = formatInSettingsTimezone(now, restaurantSettings, {
     hour: "2-digit",
     minute: "2-digit",
     hour12: true,
@@ -600,20 +607,24 @@ function triggerPrint(
   const rows = completedOrders
     .map((o, i) => {
       const fmtDate =
-        parseDateSafe(o.date)?.toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        }) ?? "—";
+        parseDateSafe(o.date)
+          ? formatInSettingsTimezone(o.date, restaurantSettings, {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+            })
+          : "—";
       const fmtHandover =
-        parseDateSafe(o.handoverTimestamp)?.toLocaleString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: true,
-        }) ?? "—";
+        parseDateSafe(o.handoverTimestamp)
+          ? formatInSettingsTimezone(o.handoverTimestamp ?? "", restaurantSettings, {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: true,
+            })
+          : "—";
       return `
         <tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
           <td>${o.transactionId}</td>
@@ -624,7 +635,7 @@ function triggerPrint(
           <td>${o.orderType === "delivery" ? fmtHandover : "—"}</td>
           <td>${o.cashierName ?? "—"}</td>
           <td style="text-transform:capitalize;color:#2563eb">${o.paymentCategory}</td>
-          <td style="text-align:right;font-weight:700">PHP ${o.total.toLocaleString()}</td>
+          <td style="text-align:right;font-weight:700">${formatReportCurrency(o.total, restaurantSettings)}</td>
         </tr>
       `;
     })
@@ -704,19 +715,19 @@ function triggerPrint(
       <div class="revenue-hero">
         <div>
           <p class="revenue-label">Total Revenue</p>
-          <p class="revenue-amount">${currency} ${revenue.toLocaleString()}</p>
+          <p class="revenue-amount">${formatReportCurrency(revenue, restaurantSettings)}</p>
         </div>
         <div class="revenue-stats">
           <div class="stat-item"><p class="stat-number" style="color:#4ade80">${paidCompleted.length}</p><p class="stat-label">Paid Orders</p></div>
-          <div class="stat-item"><p class="stat-number" style="color:#60a5fa">${currency} ${gcashSales.reduce((sum, log) => sum + log.total, 0).toLocaleString()}</p><p class="stat-label">GCash Sales</p></div>
-          <div class="stat-item"><p class="stat-number" style="color:#f59e0b">${currency} ${cashSales.reduce((sum, log) => sum + log.total, 0).toLocaleString()}</p><p class="stat-label">Cash Sales</p></div>
+          <div class="stat-item"><p class="stat-number" style="color:#60a5fa">${formatReportCurrency(gcashSales.reduce((sum, log) => sum + log.total, 0), restaurantSettings)}</p><p class="stat-label">GCash Sales</p></div>
+          <div class="stat-item"><p class="stat-number" style="color:#f59e0b">${formatReportCurrency(cashSales.reduce((sum, log) => sum + log.total, 0), restaurantSettings)}</p><p class="stat-label">Cash Sales</p></div>
           <div class="stat-item"><p class="stat-number" style="color:#0f172a">${cashOnPickupSales.length}</p><p class="stat-label">Pickup Cash</p></div>
         </div>
       </div>
       <div class="summary-grid">
         <div class="summary-card" style="background:#f0fdf4;border:1px solid #bbf7d0">
           <p class="summary-card-label">Total Sales</p>
-          <p class="summary-card-value" style="color:#16a34a">${currency} ${paidCompleted.reduce((sum, log) => sum + log.total, 0).toLocaleString()}</p>
+          <p class="summary-card-value" style="color:#16a34a">${formatReportCurrency(paidCompleted.reduce((sum, log) => sum + log.total, 0), restaurantSettings)}</p>
           <p class="summary-card-sub">Completed + paid only</p>
         </div>
         <div class="summary-card" style="background:#f8fafc;border:1px solid #cbd5e1">
@@ -726,12 +737,12 @@ function triggerPrint(
         </div>
         <div class="summary-card" style="background:#eff6ff;border:1px solid #bfdbfe">
           <p class="summary-card-label">GCash Sales</p>
-          <p class="summary-card-value" style="color:#2563eb">${currency} ${gcashSales.reduce((sum, log) => sum + log.total, 0).toLocaleString()}</p>
+          <p class="summary-card-value" style="color:#2563eb">${formatReportCurrency(gcashSales.reduce((sum, log) => sum + log.total, 0), restaurantSettings)}</p>
           <p class="summary-card-sub">${gcashSales.length} orders</p>
         </div>
         <div class="summary-card" style="background:#fff7ed;border:1px solid #fdba74">
           <p class="summary-card-label">Cash Sales</p>
-          <p class="summary-card-value" style="color:#d97706">${currency} ${cashSales.reduce((sum, log) => sum + log.total, 0).toLocaleString()}</p>
+          <p class="summary-card-value" style="color:#d97706">${formatReportCurrency(cashSales.reduce((sum, log) => sum + log.total, 0), restaurantSettings)}</p>
           <p class="summary-card-sub">${cashOnPickupSales.length > 0 ? `${cashSales.length} cash · ${cashOnPickupSales.length} pickup cash` : `${cashSales.length} orders`}</p>
         </div>
       </div>
@@ -749,7 +760,7 @@ function triggerPrint(
         <tfoot>
           <tr>
             <td colspan="8" style="text-align:right;color:#0f172a">Total Revenue</td>
-            <td style="text-align:right;color:#16a34a;font-size:15px">₱${revenue.toLocaleString()}</td>
+            <td style="text-align:right;color:#16a34a;font-size:15px">${formatReportCurrency(revenue, restaurantSettings)}</td>
           </tr>
         </tfoot>
       </table>
@@ -1431,7 +1442,7 @@ function RevenueDropdown({
                 letterSpacing: -0.5,
               }}
             >
-              ₱{revenue.toLocaleString()}
+              {formatReportCurrency(revenue)}
             </motion.p>
           </AnimatePresence>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -1552,7 +1563,7 @@ function RevenueDropdown({
                           fontFamily: "'Poppins', sans-serif",
                         }}
                       >
-                        ₱{getRevenueForPeriod(logs, p).toLocaleString()} revenue
+                        {formatReportCurrency(getRevenueForPeriod(logs, p))} revenue
                       </span>
                     </div>
                   </div>
@@ -1630,7 +1641,7 @@ function RevenueDropdown({
                       lineHeight: 1.5,
                     }}
                   >
-                    {period} · ₱{revenue.toLocaleString()} · {completedCount}{" "}
+                    {period} · {formatReportCurrency(revenue)} · {completedCount}{" "}
                     completed
                   </p>
                 </div>
@@ -1799,7 +1810,7 @@ function RefundModal({
                 {[
                   { label: "Transaction ID", value: txnId },
                   { label: "Product", value: product },
-                  { label: "Amount", value: `₱${total.toLocaleString()}` },
+                  { label: "Amount", value: formatReportCurrency(total) },
                   { label: "Cashier", value: cashierName },
                   { label: "Payment Method", value: paymentMethod },
                   { label: "Payment Status", value: paymentStatus },
@@ -1900,7 +1911,7 @@ function RefundModal({
               >
                 Are you sure you want to refund{" "}
                 <strong style={{ color: "#0f172a" }}>
-                  ₱{total.toLocaleString()}
+                  {formatReportCurrency(total)}
                 </strong>{" "}
                 for <strong style={{ color: "#0f172a" }}>{product}</strong>? The
                 order status will be updated to{" "}
@@ -1999,9 +2010,9 @@ function SummaryBar({ logs }: { logs: SaleLog[] }) {
   const stats = [
     {
       label: "Total Sales",
-      value: `PHP ${paidCompleted
-.reduce((sum, log) => sum + log.total, 0)
-        .toLocaleString()}`,
+      value: formatReportCurrency(
+        paidCompleted.reduce((sum, log) => sum + log.total, 0),
+      ),
       sub: "Completed + paid only",
       color: "#16a34a",
       bg: "#f0fdf4",
@@ -2017,9 +2028,9 @@ function SummaryBar({ logs }: { logs: SaleLog[] }) {
     },
     {
       label: "GCash Sales",
-      value: `PHP ${gcashSales
-        .reduce((sum, log) => sum + log.total, 0)
-        .toLocaleString()}`,
+      value: formatReportCurrency(
+        gcashSales.reduce((sum, log) => sum + log.total, 0),
+      ),
       sub: `${gcashSales.length} orders`,
       color: "#2563eb",
       bg: "#eff6ff",
@@ -2027,9 +2038,9 @@ function SummaryBar({ logs }: { logs: SaleLog[] }) {
     },
     {
       label: "Cash Sales",
-      value: `PHP ${cashSales
-        .reduce((sum, log) => sum + log.total, 0)
-        .toLocaleString()}`,
+      value: formatReportCurrency(
+        cashSales.reduce((sum, log) => sum + log.total, 0),
+      ),
       sub:
         cashOnPickupSales.length > 0
           ? `${cashSales.length} cash · ${cashOnPickupSales.length} pickup cash`
@@ -2043,25 +2054,25 @@ function SummaryBar({ logs }: { logs: SaleLog[] }) {
   const paymentBreakdown = [
     {
       label: "Cash",
-      value: `PHP ${cashSales
-        .reduce((sum, log) => sum + log.total, 0)
-        .toLocaleString()}`,
+      value: formatReportCurrency(
+        cashSales.reduce((sum, log) => sum + log.total, 0),
+      ),
       count: cashSales.length,
     },
     {
       label: "GCash",
-      value: `PHP ${gcashSales
-        .reduce((sum, log) => sum + log.total, 0)
-        .toLocaleString()}`,
+      value: formatReportCurrency(
+        gcashSales.reduce((sum, log) => sum + log.total, 0),
+      ),
       count: gcashSales.length,
     },
     ...(cashOnPickupSales.length > 0
       ? [
           {
             label: "Cash on Pickup",
-            value: `PHP ${cashOnPickupSales
-              .reduce((sum, log) => sum + log.total, 0)
-              .toLocaleString()}`,
+            value: formatReportCurrency(
+              cashOnPickupSales.reduce((sum, log) => sum + log.total, 0),
+            ),
             count: cashOnPickupSales.length,
           },
         ]
@@ -2272,7 +2283,7 @@ function LogRow({ log, index }: { log: SaleLog; index: number }) {
             flexShrink: 0,
           }}
         >
-          {log.total === 0 ? "—" : `₱${Math.abs(log.total).toLocaleString()}`}
+          {log.total === 0 ? "—" : formatReportCurrency(Math.abs(log.total))}
         </span>
         <span
           style={{
@@ -2337,10 +2348,10 @@ function LogRow({ log, index }: { log: SaleLog; index: number }) {
                 { label: "Payment Status", value: formatPaymentStatus(log.paymentStatus) },
                 {
                   label: "Unit Price",
-                  value: `₱${log.unitPrice.toLocaleString()}`,
+                  value: formatReportCurrency(log.unitPrice),
                 },
                 { label: "Quantity", value: `${log.quantity} pcs` },
-                { label: "Subtotal", value: `₱${log.total.toLocaleString()}` },
+                { label: "Subtotal", value: formatReportCurrency(log.total) },
                 { label: "Order Status", value: "Completed" },
               ].map((f) => (
                 <div key={f.label}>
@@ -2671,26 +2682,19 @@ function OrderRow({
   const fmtDate = (v?: string | null) => {
     const d = parseDateSafe(v);
     return d
-      ? d.toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        })
+      ? formatDisplayDate(d)
       : "—";
   };
   const fmtTime = (v?: string | null) => {
     const d = parseDateSafe(v);
     return d
-      ? d.toLocaleTimeString("en-US", {
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: true,
-        })
+      ? formatDisplayTime(d)
       : "—";
   };
 
   const totalQty = order.items.reduce((s, i) => s + i.quantity, 0);
-  const canRefund = order.status === "Completed";
+  const canRefund =
+    order.status === "Pending" && isPaidPaymentStatus(order.paymentStatus);
   const isDelivery = order.orderType === "delivery";
 
   const orderTypeLabel =
@@ -2799,7 +2803,7 @@ function OrderRow({
           </span>
         </TableCell>
         <TableCell className="font-semibold text-gray-900 text-right py-4">
-          ₱{order.total.toLocaleString()}
+          {formatReportCurrency(order.total)}
         </TableCell>
       </TableRow>
 
@@ -2849,7 +2853,7 @@ function OrderRow({
                       { label: "Total Qty", value: `${totalQty} pcs` },
                       {
                         label: "Subtotal",
-                          value: `₱${order.total.toLocaleString()}`,
+                        value: formatReportCurrency(order.total),
                       },
                       { label: "Payment Method", value: order.paymentCategory },
                       {
@@ -3011,7 +3015,7 @@ function OrderRow({
                             </span>
                             {item.name}
                             <span style={{ color: "#94a3b8", fontSize: 11 }}>
-                              ₱{item.price.toLocaleString()}
+                              {formatReportCurrency(item.price)}
                             </span>
                           </div>
                         ))
@@ -3217,7 +3221,7 @@ function OrdersTab({
                 </span>{" "}
                 ·{" "}
                 <span className="text-gray-600 font-medium">
-                  ₱{totalRevenue.toLocaleString()} revenue
+                  {formatReportCurrency(totalRevenue)} revenue
                 </span>
               </p>
             )}
@@ -4089,8 +4093,7 @@ export default function SalesReports() {
                             {date}
                           </span>
                           <span style={{ color: "#cbd5e1", fontSize: 11 }}>
-                            {entries.length} records · ₱
-                            {dayRevenue.toLocaleString()} revenue
+                            {entries.length} records · {formatReportCurrency(dayRevenue)} revenue
                           </span>
                         </div>
                         {entries.map((log, i) => (

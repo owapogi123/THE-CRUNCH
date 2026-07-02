@@ -172,12 +172,12 @@ export function useDashboard({
         emptyMessage: "No products found in inventory.",
       },
       withdrawn: {
-        title: "Withdrawn Today Summary",
-        subtitle: "Items pulled from storage for kitchen use today.",
-        totalLabel: "Total Withdrawn",
+        title: "Released Today Summary",
+        subtitle: "Items released from storage for kitchen use today.",
+        totalLabel: "Total Released",
         totalValue: fmtInt(totalWithdrawn),
         rows: withdrawnRows,
-        emptyMessage: "No products have been withdrawn today.",
+        emptyMessage: "No products have been released today.",
       },
       wasted: {
         title: "Wasted Today Summary",

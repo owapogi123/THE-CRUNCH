@@ -4,10 +4,7 @@ import { motion } from "framer-motion";
 import { useState } from "react";
 import { CloseBtn } from "../CloseBtn";
 import type { PurchaseOrder } from "../../types/inventory";
-import { fmtReceivedDate, toNumber } from "../../utils/formatters";
-import { calcPOTotal } from "../../utils/purchaseOrderUtils";
-
-const PESO = "\u20B1";
+import { fmtReceivedDate } from "../../utils/formatters";
 
 export function POPrintModal({
   order,
@@ -17,9 +14,6 @@ export function POPrintModal({
   onClose: () => void;
 }) {
   const [downloadingPdf, setDownloadingPdf] = useState(false);
-  const subtotal = calcPOTotal(order.items);
-  const vat = subtotal * 0.12;
-  const total = subtotal + vat;
 
   const handlePrint = () => {
     window.print();
@@ -170,8 +164,6 @@ export function POPrintModal({
                         "Category",
                         "Qty",
                         "Unit",
-                        "Unit Cost",
-                        "Amount",
                       ].map((header) => (
                         <th
                           key={header}
@@ -201,63 +193,9 @@ export function POPrintModal({
                         <td className="px-4 py-3 text-right text-slate-500">
                           {item.unit}
                         </td>
-                        <td className="px-4 py-3 text-right text-slate-700">
-                          {PESO}
-                          {toNumber(item.unitCost).toLocaleString()}
-                        </td>
-                        <td className="px-4 py-3 text-right font-semibold text-slate-800">
-                          {PESO}
-                          {(
-                            toNumber(item.quantity) * toNumber(item.unitCost)
-                          ).toLocaleString()}
-                        </td>
                       </tr>
                     ))}
                   </tbody>
-                  <tfoot className="bg-slate-50">
-                    <tr>
-                      <td
-                        colSpan={5}
-                        className="px-4 py-3 text-right text-slate-500"
-                      >
-                        Subtotal
-                      </td>
-                      <td className="px-4 py-3 text-right font-medium text-slate-700">
-                        {PESO}
-                        {subtotal.toLocaleString(undefined, {
-                          maximumFractionDigits: 2,
-                        })}
-                      </td>
-                    </tr>
-                    <tr>
-                      <td
-                        colSpan={5}
-                        className="px-4 py-3 text-right text-slate-500"
-                      >
-                        VAT 12%
-                      </td>
-                      <td className="px-4 py-3 text-right font-medium text-slate-700">
-                        {PESO}
-                        {vat.toLocaleString(undefined, {
-                          maximumFractionDigits: 2,
-                        })}
-                      </td>
-                    </tr>
-                    <tr>
-                      <td
-                        colSpan={5}
-                        className="px-4 py-3 text-right font-semibold text-slate-800"
-                      >
-                        Total Amount
-                      </td>
-                      <td className="px-4 py-3 text-right text-base font-bold text-slate-900">
-                        {PESO}
-                        {total.toLocaleString(undefined, {
-                          maximumFractionDigits: 2,
-                        })}
-                      </td>
-                    </tr>
-                  </tfoot>
                 </table>
               </div>
             </div>

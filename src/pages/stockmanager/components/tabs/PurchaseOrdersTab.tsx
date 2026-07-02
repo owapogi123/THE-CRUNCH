@@ -1,7 +1,6 @@
 import { motion, type Variants } from "framer-motion";
 import { EmptyState } from "../EmptyState";
 import { POBadge } from "../POBadge";
-import { calcPOTotal } from "../../utils/purchaseOrderUtils";
 import type { POStatus, Product, PurchaseOrder, StockAlertSettings } from "../../types/inventory";
 
 function CartIcon() {
@@ -52,7 +51,6 @@ export function PurchaseOrdersTab({
   poLoading,
   products,
   stockAlertSettings,
-  peso,
   statusDot,
   statusBar,
   restockBanner,
@@ -76,7 +74,6 @@ export function PurchaseOrdersTab({
   poLoading: boolean;
   products: Product[];
   stockAlertSettings: StockAlertSettings;
-  peso: string;
   statusDot: Record<"critical" | "low" | "normal", string>;
   statusBar: Record<"critical" | "low" | "normal", string>;
   restockBanner: React.ReactNode;
@@ -272,13 +269,13 @@ export function PurchaseOrdersTab({
                 {filteredPOs.length !== 1 ? "s" : ""} shown
               </p>
             </div>
-            <div className="hidden lg:grid grid-cols-[1.5fr_2.5fr_2fr_2fr_2fr_2fr_1.5fr_auto] px-5 py-3 border-b border-slate-100 text-xs font-semibold text-slate-400 uppercase tracking-wide">
+            <div className="hidden lg:grid grid-cols-[1.5fr_2.5fr_2fr_2fr_2fr_1.5fr_1.5fr_auto] px-5 py-3 border-b border-slate-100 text-xs font-semibold text-slate-400 uppercase tracking-wide">
               <span>PO No.</span>
               <span>Supplier</span>
               <span>Receipt</span>
               <span>Order Date</span>
               <span>Delivery</span>
-              <span>Total</span>
+              <span>Items</span>
               <span>Status</span>
               <span className="text-right">Action</span>
             </div>
@@ -295,11 +292,15 @@ export function PurchaseOrdersTab({
                     order.items.length === 0
                       ? "No items"
                       : `${order.items.length} item${order.items.length !== 1 ? "s" : ""}`;
+                  const totalQuantity = order.items.reduce(
+                    (sum, item) => sum + Number(item.quantity || 0),
+                    0,
+                  );
 
                   return (
                     <div key={order.id}>
                       <div
-                        className="hidden lg:grid grid-cols-[1.5fr_2.5fr_2fr_2fr_2fr_2fr_1.5fr_auto] px-5 py-4 transition-colors items-center hover:bg-slate-50/70 cursor-pointer"
+                        className="hidden lg:grid grid-cols-[1.5fr_2.5fr_2fr_2fr_2fr_1.5fr_1.5fr_auto] px-5 py-4 transition-colors items-center hover:bg-slate-50/70 cursor-pointer"
                         onClick={() => onSelectOrder(order)}
                         onKeyDown={(e) => {
                           if (e.key === "Enter" || e.key === " ") {
@@ -332,11 +333,7 @@ export function PurchaseOrdersTab({
                             {order.deliveryDate}
                           </span>
                           <span className="text-sm font-semibold text-slate-800">
-                            {peso}
-                            {(calcPOTotal(order.items) * 1.12).toLocaleString(
-                              undefined,
-                              { maximumFractionDigits: 0 },
-                            )}
+                            {totalQuantity} unit{totalQuantity !== 1 ? "s" : ""}
                           </span>
                           <span>
                             <POBadge status={order.status} />
@@ -430,11 +427,7 @@ export function PurchaseOrdersTab({
                           <span>Order: {order.date}</span>
                           <span>Delivery: {order.deliveryDate}</span>
                           <span className="font-semibold text-slate-700">
-                            {peso}
-                            {(calcPOTotal(order.items) * 1.12).toLocaleString(
-                              undefined,
-                              { maximumFractionDigits: 0 },
-                            )}
+                            {totalQuantity} unit{totalQuantity !== 1 ? "s" : ""}
                           </span>
                         </div>
                       </motion.div>
