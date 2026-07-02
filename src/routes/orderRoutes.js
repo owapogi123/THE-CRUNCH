@@ -1667,7 +1667,7 @@ router.patch("/:id", async (req, res) => {
     if (hasStatusUpdate && (nextStatus === "Cancelled" || nextStatus === "Refunded")) {
       if (currentStatus === "Completed") {
         console.warn(
-          `[orderRoutes] Blocked completed refund for order ${id}. Requested status: ${nextStatus}.`,
+          `[orderRoutes] Blocked completed refund/cancellation for order ${id}. Requested status: ${nextStatus}.`,
         );
         return res.status(400).json({
           message: "Completed orders cannot be cancelled or refunded",
@@ -1854,9 +1854,12 @@ router.patch("/:id", async (req, res) => {
       const paymentRecordStatus =
         nextStatus === "Refunded"
           ? "Refunded"
-          : isPaidPaymentStatus(nextPaymentStatus) || nextStatus === "Completed"
-          ? "Completed"
-          : "Pending";
+          : (
+              isPaidPaymentStatus(nextPaymentStatus) ||
+              nextStatus === "Completed"
+            )
+            ? "Completed"
+            : "Pending";
       await conn.query(
         "UPDATE payments SET Payment_Status = ? WHERE Order_ID = ?",
         [paymentRecordStatus, id]
@@ -1886,7 +1889,7 @@ router.patch("/:id", async (req, res) => {
     const errorMessage = String(err?.message || "Unknown error");
     const isClientError =
       /cannot move to the cook queue until payment is confirmed as paid/i.test(errorMessage) ||
-      /insufficient daily_withdrawn/i.test(errorMessage) ||
+      /insufficient (daily_withdrawn|inventory stock|stock)/i.test(errorMessage) ||
       /must be stock_item/i.test(errorMessage) ||
       /invalid order status transition/i.test(errorMessage) ||
       /timer can only be updated/i.test(errorMessage);

@@ -1,6 +1,11 @@
 const db = require("../config/db");
 const { fetchMenuIngredients } = require("../utils/menuAvailability");
-const { STOCK_ITEM } = require("../utils/productItemType");
+const {
+  MENU_ITEM,
+  STOCK_ITEM,
+  ensureProductsItemTypeSchema,
+  getProductItemTypeExpression,
+} = require("../utils/productItemType");
 
 function normalizePaymentStatus(value) {
   const v = String(value || "").toLowerCase().trim();
@@ -64,7 +69,7 @@ async function resolveRecordedByAdminId(recordedBy, connection = db) {
 }
 
 // Shared helper used by order flow.
-// Sales only deduct Daily_Withdrawn — mainStock is ONLY touched by kitchen withdrawals.
+// Paid orders deduct directly from main inventory stock.
 async function deductStockForOrder(
   productId,
   quantityUsed,
@@ -104,12 +109,25 @@ async function deductStockForOrder(
     [productId],
   );
 
-  // Only deduct Daily_Withdrawn — mainStock (Stock) is NOT touched by sales.
   await connection.query(
     `UPDATE Inventory
-     SET Daily_Withdrawn = GREATEST(COALESCE(Daily_Withdrawn, 0) - ?, 0),
+     SET Stock = GREATEST(COALESCE(Stock, 0) - ?, 0),
          Last_Update     = NOW()
      WHERE Product_ID = ?`,
+    [qty, productId],
+  );
+
+  await connection.query(
+    `UPDATE Menu
+     SET Stock = GREATEST(COALESCE(Stock, 0) - ?, 0)
+     WHERE Product_ID = ?`,
+    [qty, productId],
+  );
+
+  await connection.query(
+    `UPDATE products
+     SET quantity = GREATEST(COALESCE(quantity, 0) - ?, 0)
+     WHERE id = ?`,
     [qty, productId],
   );
 
@@ -144,9 +162,23 @@ async function restoreStockForOrder(
 
   await connection.query(
     `UPDATE Inventory
-     SET Daily_Withdrawn = COALESCE(Daily_Withdrawn, 0) + ?,
+     SET Stock = COALESCE(Stock, 0) + ?,
          Last_Update = NOW()
      WHERE Product_ID = ?`,
+    [qty, productId],
+  );
+
+  await connection.query(
+    `UPDATE Menu
+     SET Stock = COALESCE(Stock, 0) + ?
+     WHERE Product_ID = ?`,
+    [qty, productId],
+  );
+
+  await connection.query(
+    `UPDATE products
+     SET quantity = COALESCE(quantity, 0) + ?
+     WHERE id = ?`,
     [qty, productId],
   );
 
@@ -158,6 +190,12 @@ async function restoreStockForOrder(
 }
 
 async function getOrderIngredientDeductions(orderId, connection) {
+  const hasItemTypeColumn = await ensureProductsItemTypeSchema(connection);
+  const orderedItemTypeExpr = getProductItemTypeExpression(
+    hasItemTypeColumn,
+    "p",
+    "m",
+  );
   const [items] = await connection.query(
     `SELECT
        oi.Product_ID AS productId,
@@ -165,7 +203,7 @@ async function getOrderIngredientDeductions(orderId, connection) {
        COALESCE(m.manual_override, 0) AS manual_override,
        COALESCE(m.manual_status, '') AS manual_status,
        COALESCE(p.availability_status, 'Available') AS availability_status,
-       COALESCE(p.item_type, 'menu_item') AS item_type
+       ${orderedItemTypeExpr} AS item_type
      FROM order_item oi
      LEFT JOIN Menu m ON m.Product_ID = oi.Product_ID
      LEFT JOIN products p ON p.id = oi.Product_ID
@@ -189,10 +227,15 @@ async function getOrderIngredientDeductions(orderId, connection) {
         `Invalid order item for stock deduction on order ${Number(orderId) || 0}`,
       );
     }
+    if (String(item.item_type || MENU_ITEM).trim().toLowerCase() !== MENU_ITEM) {
+      throw new Error(
+        `Order item ${productId} must be ${MENU_ITEM}, found ${String(item.item_type || "").trim().toLowerCase() || "unknown"}.`,
+      );
+    }
 
     if (isForceAvailable) {
       console.warn(
-        `[inventoryService] Skipping Daily_Withdrawn deduction for force-available menu product ${productId}.`,
+        `[inventoryService] Skipping stock deduction for force-available menu product ${productId}.`,
       );
       continue;
     }
@@ -286,7 +329,7 @@ async function deductStockForPaidOrder(
     const deductionEntries = Array.from(deductions.entries());
     for (const [productId, requiredQty] of deductionEntries) {
       const [inventoryRows] = await conn.query(
-        `SELECT COALESCE(Daily_Withdrawn, 0) AS dailyWithdrawn
+        `SELECT COALESCE(Stock, 0) AS mainStock
          FROM Inventory
          WHERE Product_ID = ?
          LIMIT 1
@@ -294,11 +337,11 @@ async function deductStockForPaidOrder(
         [productId],
       );
 
-      const availableQty = Number(inventoryRows[0]?.dailyWithdrawn ?? 0);
+      const availableQty = Number(inventoryRows[0]?.mainStock ?? 0);
 
       if (availableQty < Number(requiredQty || 0)) {
         throw new Error(
-          `Insufficient Daily_Withdrawn for product ${productId}. Required ${Number(requiredQty || 0)}, available ${availableQty}.`,
+          `Insufficient inventory stock for product ${productId}. Required ${Number(requiredQty || 0)}, available ${availableQty}.`,
         );
       }
     }
@@ -381,10 +424,9 @@ async function restoreStockForRefundedOrder(
       throw new Error("Order not found for stock restoration");
     }
 
-    const order = orderRows[0];
-    if (Number(order.stockDeducted) !== 1) {
+    if (Number(orderRows[0].stockDeducted) !== 1) {
       console.info(
-        `[inventoryService] Order ${numericOrderId} inventory restore skipped: already restored or never deducted.`,
+        `[inventoryService] Order ${numericOrderId} inventory restore skipped because already restored or never deducted.`,
       );
       return false;
     }
@@ -421,7 +463,7 @@ async function restoreStockForRefundedOrder(
       );
     } else {
       console.info(
-        `[inventoryService] Order ${numericOrderId} inventory restore skipped: already restored.`,
+        `[inventoryService] Order ${numericOrderId} inventory restore skipped because already restored.`,
       );
     }
 

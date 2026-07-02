@@ -256,8 +256,8 @@ function computeAvailableServings(ingredients) {
         if (!Number.isFinite(quantityRequired) || quantityRequired <= 0) {
             return 0;
         }
-        const dailyWithdrawn = Number(ingredient.daily_withdrawn ?? 0);
-        servings = Math.min(servings, dailyWithdrawn / quantityRequired);
+        const availableStock = Number(ingredient.stock ?? 0);
+        servings = Math.min(servings, availableStock / quantityRequired);
     }
 
     return Number.isFinite(servings) ? servings : null;

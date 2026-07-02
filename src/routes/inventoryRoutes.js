@@ -654,7 +654,7 @@ router.get("/", async (req, res) => {
            MIN(
              CASE
                WHEN mi.quantity_required > 0
-                 THEN COALESCE(inv.Daily_Withdrawn, 0) / mi.quantity_required
+                 THEN COALESCE(inv.Stock, 0) / mi.quantity_required
                ELSE 0
              END
            ) AS availableServings

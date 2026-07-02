@@ -1,3 +1,8 @@
+const {
+  ensureProductsItemTypeSchema,
+  getProductItemTypeExpression,
+} = require("./productItemType");
+
 async function hasColumn(db, tableName, columnName) {
   const [rows] = await db.query(`SHOW COLUMNS FROM ${tableName} LIKE ?`, [
     columnName,
@@ -165,15 +170,17 @@ async function fetchMenuIngredients(db, menuIds) {
     return new Map();
   }
 
+  const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+  const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p", "m");
   const [rows] = await db.query(
     `SELECT
        mi.menu_product_id,
        mi.product_id,
        mi.quantity_required,
        COALESCE(p.name, m.Product_Name, CONCAT('Product #', mi.product_id)) AS product_name,
-       COALESCE(p.item_type, 'stock_item') AS item_type,
+       ${itemTypeExpr} AS item_type,
        COALESCE(bu.unit, 'piece') AS unit,
-       COALESCE(inv.Daily_Withdrawn, 0) AS daily_withdrawn,
+       COALESCE(inv.Stock, 0) AS daily_withdrawn,
        COALESCE(inv.Stock, 0) AS stock
      FROM menu_item_ingredients mi
      LEFT JOIN products p ON p.id = mi.product_id
