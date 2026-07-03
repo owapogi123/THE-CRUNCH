@@ -276,10 +276,7 @@ export default function App() {
       {/* ── Administrator ────────────────────────────────────── */}
       <Route
         path="/orders"
-        element={protect(
-          userRole === "cook" ? <Order /> : userRole === "cashier" ? <Menu /> : <Unauthorized />,
-          "orders",
-        )}
+        element={protect(<Order />, "orders")}
       />
       <Route
         path="/dashboard"
