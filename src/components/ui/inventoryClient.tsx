@@ -1,4 +1,8 @@
 import React, { useState, useMemo } from "react";
+import {
+  formatCurrencyAmount,
+  formatInSettingsTimezone,
+} from "@/lib/restaurantSettings";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -56,7 +60,7 @@ interface InventoryClientProps {
 }
 
 const formatPeso = (value: number | string) =>
-  `\u20B1${Number(value || 0).toLocaleString()}`;
+  formatCurrencyAmount(Number(value || 0));
 
 // â”€â”€â”€ Delete Confirmation Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -409,9 +413,26 @@ export function InventoryClient({ items, onAddProduct, onDeleteProduct }: Invent
                                     <span className="font-semibold text-sm bg-white px-2 py-1 rounded">#{idx + 1}</span>
                                     <div>
                                       <p className="text-sm font-medium text-gray-700">{batch.quantity} {batch.unit}</p>
-                                      <p className="text-xs text-gray-500">Received: {batch.receivedAt.toLocaleString()}</p>
+                                      <p className="text-xs text-gray-500">
+                                        Received:{" "}
+                                        {formatInSettingsTimezone(batch.receivedAt, undefined, {
+                                          month: "short",
+                                          day: "numeric",
+                                          year: "numeric",
+                                          hour: "2-digit",
+                                          minute: "2-digit",
+                                          hour12: true,
+                                        })}
+                                      </p>
                                       {batch.expiresAt && (
-                                        <p className="text-xs text-gray-500">Expires: {batch.expiresAt.toLocaleDateString()}</p>
+                                        <p className="text-xs text-gray-500">
+                                          Expires:{" "}
+                                          {formatInSettingsTimezone(batch.expiresAt, undefined, {
+                                            month: "short",
+                                            day: "numeric",
+                                            year: "numeric",
+                                          })}
+                                        </p>
                                       )}
                                     </div>
                                   </div>

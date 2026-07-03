@@ -12,8 +12,12 @@ import {
   fetchGeneralSettings,
   GENERAL_SETTINGS_DEFAULTS,
   type GeneralRestaurantSettings,
+  getCurrencySymbol,
+  formatCurrencyAmount,
+  formatInSettingsTimezone,
 } from "../lib/restaurantSettings";
 import { Sidebar } from "@/components/Sidebar";
+import { UserIdentityBanner } from "@/components/UserIdentityBanner";
 import { useViewport } from "@/hooks/use-tablet";
 import { useAuth } from "../context/authcontext";
 
@@ -57,7 +61,7 @@ interface ShiftOrder {
   id: number; orderNumber: string; total: number; createdAt: string;
   orderType: string; paymentMethod: string; customerType: string;
   items: { name: string; quantity: number; price: number }[];
-  status: string; discountAmount: number; taxAmount: number;
+  status: string; paymentStatus?: string | null; discountAmount: number; taxAmount: number;
 }
 
 interface HeldOrder {
@@ -97,6 +101,28 @@ const isUnavailableStatus = (value: unknown) =>
 const isPaidStatus = (value?: string | null) =>
   String(value || "").trim().toLowerCase() === "paid";
 
+const getSettlementAction = (
+  status?: string | null,
+  paymentStatus?: string | null,
+) => {
+  const normalizedStatus = String(status || "").trim().toLowerCase();
+  if (["completed", "refunded", "cancelled"].includes(normalizedStatus)) {
+    return null;
+  }
+  if (
+    normalizedStatus === "queued" ||
+    normalizedStatus === "preparing" ||
+    normalizedStatus === "ready" ||
+    normalizedStatus === "ready for pickup"
+  ) {
+    return "refund";
+  }
+  if (normalizedStatus === "pending payment") {
+    return "cancel";
+  }
+  return isPaidStatus(paymentStatus) ? "refund" : "cancel";
+};
+
 const fmt = (n: number) => {
   const [int, dec] = n.toFixed(2).split(".");
   return (dec === "00" ? int : `${int}.${dec}`).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
@@ -109,8 +135,16 @@ const escapeHtml = (value: string) =>
 const getNow = () => {
   const d = new Date();
   return {
-    date: d.toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" }),
-    time: d.toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", hour12: true }),
+    date: formatInSettingsTimezone(d, undefined, {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    }),
+    time: formatInSettingsTimezone(d, undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    }),
   };
 };
 
@@ -165,7 +199,7 @@ const formatOrderTimestamp = (value?: string | null) => {
   if (!value) return "";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString("en-PH", {
+  return formatInSettingsTimezone(date, undefined, {
     year: "numeric", month: "short", day: "numeric",
     hour: "2-digit", minute: "2-digit", hour12: true,
   });
@@ -198,8 +232,8 @@ const buildReceiptHtml = ({
     <tr>
       <td>${escapeHtml(item.name)}${item.note ? `<br/><small style="color:#9ca3af">${escapeHtml(item.note)}</small>` : ""}</td>
       <td class="qty">${item.quantity}</td>
-      <td class="amount">PHP ${fmt(item.price)}</td>
-      <td class="amount">PHP ${fmt(item.price * item.quantity)}</td>
+      <td class="amount">${currency} ${fmt(item.price)}</td>
+      <td class="amount">${currency} ${fmt(item.price * item.quantity)}</td>
     </tr>
   `).join("");
 
@@ -406,8 +440,24 @@ const CustomSelect = memo(({ value, onChange, options }: { value: string; onChan
 ));
 
 // ─── CONFIRM CANCEL MODAL ────────────────────────────────────────────────────
-function ConfirmCancelModal({ show, message, onConfirm, onCancel, confirming }: {
-  show: boolean; message: string; confirming: boolean; onConfirm: () => void; onCancel: () => void;
+function ConfirmCancelModal({
+  show,
+  title,
+  message,
+  confirmLabel,
+  loadingLabel,
+  onConfirm,
+  onCancel,
+  confirming,
+}: {
+  show: boolean;
+  title: string;
+  message: string;
+  confirmLabel: string;
+  loadingLabel: string;
+  confirming: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
 }) {
   return (
     <AnimatePresence>
@@ -424,13 +474,13 @@ function ConfirmCancelModal({ show, message, onConfirm, onCancel, confirming }: 
                 <div style={{ width: 36, height: 36, borderRadius: 10, background: "#fef2f2", border: "1px solid #fecaca", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 12 }}>
                   <Ban style={{ width: 16, height: 16, color: "#dc2626" }} />
                 </div>
-                <p style={{ fontSize: 14, fontWeight: 600, color: "#111", marginBottom: 6 }}>Cancel Order?</p>
+                <p style={{ fontSize: 14, fontWeight: 600, color: "#111", marginBottom: 6 }}>{title}</p>
                 <p style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.6 }}>{message}</p>
               </div>
               <div style={{ padding: "0 20px 18px", display: "flex", flexDirection: "column", gap: 7 }}>
                 <motion.button whileTap={{ scale: 0.98 }} onClick={onConfirm} disabled={confirming}
                   style={{ ...btn("#dc2626", "#fff"), cursor: confirming ? "not-allowed" : "pointer", opacity: confirming ? 0.6 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                  {confirming ? <><Spinner size={13} light />Cancelling…</> : "Yes, Cancel Order"}
+                  {confirming ? <><Spinner size={13} light />{loadingLabel}</> : confirmLabel}
                 </motion.button>
                 <motion.button whileTap={{ scale: 0.97 }} onClick={onCancel} disabled={confirming}
                   style={{ ...btn("#f3f4f6", "#6b7280"), padding: "10px", fontSize: 12, cursor: confirming ? "not-allowed" : "pointer" }}>
@@ -446,12 +496,21 @@ function ConfirmCancelModal({ show, message, onConfirm, onCancel, confirming }: 
 }
 
 // ─── PROCEED CONFIRM MODAL ───────────────────────────────────────────────────
-function ProceedConfirmModal({ show, order, confirming, onConfirm, onCancel }: {
+function ProceedConfirmModal({ show, order, confirming, onConfirm, onCancel, restaurantSettings }: {
   show: boolean; order: OnlineNotif | null; confirming: boolean; onConfirm: () => void; onCancel: () => void;
+  restaurantSettings: GeneralRestaurantSettings;
 }) {
   if (!order) return null;
   const orderTime = (() => {
-    try { return new Date(order.createdAt).toLocaleString("en-PH", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: true }); }
+    try {
+      return formatInSettingsTimezone(order.createdAt, restaurantSettings, {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+      });
+    }
     catch { return order.createdAt; }
   })();
   const payLabel = formatPaymentMethodLabel(order.paymentMethod);
@@ -522,7 +581,7 @@ function ProceedConfirmModal({ show, order, confirming, onConfirm, onCancel }: {
               <div style={{ padding: "14px 20px", borderBottom: "1px solid #f3f4f6" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <span style={{ fontSize: 12, fontWeight: 500, color: "#6b7280" }}>Order Total</span>
-                  <span style={{ fontSize: 20, fontWeight: 700, color: "#111" }}>₱{Number(order.total).toFixed(2)}</span>
+                  <span style={{ fontSize: 20, fontWeight: 700, color: "#111" }}>{formatCurrencyAmount(order.total, restaurantSettings)}</span>
                 </div>
                 {!isPaid && (
                   <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
@@ -575,7 +634,9 @@ const ProductCard = memo(({ item, onAdd, inCart }: { item: MenuItem; onAdd: (i: 
       <div style={{ padding: "9px 10px 10px" }}>
         <p style={{ fontSize: 11, fontWeight: 500, color: "#222", lineHeight: 1.35, marginBottom: 7 }}>{item.name}</p>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: "#111" }}>₱{fmt(item.price)}</span>
+          <span style={{ fontSize: 12, fontWeight: 600, color: "#111" }}>
+            {formatCurrencyAmount(item.price)}
+          </span>
           {!isFood(item) && (
             <span style={{ fontSize: 10, fontWeight: 500, padding: "2px 6px", borderRadius: 5, background: out ? "#fff0f0" : "#f5f5f5", color: out ? "#f87171" : "#bbb" }}>
               {out ? "Out" : item.remainingStock}
@@ -618,7 +679,9 @@ const CartRow = memo(({ item, onRemove, onQty, onNoteChange }: {
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <p style={{ fontSize: 11, fontWeight: 500, color: "#222", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", margin: 0 }}>{item.name}</p>
-          <p style={{ fontSize: 10, color: "#bbb", marginTop: 1, marginBottom: 0 }}>₱{fmt(item.price)}</p>
+          <p style={{ fontSize: 10, color: "#bbb", marginTop: 1, marginBottom: 0 }}>
+            {formatCurrencyAmount(item.price)}
+          </p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
           {qtyBtn(-1, <Minus style={{ width: 10, height: 10, color: "#666" }} />)}
@@ -635,7 +698,9 @@ const CartRow = memo(({ item, onRemove, onQty, onNoteChange }: {
           />
           {qtyBtn(1, <Plus style={{ width: 10, height: 10, color: "#666" }} />)}
         </div>
-        <span style={{ fontSize: 11, fontWeight: 600, color: "#111", minWidth: 40, textAlign: "right" }}>₱{fmt(item.price * item.quantity)}</span>
+        <span style={{ fontSize: 11, fontWeight: 600, color: "#111", minWidth: 40, textAlign: "right" }}>
+          {formatCurrencyAmount(item.price * item.quantity)}
+        </span>
         <motion.button whileTap={{ scale: 0.85 }} onClick={() => setShowNote((p) => !p)}
           title="Add note"
           style={{ width: 22, height: 22, border: "none", background: item.note ? "#eff6ff" : "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, flexShrink: 0 }}>
@@ -716,9 +781,9 @@ function HeldOrdersBadge({ held, onRestore, onDiscard }: {
 }
 
 // ─── SHIFT HISTORY MODAL ──────────────────────────────────────────────────────
-function ShiftHistoryModal({ show, orders, loading, onClose, onVoid, voidingId, restaurantSettings }: {
+function ShiftHistoryModal({ show, orders, loading, onClose, onSettleOrder, settlingId, restaurantSettings }: {
   show: boolean; orders: ShiftOrder[]; loading: boolean; onClose: () => void;
-  onVoid: (id: number, orderNumber: string) => void; voidingId: number | null;
+  onSettleOrder: (order: ShiftOrder) => void; settlingId: number | null;
   restaurantSettings: GeneralRestaurantSettings;
 }) {
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -775,7 +840,7 @@ function ShiftHistoryModal({ show, orders, loading, onClose, onVoid, voidingId, 
               <div style={{ padding: "14px 20px", borderBottom: "1px solid #f3f4f6", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, flexShrink: 0 }}>
                 {[
                   { label: "Orders", value: String(totalOrders), color: "#111" },
-                  { label: "Revenue", value: `₱${fmt(totalRevenue)}`, color: "#16a34a" },
+                  { label: "Revenue", value: formatCurrencyAmount(totalRevenue, restaurantSettings), color: "#16a34a" },
                   { label: "Voided", value: String(orders.filter((o) => o.status === "Cancelled").length), color: "#dc2626" },
                 ].map(({ label, value, color }) => (
                   <div key={label} style={{ background: "#fafafa", border: "1px solid #f0f0f0", borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
@@ -799,6 +864,10 @@ function ShiftHistoryModal({ show, orders, loading, onClose, onVoid, voidingId, 
                 ) : (
                   orders.map((order) => {
                     const isCancelled = order.status === "Cancelled";
+                    const settlementAction = getSettlementAction(
+                      order.status,
+                      order.paymentStatus,
+                    );
                     const isExpanded = expanded === order.id;
                     return (
                       <div key={order.id} style={{ borderBottom: "1px solid #f5f5f5" }}>
@@ -810,8 +879,16 @@ function ShiftHistoryModal({ show, orders, loading, onClose, onVoid, voidingId, 
                               <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 99, background: "#f3f4f6", color: "#6b7280", textTransform: "capitalize" }}>{order.orderType}</span>
                             </div>
                             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                              <span style={{ fontSize: 11, color: "#6b7280" }}>{new Date(order.createdAt).toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", hour12: true })}</span>
-                              <span style={{ fontSize: 11, fontWeight: 600, color: isCancelled ? "#9ca3af" : "#111" }}>₱{fmt(order.total)}</span>
+                              <span style={{ fontSize: 11, color: "#6b7280" }}>
+                                {formatInSettingsTimezone(order.createdAt, restaurantSettings, {
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                  hour12: true,
+                                })}
+                              </span>
+                              <span style={{ fontSize: 11, fontWeight: 600, color: isCancelled ? "#9ca3af" : "#111" }}>
+                                {formatCurrencyAmount(order.total, restaurantSettings)}
+                              </span>
                               <span style={{ fontSize: 10, color: "#9ca3af" }}>{formatPaymentMethodLabel(order.paymentMethod)}</span>
                             </div>
                           </div>
@@ -829,12 +906,18 @@ function ShiftHistoryModal({ show, orders, loading, onClose, onVoid, voidingId, 
                                   style={{ width: 28, height: 28, borderRadius: 8, border: "1px solid #e5e7eb", background: "#fafafa", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
                                   <Printer style={{ width: 12, height: 12, color: "#6b7280" }} />
                                 </motion.button>
-                                <motion.button whileTap={{ scale: 0.95 }} onClick={() => onVoid(order.id, order.orderNumber)}
-                                  disabled={voidingId === order.id}
-                                  title="Void order"
-                                  style={{ width: 28, height: 28, borderRadius: 8, border: "1px solid #fecaca", background: "#fff1f2", cursor: voidingId === order.id ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", opacity: voidingId === order.id ? 0.5 : 1 }}>
-                                  {voidingId === order.id ? <Spinner size={11} /> : <Ban style={{ width: 11, height: 11, color: "#dc2626" }} />}
-                                </motion.button>
+                                {settlementAction && (
+                                  <motion.button whileTap={{ scale: 0.95 }} onClick={() => onSettleOrder(order)}
+                                    disabled={settlingId === order.id}
+                                    title={settlementAction === "refund" ? "Refund order" : "Cancel order"}
+                                    style={{ width: 28, height: 28, borderRadius: 8, border: "1px solid #fecaca", background: "#fff1f2", cursor: settlingId === order.id ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", opacity: settlingId === order.id ? 0.5 : 1 }}>
+                                    {settlingId === order.id
+                                      ? <Spinner size={11} />
+                                      : settlementAction === "refund"
+                                        ? <RotateCcw style={{ width: 11, height: 11, color: "#dc2626" }} />
+                                        : <Ban style={{ width: 11, height: 11, color: "#dc2626" }} />}
+                                  </motion.button>
+                                )}
                               </>
                             )}
                           </div>
@@ -846,13 +929,17 @@ function ShiftHistoryModal({ show, orders, loading, onClose, onVoid, voidingId, 
                                 <div style={{ background: "#fafafa", borderRadius: 10, padding: "10px 12px", border: "1px solid #f0f0f0" }}>
                                   {order.items.map((item, i) => (
                                     <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: i < order.items.length - 1 ? "1px dashed #eee" : "none" }}>
-                                      <span style={{ fontSize: 11, color: "#374151" }}>{item.name} ×{item.quantity}</span>
-                                      <span style={{ fontSize: 11, fontWeight: 500, color: "#111" }}>₱{fmt(item.price * item.quantity)}</span>
+                                      <span style={{ fontSize: 11, color: "#374151" }}>{item.name} x{item.quantity}</span>
+                                      <span style={{ fontSize: 11, fontWeight: 500, color: "#111" }}>
+                                        {formatCurrencyAmount(item.price * item.quantity, restaurantSettings)}
+                                      </span>
                                     </div>
                                   ))}
                                   <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, paddingTop: 8, borderTop: "1px solid #e5e7eb" }}>
                                     <span style={{ fontSize: 12, fontWeight: 600, color: "#111" }}>Total</span>
-                                    <span style={{ fontSize: 13, fontWeight: 700, color: "#111" }}>₱{fmt(order.total)}</span>
+                                    <span style={{ fontSize: 13, fontWeight: 700, color: "#111" }}>
+                                      {formatCurrencyAmount(order.total, restaurantSettings)}
+                                    </span>
                                   </div>
                                 </div>
                               </div>
@@ -912,7 +999,7 @@ function RiderHandoverModal({ show, order, riderName, handoverTime, saving, onCh
                   </div>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                     <span style={{ fontSize: 10, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.06em" }}>Amount</span>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: "#111" }}>₱{Number(order.total).toFixed(2)}</span>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: "#111" }}>{formatCurrencyAmount(order.total)}</span>
                   </div>
                 </div>
                 <motion.button whileHover={{ opacity: 0.88 }} whileTap={{ scale: 0.98 }} disabled={saving || !riderName.trim()} onClick={onConfirm}
@@ -933,10 +1020,11 @@ function RiderHandoverModal({ show, order, riderName, handoverTime, saving, onCh
 }
 
 // ─── AMOUNT ENTRY MODAL ───────────────────────────────────────────────────────
-function AmountEntryModal({ show, amountDue, paymentMethod, onConfirm, onCancel }: {
+function AmountEntryModal({ show, amountDue, paymentMethod, onConfirm, onCancel, restaurantSettings }: {
   show: boolean; amountDue: number; paymentMethod: PaymentMethod;
   onConfirm: (payload: { tendered: number; selectedImage?: File; proofFileName?: string }) => void;
   onCancel: () => void;
+  restaurantSettings: GeneralRestaurantSettings;
 }) {
   const [input, setInput] = useState("");
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
@@ -984,14 +1072,16 @@ function AmountEntryModal({ show, amountDue, paymentMethod, onConfirm, onCancel 
               style={{ background: "#fff", width: "100%", maxWidth: 320, maxHeight: "90vh", borderRadius: 20, border: "1px solid #ebebeb", pointerEvents: "auto", fontFamily: F, display: "flex", flexDirection: "column", overflow: "hidden" }}>
               <div style={{ padding: "22px 22px 16px", borderBottom: "1px solid #f5f5f5", flexShrink: 0 }}>
                 <p style={{ fontSize: 10, fontWeight: 600, color: "#bbb", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 4 }}>Amount due</p>
-                <p style={{ fontSize: 28, fontWeight: 600, color: "#111", margin: 0 }}>₱{fmt(amountDue)}</p>
+                <p style={{ fontSize: 28, fontWeight: 600, color: "#111", margin: 0 }}>{formatCurrencyAmount(amountDue, restaurantSettings)}</p>
               </div>
               <div style={{ padding: "14px 18px 18px", overflowY: "auto", flex: 1 }}>
                 {paymentMethod === "cash" ? (
                   <>
                     <p style={{ fontSize: 10, fontWeight: 600, color: "#bbb", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>Cash tendered</p>
                     <div style={{ background: "#fafafa", border: `1.5px solid ${input ? "#111" : "#e5e5e5"}`, borderRadius: 10, padding: "10px 14px", display: "flex", alignItems: "center", gap: 6, marginBottom: 10, minHeight: 44 }}>
-                      <span style={{ fontSize: 14, color: "#aaa" }}>₱</span>
+                      <span style={{ fontSize: 14, color: "#aaa" }}>
+                        {getCurrencySymbol(restaurantSettings)}
+                      </span>
                       <span style={{ fontSize: 20, fontWeight: 600, color: input ? "#111" : "#ccc", flex: 1 }}>{input || "0"}</span>
                     </div>
                     {QUICK.length > 0 && (
@@ -999,15 +1089,15 @@ function AmountEntryModal({ show, amountDue, paymentMethod, onConfirm, onCancel 
                         {QUICK.slice(0, 5).map((a) => (
                           <motion.button key={a} whileTap={{ scale: 0.94 }} onClick={() => setInput(String(a))}
                             style={{ padding: "4px 10px", borderRadius: 7, border: "1px solid #efefef", background: "#f7f7f7", fontSize: 11, fontWeight: 500, color: "#555", cursor: "pointer", fontFamily: F }}>
-                            ₱{a}
+                            {formatCurrencyAmount(a, restaurantSettings)}
                           </motion.button>
                         ))}
                       </div>
                     )}
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
                       {[
-                        { label: "Change", val: enough && input ? `₱${fmt(change)}` : "—", color: enough && input ? "#16a34a" : "#ddd" },
-                        { label: "Tendered", val: input ? `₱${fmt(tendered)}` : "—", color: input ? "#111" : "#ddd" },
+                        { label: "Change", val: enough && input ? formatCurrencyAmount(change, restaurantSettings) : "—", color: enough && input ? "#16a34a" : "#ddd" },
+                        { label: "Tendered", val: input ? formatCurrencyAmount(tendered, restaurantSettings) : "—", color: input ? "#111" : "#ddd" },
                       ].map(({ label, val, color }) => (
                         <div key={label} style={{ background: "#fafafa", border: "1px solid #f0f0f0", borderRadius: 10, padding: "10px 12px" }}>
                           <p style={{ fontSize: 10, color: "#bbb", marginBottom: 3 }}>{label}</p>
@@ -1019,7 +1109,7 @@ function AmountEntryModal({ show, amountDue, paymentMethod, onConfirm, onCancel 
                       {input && !enough && (
                         <motion.p initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
                           style={{ fontSize: 11, color: "#f87171", marginBottom: 8, fontWeight: 500 }}>
-                          ₱{fmt(amountDue - tendered)} short
+                          {formatCurrencyAmount(amountDue - tendered, restaurantSettings)} short
                         </motion.p>
                       )}
                     </AnimatePresence>
@@ -1048,7 +1138,7 @@ function AmountEntryModal({ show, amountDue, paymentMethod, onConfirm, onCancel 
                       </div>
                       <img src="/gcashQR1.png" alt="GCash QR" style={{ width: 164, height: 164, borderRadius: 10, objectFit: "contain", background: "#fff", border: "1px solid #efefef" }} />
                       <p style={{ fontSize: 10, color: "#aaa", marginTop: 10, textAlign: "center", lineHeight: 1.6 }}>Ask the customer to scan, then upload or capture the proof below.</p>
-                      <p style={{ fontSize: 14, fontWeight: 600, color: "#111", marginTop: 2 }}>₱{fmt(amountDue)}</p>
+                      <p style={{ fontSize: 14, fontWeight: 600, color: "#111", marginTop: 2 }}>{formatCurrencyAmount(amountDue, restaurantSettings)}</p>
                     </div>
                     <div style={{ background: previewURL ? "#eff6ff" : "#fffbeb", border: `1px solid ${previewURL ? "#bfdbfe" : "#fde68a"}`, borderRadius: 10, padding: "9px 12px", marginBottom: 14 }}>
                       <p style={{ fontSize: 11, color: previewURL ? "#1d4ed8" : "#92400e", lineHeight: 1.55, margin: 0, fontWeight: 500 }}>
@@ -1202,7 +1292,9 @@ function SuccessModal({
                         </div>
                         {item.note && <p style={{ fontSize: 10, color: "#9ca3af", margin: "2px 0 0" }}>{item.note}</p>}
                       </div>
-                      <span style={{ fontSize: 11, fontWeight: 500, color: "#374151" }}>₱{fmt(item.price * item.quantity)}</span>
+                      <span style={{ fontSize: 11, fontWeight: 500, color: "#374151" }}>
+                        {formatCurrencyAmount(item.price * item.quantity, restaurantSettings)}
+                      </span>
                     </div>
                   ))}
                 </motion.div>
@@ -1210,17 +1302,23 @@ function SuccessModal({
                   {[["Subtotal", subtotal], ["Discount", discountAmount], ["Tax", taxAmount], ["Service Charge", serviceChargeAmount]].map(([labelText, value]) => (
                     <div key={String(labelText)} style={{ display: "flex", justifyContent: "space-between", padding: "8px 14px", borderBottom: "1px dashed #f5f5f5" }}>
                       <span style={{ fontSize: 11, color: "#bbb" }}>{labelText}</span>
-                      <span style={{ fontSize: 11, fontWeight: 500, color: "#bbb" }}>₱{fmt(Number(value))}</span>
+                      <span style={{ fontSize: 11, fontWeight: 500, color: "#bbb" }}>
+                        {formatCurrencyAmount(Number(value), restaurantSettings)}
+                      </span>
                     </div>
                   ))}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: "#f9f9f9" }}>
                     <span style={{ fontSize: 12, fontWeight: 500, color: "#777" }}>Total Paid</span>
-                    <span style={{ fontSize: 18, fontWeight: 600, color: "#111" }}>₱{fmt(paidAmount)}</span>
+                    <span style={{ fontSize: 18, fontWeight: 600, color: "#111" }}>
+                      {formatCurrencyAmount(paidAmount, restaurantSettings)}
+                    </span>
                   </div>
                   {paymentMethod === "cash" && changeAmount > 0 && (
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 14px", background: "#f0fdf4", borderTop: "1px dashed #bbf7d0" }}>
                       <span style={{ fontSize: 11, fontWeight: 500, color: "#16a34a" }}>Change</span>
-                      <span style={{ fontSize: 14, fontWeight: 600, color: "#16a34a" }}>₱{fmt(changeAmount)}</span>
+                      <span style={{ fontSize: 14, fontWeight: 600, color: "#16a34a" }}>
+                        {formatCurrencyAmount(changeAmount, restaurantSettings)}
+                      </span>
                     </div>
                   )}
                 </div>
@@ -1303,7 +1401,7 @@ export default function CashierView() {
 
   // ── NEW: Cancel confirm ──
   const [cancelConfirmId, setCancelConfirmId] = useState<number | null>(null);
-  const [cancellingOnlineId, setCancellingOnlineId] = useState<number | null>(null);
+  const [settlingOnlineId, setSettlingOnlineId] = useState<number | null>(null);
 
   // ── NEW: Held orders (in-memory only, no localStorage) ──
   const [heldOrders, setHeldOrders] = useState<HeldOrder[]>([]);
@@ -1311,7 +1409,7 @@ export default function CashierView() {
   // ── NEW: Shift history ──
   const [shiftOrders, setShiftOrders] = useState<ShiftOrder[]>([]);
   const [shiftOrdersLoading, setShiftOrdersLoading] = useState(false);
-  const [voidingOrderId, setVoidingOrderId] = useState<number | null>(null);
+  const [settlingOrderId, setSettlingOrderId] = useState<number | null>(null);
 
   // ── NEW: Connectivity ──
   const [isOnline, setIsOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine : true);
@@ -1472,7 +1570,13 @@ export default function CashierView() {
   const openRiderHandover = (order: OnlineNotif) => {
     setHandoverOrder(order);
     setRiderNameInput(order.riderName ?? "");
-    setHandoverTime(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
+    setHandoverTime(
+      formatInSettingsTimezone(new Date(), restaurantSettings, {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+      }),
+    );
   };
 
   const closeRiderHandover = () => {
@@ -1501,15 +1605,37 @@ export default function CashierView() {
   // ── Cancel with confirmation ──
   const handleCancelOnlineOrderConfirmed = async () => {
     if (cancelConfirmId === null) return;
-    setCancellingOnlineId(cancelConfirmId);
+    const currentOrder = onlineOrderNotifs.find((order) => order.id === cancelConfirmId);
+    const action = getSettlementAction(
+      currentOrder?.trackingStatus,
+      currentOrder?.paymentStatus,
+    );
+    if (!action) {
+      setCancelConfirmId(null);
+      return;
+    }
+    setSettlingOnlineId(cancelConfirmId);
     try {
-      await updateQueueOrder(cancelConfirmId, { status: "Cancelled", cashierId: getCashierId() });
+      await updateQueueOrder(cancelConfirmId, {
+        status: action === "refund" ? "Refunded" : "Cancelled",
+        cashierId: getCashierId(),
+      });
       setOnlineOrderNotifs((prev) => prev.filter((o) => o.id !== cancelConfirmId));
-      toast("info", "Order has been cancelled.");
+      toast(
+        "info",
+        action === "refund"
+          ? "Order has been refunded."
+          : "Order has been cancelled.",
+      );
     } catch {
-      toast("error", "Failed to cancel order. Please try again.");
+      toast(
+        "error",
+        action === "refund"
+          ? "Failed to refund order. Please try again."
+          : "Failed to cancel order. Please try again.",
+      );
     } finally {
-      setCancellingOnlineId(null);
+      setSettlingOnlineId(null);
       setCancelConfirmId(null);
     }
   };
@@ -1548,7 +1674,11 @@ export default function CashierView() {
       id: `${Date.now()}`,
       cart: [...cart],
       orderType, paymentMethod, customerType, selectedTable, note: orderNote,
-      savedAt: new Date().toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", hour12: true }),
+      savedAt: formatInSettingsTimezone(new Date(), restaurantSettings, {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+      }),
     };
     setHeldOrders((prev) => [...prev, held]);
     setCart([]); setOrderNote(""); setShowOrderNote(false);
@@ -1571,17 +1701,43 @@ export default function CashierView() {
     toast("info", "Held order discarded.");
   }, []);
 
-  // ── Void order from shift history ──
-  const handleVoidOrder = async (id: number, orderNum: string) => {
-    setVoidingOrderId(id);
+  // ── Cancel or refund from shift history ──
+  const handleSettleOrder = async (order: ShiftOrder) => {
+    const action = getSettlementAction(order.status, order.paymentStatus);
+    if (!action) {
+      toast(
+        "warning",
+        "Completed, refunded, or cancelled orders cannot be changed.",
+      );
+      return;
+    }
+    setSettlingOrderId(order.id);
     try {
-      await api.patch(`/orders/${id}`, { status: "Cancelled", cashierId: getCashierId() });
-      setShiftOrders((prev) => prev.map((o) => o.id === id ? { ...o, status: "Cancelled" } : o));
-      toast("info", `Order ${orderNum} voided.`);
+      const nextStatus = action === "refund" ? "Refunded" : "Cancelled";
+      await api.patch(`/orders/${order.id}`, {
+        status: nextStatus,
+        cashierId: getCashierId(),
+      });
+      setShiftOrders((prev) =>
+        prev.map((entry) =>
+          entry.id === order.id ? { ...entry, status: nextStatus } : entry,
+        ),
+      );
+      toast(
+        "info",
+        action === "refund"
+          ? `Order ${order.orderNumber} refunded.`
+          : `Order ${order.orderNumber} cancelled.`,
+      );
     } catch {
-      toast("error", "Failed to void order. Please try again.");
+      toast(
+        "error",
+        action === "refund"
+          ? "Failed to refund order. Please try again."
+          : "Failed to cancel order. Please try again.",
+      );
     } finally {
-      setVoidingOrderId(null);
+      setSettlingOrderId(null);
     }
   };
 
@@ -1762,6 +1918,12 @@ export default function CashierView() {
               </div>
             </div>
 
+            <UserIdentityBanner
+              title="Cashier Dashboard"
+              subtitle={`${restaurantSettings.restaurantName} order handling`}
+              className="mb-4"
+            />
+
             {/* Online Orders Panel */}
             <AnimatePresence>
               {notifOpen && (
@@ -1790,8 +1952,8 @@ export default function CashierView() {
                                   </div>
                                   <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                                     <span style={{ fontSize: 9, fontWeight: 500, padding: "1px 7px", borderRadius: 99, background: "#d1fae5", color: "#065f46", textTransform: "capitalize" }}>{notif.orderType}</span>
-                                    <span style={{ fontSize: 9, color: "#6b7280" }}>{new Date(notif.createdAt).toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", hour12: true })}</span>
-                                    <span style={{ fontSize: 11, fontWeight: 700, color: "#111" }}>₱{Number(notif.total).toFixed(2)}</span>
+                                    <span style={{ fontSize: 9, color: "#6b7280" }}>{formatInSettingsTimezone(notif.createdAt, restaurantSettings, { hour: "2-digit", minute: "2-digit", hour12: true })}</span>
+                                    <span style={{ fontSize: 11, fontWeight: 700, color: "#111" }}>{formatCurrencyAmount(notif.total, restaurantSettings)}</span>
                                   </div>
                                   <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
                                     <span style={{ fontSize: 10, color: "#374151" }}>Payment: {formatPaymentMethodLabel(notif.paymentMethod)}</span>
@@ -1799,13 +1961,17 @@ export default function CashierView() {
                                   </div>
                                 </div>
                                 <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                                  <motion.button whileTap={{ scale: 0.95 }}
-                                    onClick={() => setCancelConfirmId(notif.id)}
-                                    disabled={cancellingOnlineId === notif.id}
-                                    style={{ padding: "7px 11px", borderRadius: 9, border: "1px solid #fecaca", background: "#fff1f2", color: "#dc2626", cursor: cancellingOnlineId === notif.id ? "not-allowed" : "pointer", fontSize: 10.5, fontWeight: 600, fontFamily: F, opacity: cancellingOnlineId === notif.id ? 0.5 : 1, display: "flex", alignItems: "center", gap: 5 }}>
-                                    {cancellingOnlineId === notif.id ? <Spinner size={11} /> : null}
-                                    Cancel
-                                  </motion.button>
+                                  {getSettlementAction(notif.trackingStatus, notif.paymentStatus) && (
+                                    <motion.button whileTap={{ scale: 0.95 }}
+                                      onClick={() => setCancelConfirmId(notif.id)}
+                                      disabled={settlingOnlineId === notif.id}
+                                      style={{ padding: "7px 11px", borderRadius: 9, border: "1px solid #fecaca", background: "#fff1f2", color: "#dc2626", cursor: settlingOnlineId === notif.id ? "not-allowed" : "pointer", fontSize: 10.5, fontWeight: 600, fontFamily: F, opacity: settlingOnlineId === notif.id ? 0.5 : 1, display: "flex", alignItems: "center", gap: 5 }}>
+                                      {settlingOnlineId === notif.id ? <Spinner size={11} /> : null}
+                                      {getSettlementAction(notif.trackingStatus, notif.paymentStatus) === "refund"
+                                        ? "Refund Order"
+                                        : "Cancel Order"}
+                                    </motion.button>
+                                  )}
                                   <motion.button whileTap={{ scale: 0.95 }} onClick={() => handleProceedOnlineOrderClick(notif)}
                                     style={{ padding: "7px 11px", borderRadius: 9, border: "1px solid #16a34a", background: "#16a34a", color: "#fff", cursor: "pointer", fontSize: 10.5, fontWeight: 600, fontFamily: F }}>
                                     Proceed to Order
@@ -1838,8 +2004,8 @@ export default function CashierView() {
                                   </div>
                                   <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                                     <span style={{ fontSize: 9, fontWeight: 500, padding: "1px 7px", borderRadius: 99, background: "#d1fae5", color: "#065f46", textTransform: "capitalize" }}>{notif.orderType}</span>
-                                    <span style={{ fontSize: 9, color: "#6b7280" }}>{new Date(notif.createdAt).toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", hour12: true })}</span>
-                                    <span style={{ fontSize: 11, fontWeight: 700, color: "#111" }}>₱{Number(notif.total).toFixed(2)}</span>
+                                    <span style={{ fontSize: 9, color: "#6b7280" }}>{formatInSettingsTimezone(notif.createdAt, restaurantSettings, { hour: "2-digit", minute: "2-digit", hour12: true })}</span>
+                                    <span style={{ fontSize: 11, fontWeight: 700, color: "#111" }}>{formatCurrencyAmount(notif.total, restaurantSettings)}</span>
                                     <PaymentStatusBadge paymentStatus={notif.paymentStatus} />
                                   </div>
                                 </div>
@@ -1893,8 +2059,8 @@ export default function CashierView() {
                                     </div>
                                     <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                                       <span style={{ fontSize: 9, fontWeight: 500, padding: "1px 7px", borderRadius: 99, background: "#f3f4f6", color: "#4b5563", textTransform: "capitalize" }}>{notif.orderType}</span>
-                                      <span style={{ fontSize: 9, color: "#6b7280" }}>{new Date(notif.createdAt).toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", hour12: true })}</span>
-                                      <span style={{ fontSize: 11, fontWeight: 700, color: "#111" }}>₱{Number(notif.total).toFixed(2)}</span>
+                                      <span style={{ fontSize: 9, color: "#6b7280" }}>{formatInSettingsTimezone(notif.createdAt, restaurantSettings, { hour: "2-digit", minute: "2-digit", hour12: true })}</span>
+                                      <span style={{ fontSize: 11, fontWeight: 700, color: "#111" }}>{formatCurrencyAmount(notif.total, restaurantSettings)}</span>
                                     </div>
                                   </div>
                                   <motion.button whileTap={{ scale: 0.95 }} onClick={() => openRiderHandover(notif)}
@@ -2041,21 +2207,21 @@ export default function CashierView() {
                 {/* Pricing breakdown */}
                 <div style={{ background: "#fafafa", border: "1px solid #f0f0f0", borderRadius: 12, overflow: "hidden", marginBottom: 10 }}>
                   {[
-                    { label: "Subtotal", val: fmt(gross), color: "#999" },
-                    { label: `Discount (${fmt(Number(selectedDiscount?.percentage || 0))}%)`, val: fmt(pricing.discountAmount), color: "#16a34a", prefix: "-₱" },
-                    { label: `Tax (${fmt(billingSettings.taxRate)}%)`, val: fmt(pricing.taxAmount), color: "#999" },
-                    { label: `Service Charge (${fmt(billingSettings.serviceCharge)}%)`, val: fmt(pricing.serviceChargeAmount), color: "#999" },
-                  ].map(({ label, val, color, prefix }) => (
+                    { label: "Subtotal", val: formatCurrencyAmount(gross, restaurantSettings), color: "#999" },
+                    { label: `Discount (${fmt(Number(selectedDiscount?.percentage || 0))}%)`, val: `-${formatCurrencyAmount(pricing.discountAmount, restaurantSettings)}`, color: "#16a34a" },
+                    { label: `Tax (${fmt(billingSettings.taxRate)}%)`, val: formatCurrencyAmount(pricing.taxAmount, restaurantSettings), color: "#999" },
+                    { label: `Service Charge (${fmt(billingSettings.serviceCharge)}%)`, val: formatCurrencyAmount(pricing.serviceChargeAmount, restaurantSettings), color: "#999" },
+                  ].map(({ label, val, color }) => (
                     <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", borderBottom: "1px dashed #f0f0f0" }}>
                       <span style={{ fontSize: 11, color: "#bbb" }}>{label}</span>
-                      <span style={{ fontSize: 11, fontWeight: 500, color }}>{prefix ?? "₱"}{val}</span>
+                      <span style={{ fontSize: 11, fontWeight: 500, color }}>{val}</span>
                     </div>
                   ))}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 12px", background: "#f5f5f5" }}>
                     <span style={{ fontSize: 12, fontWeight: 500, color: "#777" }}>Total</span>
                     <motion.span key={pricing.amountDue} initial={{ scale: 0.95, opacity: 0.6 }} animate={{ scale: 1, opacity: 1 }} transition={{ duration: 0.15 }}
                       style={{ fontSize: 19, fontWeight: 600, color: "#111", fontFamily: F }}>
-                      ₱{fmt(pricing.amountDue)}
+                      {formatCurrencyAmount(pricing.amountDue, restaurantSettings)}
                     </motion.span>
                   </div>
                 </div>
@@ -2108,8 +2274,11 @@ export default function CashierView() {
                   disabled={placing || !isOnline}
                   whileHover={{ opacity: 0.88 }} whileTap={{ scale: 0.98 }} transition={{ duration: 0.12 }}
                   style={{ ...btn(isOnline ? "#16a34a" : "#9ca3af", "#fff"), cursor: placing || !isOnline ? "not-allowed" : "pointer", opacity: placing ? 0.5 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, letterSpacing: "0.01em" }}>
-                  {placing ? (<><Spinner size={14} light />Processing…</>) : !isOnline ? "Offline — Cannot Place Order" : `Pay ₱${fmt(pricing.amountDue)}`}
+                  {placing ? (<><Spinner size={14} light />Processing…</>) : !isOnline ? "Offline — Cannot Place Order" : `Pay ${formatCurrencyAmount(pricing.amountDue, restaurantSettings)}`}
                 </motion.button>
+                <p style={{ margin: "8px 2px 0", fontSize: 10, color: "#9ca3af", textAlign: "center" }}>
+                  Inventory is deducted after payment confirmation.
+                </p>
               </motion.div>
             )}
           </AnimatePresence>
@@ -2119,8 +2288,39 @@ export default function CashierView() {
       {/* ── Modals ── */}
       <ConfirmCancelModal
         show={cancelConfirmId !== null}
-        message="This will permanently cancel the online order. The customer will need to be notified separately."
-        confirming={cancellingOnlineId !== null}
+        title={
+          getSettlementAction(
+            onlineOrderNotifs.find((order) => order.id === cancelConfirmId)?.trackingStatus,
+            onlineOrderNotifs.find((order) => order.id === cancelConfirmId)?.paymentStatus,
+          ) === "refund"
+            ? "Refund Order?"
+            : "Cancel Order?"
+        }
+        message={
+          getSettlementAction(
+            onlineOrderNotifs.find((order) => order.id === cancelConfirmId)?.trackingStatus,
+            onlineOrderNotifs.find((order) => order.id === cancelConfirmId)?.paymentStatus,
+          ) === "refund"
+            ? "This will mark the order as refunded and restore deducted inventory once."
+            : "This will permanently cancel the online order. The customer will need to be notified separately."
+        }
+        confirmLabel={
+          getSettlementAction(
+            onlineOrderNotifs.find((order) => order.id === cancelConfirmId)?.trackingStatus,
+            onlineOrderNotifs.find((order) => order.id === cancelConfirmId)?.paymentStatus,
+          ) === "refund"
+            ? "Yes, Refund Order"
+            : "Yes, Cancel Order"
+        }
+        loadingLabel={
+          getSettlementAction(
+            onlineOrderNotifs.find((order) => order.id === cancelConfirmId)?.trackingStatus,
+            onlineOrderNotifs.find((order) => order.id === cancelConfirmId)?.paymentStatus,
+          ) === "refund"
+            ? "Refunding..."
+            : "Cancelling..."
+        }
+        confirming={settlingOnlineId !== null}
         onConfirm={handleCancelOnlineOrderConfirmed}
         onCancel={() => setCancelConfirmId(null)}
       />
@@ -2131,6 +2331,7 @@ export default function CashierView() {
         confirming={proceedConfirming}
         onConfirm={() => { void handleProceedOnlineOrderConfirm(); }}
         onCancel={() => { if (!proceedConfirming) setProceedConfirmOrder(null); }}
+        restaurantSettings={restaurantSettings}
       />
 
       <AmountEntryModal
@@ -2139,6 +2340,7 @@ export default function CashierView() {
         paymentMethod={paymentMethod}
         onConfirm={(payload) => { void handleAmountConfirmed(payload); }}
         onCancel={() => setShowAmountEntry(false)}
+        restaurantSettings={restaurantSettings}
       />
 
       <RiderHandoverModal
@@ -2176,8 +2378,8 @@ export default function CashierView() {
         orders={shiftOrders}
         loading={shiftOrdersLoading}
         onClose={() => setShowShiftHistory(false)}
-        onVoid={handleVoidOrder}
-        voidingId={voidingOrderId}
+        onSettleOrder={handleSettleOrder}
+        settlingId={settlingOrderId}
         restaurantSettings={restaurantSettings}
       />
 

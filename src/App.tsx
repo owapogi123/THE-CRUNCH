@@ -17,6 +17,7 @@ import AdminDashboard from "./pages/index";
 import SalesReports from "./pages/sales-reports";
 import Inventory from "./pages/inventory";
 import Menu from "./pages/menu";
+import Order from "./pages/Order";
 import StaffAccounts from "./pages/staffaccounts";
 import StockManager from "./pages/stockmanager";
 import Products from "./pages/products";
@@ -47,6 +48,7 @@ const ROLE_MAP: Record<string, string> = {
 };
 
 const PERMISSION_ROUTE_MAP: Partial<Record<PermissionKey, string>> = {
+  orders: "/orders",
   overview: "/dashboard",
   menuManagement: "/inventory",
   menus: "/menu",
@@ -272,6 +274,13 @@ export default function App() {
       />
 
       {/* ── Administrator ────────────────────────────────────── */}
+      <Route
+        path="/orders"
+        element={protect(
+          userRole === "cook" ? <Order /> : userRole === "cashier" ? <Menu /> : <Unauthorized />,
+          "orders",
+        )}
+      />
       <Route
         path="/dashboard"
         element={protect(<AdminDashboard />, "overview")}

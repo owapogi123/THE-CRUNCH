@@ -4,14 +4,15 @@ import { Search, Flame, Crown, Clock, ChevronDown, Droplets, MapPin, Star, X, Ca
 import { useNavigate } from 'react-router-dom'
 import { useViewport } from '@/hooks/use-tablet'
 import { api, resolveAssetUrl } from '@/lib/api'
+import { fetchGeneralSettings, formatCurrencyAmount } from '@/lib/restaurantSettings'
 
 // ── Constants & Types ──────────────────────────────────────────────────────
-const NAV_H = 64, BANNER_H = 40, TAB_TOP = NAV_H + BANNER_H + 32
+const NAV_H = 64, BANNER_H = 40
 const PLACEHOLDER = '/img/placeholder.jpg'
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 const CATEGORIES = ['All','Chicken','Sides','Drinks','Combos'] as const
 type Category = typeof CATEGORIES[number]
-const fmtPHP = (v:number) => new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(v||0)
+const fmtPHP = (v:number) => formatCurrencyAmount(v)
 const BADGE_CFG: Record<string,{bg:string;dark?:boolean}> = {
   Bestseller:{bg:'#f5c842',dark:true}, Hot:{bg:'#ef4444'}, New:{bg:'#8b5cf6'},
   'Fan Fave':{bg:'#16a34a'}, 'Best Value':{bg:'#0284c7'}, 'Must Try':{bg:'#7c3aed'},
@@ -359,6 +360,8 @@ export default function Products({isAuthenticated=false,onLogout}:ProductsProps)
   const [mobileOpen,setMobileOpen]=useState(false),[searchFocused,setSearchFocused]=useState(false)
   const [currentUser,setCurrentUser]=useState<UserInfo|null>(null)
   const {scrollY}=useScroll(); const heroY=useTransform(scrollY,[0,600],[0,80]); const heroO=useTransform(scrollY,[0,400],[1,.35])
+
+  useEffect(()=>{ void fetchGeneralSettings() },[])
 
   useEffect(()=>{
     const check=()=>{ const n=new Date(),d=n.getDay(),t=n.getHours()+n.getMinutes()/60; setIsOpen((d>=1&&d<=5&&t>=10&&t<22)||((d===0||d===6)&&t>=11&&t<20.5)) }

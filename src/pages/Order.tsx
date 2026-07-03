@@ -5,8 +5,14 @@ import { Clock, Bell, ClipboardList, XCircle, CheckCircle2, ChefHat, Utensils, P
 import { motion, AnimatePresence } from "framer-motion";
 import { api } from "../lib/api";
 import { Sidebar } from "@/components/Sidebar";
+import { UserIdentityBanner } from "@/components/UserIdentityBanner";
 import { useNotifications } from "@/lib/NotificationContext";
 import { useViewport } from "@/hooks/use-tablet";
+import {
+  fetchGeneralSettings,
+  GENERAL_SETTINGS_DEFAULTS,
+  formatInSettingsTimezone,
+} from "@/lib/restaurantSettings";
 
 // ─── FONT ─────────────────────────────────────────────────────────────────────
 if (typeof document !== "undefined" && !document.getElementById("dm-sans-font")) {
@@ -16,6 +22,31 @@ if (typeof document !== "undefined" && !document.getElementById("dm-sans-font"))
   document.head.appendChild(l);
 }
 const F = "'DM Sans', sans-serif";
+const isPaidOrderStatus = (value?: string | null) =>
+  String(value || "").trim().toLowerCase() === "paid";
+const normalizeWorkflowStatus = (value?: string | null) =>
+  String(value || "").trim().toLowerCase();
+const getSettlementAction = (
+  currentStatus?: string | null,
+  paymentStatus?: string | null,
+) => {
+  const normalizedStatus = normalizeWorkflowStatus(currentStatus);
+  if (["completed", "refunded", "cancelled"].includes(normalizedStatus)) {
+    return null;
+  }
+  if (
+    normalizedStatus === "queued" ||
+    normalizedStatus === "preparing" ||
+    normalizedStatus === "ready" ||
+    normalizedStatus === "ready for pickup"
+  ) {
+    return "refund";
+  }
+  if (normalizedStatus === "pending payment") {
+    return "cancel";
+  }
+  return isPaidOrderStatus(paymentStatus) ? "refund" : "cancel";
+};
 
 // ─── TYPES ────────────────────────────────────────────────────────────────────
 interface OrderItem { quantity: number; name: string; }
@@ -31,6 +62,7 @@ interface OrderCard {
   prepStartedAt?: number;
   readyAt?: number;
   currentStatus?: string;
+  paymentStatus?: string;
   estimatedPrepMinutes?: number;
   dueAt?: number;
   overdue?: boolean;
@@ -62,6 +94,8 @@ interface KitchenUsagePayload {
   report: KitchenUsageReport;
   items: KitchenUsageItem[];
 }
+const SHOW_LEGACY_USAGE_PANEL = false;
+
 interface UsageProductOption {
   product_id: number;
   product_name: string;
@@ -73,6 +107,11 @@ interface UsageProductOption {
   shelfLifeDays?: number | null;
   shelfLifeHours?: number | null;
 }
+
+const isTerminalOrderStatus = (value?: string | null) =>
+  ["completed", "refunded", "cancelled"].includes(
+    String(value || "").trim().toLowerCase(),
+  );
 
 function buildUsageItem(
   product: UsageProductOption,
@@ -228,10 +267,13 @@ function OrderTimer({
 // ─── MAIN ─────────────────────────────────────────────────────────────────────
 export default function Order() {
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [restaurantSettings, setRestaurantSettings] = useState(
+    GENERAL_SETTINGS_DEFAULTS,
+  );
   const [notifPermission, setNotifPermission] = useState(Notification.permission);
   const [orders, setOrders] = useState<OrderCard[]>([]);
   const [servedCount, setServedCount] = useState(0);
-  const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [settlingId, setSettlingId] = useState<string | null>(null);
   const [usageOpen, setUsageOpen] = useState(false);
   const [usageLoading, setUsageLoading] = useState(false);
   const [usageSaving, setUsageSaving] = useState(false);
@@ -292,7 +334,22 @@ export default function Order() {
 
   useEffect(() => { fetchAll(); const i = setInterval(fetchAll, 3000); return () => clearInterval(i); }, []);
   useEffect(() => { const t = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(t); }, []);
-  useEffect(() => { void fetchUsage(); }, []);
+  useEffect(() => {
+    if (SHOW_LEGACY_USAGE_PANEL) {
+      void fetchUsage();
+    }
+  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    void fetchGeneralSettings().then((settings) => {
+      if (!cancelled) {
+        setRestaurantSettings(settings);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const patch = async (id: string, body: object) => {
     try {
@@ -331,10 +388,18 @@ export default function Order() {
       });
     }
   };
-  const handleCancel = async (id: string) => {
-    setCancellingId(id);
-    try { await api.patch(`/orders/${id}`, { status: "Cancelled" }); fetchAll(); }
-    catch {} finally { setCancellingId(null); }
+  const handleSettlementAction = async (order: OrderCard) => {
+    const action = getSettlementAction(order.currentStatus, order.paymentStatus);
+    if (!action) return;
+    setSettlingId(order.id);
+    try {
+      await api.patch(`/orders/${order.id}`, {
+        status: action === "refund" ? "Refunded" : "Cancelled",
+      });
+      fetchAll();
+    } catch {} finally {
+      setSettlingId(null);
+    }
   };
   const userId = (() => {
     const raw = typeof window !== "undefined" ? localStorage.getItem("userId") : null;
@@ -404,16 +469,18 @@ export default function Order() {
   };
 
   const fmt = (d: Date) => {
-    let h = d.getHours();
-    const m = String(d.getMinutes()).padStart(2, "0");
-    const ap = h >= 12 ? "PM" : "AM";
-    h = h % 12 || 12;
-    return `${h}:${m} ${ap}`;
+    return formatInSettingsTimezone(d, restaurantSettings, {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
   };
   const fmtDate = (d: Date) => {
-    const days = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-    const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-    return `${days[d.getDay()]}, ${months[d.getMonth()]} ${d.getDate()}`;
+    return formatInSettingsTimezone(d, restaurantSettings, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
   };
 
   const newCount  = orders.filter((o) => !o.isPreparing && !o.isReady).length;
@@ -589,6 +656,12 @@ export default function Order() {
         </div>
 
         {/* ── Notification banner ── */}
+        <div style={{ padding: isMobile ? "12px 14px 0" : isTablet ? "12px 18px 0" : "12px 32px 0" }}>
+          <UserIdentityBanner
+            title="Kitchen Queue"
+            subtitle={`${restaurantSettings.restaurantName} preparation board`}
+          />
+        </div>
         {notifPermission !== "granted" && (
           <div style={{ padding: isMobile ? "12px 14px 0" : isTablet ? "12px 18px 0" : "12px 32px 0" }}>
             <button onClick={() => Notification.requestPermission().then(setNotifPermission)}
@@ -600,6 +673,7 @@ export default function Order() {
         )}
 
         {/* ── Queue ── */}
+        {SHOW_LEGACY_USAGE_PANEL && (
         <div style={{ padding: isMobile ? "16px 14px 0" : isTablet ? "16px 18px 0" : "16px 32px 0", display: "none" }}>
           <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
             style={{ background: "#fff", borderRadius: 16, border: "1px solid #e5e7eb", overflow: "hidden" }}>
@@ -635,6 +709,7 @@ export default function Order() {
             </AnimatePresence>
           </motion.div>
         </div>
+        )}
 
         <div style={{ padding: isMobile ? "18px 14px 28px" : isTablet ? "20px 18px 32px" : "24px 32px 40px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 14 }}>
@@ -660,7 +735,13 @@ export default function Order() {
                   const isNew = !order.isPreparing && !order.isReady;
                   const isPrep = order.isPreparing && !order.isReady;
                   const isReady = order.isReady;
-                  const isCancelling = cancellingId === order.id;
+                  const settlementAction = getSettlementAction(
+                    order.currentStatus,
+                    order.paymentStatus,
+                  );
+                  const isSettling = settlingId === order.id;
+                  const isTerminal = isTerminalOrderStatus(order.currentStatus);
+                  const settlementLocked = isSettling || isTerminal;
                   const timerEditable = isNew || isPrep;
                   const timerBase = order.prepStartedAt;
                   const estimatedPrepMinutes = Math.max(order.estimatedPrepMinutes ?? 10, 1);
@@ -810,22 +891,30 @@ export default function Order() {
                             ) : null}
                           </div>
 
-                          {/* Cancel */}
-                          <button onClick={() => !isCancelling && !isReady && handleCancel(order.id)}
-                            disabled={isCancelling || isReady}
+                          {/* Cancel / Refund */}
+                          {settlementAction && (
+                          <button onClick={() => !settlementLocked && handleSettlementAction(order)}
+                            disabled={settlementLocked}
                             style={{
                               width: "100%", padding: "6px 0", borderRadius: 9, fontSize: 11, fontWeight: 500,
                               display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
-                              cursor: (isCancelling || isReady) ? "not-allowed" : "pointer", fontFamily: F,
+                              cursor: settlementLocked ? "not-allowed" : "pointer", fontFamily: F,
                               border: "1px solid",
-                              borderColor: (isCancelling || isReady) ? "#f3f4f6" : "#e5e7eb",
+                              borderColor: settlementLocked ? "#f3f4f6" : "#e5e7eb",
                               background: "transparent",
-                              color: (isCancelling || isReady) ? "#d1d5db" : "#9ca3af",
+                              color: settlementLocked ? "#d1d5db" : "#9ca3af",
                               transition: "all 0.12s",
                             }}>
                             <XCircle size={10} />
-                            {isCancelling ? "Cancelling…" : "Cancel"}
+                            {isSettling
+                              ? settlementAction === "refund"
+                                ? "Refunding..."
+                                : "Cancelling..."
+                              : settlementAction === "refund"
+                                ? "Refund Order"
+                                : "Cancel Order"}
                           </button>
+                          )}
                         </div>
                       </div>
                     </motion.div>
@@ -835,6 +924,7 @@ export default function Order() {
             </div>
           )}
 
+          {SHOW_LEGACY_USAGE_PANEL && (
           <div style={{ paddingTop: 24 }}>
             <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
               style={{ background: "#fff", borderRadius: 16, border: "1px solid #e5e7eb", overflow: "hidden" }}>
@@ -870,6 +960,7 @@ export default function Order() {
               </AnimatePresence>
             </motion.div>
           </div>
+          )}
         </div>
       </div>
     </div>
