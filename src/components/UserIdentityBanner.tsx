@@ -11,13 +11,15 @@ const ROLE_LABELS: Record<string, string> = {
 };
 
 export function UserIdentityBanner({
-  title,
-  subtitle,
   className = "",
+  statusText,
+  statusTone = "success",
+  showRoleBadge = true,
 }: {
-  title?: string;
-  subtitle?: string;
   className?: string;
+  statusText?: string;
+  statusTone?: "neutral" | "success" | "warning" | "danger";
+  showRoleBadge?: boolean;
 }) {
   const { user } = useAuth();
 
@@ -31,35 +33,52 @@ export function UserIdentityBanner({
     return ROLE_LABELS[role] ?? "User";
   }, [user?.role]);
 
+  const statusToneClass = useMemo(() => {
+    switch (statusTone) {
+      case "neutral":
+        return {
+          wrapper: "border-slate-200 bg-slate-100 text-slate-600",
+          dot: "bg-slate-400",
+        };
+      case "warning":
+        return {
+          wrapper: "border-amber-200 bg-amber-50 text-amber-700",
+          dot: "bg-amber-400",
+        };
+      case "danger":
+        return {
+          wrapper: "border-red-200 bg-red-50 text-red-600",
+          dot: "bg-red-400",
+        };
+      default:
+        return {
+          wrapper: "border-emerald-100 bg-emerald-50 text-emerald-700",
+          dot: "bg-emerald-400",
+        };
+    }
+  }, [statusTone]);
+
   return (
     <div
-      className={`rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm ${className}`.trim()}
+      className={`flex max-w-full flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-600 shadow-sm ${className}`.trim()}
     >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-            Logged-In User
-          </p>
-          <p className="mt-1 truncate text-lg font-semibold text-slate-900">
-            {displayName}
-          </p>
-          <p className="text-sm text-slate-500">{roleLabel}</p>
-          {(title || subtitle) && (
-            <div className="mt-3">
-              {title && (
-                <p className="text-sm font-semibold text-slate-800">{title}</p>
-              )}
-              {subtitle && (
-                <p className="text-xs text-slate-500">{subtitle}</p>
-              )}
-            </div>
-          )}
-        </div>
-        <div className="inline-flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700">
+      <span className="font-medium text-slate-500">Logged in:</span>
+      <span className="font-semibold text-slate-800">{displayName}</span>
+      <span className="text-slate-400">({roleLabel})</span>
+      {showRoleBadge && (
+        <div className="inline-flex items-center gap-1.5 rounded-full border border-emerald-100 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
           <ShieldCheck className="h-4 w-4" />
           <span>{roleLabel}</span>
         </div>
-      </div>
+      )}
+      {statusText ? (
+        <div
+          className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusToneClass.wrapper}`}
+        >
+          <span className={`h-2 w-2 rounded-full ${statusToneClass.dot}`} />
+          <span>{statusText}</span>
+        </div>
+      ) : null}
     </div>
   );
 }

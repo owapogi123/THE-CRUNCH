@@ -1864,6 +1864,9 @@ export default function CashierView() {
             {/* Top bar */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, gap: 8, flexWrap: "wrap" }}>
               <h1 style={{ fontSize: 16, fontWeight: 600, color: "#111", fontFamily: F }}>Menu</h1>
+              <UserIdentityBanner
+                className="order-3 w-full sm:order-2 sm:w-auto"
+              />
               <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
 
                 {/* Connectivity dot */}
@@ -1917,12 +1920,6 @@ export default function CashierView() {
                 </motion.button>
               </div>
             </div>
-
-            <UserIdentityBanner
-              title="Cashier Dashboard"
-              subtitle={`${restaurantSettings.restaurantName} order handling`}
-              className="mb-4"
-            />
 
             {/* Online Orders Panel */}
             <AnimatePresence>

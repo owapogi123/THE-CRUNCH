@@ -671,6 +671,10 @@ export default function Order() {
             </div>
           </div>
 
+          <UserIdentityBanner
+            className="order-3 w-full sm:order-2 sm:w-auto"
+          />
+
           {/* Right: stats */}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", width: isTablet ? "100%" : "auto" }}>
             {[
@@ -693,12 +697,6 @@ export default function Order() {
         </div>
 
         {/* ── Notification banner ── */}
-        <div style={{ padding: isMobile ? "12px 14px 0" : isTablet ? "12px 18px 0" : "12px 32px 0" }}>
-          <UserIdentityBanner
-            title="Order Processing"
-            subtitle={`${restaurantSettings.restaurantName} orders board`}
-          />
-        </div>
         {notifPermission !== "granted" && (
           <div style={{ padding: isMobile ? "12px 14px 0" : isTablet ? "12px 18px 0" : "12px 32px 0" }}>
             <button onClick={() => Notification.requestPermission().then(setNotifPermission)}

@@ -994,30 +994,21 @@ export default function AdminDashboard() {
         <div className="tablet-surface bg-[#FDFAF6] min-h-[calc(100vh-5rem)]">
 
           {/* ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Header ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ */}
-          <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
+          <div className="mb-6 flex flex-col gap-4">
+            <div className="flex flex-wrap items-start justify-between gap-4">
             {/* Brand */}
-            <div className="flex items-center gap-3 shrink-0">
+            <div className="shrink-0">
               <span className="text-2xl font-semibold text-[#4A1C1C]">
                 {restaurantSettings.restaurantName}
               </span>
+              <p className="mt-1 text-xs font-medium uppercase tracking-wide text-gray-400">
+                Administrator Dashboard
+              </p>
             </div>
 
-            {/* Search */}
-            <div className="min-w-0 flex-1 max-w-xl">
-              <div className="relative">
-                <Input
-                  type="search"
-                  placeholder="Search..."
-                  className="w-full bg-white border-2 border-gray-200 text-gray-800 placeholder:text-gray-400 rounded-full pl-6 pr-12 h-12 shadow-sm focus:shadow-md transition-shadow"
-                />
-                <Button
-                  size="icon"
-                  className="absolute right-1 top-1 bg-gray-100 hover:bg-gray-200 rounded-full h-10 w-10 transition-all duration-300 hover:scale-105"
-                >
-                  <Search className="h-5 w-5 text-gray-700" />
-                </Button>
-              </div>
-            </div>
+            <UserIdentityBanner
+              className="order-3 w-full sm:order-2 sm:w-auto"
+            />
 
             {/* Right Controls: Period Dropdown + Date Range Picker */}
             <div className="flex shrink-0 flex-wrap items-center gap-3">
@@ -1033,11 +1024,22 @@ export default function AdminDashboard() {
           </div>
 
           {/* ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Banners ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ */}
-          <UserIdentityBanner
-            title="Administrator Dashboard"
-            subtitle={`${restaurantSettings.restaurantName} overview`}
-            className="mb-6"
-          />
+            <div className="min-w-0 max-w-xl">
+              <div className="relative">
+                <Input
+                  type="search"
+                  placeholder="Search..."
+                  className="w-full bg-white border-2 border-gray-200 text-gray-800 placeholder:text-gray-400 rounded-full pl-6 pr-12 h-12 shadow-sm focus:shadow-md transition-shadow"
+                />
+                <Button
+                  size="icon"
+                  className="absolute right-1 top-1 bg-gray-100 hover:bg-gray-200 rounded-full h-10 w-10 transition-all duration-300 hover:scale-105"
+                >
+                  <Search className="h-5 w-5 text-gray-700" />
+                </Button>
+              </div>
+            </div>
+          </div>
 
           {ordersError && (
             <Card className="bg-red-50 border border-red-200 rounded-2xl p-4 mb-6 shadow-sm">

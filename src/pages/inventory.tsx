@@ -2154,12 +2154,15 @@ export default function Inventory() {
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4 }}
-          className="mb-2 flex flex-wrap items-start justify-between gap-4"
+          className="mb-6 flex flex-wrap items-start justify-between gap-4"
         >
           <div>
             <p className="text-xs text-gray-400 uppercase tracking-widest mb-1">Menu Administration</p>
             <h1 className="text-3xl font-bold text-gray-900">Menu Management</h1>
           </div>
+          <UserIdentityBanner
+            className="order-3 w-full sm:order-2 sm:w-auto"
+          />
           <div className="flex flex-col items-end select-none">
             <p className="text-base font-semibold text-gray-700 tabular-nums">
               {formatInSettingsTimezone(now, restaurantSettings, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
@@ -2169,12 +2172,6 @@ export default function Inventory() {
             </p>
           </div>
         </motion.div>
-
-        <UserIdentityBanner
-          title="Menu Management"
-          subtitle={`${restaurantSettings.restaurantName} administration`}
-          className="mb-6"
-        />
 
         <motion.div
           initial={{ opacity: 0, y: 8 }}

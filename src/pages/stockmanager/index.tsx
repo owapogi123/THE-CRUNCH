@@ -6,7 +6,6 @@ import {
   type Transition,
 } from "framer-motion";
 import { Sidebar } from "@/components/Sidebar";
-import { UserIdentityBanner } from "@/components/UserIdentityBanner";
 import { useNotifications } from "@/lib/NotificationContext";
 import { useAuth } from "../../context/authcontext";
 import {
@@ -112,6 +111,13 @@ const RAW_MATERIAL_CATEGORIES = [
   "Ingredients",
   "Aromatics",
 ] as const;
+const ROLE_LABELS: Record<string, string> = {
+  administrator: "Administrator",
+  cashier: "Cashier",
+  cook: "Cook",
+  inventory_manager: "Stock Manager",
+  customer: "Customer",
+};
 const STATUS_BADGE: Record<StockStatus, string> = {
   critical: "bg-orange-100 text-orange-600",
   low: "bg-yellow-100 text-yellow-700",
@@ -313,6 +319,10 @@ export default function StockManager() {
     const username = String(user?.username ?? "").trim();
     return fullName || username;
   }, [user]);
+  const currentStaffRoleLabel = useMemo(() => {
+    const role = String(user?.role ?? "").trim().toLowerCase();
+    return ROLE_LABELS[role] ?? "User";
+  }, [user?.role]);
 
   const { addNotification } = useNotifications();
   const showToast = useCallback(
@@ -792,12 +802,12 @@ export default function StockManager() {
 
         {/* ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ Header ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ */}
         <header className="bg-white border-b border-slate-100 sticky top-0 z-30 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-4 px-4 py-4 pt-20 md:px-6 md:pt-24 lg:px-8 lg:pt-4 lg:pl-24">
-            <div>
-              <h2 className="text-base font-semibold text-slate-800">
+          <div className="flex flex-wrap items-start gap-3 px-4 py-3 pt-20 md:px-6 md:pt-24 lg:flex-nowrap lg:items-center lg:gap-4 lg:px-8 lg:pt-4 lg:pl-24">
+            <div className="min-w-0 flex-1">
+              <h2 className="text-base font-semibold leading-tight text-slate-800">
                 Stock Manager
               </h2>
-              <p className="text-xs text-slate-400 font-light mt-0.5">
+              <p className="mt-0.5 text-xs font-light text-slate-400">
                 {formatInSettingsTimezone(new Date(), restaurantSettings, {
                   weekday: "long",
                   year: "numeric",
@@ -806,7 +816,18 @@ export default function StockManager() {
                 })}
               </p>
             </div>
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="order-3 basis-full sm:order-2 sm:basis-auto lg:order-2 lg:mx-auto">
+              <div className="inline-flex max-w-full flex-wrap items-center gap-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-600 shadow-sm">
+                <span className="font-medium text-slate-500">Logged in:</span>
+                <span className="font-semibold text-slate-800">
+                  {currentStaffDisplayName || "Unknown User"}
+                </span>
+                <span className="text-slate-400">
+                  ({currentStaffRoleLabel})
+                </span>
+              </div>
+            </div>
+            <div className="order-2 ml-auto flex flex-wrap items-center justify-end gap-3 sm:order-3 lg:order-3">
               {dashboard.attentionItems.length > 0 && (
                 <button
                   onClick={() => setTab("alerts")}
@@ -825,12 +846,6 @@ export default function StockManager() {
                 </span>
               </div>
             </div>
-          </div>
-          <div className="px-4 pb-3 md:px-6 lg:px-8 lg:pl-24">
-            <UserIdentityBanner
-              title="Stock Operations"
-              subtitle={`${restaurantSettings.restaurantName} inventory control`}
-            />
           </div>
           <div className="flex items-center justify-start gap-2 overflow-x-auto px-4 pb-3 md:px-6 lg:justify-center lg:px-8 lg:pl-24">
             {TABS.map((t) => {
