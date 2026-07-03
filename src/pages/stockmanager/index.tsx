@@ -638,6 +638,7 @@ export default function StockManager() {
         name,
         price: 0,
         quantity: 0,
+        unit: rawMaterialForm.unit.trim(),
         category: rawMaterialForm.category.trim(),
         description: description || undefined,
         raw_material: isStrictRawMaterialCategory(
@@ -733,6 +734,7 @@ export default function StockManager() {
     try {
       await api.updateProduct(editingMaterial.product_id, {
         name,
+        unit: rawMaterialForm.unit.trim(),
         category: rawMaterialForm.category.trim(),
         description: description || "",
         use_default_thresholds: rawMaterialForm.useDefaultThresholds,

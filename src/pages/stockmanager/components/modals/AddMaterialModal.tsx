@@ -109,7 +109,6 @@ export function AddMaterialModal({
             <StyledSelect
               value={rawMaterialForm.unit}
               onChange={(v) => setRawMaterialForm((p) => ({ ...p, unit: v }))}
-              disabled={isEditMode}
             >
               {activeInventoryUnitOptions.map((u) => (
                 <option key={u} value={u}>

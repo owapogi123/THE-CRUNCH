@@ -95,6 +95,7 @@ export const api = {
     name: string;
     price: number;
     quantity: number;
+    unit?: string;
     category?: string;
     description?: string;
     raw_material?: boolean;
@@ -111,6 +112,7 @@ export const api = {
     id: number,
     body: {
       name?: string;
+      unit?: string;
       category?: string;
       description?: string;
       use_default_thresholds?: boolean;

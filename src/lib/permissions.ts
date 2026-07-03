@@ -20,7 +20,7 @@ export type PermissionsMap = Record<NonNullRole, RolePermissions>;
 export const DEFAULT_PERMISSIONS: PermissionsMap = {
   administrator: {
     overview: true,
-    orders: false,
+    orders: true,
     menuManagement: true,
     menus: false,
     stockManager: false,
@@ -85,7 +85,10 @@ export function normalizePermissionsMap(
   };
 
   next.administrator.userAccounts = true;
+  next.administrator.orders = true;
   next.administrator.settings = true;
+  next.cashier.orders = true;
+  next.cook.orders = true;
 
   return next;
 }

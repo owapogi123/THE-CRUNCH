@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Clock, Bell, ClipboardList, XCircle, CheckCircle2, ChefHat, Utensils, Play, AlertCircle } from "lucide-react";
+import { Clock, Bell, ClipboardList, XCircle, CheckCircle2, Utensils, Play, AlertCircle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { api } from "../lib/api";
 import { Sidebar } from "@/components/Sidebar";
@@ -31,8 +31,11 @@ const getSettlementAction = (
   paymentStatus?: string | null,
 ) => {
   const normalizedStatus = normalizeWorkflowStatus(currentStatus);
-  if (["completed", "refunded", "cancelled"].includes(normalizedStatus)) {
+  if (["refunded", "cancelled"].includes(normalizedStatus)) {
     return null;
+  }
+  if (normalizedStatus === "completed") {
+    return isPaidOrderStatus(paymentStatus) ? "refund" : null;
   }
   if (
     normalizedStatus === "queued" ||
@@ -95,6 +98,14 @@ interface KitchenUsagePayload {
   items: KitchenUsageItem[];
 }
 const SHOW_LEGACY_USAGE_PANEL = false;
+interface OrderStatusCounts {
+  pendingPayment: number;
+  queued: number;
+  preparing: number;
+  ready: number;
+  completed: number;
+  refunded: number;
+}
 
 interface UsageProductOption {
   product_id: number;
@@ -109,7 +120,7 @@ interface UsageProductOption {
 }
 
 const isTerminalOrderStatus = (value?: string | null) =>
-  ["completed", "refunded", "cancelled"].includes(
+  ["refunded", "cancelled"].includes(
     String(value || "").trim().toLowerCase(),
   );
 
@@ -272,7 +283,14 @@ export default function Order() {
   );
   const [notifPermission, setNotifPermission] = useState(Notification.permission);
   const [orders, setOrders] = useState<OrderCard[]>([]);
-  const [servedCount, setServedCount] = useState(0);
+  const [statusCounts, setStatusCounts] = useState<OrderStatusCounts>({
+    pendingPayment: 0,
+    queued: 0,
+    preparing: 0,
+    ready: 0,
+    completed: 0,
+    refunded: 0,
+  });
   const [settlingId, setSettlingId] = useState<string | null>(null);
   const [usageOpen, setUsageOpen] = useState(false);
   const [usageLoading, setUsageLoading] = useState(false);
@@ -290,10 +308,31 @@ export default function Order() {
         api.get<{ id?: number | string; orderId?: number | string; status: string }[]>("/orders"),
       ]);
       setOrders((queue ?? []).filter((o) => !o.isFinished));
-      setServedCount(new Set((all ?? []).filter((o) => {
-        const status = String(o.status || "").toLowerCase();
-        return status === "completed" || status === "picked up";
-      }).map((o) => String(o.id ?? o.orderId))).size);
+      const nextCounts: OrderStatusCounts = {
+        pendingPayment: 0,
+        queued: 0,
+        preparing: 0,
+        ready: 0,
+        completed: 0,
+        refunded: 0,
+      };
+      for (const entry of all ?? []) {
+        const status = String(entry.status || "").trim().toLowerCase();
+        if (status === "pending payment") {
+          nextCounts.pendingPayment += 1;
+        } else if (status === "queued") {
+          nextCounts.queued += 1;
+        } else if (status === "preparing") {
+          nextCounts.preparing += 1;
+        } else if (status === "ready" || status === "ready for pickup") {
+          nextCounts.ready += 1;
+        } else if (status === "completed" || status === "picked up") {
+          nextCounts.completed += 1;
+        } else if (status === "refunded") {
+          nextCounts.refunded += 1;
+        }
+      }
+      setStatusCounts(nextCounts);
     } catch (e) { console.error(e); }
   };
 
@@ -483,10 +522,6 @@ export default function Order() {
     });
   };
 
-  const newCount  = orders.filter((o) => !o.isPreparing && !o.isReady).length;
-  const prepCount = orders.filter((o) => o.isPreparing && !o.isReady).length;
-  const readyCount = orders.filter((o) => o.isReady).length;
-
   const STATUS_LABEL: Record<string, string> = { "dine-in": "Dine In", "take-out": "Take Out", "delivery": "Delivery" };
   const usageHasErrors = usageItems.some((item) => getUsageTotals(item).invalid);
   const usageInputDisabled = usageReport?.status === "finalized";
@@ -626,8 +661,8 @@ export default function Order() {
           {/* Left: brand + clock */}
           <div style={{ display: "flex", alignItems: isTablet ? "flex-start" : "center", flexDirection: isTablet ? "column" : "row", gap: isTablet ? 10 : 20 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <ChefHat size={15} color="#111" />
-              <span style={{ fontSize: 11, fontWeight: 600, color: "#111", letterSpacing: "0.1em", textTransform: "uppercase" }}>Cook View</span>
+              <ClipboardList size={15} color="#111" />
+              <span style={{ fontSize: 11, fontWeight: 600, color: "#111", letterSpacing: "0.1em", textTransform: "uppercase" }}>Orders</span>
             </div>
             {!isTablet && <div style={{ width: 1, height: 24, background: "#e5e7eb" }} />}
             <div>
@@ -639,10 +674,12 @@ export default function Order() {
           {/* Right: stats */}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", width: isTablet ? "100%" : "auto" }}>
             {[
-              { label: "New",     val: newCount,    dim: false },
-              { label: "Cooking", val: prepCount,   dim: false },
-              { label: "Ready",   val: readyCount,  dim: false },
-              { label: "Served",  val: servedCount, dim: true  },
+              { label: "Pending Payment", val: statusCounts.pendingPayment, dim: false },
+              { label: "Queued",          val: statusCounts.queued,         dim: false },
+              { label: "Preparing",       val: statusCounts.preparing,      dim: false },
+              { label: "Ready",           val: statusCounts.ready,          dim: false },
+              { label: "Completed",       val: statusCounts.completed,      dim: true  },
+              { label: "Refunded",        val: statusCounts.refunded,       dim: true  },
             ].map(({ label, val, dim }) => (
               <div key={label} style={{
                 background: "#fff", border: "1px solid #e5e7eb", borderRadius: 12,
@@ -658,8 +695,8 @@ export default function Order() {
         {/* ── Notification banner ── */}
         <div style={{ padding: isMobile ? "12px 14px 0" : isTablet ? "12px 18px 0" : "12px 32px 0" }}>
           <UserIdentityBanner
-            title="Kitchen Queue"
-            subtitle={`${restaurantSettings.restaurantName} preparation board`}
+            title="Order Processing"
+            subtitle={`${restaurantSettings.restaurantName} orders board`}
           />
         </div>
         {notifPermission !== "granted" && (
@@ -667,7 +704,7 @@ export default function Order() {
             <button onClick={() => Notification.requestPermission().then(setNotifPermission)}
               style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, background: "#fff",
                 border: "1px solid #e5e7eb", color: "#6b7280", padding: "7px 14px", borderRadius: 9, cursor: "pointer", fontFamily: F }}>
-              <Bell size={11} /> Enable notifications for order alerts
+              <Bell size={11} /> Enable notifications for order updates
             </button>
           </div>
         )}
@@ -714,7 +751,7 @@ export default function Order() {
         <div style={{ padding: isMobile ? "18px 14px 28px" : isTablet ? "20px 18px 32px" : "24px 32px 40px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 14 }}>
             <ClipboardList size={13} color="#9ca3af" />
-            <span style={{ fontSize: 12, fontWeight: 500, color: "#6b7280" }}>Order Queue</span>
+            <span style={{ fontSize: 12, fontWeight: 500, color: "#6b7280" }}>Active Orders</span>
             {orders.length > 0 && (
               <span style={{ background: "#f3f4f6", color: "#6b7280", fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 99 }}>
                 {orders.length}

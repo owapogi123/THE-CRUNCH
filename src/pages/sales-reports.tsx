@@ -2694,7 +2694,9 @@ function OrderRow({
 
   const totalQty = order.items.reduce((s, i) => s + i.quantity, 0);
   const canRefund =
-    order.status === "Pending" && isPaidPaymentStatus(order.paymentStatus);
+    order.status !== "Refunded" &&
+    order.status !== "Cancelled" &&
+    isPaidPaymentStatus(order.paymentStatus);
   const isDelivery = order.orderType === "delivery";
 
   const orderTypeLabel =
