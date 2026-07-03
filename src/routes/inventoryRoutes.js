@@ -48,6 +48,12 @@ async function ensureInventoryAlertColumns() {
       "ALTER TABLE Inventory ADD COLUMN critical_stock_threshold INT NULL",
     );
   }
+
+  if (!(await hasColumn("Inventory", "unit"))) {
+    await db.query(
+      "ALTER TABLE Inventory ADD COLUMN unit VARCHAR(50) NOT NULL DEFAULT 'piece'",
+    );
+  }
 }
 
 function normalizeBooleanFlag(value, fallback = true) {
@@ -583,7 +589,7 @@ router.get("/", async (req, res) => {
          i.Product_ID                                                            AS product_id,
          COALESCE(m.Product_Name, i.Item_Purchased, 'Unnamed Product')          AS product_name,
          COALESCE(m.Category_Name, 'Uncategorized')                             AS category,
-         COALESCE(bu.unit, 'piece')                                             AS unit,
+         COALESCE(NULLIF(TRIM(i.unit), ''), bu.unit, 'piece')                   AS unit,
          COALESCE(i.Stock, 0)                                                   AS mainStock,
          COALESCE(i.Quantity, 0)                                                AS quantity,
          COALESCE(i.Item_Purchased, m.Product_Name, 'Unnamed Product')          AS item_purchased,
@@ -739,7 +745,7 @@ router.get("/alerts", async (_req, res) => {
          i.Product_ID AS product_id,
          COALESCE(m.Product_Name, i.Item_Purchased, 'Unnamed Product') AS product_name,
          COALESCE(m.Category_Name, 'Uncategorized') AS category,
-         COALESCE(bu.unit, 'piece') AS unit,
+         COALESCE(NULLIF(TRIM(i.unit), ''), bu.unit, 'piece') AS unit,
          COALESCE(i.Stock, 0) AS mainStock,
          COALESCE(i.use_default_thresholds, 1) AS useDefaultThresholds,
          i.low_stock_threshold AS lowStockThreshold,
@@ -1221,7 +1227,7 @@ router.post("/daily-usage", async (req, res) => {
            p.id AS product_id,
            COALESCE(m.Product_Name, p.name, CONCAT('Product #', p.id)) AS product_name,
            COALESCE(m.Category_Name, '') AS category,
-           COALESCE(bu.unit, 'unit') AS unit,
+           COALESCE(NULLIF(TRIM(inv.unit), ''), bu.unit, 'unit') AS unit,
            COALESCE(inv.Daily_Withdrawn, 0) AS withdrawn_qty,
            ${stockItemExpr} AS item_type
          FROM products p

@@ -19,6 +19,7 @@ const {
 const PRODUCT_NAME_MAX_LENGTH = 100;
 const PRODUCT_DESCRIPTION_MAX_LENGTH = 100;
 const RAW_MATERIAL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9' -]*[A-Za-z0-9]$|^[A-Za-z0-9]$/;
+const DEFAULT_INVENTORY_UNIT = "piece";
 
 function normalizeProductName(value, { stockOnly = false } = {}) {
     const normalized = String(value ?? "").trim();
@@ -44,6 +45,17 @@ function normalizeProductDescription(value) {
     if (!normalized) return null;
     if (normalized.length > PRODUCT_DESCRIPTION_MAX_LENGTH) {
         throw new Error("Description must not exceed 100 characters.");
+    }
+    return normalized;
+}
+
+function normalizeInventoryUnit(value) {
+    const normalized = String(value ?? "").trim();
+    if (!normalized) {
+        return DEFAULT_INVENTORY_UNIT;
+    }
+    if (normalized.length > 50) {
+        throw new Error("Unit must not exceed 50 characters.");
     }
     return normalized;
 }
@@ -99,6 +111,12 @@ async function ensureInventoryThresholdColumns() {
     if (!(await hasColumn("Inventory", "critical_stock_threshold"))) {
         await db.query(
             "ALTER TABLE Inventory ADD COLUMN critical_stock_threshold INT NULL",
+        );
+    }
+
+    if (!(await hasColumn("Inventory", "unit"))) {
+        await db.query(
+            "ALTER TABLE Inventory ADD COLUMN unit VARCHAR(50) NOT NULL DEFAULT 'piece'",
         );
     }
 }
@@ -355,6 +373,7 @@ router.get("/", async (req, res) => {
                 ${itemTypeExpr} AS item_type,
                 m.Category_Name AS category,
                 m.Promo AS inventoryPromo,
+                COALESCE(NULLIF(TRIM(i.unit), ''), 'piece') AS unit,
                 COALESCE(i.Stock, 0) AS stock,
                 COALESCE(i.Daily_Withdrawn, 0) AS dailyWithdrawn,
                 CAST(COALESCE(m.Stock, i.Stock, p.quantity, 0) AS SIGNED) AS remainingStock,
@@ -367,7 +386,14 @@ router.get("/", async (req, res) => {
             values,
         );
 
-        res.json(await attachIngredientAvailability(rows));
+        res.json(
+            await attachIngredientAvailability(
+                rows.map((row) => ({
+                    ...row,
+                    unit: normalizeInventoryUnit(row.unit),
+                })),
+            ),
+        );
     } catch (err) {
         console.error(err);
         res.status(500).json({ message: 'DB error', error: err.message });
@@ -401,6 +427,7 @@ router.post("/", async (req, res) => {
             use_default_thresholds,
             low_stock_threshold,
             critical_stock_threshold,
+            unit,
         } = req.body;
 
         const normalizedAvailabilityStatus = normalizeAvailabilityStatus(
@@ -432,6 +459,7 @@ router.post("/", async (req, res) => {
             stockOnly: normalizedItemType === STOCK_ITEM,
         });
         const normalizedDescription = normalizeProductDescription(description);
+        const normalizedUnit = normalizeInventoryUnit(unit);
         const normalizedPromo = normalizePromoValues(
             is_promotional,
             promo_price,
@@ -579,9 +607,10 @@ router.post("/", async (req, res) => {
                 Item_Purchased,
                 use_default_thresholds,
                 low_stock_threshold,
-                critical_stock_threshold
+                critical_stock_threshold,
+                unit
             )
-             VALUES (?,?,?,?,?,?,?,?,?)
+             VALUES (?,?,?,?,?,?,?,?,?,?)
              ON DUPLICATE KEY UPDATE
                 Quantity = VALUES(Quantity),
                 Stock = VALUES(Stock),
@@ -590,7 +619,8 @@ router.post("/", async (req, res) => {
                 Item_Purchased = VALUES(Item_Purchased),
                 use_default_thresholds = VALUES(use_default_thresholds),
                 low_stock_threshold = VALUES(low_stock_threshold),
-                critical_stock_threshold = VALUES(critical_stock_threshold)`,
+                critical_stock_threshold = VALUES(critical_stock_threshold),
+                unit = VALUES(unit)`,
             [
                 newId,
                 safeQuantity,
@@ -601,6 +631,7 @@ router.post("/", async (req, res) => {
                 useDefaultThresholds ? 1 : 0,
                 lowStockThreshold,
                 criticalStockThreshold,
+                normalizedUnit,
             ],
         );
 
@@ -624,6 +655,7 @@ router.post("/", async (req, res) => {
                 err.message === "Product name is required." ||
                 err.message === "Product name must be at least 2 characters." ||
                 err.message === "Product name must not exceed 100 characters." ||
+                err.message === "Unit must not exceed 50 characters." ||
                 err.message === "Description must not exceed 100 characters." ||
                 err.message ===
                     "Material name may only use letters, numbers, spaces, apostrophes, and hyphens." ||
@@ -642,6 +674,7 @@ router.put("/:id", async (req, res) => {
         await ensureMenuManagementColumns();
         await ensureMenuAvailabilitySchema(db);
         const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+        await ensureInventoryThresholdColumns();
 
         const productId = Number(req.params.id);
         if (!Number.isFinite(productId) || productId <= 0) {
@@ -678,6 +711,7 @@ router.put("/:id", async (req, res) => {
             use_default_thresholds,
             low_stock_threshold,
             critical_stock_threshold,
+            unit,
         } = req.body;
 
         const productFields = [];
@@ -699,6 +733,11 @@ router.put("/:id", async (req, res) => {
             menuValues.push(safeName);
             inventoryFields.push("Item_Purchased = ?");
             inventoryValues.push(safeName);
+        }
+
+        if (unit !== undefined) {
+            inventoryFields.push("unit = ?");
+            inventoryValues.push(normalizeInventoryUnit(unit));
         }
 
         if (price !== undefined) {
@@ -913,6 +952,12 @@ router.put("/:id", async (req, res) => {
         if (inventoryFields.length > 0) {
             inventoryFields.push("Last_Update = NOW()");
             await db.query(
+                `INSERT INTO Inventory (Product_ID, Item_Purchased)
+                 VALUES (?, COALESCE((SELECT name FROM products WHERE id = ?), 'Unnamed Product'))
+                 ON DUPLICATE KEY UPDATE Product_ID = Product_ID`,
+                [productId, productId],
+            );
+            await db.query(
                 `UPDATE Inventory SET ${inventoryFields.join(", ")} WHERE Product_ID = ?`,
                 [...inventoryValues, productId],
             );
@@ -924,10 +969,12 @@ router.put("/:id", async (req, res) => {
 
         const [rows] = await db.query(
             `SELECT p.*, m.Category_Name AS category,
+                    COALESCE(NULLIF(TRIM(i.unit), ''), 'piece') AS unit,
                     COALESCE(m.manual_override, 0) AS manual_override,
                     COALESCE(m.manual_status, 'Available') AS manual_status
              FROM products p
              LEFT JOIN Menu m ON m.Product_ID = p.id
+             LEFT JOIN Inventory i ON i.Product_ID = p.id
              WHERE p.id = ?`,
             [productId],
         );
@@ -953,6 +1000,7 @@ router.put("/:id", async (req, res) => {
                 err.message === "Product name is required." ||
                 err.message === "Product name must be at least 2 characters." ||
                 err.message === "Product name must not exceed 100 characters." ||
+                err.message === "Unit must not exceed 50 characters." ||
                 err.message === "Description must not exceed 100 characters." ||
                 err.message ===
                     "Material name may only use letters, numbers, spaces, apostrophes, and hyphens." ||

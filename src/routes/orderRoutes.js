@@ -1665,25 +1665,27 @@ router.patch("/:id", async (req, res) => {
     }
 
     if (hasStatusUpdate && (nextStatus === "Cancelled" || nextStatus === "Refunded")) {
-      if (currentStatus === "Completed") {
-        console.warn(
-          `[orderRoutes] Blocked completed refund/cancellation for order ${id}. Requested status: ${nextStatus}.`,
-        );
-        return res.status(400).json({
-          message: "Completed orders cannot be cancelled or refunded",
-        });
-      }
-
       if (currentStatus === "Refunded" || currentStatus === "Cancelled") {
         return res.status(400).json({
           message: `${currentStatus} orders cannot be cancelled or refunded again`,
         });
       }
 
-      if (nextStatus === "Cancelled" && isPaidPaymentStatus(effectiveCurrentPaymentStatus)) {
-        return res.status(400).json({
-          message: "Paid orders must be refunded instead of cancelled",
-        });
+      if (nextStatus === "Cancelled") {
+        if (currentStatus === "Completed") {
+          console.warn(
+            `[orderRoutes] Blocked completed cancellation for order ${id}.`,
+          );
+          return res.status(400).json({
+            message: "Completed orders cannot be cancelled",
+          });
+        }
+
+        if (isPaidPaymentStatus(effectiveCurrentPaymentStatus)) {
+          return res.status(400).json({
+            message: "Paid orders must be refunded instead of cancelled",
+          });
+        }
       }
 
       if (nextStatus === "Refunded" && !isPaidPaymentStatus(effectiveCurrentPaymentStatus)) {
