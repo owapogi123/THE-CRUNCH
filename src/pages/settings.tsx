@@ -3,6 +3,7 @@ import { Lock, ChevronDown, ChevronUp, Star, MessageSquare } from "lucide-react"
 import { useAuth } from "../context/authcontext";
 import { api } from "../lib/api";
 import { saveGeneralSettings, syncGeneralSettings } from "../lib/restaurantSettings";
+import { Sidebar } from "../components/Sidebar";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 export const FONT = "'Poppins', sans-serif";
@@ -881,85 +882,90 @@ export default function Settings() {
   };
 
   return (
-    <div style={{
-      display: "flex", height: "100%", fontFamily: FONT, background: "#f0eeec",
-      padding: 24, boxSizing: "border-box",
-    }}>
-      <div style={{
-        display: "flex", width: "100%", maxWidth: 1100, margin: "0 auto",
-        background: "#fff", borderRadius: 24, overflow: "hidden",
-        boxShadow: "0 4px 24px rgba(0,0,0,.05)",
-      }}>
-        {/* Settings sidebar */}
+    <div className="flex min-h-screen bg-gray-50" style={{ fontFamily: FONT }}>
+      <Sidebar />
+      <main className="tablet-shell flex-1">
         <div style={{
-          width: 230, flexShrink: 0, background: "#fff",
-          overflowY: "auto", padding: "24px 14px",
+          display: "flex", height: "100%", background: "#f0eeec",
+          padding: 24, boxSizing: "border-box", minHeight: "100vh",
         }}>
-          <div style={{ padding: "0 10px 18px" }}>
-            <h2 style={{ fontFamily: FONT, fontSize: "1.1rem", fontWeight: 700, color: "#1c1a18", margin: 0 }}>
-              Settings
-            </h2>
-          </div>
-          {NAV_GROUPS.map((group) => (
-            <SidebarGroup
-              key={group.label}
-              group={group}
-              active={activeTab}
-              role={role}
-              feedbackCount={feedbackCount}
-              onSelect={setActiveTab}
-            />
-          ))}
-        </div>
-
-        {/* Content */}
-        <div style={{
-          flex: 1, overflowY: "auto", padding: "32px 36px",
-          borderLeft: "1px solid #f0eeec",
-        }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
-            <div>
-              {settingsLoading && (
-                <p style={{ fontFamily: FONT, fontSize: "0.76rem", color: "#9e9891", margin: "0 0 6px" }}>
-                  Loading saved settings...
-                </p>
-              )}
-              {settingsError && (
-                <p style={{ fontFamily: FONT, fontSize: "0.76rem", color: "#b91c1c", margin: "0 0 6px" }}>
-                  {settingsError}
-                </p>
-              )}
-              {saveNotice && !settingsError && (
-                <p style={{ fontFamily: FONT, fontSize: "0.76rem", color: "#15803d", margin: "0 0 6px" }}>
-                  {saveNotice}
-                </p>
-              )}
+          <div style={{
+            display: "flex", width: "100%", maxWidth: 1100, margin: "0 auto",
+            background: "#fff", borderRadius: 24, overflow: "hidden",
+            boxShadow: "0 4px 24px rgba(0,0,0,.05)",
+          }}>
+            {/* Settings sidebar */}
+            <div style={{
+              width: 230, flexShrink: 0, background: "#fff",
+              overflowY: "auto", padding: "24px 14px",
+            }}>
+              <div style={{ padding: "0 10px 18px" }}>
+                <h2 style={{ fontFamily: FONT, fontSize: "1.1rem", fontWeight: 700, color: "#1c1a18", margin: 0 }}>
+                  Settings
+                </h2>
+              </div>
+              {NAV_GROUPS.map((group) => (
+                <SidebarGroup
+                  key={group.label}
+                  group={group}
+                  active={activeTab}
+                  role={role}
+                  feedbackCount={feedbackCount}
+                  onSelect={setActiveTab}
+                />
+              ))}
             </div>
-            <button
-              onClick={handleSaveSettings}
-              disabled={settingsSaving || settingsLoading}
-              style={{
-                ...S.accentBtn,
-                textAlign: "center",
-                opacity: settingsSaving || settingsLoading ? 0.55 : 1,
-                cursor:
-                  settingsSaving || settingsLoading ? "not-allowed" : "pointer",
-              }}
-            >
-              {settingsSaving ? "Saving..." : "Save Settings"}
-            </button>
+
+            {/* Content */}
+            <div style={{
+              flex: 1, overflowY: "auto", padding: "32px 36px",
+              borderLeft: "1px solid #f0eeec",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+                <div>
+                  {settingsLoading && (
+                    <p style={{ fontFamily: FONT, fontSize: "0.76rem", color: "#9e9891", margin: "0 0 6px" }}>
+                      Loading saved settings...
+                    </p>
+                  )}
+                  {settingsError && (
+                    <p style={{ fontFamily: FONT, fontSize: "0.76rem", color: "#b91c1c", margin: "0 0 6px" }}>
+                      {settingsError}
+                    </p>
+                  )}
+                  {saveNotice && !settingsError && (
+                    <p style={{ fontFamily: FONT, fontSize: "0.76rem", color: "#15803d", margin: "0 0 6px" }}>
+                      {saveNotice}
+                    </p>
+                  )}
+                </div>
+                <button
+                  onClick={handleSaveSettings}
+                  disabled={settingsSaving || settingsLoading}
+                  style={{
+                    ...S.accentBtn,
+                    textAlign: "center",
+                    opacity: settingsSaving || settingsLoading ? 0.55 : 1,
+                    cursor:
+                      settingsSaving || settingsLoading ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {settingsSaving ? "Saving..." : "Save Settings"}
+                </button>
+              </div>
+              <div style={{ marginBottom: 8 }}>
+                <h1 style={{ fontFamily: FONT, fontSize: "1.4rem", fontWeight: 700, color: "#1c1a18", margin: "0 0 4px" }}>
+                  {meta.title}
+                </h1>
+                <p style={{ fontFamily: FONT, fontSize: "0.82rem", color: "#9e9891", margin: "0 0 8px" }}>
+                  {meta.desc}
+                </p>
+              </div>
+              {renderTab()}
+            </div>
           </div>
-          <div style={{ marginBottom: 8 }}>
-            <h1 style={{ fontFamily: FONT, fontSize: "1.4rem", fontWeight: 700, color: "#1c1a18", margin: "0 0 4px" }}>
-              {meta.title}
-            </h1>
-            <p style={{ fontFamily: FONT, fontSize: "0.82rem", color: "#9e9891", margin: "0 0 8px" }}>
-              {meta.desc}
-            </p>
-          </div>
-          {renderTab()}
         </div>
-      </div>
+      </main>
     </div>
   );
 }
