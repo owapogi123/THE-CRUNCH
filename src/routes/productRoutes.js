@@ -15,6 +15,7 @@ const {
     normalizeItemType,
     assertProductsMatchItemType,
 } = require("../utils/productItemType");
+const { ensureInventoryUnitColumn } = require("../utils/inventorySchema");
 
 const PRODUCT_NAME_MAX_LENGTH = 100;
 const PRODUCT_DESCRIPTION_MAX_LENGTH = 100;
@@ -54,8 +55,8 @@ function normalizeInventoryUnit(value) {
     if (!normalized) {
         return DEFAULT_INVENTORY_UNIT;
     }
-    if (normalized.length > 50) {
-        throw new Error("Unit must not exceed 50 characters.");
+    if (normalized.length > 30) {
+        throw new Error("Unit must not exceed 30 characters.");
     }
     return normalized;
 }
@@ -114,11 +115,7 @@ async function ensureInventoryThresholdColumns() {
         );
     }
 
-    if (!(await hasColumn("Inventory", "unit"))) {
-        await db.query(
-            "ALTER TABLE Inventory ADD COLUMN unit VARCHAR(50) NOT NULL DEFAULT 'piece'",
-        );
-    }
+    await ensureInventoryUnitColumn(db);
 }
 
 async function ensureMenuManagementColumns() {
@@ -655,7 +652,7 @@ router.post("/", async (req, res) => {
                 err.message === "Product name is required." ||
                 err.message === "Product name must be at least 2 characters." ||
                 err.message === "Product name must not exceed 100 characters." ||
-                err.message === "Unit must not exceed 50 characters." ||
+                err.message === "Unit must not exceed 30 characters." ||
                 err.message === "Description must not exceed 100 characters." ||
                 err.message ===
                     "Material name may only use letters, numbers, spaces, apostrophes, and hyphens." ||
@@ -682,7 +679,7 @@ router.put("/:id", async (req, res) => {
         }
         const itemTypeSelect = hasItemTypeColumn ? "item_type" : "NULL AS item_type";
         const [[existingProduct]] = await db.query(
-            `SELECT ${itemTypeSelect}, price
+            `SELECT ${itemTypeSelect}, price, name, quantity
              FROM products
              WHERE id = ?
              LIMIT 1`,
@@ -951,12 +948,72 @@ router.put("/:id", async (req, res) => {
 
         if (inventoryFields.length > 0) {
             inventoryFields.push("Last_Update = NOW()");
-            await db.query(
-                `INSERT INTO Inventory (Product_ID, Item_Purchased)
-                 VALUES (?, COALESCE((SELECT name FROM products WHERE id = ?), 'Unnamed Product'))
-                 ON DUPLICATE KEY UPDATE Product_ID = Product_ID`,
-                [productId, productId],
+            const [[existingInventory]] = await db.query(
+                `SELECT Inventory_ID
+                 FROM Inventory
+                 WHERE Product_ID = ?
+                 LIMIT 1`,
+                [productId],
             );
+            if (!existingInventory) {
+                const fallbackQuantity =
+                    quantity !== undefined
+                        ? Number(quantity)
+                        : Number(existingProduct.quantity ?? 0);
+                const fallbackItemPurchased =
+                    name !== undefined
+                        ? normalizeProductName(name, {
+                              stockOnly:
+                                  normalizeItemType(existingProduct.item_type, MENU_ITEM) ===
+                                  STOCK_ITEM,
+                          })
+                        : String(existingProduct.name ?? "").trim() || "Unnamed Product";
+                const fallbackUnit =
+                    unit !== undefined
+                        ? normalizeInventoryUnit(unit)
+                        : DEFAULT_INVENTORY_UNIT;
+                const fallbackUseDefaultThresholds =
+                    use_default_thresholds !== undefined
+                        ? normalizeBooleanFlag(use_default_thresholds, true)
+                        : true;
+                const fallbackLowStockThreshold =
+                    low_stock_threshold === undefined ||
+                    low_stock_threshold === null ||
+                    low_stock_threshold === ""
+                        ? null
+                        : Number(low_stock_threshold);
+                const fallbackCriticalStockThreshold =
+                    critical_stock_threshold === undefined ||
+                    critical_stock_threshold === null ||
+                    critical_stock_threshold === ""
+                        ? null
+                        : Number(critical_stock_threshold);
+                await db.query(
+                    `INSERT INTO Inventory (
+                        Product_ID,
+                        Quantity,
+                        Stock,
+                        Reorder_Point,
+                        Critical_Point,
+                        Item_Purchased,
+                        use_default_thresholds,
+                        low_stock_threshold,
+                        critical_stock_threshold,
+                        unit
+                    )
+                    VALUES (?, ?, ?, 20, 5, ?, ?, ?, ?, ?)`,
+                    [
+                        productId,
+                        fallbackQuantity,
+                        fallbackQuantity,
+                        fallbackItemPurchased,
+                        fallbackUseDefaultThresholds ? 1 : 0,
+                        fallbackLowStockThreshold,
+                        fallbackCriticalStockThreshold,
+                        fallbackUnit,
+                    ],
+                );
+            }
             await db.query(
                 `UPDATE Inventory SET ${inventoryFields.join(", ")} WHERE Product_ID = ?`,
                 [...inventoryValues, productId],
@@ -1000,7 +1057,7 @@ router.put("/:id", async (req, res) => {
                 err.message === "Product name is required." ||
                 err.message === "Product name must be at least 2 characters." ||
                 err.message === "Product name must not exceed 100 characters." ||
-                err.message === "Unit must not exceed 50 characters." ||
+                err.message === "Unit must not exceed 30 characters." ||
                 err.message === "Description must not exceed 100 characters." ||
                 err.message ===
                     "Material name may only use letters, numbers, spaces, apostrophes, and hyphens." ||

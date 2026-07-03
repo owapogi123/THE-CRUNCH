@@ -1,6 +1,7 @@
 const app = require("./app");
 const db = require("./config/db");
 const { setup } = require("./db/setup");
+const { ensureInventoryUnitColumn } = require("./utils/inventorySchema");
 
 // default port 5000 to match frontend proxy, but allow override
 const PORT = process.env.PORT || 5000;
@@ -10,6 +11,7 @@ async function startServer() {
     await setup({
       log: console,
     });
+    await ensureInventoryUnitColumn(db);
 
     const info = await db.verifyConnection();
     console.log(

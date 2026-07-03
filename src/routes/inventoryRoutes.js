@@ -10,6 +10,7 @@ const {
   ensureProductsItemTypeSchema,
   getProductItemTypeExpression,
 } = require("../utils/productItemType");
+const { ensureInventoryUnitColumn } = require("../utils/inventorySchema");
 
 async function hasColumn(tableName, columnName) {
   const [rows] = await db.query(`SHOW COLUMNS FROM ${tableName} LIKE ?`, [
@@ -49,11 +50,7 @@ async function ensureInventoryAlertColumns() {
     );
   }
 
-  if (!(await hasColumn("Inventory", "unit"))) {
-    await db.query(
-      "ALTER TABLE Inventory ADD COLUMN unit VARCHAR(50) NOT NULL DEFAULT 'piece'",
-    );
-  }
+  await ensureInventoryUnitColumn(db);
 }
 
 function normalizeBooleanFlag(value, fallback = true) {
