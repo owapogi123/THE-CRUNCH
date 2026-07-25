@@ -1,5 +1,7 @@
 require('dotenv').config();
 const mysql = require('mysql2/promise');
+const fs = require('fs');
+const path = require('path');
 
 (async function verify(){
   const DB_HOST = process.env.DB_HOST || 'localhost';
@@ -10,7 +12,24 @@ const mysql = require('mysql2/promise');
 
   let conn;
   try {
-    conn = await mysql.createConnection({host: DB_HOST, user: DB_USER, password: DB_PASSWORD, database: DB_NAME, port: DB_PORT});
+    conn = await mysql.createConnection({
+      host: DB_HOST,
+      user: DB_USER,
+      password: DB_PASSWORD,
+      database: DB_NAME,
+      port: DB_PORT,
+      ...(process.env.DB_SSL_CA_PATH
+        ? {
+            ssl: {
+              ca: fs.readFileSync(
+                path.resolve(process.env.DB_SSL_CA_PATH),
+                'utf8',
+              ),
+              rejectUnauthorized: true,
+            },
+          }
+        : {}),
+    });
     console.log(`Connected to ${DB_HOST}:${DB_PORT} database ${DB_NAME}`);
 
     const [tables] = await conn.query("SHOW TABLES");

@@ -1,5 +1,7 @@
 require("dotenv").config();
 const mysql = require("mysql2/promise");
+const fs = require("fs");
+const path = require("path");
 const { ensureProductsItemTypeSchema } = require("../utils/productItemType");
 
 const DB_HOST = process.env.DB_HOST || "localhost";
@@ -42,6 +44,17 @@ async function setup(options = {}) {
       user: DB_USER,
       password: DB_PASSWORD,
       port: DB_PORT,
+      ...(process.env.DB_SSL_CA_PATH
+        ? {
+            ssl: {
+              ca: fs.readFileSync(
+                path.resolve(process.env.DB_SSL_CA_PATH),
+                "utf8",
+              ),
+              rejectUnauthorized: true,
+            },
+          }
+        : {}),
       multipleStatements: true,
     });
 

@@ -1,4 +1,5 @@
 const mysql = require("mysql2");
+const fs = require("fs");
 const path = require("path");
 
 require("dotenv").config({ path: path.resolve(__dirname, "../../.env") });
@@ -24,6 +25,17 @@ const pool = mysql.createPool({
   password: dbConfig.password,
   database: dbConfig.database,
   port: dbConfig.port,
+  ...(process.env.DB_SSL_CA_PATH
+    ? {
+        ssl: {
+          ca: fs.readFileSync(
+            path.resolve(process.env.DB_SSL_CA_PATH),
+            "utf8",
+          ),
+          rejectUnauthorized: true,
+        },
+      }
+    : {}),
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,

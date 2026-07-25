@@ -4,6 +4,7 @@ const fs = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
+const { requireCookViewAccess } = require("../middleware/cookViewAccess");
 const { sendCustomerOrderReceiptEmail } = require("../services/emailService");
 const {
   deductStockForPaidOrder,
@@ -582,7 +583,7 @@ async function ensureLegacyCashierRow(conn, cashierId) {
 // ─── ROUTES (specific paths MUST come before /:id wildcards) ──────────────────
 
 // GET /orders — list all orders for dashboard
-router.get("/", async (req, res) => {
+router.get("/", requireCookViewAccess, async (req, res) => {
   try {
     await ensureOnlineOrderColumns();
     await ensureDeliveryTrackingColumns();
@@ -632,7 +633,7 @@ router.get("/", async (req, res) => {
 });
 
 // GET /orders/queue — kitchen/order queue view
-router.get("/queue", async (req, res) => {
+router.get("/queue", requireCookViewAccess, async (req, res) => {
   try {
     await ensureStartedAtColumn();
     await ensureKitchenTimingColumns();
@@ -1558,7 +1559,7 @@ router.post("/", async (req, res) => {
 
 // PATCH /orders/:id — update order status
 // ⚠️  Wildcard param routes go LAST so they don't shadow named paths above.
-router.patch("/:id", async (req, res) => {
+router.patch("/:id", requireCookViewAccess, async (req, res) => {
   let conn;
   let txStarted = false;
   try {

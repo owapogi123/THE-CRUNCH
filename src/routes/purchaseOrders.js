@@ -18,6 +18,7 @@ function toNumber(value, fallback = 0) {
 
 const PURCHASE_ORDER_NAME_MAX_LENGTH = 100;
 const PURCHASE_ORDER_NUMBER_MAX_DIGITS = 20;
+const PURCHASE_ORDER_QUANTITY_MAX = 999;
 
 function hasValidNumericLength(value, maxDigits = PURCHASE_ORDER_NUMBER_MAX_DIGITS) {
   const digitsOnly = String(value ?? "").replace(/\D/g, "");
@@ -418,15 +419,17 @@ router.post("/", async (req, res) => {
         error: "Purchase order item name must not exceed 100 characters",
       });
     }
-    if (!hasValidNumericLength(item.quantity)) {
+    const rawQuantity = String(item.quantity ?? "").trim();
+    const safeQuantity = toNumber(rawQuantity, Number.NaN);
+    if (
+      !/^\d+$/.test(rawQuantity) ||
+      !Number.isFinite(safeQuantity) ||
+      !Number.isInteger(safeQuantity) ||
+      safeQuantity < 1 ||
+      safeQuantity > PURCHASE_ORDER_QUANTITY_MAX
+    ) {
       return res.status(400).json({
-        error: "Purchase order item quantity is too long or invalid",
-      });
-    }
-    const safeQuantity = toNumber(item.quantity, Number.NaN);
-    if (!Number.isFinite(safeQuantity) || safeQuantity <= 0) {
-      return res.status(400).json({
-        error: "Purchase order item quantity must be greater than 0",
+        error: "Purchase order item quantity must be a whole number from 1 to 999",
       });
     }
     const submittedUnitCost = item.unitCost ?? item.unit_cost;
@@ -658,16 +661,33 @@ router.patch("/:id/receive", async (req, res) => {
         .json({ error: "Cannot receive a Cancelled order" });
     }
 
+    const [items] = await conn.query(
+      `SELECT * FROM purchase_order_items WHERE po_id = ?`,
+      [poId],
+    );
+
+    const invalidItem = items.find((item) => {
+      const quantity = toNumber(item.quantity, Number.NaN);
+      return (
+        !Number.isFinite(quantity) ||
+        !Number.isInteger(quantity) ||
+        quantity < 1 ||
+        quantity > PURCHASE_ORDER_QUANTITY_MAX
+      );
+    });
+    if (invalidItem) {
+      await conn.rollback();
+      return res.status(400).json({
+        error:
+          "Purchase order contains an item quantity outside the allowed whole-number range of 1 to 999",
+      });
+    }
+
     await conn.query(
       `UPDATE purchase_orders
        SET status = 'Received', receipt_no = ?, received_by = ?, received_date = ?
        WHERE po_id = ?`,
       [receiptNo ? String(receiptNo).trim() : null, receivedBy, recDate, poId],
-    );
-
-    const [items] = await conn.query(
-      `SELECT * FROM purchase_order_items WHERE po_id = ?`,
-      [poId],
     );
 
     const receivedItemNames = [];

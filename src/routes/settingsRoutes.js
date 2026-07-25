@@ -187,7 +187,7 @@ async function ensureInventoryMasterTables() {
 const DEFAULT_ROLE_PERMISSIONS = {
   administrator: {
     overview: true,
-    orders: false,
+    orders: true,
     menuManagement: true,
     menus: false,
     stockManager: false,
@@ -217,7 +217,7 @@ const DEFAULT_ROLE_PERMISSIONS = {
   },
   inventory_manager: {
     overview: true,
-    orders: false,
+    orders: true,
     menuManagement: true,
     menus: false,
     stockManager: true,
@@ -229,6 +229,12 @@ const DEFAULT_ROLE_PERMISSIONS = {
 
 const VALID_PERMISSION_ROLES = Object.keys(DEFAULT_ROLE_PERMISSIONS);
 const VALID_PERMISSION_KEYS = Object.keys(DEFAULT_ROLE_PERMISSIONS.administrator);
+const COOK_VIEW_PERMISSION_ROLES = [
+  "administrator",
+  "cashier",
+  "inventory_manager",
+  "cook",
+];
 const DEFAULT_PERMISSION_ROLE_LOCKS = {
   administrator: false,
   cashier: false,
@@ -254,6 +260,9 @@ function normalizePermissionsPayload(payload) {
 
   next.administrator.userAccounts = true;
   next.administrator.settings = true;
+  for (const role of COOK_VIEW_PERMISSION_ROLES) {
+    next[role].orders = true;
+  }
 
   return next;
 }
@@ -291,6 +300,9 @@ async function loadRolePermissions() {
 
   merged.administrator.userAccounts = true;
   merged.administrator.settings = true;
+  for (const role of COOK_VIEW_PERMISSION_ROLES) {
+    merged[role].orders = true;
+  }
 
   const [lockRows] = await db.query(
     `SELECT settings_json
@@ -385,13 +397,13 @@ function normalizeNonNegativeNumericString(value, fieldName, fallback = "") {
 function sanitizeSettingsPayload(payload) {
   const source = payload && typeof payload === "object" ? payload : {};
   return {
-    restaurantName: normalizeString(source.restaurantName, "The Crunch"),
-    tagline: normalizeString(source.tagline),
+    restaurantName: "The Crunch",
+    tagline: "",
     email: normalizeString(source.email),
     phone: normalizeString(source.phone),
     address: normalizeString(source.address),
-    currency: normalizeString(source.currency, "PHP"),
-    timezone: normalizeString(source.timezone, "Asia/Manila"),
+    currency: "PHP",
+    timezone: "Asia/Manila",
     openTime: normalizeString(source.openTime, "08:00"),
     closeTime: normalizeString(source.closeTime, "22:00"),
     weekdayOpenTime: normalizeString(source.weekdayOpenTime, "10:00"),

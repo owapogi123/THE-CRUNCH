@@ -11,6 +11,7 @@ const {
   getProductItemTypeExpression,
 } = require("../utils/productItemType");
 const { ensureInventoryUnitColumn } = require("../utils/inventorySchema");
+const { requireCookViewAccess } = require("../middleware/cookViewAccess");
 
 async function hasColumn(tableName, columnName) {
   const [rows] = await db.query(`SHOW COLUMNS FROM ${tableName} LIKE ?`, [
@@ -504,7 +505,7 @@ async function buildDailyUsagePayload({
 }
 
 // GET /api/inventory
-router.get("/", async (req, res) => {
+router.get("/", requireCookViewAccess, async (req, res) => {
   try {
     await ensureBatchTable();
     await ensureInventoryAlertColumns();
@@ -1157,7 +1158,7 @@ router.post("/batches/:batchId/return", async (req, res) => {
   }
 });
 
-router.get("/daily-usage", async (req, res) => {
+router.get("/daily-usage", requireCookViewAccess, async (req, res) => {
   try {
     const requestedDate = toReportDateString(req.query.date);
     const requestedStatus = String(req.query.status || "").trim().toLowerCase();
@@ -1179,7 +1180,7 @@ router.get("/daily-usage", async (req, res) => {
   }
 });
 
-router.post("/daily-usage", async (req, res) => {
+router.post("/daily-usage", requireCookViewAccess, async (req, res) => {
   let conn;
   try {
     const reportDate = toReportDateString(req.body.report_date);
