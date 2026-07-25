@@ -49,7 +49,7 @@ const testRoutes = require("./routes/testRoutes");
 app.use("/api/test", testRoutes);
 const productRoutes = require("./routes/productRoutes");
 app.use("/api/products", productRoutes);
-const purchaseOrdersRouter = require("./routes/Purchaseorders");
+const purchaseOrdersRouter = require("./routes/purchaseOrders");
 app.use("/api/purchase-orders", purchaseOrdersRouter);
 
 // inventory and batch endpoints (new)
