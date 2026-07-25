@@ -9,6 +9,7 @@ import {
   cachePermissions,
   hasCachedPermissions,
   normalizeRole,
+  COOK_VIEW_ROLES,
 } from "./lib/permissions";
 import { api } from "./lib/api";
 
@@ -106,6 +107,7 @@ function ProtectedRoute({
   userRole,
   permissions,
   permissionsReady,
+  allowedRoles,
 }: {
   element: React.ReactElement;
   permissionKey?: PermissionKey;
@@ -113,9 +115,13 @@ function ProtectedRoute({
   userRole: Role;
   permissions: PermissionsMap;
   permissionsReady: boolean;
+  allowedRoles?: readonly Exclude<Role, "customer" | null>[];
 }) {
   if (!isAuth) return <Navigate to="/login" replace />;
   if (!userRole || userRole === "customer") {
+    return <Navigate to="/unauthorized" replace />;
+  }
+  if (allowedRoles && !allowedRoles.includes(userRole)) {
     return <Navigate to="/unauthorized" replace />;
   }
   if (!permissionsReady) {
@@ -221,7 +227,11 @@ export default function App() {
     };
   }, [userRole]);
 
-  const protect = (element: React.ReactElement, permissionKey?: PermissionKey) => (
+  const protect = (
+    element: React.ReactElement,
+    permissionKey?: PermissionKey,
+    allowedRoles?: readonly Exclude<Role, "customer" | null>[],
+  ) => (
     <ProtectedRoute
       element={element}
       permissionKey={permissionKey}
@@ -229,6 +239,7 @@ export default function App() {
       userRole={userRole}
       permissions={permissions}
       permissionsReady={permissionsReady}
+      allowedRoles={allowedRoles}
     />
   );
 
@@ -276,7 +287,7 @@ export default function App() {
       {/* ── Administrator ────────────────────────────────────── */}
       <Route
         path="/orders"
-        element={protect(<Order />, "orders")}
+        element={protect(<Order />, "orders", COOK_VIEW_ROLES)}
       />
       <Route
         path="/dashboard"

@@ -4,6 +4,7 @@ import {
   useState,
   useRef,
   useEffect,
+  useCallback,
   ReactNode,
 } from "react";
 import { authApi } from "../lib/api";
@@ -189,7 +190,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const updateUser = (patch: Partial<AuthUser>) => {
+  const updateUser = useCallback((patch: Partial<AuthUser>) => {
     setUser((current) => {
       if (!current) return current;
       const nextUser = { ...current, ...patch };
@@ -199,7 +200,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       return nextUser;
     });
-  };
+  }, []);
 
   // ── Logout ─────────────────────────────────────────────────────────────────
 

@@ -1,8 +1,9 @@
 import { motion, type Variants } from "framer-motion";
 import { EmptyState } from "../EmptyState";
 import { POBadge } from "../POBadge";
+import { KPICard } from "../KPICard";
 import { fmtFilterDate, fmtReceivedDate } from "../../utils/formatters";
-import type { PurchaseOrder } from "../../types/inventory";
+import type { DashboardSummaryKey, PurchaseOrder } from "../../types/inventory";
 
 export function PurchaseHistoryTab({
   pageVariants,
@@ -23,6 +24,7 @@ export function PurchaseHistoryTab({
   setPoHistoryPage,
   setSelectedOrder,
   setPrintOrder,
+  onSummarySelect,
 }: {
   pageVariants: Variants;
   staggerVariants: Variants;
@@ -42,6 +44,7 @@ export function PurchaseHistoryTab({
   setPoHistoryPage: React.Dispatch<React.SetStateAction<number>>;
   setSelectedOrder: React.Dispatch<React.SetStateAction<PurchaseOrder | null>>;
   setPrintOrder: React.Dispatch<React.SetStateAction<PurchaseOrder | null>>;
+  onSummarySelect: (key: DashboardSummaryKey) => void;
 }) {
   return (
     <motion.div
@@ -65,33 +68,36 @@ export function PurchaseHistoryTab({
             {
               label: "Completed Orders",
               value: filteredCompletedPOs.length,
-              accent: "border-t-emerald-400",
-              text: "text-emerald-600",
+              accent: "emerald",
+              summary: "historyCompleted" as const,
+              sub: "in selected date range",
             },
             {
               label: "Received Today",
               value: filteredCompletedPOs.filter(
                 (o) => o.receivedDate === new Date().toISOString().split("T")[0],
               ).length,
-              accent: "border-t-sky-400",
-              text: "text-sky-600",
+              accent: "sky",
+              summary: "historyToday" as const,
+              sub: "completed today",
             },
             {
               label: "With Receipt Logged",
               value: filteredCompletedPOs.filter((o) => !!o.receiptNo).length,
-              accent: "border-t-slate-800",
-              text: "text-slate-700",
+              accent: "slate",
+              summary: "historyReceipt" as const,
+              sub: "receipt number recorded",
             },
           ].map((k) => (
-            <div
+            <KPICard
               key={k.label}
-              className={`bg-white rounded-2xl p-5 shadow-sm border border-slate-100 border-t-4 ${k.accent}`}
-            >
-              <p className="text-xs text-slate-400 font-medium">{k.label}</p>
-              <p className={`text-3xl font-bold mt-1 leading-none ${k.text}`}>
-                {k.value}
-              </p>
-            </div>
+              itemVariants={itemVariants}
+              label={k.label}
+              value={k.value.toString()}
+              sub={k.sub}
+              accent={k.accent}
+              onClick={() => onSummarySelect(k.summary)}
+            />
           ))}
         </motion.div>
         <motion.div variants={itemVariants}>

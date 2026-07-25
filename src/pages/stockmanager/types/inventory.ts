@@ -17,9 +17,18 @@ export type Tab =
 
 export type DashboardSummaryKey =
   | "products"
+  | "normal"
   | "low"
   | "critical"
-  | "attention";
+  | "out"
+  | "attention"
+  | "poAll"
+  | "poDraft"
+  | "poOrdered"
+  | "poReceived"
+  | "historyCompleted"
+  | "historyToday"
+  | "historyReceipt";
 
 export type POStatus = "Draft" | "Ordered" | "Received" | "Cancelled";
 

@@ -1,6 +1,9 @@
 import { motion, type Variants } from "framer-motion";
+import { useState } from "react";
 import { formatInSettingsTimezone } from "@/lib/restaurantSettings";
 import { SectionCard } from "../SectionCard";
+import { KPICard } from "../KPICard";
+import { DashboardSummaryModal } from "../DashboardSummaryModal";
 import type { ReportData } from "../../types/inventory";
 import { fmtInt } from "../../utils/formatters";
 import {
@@ -9,6 +12,7 @@ import {
 } from "../../utils/inputUtils";
 
 type ReportPeriod = "weekly" | "monthly";
+type StockMovementMetric = "received" | "withdrawn" | "returned" | "wasted";
 
 export function StockMovementReportPanel({
   itemVariants,
@@ -43,6 +47,43 @@ export function StockMovementReportPanel({
   onExportCsv: () => void;
   getCategoryStyle: (category: string) => string;
 }) {
+  const [selectedMetric, setSelectedMetric] =
+    useState<StockMovementMetric | null>(null);
+  const metricConfig = reportData && selectedMetric
+    ? {
+        received: {
+          title: "Received Stock Summary",
+          totalLabel: "Total Received",
+          totalValue: reportData.totalReceived,
+        },
+        withdrawn: {
+          title: "Withdrawn Stock Summary",
+          totalLabel: "Total Withdrawn",
+          totalValue: reportData.totalWithdrawn,
+        },
+        returned: {
+          title: "Returned Stock Summary",
+          totalLabel: "Total Returned",
+          totalValue: reportData.totalReturned,
+        },
+        wasted: {
+          title: "Wasted Stock Summary",
+          totalLabel: "Total Wasted",
+          totalValue: reportData.totalWasted,
+        },
+      }[selectedMetric]
+    : null;
+  const metricRows = reportData && selectedMetric
+    ? reportData.items
+        .filter((item) => item[selectedMetric] > 0)
+        .map((item) => ({
+          id: `${selectedMetric}-${item.product_id}`,
+          name: item.product_name,
+          value: `${fmtInt(item[selectedMetric])} ${item.unit}`,
+          meta: `${item.category} - ${reportData.period}`,
+        }))
+    : [];
+
   return (
     <>
       <div
@@ -174,44 +215,37 @@ export function StockMovementReportPanel({
                 {
                   label: "Total Received",
                   value: fmtInt(reportData.totalReceived),
-                  accent: "border-t-emerald-400",
-                  text: "text-emerald-600",
+                  accent: "emerald",
+                  metric: "received" as const,
                 },
                 {
-                  label: "Total Released",
+                  label: "Total Withdrawn",
                   value: fmtInt(reportData.totalWithdrawn),
-                  accent: "border-t-indigo-400",
-                  text: "text-indigo-600",
+                  accent: "indigo",
+                  metric: "withdrawn" as const,
                 },
                 {
                   label: "Total Returned",
                   value: fmtInt(reportData.totalReturned),
-                  accent: "border-t-amber-400",
-                  text: "text-amber-600",
+                  accent: "amber",
+                  metric: "returned" as const,
                 },
                 {
                   label: "Total Wasted",
                   value: fmtInt(reportData.totalWasted),
-                  accent: "border-t-rose-400",
-                  text: "text-rose-500",
+                  accent: "rose",
+                  metric: "wasted" as const,
                 },
               ].map((card) => (
-                <div
+                <KPICard
                   key={card.label}
-                  className={`bg-white rounded-2xl p-5 shadow-sm border border-slate-100 border-t-4 ${card.accent}`}
-                >
-                  <p className="text-xs text-slate-400 font-medium">
-                    {card.label}
-                  </p>
-                  <p
-                    className={`text-3xl font-bold mt-1 leading-none ${card.text}`}
-                  >
-                    {card.value}
-                  </p>
-                  <p className="text-xs text-slate-400 mt-1">
-                    {reportData.period}
-                  </p>
-                </div>
+                  itemVariants={itemVariants}
+                  label={card.label}
+                  value={card.value}
+                  sub={reportData.period}
+                  accent={card.accent}
+                  onClick={() => setSelectedMetric(card.metric)}
+                />
               ))}
             </div>
             <SectionCard
@@ -316,6 +350,18 @@ export function StockMovementReportPanel({
           </div>
         )}
       </motion.div>
+      {metricConfig && reportData && (
+        <DashboardSummaryModal
+          open={selectedMetric !== null}
+          title={metricConfig.title}
+          subtitle={`Detailed stock movement for ${reportData.period}.`}
+          totalLabel={metricConfig.totalLabel}
+          totalValue={fmtInt(metricConfig.totalValue)}
+          rows={metricRows}
+          emptyMessage={`No ${selectedMetric} stock movement was recorded for this period.`}
+          onClose={() => setSelectedMetric(null)}
+        />
+      )}
     </>
   );
 }

@@ -36,16 +36,13 @@ export function normalizeGeneralSettings(
   source: Record<string, unknown> | null | undefined,
 ): GeneralRestaurantSettings {
   return {
-    restaurantName: readString(
-      source?.restaurantName,
-      GENERAL_SETTINGS_DEFAULTS.restaurantName,
-    ),
-    tagline: readString(source?.tagline),
+    restaurantName: GENERAL_SETTINGS_DEFAULTS.restaurantName,
+    tagline: GENERAL_SETTINGS_DEFAULTS.tagline,
     email: readString(source?.email),
     phone: readString(source?.phone),
     address: readString(source?.address),
-    currency: readString(source?.currency, GENERAL_SETTINGS_DEFAULTS.currency),
-    timezone: readString(source?.timezone, GENERAL_SETTINGS_DEFAULTS.timezone),
+    currency: GENERAL_SETTINGS_DEFAULTS.currency,
+    timezone: GENERAL_SETTINGS_DEFAULTS.timezone,
     openTime: readString(source?.openTime, GENERAL_SETTINGS_DEFAULTS.openTime),
     closeTime: readString(
       source?.closeTime,

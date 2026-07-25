@@ -456,7 +456,7 @@ function RecipeCard({ recipe,isFav,justAdded,flavorSel,variantSel,onToggleFav,on
           <h2 style={{ fontSize:"clamp(16px,2.5vw,18px)",fontWeight:800,color:avail?"#f0ede8":"rgba(240,237,232,0.45)",margin:0,lineHeight:1.28,flex:1 }}>{recipe.name}</h2>
           <div style={{ display:"flex",alignItems:"center",gap:6,flexShrink:0,flexWrap:"wrap" }}>
             {recipe.tag&&avail&&<Tag tag={recipe.tag} />}
-            {!avail&&<span style={{ fontSize:10,fontWeight:700,padding:"4px 10px",borderRadius:20,background:"rgba(239,68,68,0.1)",color:"#f87171",border:"1px solid rgba(239,68,68,0.22)",whiteSpace:"nowrap",letterSpacing:"0.06em",textTransform:"uppercase" }}>Not Available</span>}
+            {!avail&&<span style={{ fontSize:10,fontWeight:800,padding:"4px 10px",borderRadius:20,background:"rgba(239,68,68,0.14)",color:"#f87171",border:"1px solid rgba(239,68,68,0.3)",whiteSpace:"nowrap",letterSpacing:"0.08em",textTransform:"uppercase" }}>OUT OF STOCK</span>}
           </div>
         </div>
         <p style={{ fontSize:13,color:"rgba(240,237,232,0.42)",lineHeight:1.7,marginBottom:recipe.note?6:18,fontWeight:300 }}>{recipe.description}</p>
@@ -477,7 +477,7 @@ function RecipeCard({ recipe,isFav,justAdded,flavorSel,variantSel,onToggleFav,on
           <div style={{ display:"flex",gap:10,flexWrap:"wrap",width:isNarrowPhone?"100%":undefined }}>
             <motion.button onClick={onToggleFav} whileHover={{ scale:1.04 }} whileTap={{ scale:0.93 }} transition={SP} style={{ display:"flex",alignItems:"center",gap:7,background:isFav?"rgba(245,200,66,0.1)":"rgba(240,237,232,0.05)",color:isFav?"#f5c842":"rgba(240,237,232,0.45)",border:`1px solid ${isFav?"rgba(245,200,66,0.3)":"rgba(240,237,232,0.1)"}`,borderRadius:12,padding:"10px 18px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit",flex:isNarrowPhone?"1 1 100%":"0 0 auto",justifyContent:"center" }}>{isFav?"Saved":"Save"}</motion.button>
             <motion.button onClick={()=>avail&&onAddToCart()} disabled={!avail} whileHover={avail?{ scale:1.04 }:{}} whileTap={avail?{ scale:0.93 }:{}} transition={SP} style={{ display:"flex",alignItems:"center",gap:7,background:!avail?"rgba(240,237,232,0.04)":justAdded?"rgba(74,222,128,0.1)":"#f5c842",color:!avail?"rgba(240,237,232,0.2)":justAdded?"#4ade80":"#111",border:!avail?"1px solid rgba(240,237,232,0.1)":justAdded?"1px solid rgba(74,222,128,0.25)":"none",borderRadius:12,padding:"10px 22px",fontSize:13,fontWeight:700,cursor:!avail?"not-allowed":"pointer",fontFamily:"inherit",minWidth:isNarrowPhone?0:140,flex:isNarrowPhone?"1 1 100%":"0 0 auto",justifyContent:"center",opacity:!avail?0.55:1 }}>
-              <AnimatePresence mode="wait"><motion.span key={!avail?"na":justAdded?"done":"add"} initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }} transition={SP}>{!avail?"Not Available":justAdded?"Added!":"Add to Order"}</motion.span></AnimatePresence>
+              <AnimatePresence mode="wait"><motion.span key={!avail?"na":justAdded?"done":"add"} initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }} transition={SP}>{!avail?"OUT OF STOCK":justAdded?"Added!":"Add to Order"}</motion.span></AnimatePresence>
             </motion.button>
           </div>
           <div style={{ textAlign:isNarrowPhone?"left":"right",width:isNarrowPhone?"100%":undefined }}>

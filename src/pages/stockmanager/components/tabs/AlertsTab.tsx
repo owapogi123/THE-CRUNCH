@@ -1,7 +1,9 @@
 import { motion, type Variants } from "framer-motion";
 import { formatInSettingsTimezone } from "@/lib/restaurantSettings";
 import { EmptyState } from "../EmptyState";
+import { KPICard } from "../KPICard";
 import type {
+  DashboardSummaryKey,
   InventoryAlertsPayload,
   Product,
   StockAlertSettings,
@@ -45,6 +47,7 @@ export function AlertsTab({
   getCategoryStyle,
   statusBadge,
   toNumber,
+  onSummarySelect,
 }: {
   pageVariants: Variants;
   staggerVariants: Variants;
@@ -80,6 +83,7 @@ export function AlertsTab({
   getCategoryStyle: (cat: string) => string;
   statusBadge: Record<"critical" | "low" | "normal", string>;
   toNumber: (v: unknown, fb?: number) => number;
+  onSummarySelect: (key: DashboardSummaryKey) => void;
 }) {
   return (
     <motion.div
@@ -139,46 +143,44 @@ export function AlertsTab({
           </div>
         </motion.div>
         <motion.div variants={itemVariants} className="grid grid-cols-4 gap-4">
-          <div className="bg-green-50 rounded-2xl p-5 border-2 border-t-4 border-green-200 border-t-green-500 shadow-sm">
-            <p className="text-xs text-green-600 font-medium">Normal</p>
-            <p className="text-3xl font-bold text-green-600 mt-1">
-              {
-                products.filter(
-                  (p) =>
-                    !isMenuFoodProduct(p) &&
-                    getAlertSeverity(p, stockAlertSettings) === "normal",
-                ).length
-              }
-            </p>
-            <p className="text-xs text-green-500 mt-1">items in safe range</p>
-          </div>
-          <div className="bg-yellow-50 rounded-2xl p-5 border-2 border-t-4 border-yellow-200 border-t-yellow-500 shadow-sm">
-            <p className="text-xs text-yellow-700 font-medium">
-              Warning Items
-            </p>
-            <p className="text-3xl font-bold text-yellow-600 mt-1">
-              {lowStock.length}
-            </p>
-            <p className="text-xs text-yellow-700/80 mt-1">
-              need reordering soon
-            </p>
-          </div>
-          <div className="bg-orange-50 rounded-2xl p-5 border-2 border-t-4 border-orange-200 border-t-orange-500 shadow-sm">
-            <p className="text-xs text-orange-600 font-medium">
-              Critical Items
-            </p>
-            <p className="text-3xl font-bold text-orange-600 mt-1">
-              {alertCriticalStock.length}
-            </p>
-            <p className="text-xs text-orange-500 mt-1">order immediately</p>
-          </div>
-          <div className="bg-red-50 rounded-2xl p-5 border-2 border-t-4 border-red-200 border-t-red-500 shadow-sm">
-            <p className="text-xs text-red-600 font-medium">Out of Stock</p>
-            <p className="text-3xl font-bold text-red-600 mt-1">
-              {outOfStockItems.length}
-            </p>
-            <p className="text-xs text-red-500 mt-1">no stock remaining</p>
-          </div>
+          <KPICard
+            itemVariants={itemVariants}
+            label="Normal"
+            value={products
+              .filter(
+                (p) =>
+                  !isMenuFoodProduct(p) &&
+                  getAlertSeverity(p, stockAlertSettings) === "normal",
+              )
+              .length.toString()}
+            sub="items in safe range"
+            accent="green"
+            onClick={() => onSummarySelect("normal")}
+          />
+          <KPICard
+            itemVariants={itemVariants}
+            label="Warning Items"
+            value={lowStock.length.toString()}
+            sub="need reordering soon"
+            accent="yellow"
+            onClick={() => onSummarySelect("low")}
+          />
+          <KPICard
+            itemVariants={itemVariants}
+            label="Critical Items"
+            value={alertCriticalStock.length.toString()}
+            sub="order immediately"
+            accent="orange"
+            onClick={() => onSummarySelect("critical")}
+          />
+          <KPICard
+            itemVariants={itemVariants}
+            label="Out of Stock"
+            value={outOfStockItems.length.toString()}
+            sub="no stock remaining"
+            accent="red"
+            onClick={() => onSummarySelect("out")}
+          />
         </motion.div>
         {lowStock.length === 0 &&
         alertCriticalStock.length === 0 &&

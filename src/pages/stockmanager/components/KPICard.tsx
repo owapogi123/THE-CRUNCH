@@ -34,6 +34,42 @@ const KPI_ACCENT: Record<
     bg: "bg-emerald-50",
     borderColor: "border-emerald-200",
   },
+  green: {
+    border: "border-t-green-500",
+    value: "text-green-600",
+    bg: "bg-green-50",
+    borderColor: "border-green-200",
+  },
+  orange: {
+    border: "border-t-orange-500",
+    value: "text-orange-600",
+    bg: "bg-orange-50",
+    borderColor: "border-orange-200",
+  },
+  red: {
+    border: "border-t-red-500",
+    value: "text-red-600",
+    bg: "bg-red-50",
+    borderColor: "border-red-200",
+  },
+  blue: {
+    border: "border-t-blue-500",
+    value: "text-blue-600",
+    bg: "bg-blue-50",
+    borderColor: "border-blue-200",
+  },
+  sky: {
+    border: "border-t-sky-500",
+    value: "text-sky-600",
+    bg: "bg-sky-50",
+    borderColor: "border-sky-200",
+  },
+  amber: {
+    border: "border-t-amber-500",
+    value: "text-amber-600",
+    bg: "bg-amber-50",
+    borderColor: "border-amber-200",
+  },
 };
 
 export function KPICard({

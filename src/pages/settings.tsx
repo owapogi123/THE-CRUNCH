@@ -67,13 +67,13 @@ function normalizeSettingsState(
   source: Record<string, unknown> | null | undefined,
 ): RestaurantSettings {
   return {
-    restaurantName: readString(source?.restaurantName, DEFAULT.restaurantName),
-    tagline: readString(source?.tagline),
+    restaurantName: DEFAULT.restaurantName,
+    tagline: DEFAULT.tagline,
     email: readString(source?.email),
     phone: readString(source?.phone),
     address: readString(source?.address),
-    currency: readString(source?.currency, DEFAULT.currency),
-    timezone: readString(source?.timezone, DEFAULT.timezone),
+    currency: DEFAULT.currency,
+    timezone: DEFAULT.timezone,
     weekdayOpenTime: readString(
       source?.weekdayOpenTime,
       DEFAULT.weekdayOpenTime,
@@ -273,25 +273,17 @@ export function LockedSection({ tabLabel }: { tabLabel: string }) {
 // ─── Tab panels ───────────────────────────────────────────────────────────────
 export function BusinessTab({ s, setStr }: { s: RestaurantSettings; setStr: (k: keyof RestaurantSettings, v: string) => void }) {
   return <>
-    <Card title="Restaurant Identity">
-      <FR label="Business name"><SI value={s.restaurantName} onChange={(v) => setStr("restaurantName", v)} placeholder="The Crunch" /></FR>
-      <FR label="Tagline" last><SI value={s.tagline} onChange={(v) => setStr("tagline", v)} placeholder="Crunch into flavor" /></FR>
-    </Card>
-    <Card title="Regional Settings">
+    <Card title="Fixed System Identity">
+      <FR label="System name">
+        <span style={{ fontFamily: FONT, fontSize: "0.8rem", fontWeight: 600, color: "#1c1a18" }}>The Crunch</span>
+      </FR>
       <FR label="Currency">
-        <SS
-          value={s.currency}
-          onChange={(v) => setStr("currency", v)}
-          options={[
-            { value: "PHP", label: "Philippine Peso (PHP)" },
-            { value: "USD", label: "US Dollar (USD)" },
-            { value: "EUR", label: "Euro (EUR)" },
-          ]}
-        />
+        <span style={{ fontFamily: FONT, fontSize: "0.8rem", fontWeight: 600, color: "#1c1a18" }}>Philippine Peso (PHP)</span>
       </FR>
       <FR label="Time zone" last>
-        <SI value={s.timezone} onChange={(v) => setStr("timezone", v)} placeholder="Asia/Manila" />
+        <span style={{ fontFamily: FONT, fontSize: "0.8rem", fontWeight: 600, color: "#1c1a18" }}>Asia/Manila</span>
       </FR>
+      <Hint>The Crunch name, branding, currency, and time zone are fixed system settings.</Hint>
     </Card>
     <Card title="Contact Details">
       <FR label="Email"><SI value={s.email} onChange={(v) => setStr("email", v)} type="email" placeholder="contact@thecrunch.ph" /></FR>
@@ -557,17 +549,152 @@ export function AuditTab() {
   );
 }
 
+type OwnAccount = {
+  id: number;
+  username: string;
+  email: string;
+  role: string;
+};
+
+function formatRoleLabel(value: string) {
+  return value
+    .split("_")
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
 export function PersonalTab() {
+  const { user, updateUser } = useAuth();
+  const [account, setAccount] = useState<OwnAccount | null>(null);
+  const [displayName, setDisplayName] = useState(user?.username ?? "");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [profileMessage, setProfileMessage] = useState<string | null>(null);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [passwordMessage, setPasswordMessage] = useState<string | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.get<OwnAccount>("/users/me")
+      .then((data) => {
+        if (cancelled) return;
+        setAccount(data);
+        setDisplayName(data.username);
+        updateUser({ username: data.username, email: data.email, role: data.role });
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setProfileError(
+            error instanceof Error ? error.message : "Failed to load your account.",
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [updateUser]);
+
+  const handleProfileSave = async () => {
+    const username = displayName.trim();
+    setProfileMessage(null);
+    setProfileError(null);
+    if (username.length < 2 || username.length > 100) {
+      setProfileError("Display name must be between 2 and 100 characters.");
+      return;
+    }
+
+    setProfileSaving(true);
+    try {
+      const saved = await api.put<OwnAccount>("/users/me", { username });
+      setAccount(saved);
+      setDisplayName(saved.username);
+      updateUser({ username: saved.username, email: saved.email, role: saved.role });
+      setProfileMessage("Account details updated.");
+    } catch (error) {
+      setProfileError(
+        error instanceof Error ? error.message : "Failed to update your account.",
+      );
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
+  const handlePasswordSave = async () => {
+    setPasswordMessage(null);
+    setPasswordError(null);
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      setPasswordError("Current password, new password, and confirmation are required.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError("New passwords do not match.");
+      return;
+    }
+    if (newPassword.length < 8 || !/[A-Za-z]/.test(newPassword) || !/\d/.test(newPassword)) {
+      setPasswordError("New password must be at least 8 characters with a letter and number.");
+      return;
+    }
+
+    setPasswordSaving(true);
+    try {
+      await api.put<{ message: string }>("/users/me/password", {
+        currentPassword,
+        newPassword,
+        confirmPassword,
+      });
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setPasswordMessage("Password changed successfully.");
+    } catch (error) {
+      setPasswordError(
+        error instanceof Error ? error.message : "Failed to change your password.",
+      );
+    } finally {
+      setPasswordSaving(false);
+    }
+  };
+
+  const email = account?.email ?? user?.email ?? "";
+  const role = account?.role ?? user?.role ?? "";
+
   return <>
-    <Card title="Profile Information">
-      {([["Display name", "text", "e.g. Juan dela Cruz"], ["Email", "email", "juan@thecrunch.ph"]] as [string, string, string][]).map(([lbl, t, ph]) => (
-        <FR key={lbl} label={lbl}><SI value="" onChange={() => {}} type={t} placeholder={ph} /></FR>
-      ))}
-      <FR label="New password" last><SI value="" onChange={() => {}} type="password" placeholder="Leave blank to keep current" /></FR>
+    <Card title="My Account">
+      <FR label="Display name / username">
+        <SI value={displayName} onChange={setDisplayName} placeholder="e.g. Juan dela Cruz" />
+      </FR>
+      <FR label="Email">
+        <span style={{ fontFamily: FONT, fontSize: "0.8rem", color: "#5a5652" }}>{email || "Not available"}</span>
+      </FR>
+      <FR label="Role" last>
+        <span style={{ fontFamily: FONT, fontSize: "0.8rem", color: "#5a5652" }}>{formatRoleLabel(role) || "Not available"}</span>
+      </FR>
+      <div style={{ padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <span style={{ fontFamily: FONT, fontSize: "0.72rem", color: profileError ? "#b91c1c" : "#15803d" }}>
+          {profileError ?? profileMessage}
+        </span>
+        <button onClick={handleProfileSave} disabled={profileSaving} style={{ ...S.accentBtn, opacity: profileSaving ? 0.55 : 1, cursor: profileSaving ? "not-allowed" : "pointer" }}>
+          {profileSaving ? "Saving..." : "Save Account"}
+        </button>
+      </div>
     </Card>
-    <Card title="Preferences">
-      <TR label="Dark mode" desc="Toggle between light and dark interface." value={false} onChange={() => {}} />
-      <TR label="Notification preferences" value={true} onChange={() => {}} last />
+    <Card title="Security">
+      <FR label="Current password"><SI value={currentPassword} onChange={setCurrentPassword} type="password" /></FR>
+      <FR label="New password"><SI value={newPassword} onChange={setNewPassword} type="password" /></FR>
+      <FR label="Confirm new password" last><SI value={confirmPassword} onChange={setConfirmPassword} type="password" /></FR>
+      <div style={{ padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <span style={{ fontFamily: FONT, fontSize: "0.72rem", color: passwordError ? "#b91c1c" : "#15803d" }}>
+          {passwordError ?? passwordMessage}
+        </span>
+        <button onClick={handlePasswordSave} disabled={passwordSaving} style={{ ...S.accentBtn, opacity: passwordSaving ? 0.55 : 1, cursor: passwordSaving ? "not-allowed" : "pointer" }}>
+          {passwordSaving ? "Changing..." : "Change Password"}
+        </button>
+      </div>
     </Card>
   </>;
 }
@@ -670,7 +797,7 @@ export const NAV_GROUPS: NavGroup[] = [
   { label: "Catalog", items: [{ key: "products", label: "Products" }, { key: "inventory", label: "Inventory" }] },
   { label: "Finance", items: [{ key: "billing", label: "Tax & Charges" }, { key: "payment", label: "Payment Methods" }, { key: "receipt", label: "Receipt" }, { key: "reports", label: "Reports" }] },
   { label: "Admin", items: [{ key: "users", label: "User Management" }, { key: "roles", label: "Roles & Permissions" }, { key: "security", label: "Security" }, { key: "backup", label: "Backup & Restore" }, { key: "audit", label: "Audit Logs" }] },
-  { label: "System", items: [{ key: "notifications", label: "Notifications" }, { key: "feedback", label: "Customer Feedback" }, { key: "personal", label: "Personal Settings" }] },
+  { label: "System", items: [{ key: "personal", label: "My Account" }, { key: "notifications", label: "Notifications" }, { key: "feedback", label: "Customer Feedback" }] },
 ];
 
 export const TAB_META: Record<TabKey, { title: string; desc: string }> = {
@@ -690,7 +817,7 @@ export const TAB_META: Record<TabKey, { title: string; desc: string }> = {
   security:      { title: "Security Settings",       desc: "2FA, session timeout, and login monitoring." },
   backup:        { title: "Backup & Restore",        desc: "Manual and scheduled backups, database restore." },
   audit:         { title: "Audit Logs",              desc: "User activity, transaction, and system change history." },
-  personal:      { title: "Personal Settings",       desc: "Profile, password, theme, and notification preferences." },
+  personal:      { title: "My Account",              desc: "Manage your own display name and password securely." },
   feedback:      { title: "Customer Feedback",       desc: "Customer reviews and ratings from the menu page." },
 };
 
@@ -935,19 +1062,21 @@ export default function Settings() {
                 </p>
               )}
             </div>
-            <button
-              onClick={handleSaveSettings}
-              disabled={settingsSaving || settingsLoading}
-              style={{
-                ...S.accentBtn,
-                textAlign: "center",
-                opacity: settingsSaving || settingsLoading ? 0.55 : 1,
-                cursor:
-                  settingsSaving || settingsLoading ? "not-allowed" : "pointer",
-              }}
-            >
-              {settingsSaving ? "Saving..." : "Save Settings"}
-            </button>
+            {activeTab !== "personal" && (
+              <button
+                onClick={handleSaveSettings}
+                disabled={settingsSaving || settingsLoading}
+                style={{
+                  ...S.accentBtn,
+                  textAlign: "center",
+                  opacity: settingsSaving || settingsLoading ? 0.55 : 1,
+                  cursor:
+                    settingsSaving || settingsLoading ? "not-allowed" : "pointer",
+                }}
+              >
+                {settingsSaving ? "Saving..." : "Save Settings"}
+              </button>
+            )}
           </div>
           <div style={{ marginBottom: 8 }}>
             <h1 style={{ fontFamily: FONT, fontSize: "1.4rem", fontWeight: 700, color: "#1c1a18", margin: "0 0 4px" }}>

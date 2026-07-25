@@ -61,7 +61,7 @@ const ROLE_LABELS: Record<Exclude<Role, null>, string> = {
 
 const SIDEBAR_ITEMS: SidebarItem[] = [
   {
-    label: "Orders",
+    label: "Cook View",
     path: "/orders",
     permissionKey: "orders",
     icon: ShoppingCart,

@@ -559,6 +559,8 @@ export default function StockManager() {
   const dashboard = useDashboard({
     products,
     mainStockProducts,
+    purchaseOrders: po.poOrders,
+    completedPurchaseOrders: po.filteredCompletedPOs,
     stockAlertSettings,
     inventoryCategoryDateTrackingLookup,
     isMenuFoodProduct,
@@ -1215,6 +1217,7 @@ export default function StockManager() {
                   getCategoryStyle={getCategoryStyle}
                   statusBadge={STATUS_BADGE}
                   toNumber={toNumber}
+                  onSummarySelect={dashboard.selectDashboardSummary}
                 />
               )}
 
@@ -1287,6 +1290,7 @@ export default function StockManager() {
                   onSelectOrder={po.setSelectedOrder}
                   onPrintOrder={po.setPrintOrder}
                   onDeleteOrder={po.handlePODelete}
+                  onSummarySelect={dashboard.selectDashboardSummary}
                 />
               )}
               {activeTab === "purchase-history" && (
@@ -1309,6 +1313,7 @@ export default function StockManager() {
                   setPoHistoryPage={po.setPoHistoryPage}
                   setSelectedOrder={po.setSelectedOrder}
                   setPrintOrder={po.setPrintOrder}
+                  onSummarySelect={dashboard.selectDashboardSummary}
                 />
               )}
             </AnimatePresence>

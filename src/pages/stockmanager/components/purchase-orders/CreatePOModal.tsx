@@ -16,7 +16,7 @@ const EMPTY_PO_ITEM: Omit<POItem, "id"> = {
   quantity: 0,
 };
 const PURCHASE_ORDER_NAME_MAX_LENGTH = 100;
-const PURCHASE_ORDER_NUMBER_MAX_DIGITS = 20;
+const PURCHASE_ORDER_QUANTITY_MAX = 999;
 
 function TrashIcon() {
   return (
@@ -169,9 +169,14 @@ export function CreatePOModal({
         name: product.product_name,
         category: product.category,
         unit: product.unit,
-        quantity: Math.max(
-          1,
-          Math.ceil(toNumber(product.reorderPoint) - toNumber(product.mainStock)),
+        quantity: Math.min(
+          PURCHASE_ORDER_QUANTITY_MAX,
+          Math.max(
+            1,
+            Math.ceil(
+              toNumber(product.reorderPoint) - toNumber(product.mainStock),
+            ),
+          ),
         ),
       },
       ...p,
@@ -190,9 +195,14 @@ export function CreatePOModal({
         category: match?.category ?? "",
         unit: match?.unit ?? "",
         quantity: match
-          ? Math.max(
-              1,
-              Math.ceil(toNumber(match.reorderPoint) - toNumber(match.mainStock)),
+          ? Math.min(
+              PURCHASE_ORDER_QUANTITY_MAX,
+              Math.max(
+                1,
+                Math.ceil(
+                  toNumber(match.reorderPoint) - toNumber(match.mainStock),
+                ),
+              ),
             )
           : 1,
       },
@@ -232,18 +242,17 @@ export function CreatePOModal({
       return;
     }
     const invalidQuantityItem = items.find((item) => {
-      const digitsOnly = String(item.quantity ?? "").replace(/\D/g, "");
       const quantity = toNumber(item.quantity, Number.NaN);
       return (
-        digitsOnly.length === 0 ||
-        digitsOnly.length > PURCHASE_ORDER_NUMBER_MAX_DIGITS ||
         !Number.isFinite(quantity) ||
-        quantity <= 0
+        !Number.isInteger(quantity) ||
+        quantity < 1 ||
+        quantity > PURCHASE_ORDER_QUANTITY_MAX
       );
     });
     if (invalidQuantityItem) {
       onShowToast(
-        "Purchase order quantity must be 1 or higher, with up to 20 digits.",
+        "Purchase order quantity must be a whole number from 1 to 999.",
         "error",
       );
       return;
@@ -528,10 +537,10 @@ export function CreatePOModal({
                             updateItem(
                               idx,
                               field as keyof Omit<POItem, "id">,
-                              sanitizeNumberInput(e.target.value, {
-                                allowDecimal: false,
-                                maxDigits: PURCHASE_ORDER_NUMBER_MAX_DIGITS,
-                              }),
+                               sanitizeNumberInput(e.target.value, {
+                                 allowDecimal: false,
+                                 maxDigits: 3,
+                               }),
                             );
                           }}
                           onKeyDown={(e) => {
@@ -546,11 +555,16 @@ export function CreatePOModal({
                               ? undefined
                               : "numeric"
                           }
-                          min={
+                           min={
                             field === "quantity"
                               ? 1
                               : undefined
-                          }
+                           }
+                           max={
+                             field === "quantity"
+                               ? PURCHASE_ORDER_QUANTITY_MAX
+                               : undefined
+                           }
                           step={
                             field === "unit"
                               ? undefined

@@ -631,6 +631,25 @@ const ProductCard = memo(({ item, onAdd, inCart }: { item: MenuItem; onAdd: (i: 
       <div style={{ width: "100%", aspectRatio: "1", background: "#f7f7f7", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
         {item.image ? <img src={item.image} alt={item.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <UtensilsCrossed style={{ width: 22, height: 22, color: "#ddd" }} />}
       </div>
+      {out && (
+        <span
+          style={{
+            position: "absolute",
+            top: 8,
+            left: 8,
+            zIndex: 2,
+            borderRadius: 999,
+            background: "#991b1b",
+            color: "#fff",
+            padding: "4px 8px",
+            fontSize: 9,
+            fontWeight: 800,
+            letterSpacing: "0.08em",
+          }}
+        >
+          OUT OF STOCK
+        </span>
+      )}
       <div style={{ padding: "9px 10px 10px" }}>
         <p style={{ fontSize: 11, fontWeight: 500, color: "#222", lineHeight: 1.35, marginBottom: 7 }}>{item.name}</p>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -639,7 +658,7 @@ const ProductCard = memo(({ item, onAdd, inCart }: { item: MenuItem; onAdd: (i: 
           </span>
           {!isFood(item) && (
             <span style={{ fontSize: 10, fontWeight: 500, padding: "2px 6px", borderRadius: 5, background: out ? "#fff0f0" : "#f5f5f5", color: out ? "#f87171" : "#bbb" }}>
-              {out ? "Out" : item.remainingStock}
+              {out ? "OUT OF STOCK" : item.remainingStock}
             </span>
           )}
         </div>

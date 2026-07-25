@@ -17,6 +17,15 @@ export type PermissionKey =
 export type RolePermissions = Record<PermissionKey, boolean>;
 export type PermissionsMap = Record<NonNullRole, RolePermissions>;
 
+// `cook` remains here only so existing accounts can continue to reach the
+// operational Cook View during the role transition.
+export const COOK_VIEW_ROLES: readonly NonNullRole[] = [
+  "administrator",
+  "cashier",
+  "inventory_manager",
+  "cook",
+];
+
 export const DEFAULT_PERMISSIONS: PermissionsMap = {
   administrator: {
     overview: true,
@@ -50,7 +59,7 @@ export const DEFAULT_PERMISSIONS: PermissionsMap = {
   },
   inventory_manager: {
     overview: true,
-    orders: false,
+    orders: true,
     menuManagement: true,
     menus: false,
     stockManager: true,
@@ -85,10 +94,10 @@ export function normalizePermissionsMap(
   };
 
   next.administrator.userAccounts = true;
-  next.administrator.orders = true;
   next.administrator.settings = true;
-  next.cashier.orders = true;
-  next.cook.orders = true;
+  for (const role of COOK_VIEW_ROLES) {
+    next[role].orders = true;
+  }
 
   return next;
 }

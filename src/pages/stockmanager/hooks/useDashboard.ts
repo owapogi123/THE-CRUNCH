@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import type {
   DashboardSummaryKey,
   Product,
+  PurchaseOrder,
   StockAlertSettings,
 } from "../types/inventory";
 import { fmtInt, toNumber } from "../utils/formatters";
@@ -16,6 +17,8 @@ type DashboardSubTab = "main-stock" | "last-updates";
 type UseDashboardParams = {
   products: Product[];
   mainStockProducts: Product[];
+  purchaseOrders: PurchaseOrder[];
+  completedPurchaseOrders: PurchaseOrder[];
   stockAlertSettings: StockAlertSettings;
   inventoryCategoryDateTrackingLookup: Map<
     string,
@@ -29,6 +32,8 @@ type UseDashboardParams = {
 export function useDashboard({
   products,
   mainStockProducts,
+  purchaseOrders,
+  completedPurchaseOrders,
   stockAlertSettings,
   inventoryCategoryDateTrackingLookup,
   isMenuFoodProduct,
@@ -127,6 +132,16 @@ export function useDashboard({
     [products, isMenuFoodProduct],
   );
 
+  const normalStockItems = useMemo(
+    () =>
+      products.filter(
+        (product) =>
+          !isMenuFoodProduct(product) &&
+          getAlertSeverity(product, stockAlertSettings) === "normal",
+      ),
+    [products, stockAlertSettings, isMenuFoodProduct],
+  );
+
   const dashboardSummaryConfig = useMemo(() => {
     const productRows = [...totalProductsCounted]
       .sort((a, b) => a.product_name.localeCompare(b.product_name))
@@ -144,6 +159,15 @@ export function useDashboard({
         name: product.product_name,
         value: `${fmtInt(product.mainStock)} ${product.unit}`,
         meta: `${product.category} - warning level ${fmtInt(product.reorderPoint)}`,
+      }));
+
+    const normalRows = [...normalStockItems]
+      .sort((a, b) => a.product_name.localeCompare(b.product_name))
+      .map((product) => ({
+        id: `normal-${product.product_id}`,
+        name: product.product_name,
+        value: `${fmtInt(product.mainStock)} ${product.unit}`,
+        meta: `${product.category} - within safe stock range`,
       }));
 
     const criticalRows = [...alertCriticalStock]
@@ -164,6 +188,30 @@ export function useDashboard({
         meta: `${product.category} - ${getAlertSeverity(product, stockAlertSettings)} stock`,
       }));
 
+    const outRows = [...outOfStockItems]
+      .sort((a, b) => a.product_name.localeCompare(b.product_name))
+      .map((product) => ({
+        id: `out-${product.product_id}`,
+        name: product.product_name,
+        value: `0 ${product.unit}`,
+        meta: `${product.category} - reorder point ${fmtInt(product.reorderPoint)}`,
+      }));
+
+    const toPurchaseOrderRows = (orders: PurchaseOrder[], prefix: string) =>
+      orders.map((order) => ({
+        id: `${prefix}-${order.id}`,
+        name: order.id,
+        value: `${order.items.length} item${order.items.length === 1 ? "" : "s"}`,
+        meta: `${order.supplier} - ${order.status} - ${order.receivedDate || order.deliveryDate || order.date}`,
+      }));
+    const draftOrders = purchaseOrders.filter((order) => order.status === "Draft");
+    const orderedOrders = purchaseOrders.filter((order) => order.status === "Ordered");
+    const receivedOrders = purchaseOrders.filter((order) => order.status === "Received");
+    const receivedTodayOrders = completedPurchaseOrders.filter(
+      (order) => order.receivedDate === new Date().toISOString().split("T")[0],
+    );
+    const receiptOrders = completedPurchaseOrders.filter((order) => !!order.receiptNo);
+
     return {
       products: {
         title: "Total Products Summary",
@@ -172,6 +220,14 @@ export function useDashboard({
         totalValue: totalProductsCounted.length.toString(),
         rows: productRows,
         emptyMessage: "No products found in inventory.",
+      },
+      normal: {
+        title: "Normal Stock Summary",
+        subtitle: "Inventory items currently within their safe stock range.",
+        totalLabel: "Normal Stock Items",
+        totalValue: normalRows.length.toString(),
+        rows: normalRows,
+        emptyMessage: "No items are currently in the normal stock range.",
       },
       low: {
         title: "Low Stock Summary",
@@ -189,6 +245,14 @@ export function useDashboard({
         rows: criticalRows,
         emptyMessage: "No critical stock items found.",
       },
+      out: {
+        title: "Out of Stock Summary",
+        subtitle: "Inventory items with no stock remaining.",
+        totalLabel: "Out of Stock Items",
+        totalValue: outRows.length.toString(),
+        rows: outRows,
+        emptyMessage: "No items are out of stock.",
+      },
       attention: {
         title: "Needs Attention Summary",
         subtitle: "All low, critical, and out-of-stock items.",
@@ -196,6 +260,62 @@ export function useDashboard({
         totalValue: attentionRows.length.toString(),
         rows: attentionRows,
         emptyMessage: "No attention items right now.",
+      },
+      poAll: {
+        title: "Purchase Orders Summary",
+        subtitle: "All current purchase orders across every status.",
+        totalLabel: "Purchase Orders",
+        totalValue: purchaseOrders.length.toString(),
+        rows: toPurchaseOrderRows(purchaseOrders, "po"),
+        emptyMessage: "No purchase orders found.",
+      },
+      poDraft: {
+        title: "Draft Purchase Orders",
+        subtitle: "Purchase orders that have not yet been placed.",
+        totalLabel: "Draft Orders",
+        totalValue: draftOrders.length.toString(),
+        rows: toPurchaseOrderRows(draftOrders, "draft"),
+        emptyMessage: "No draft purchase orders found.",
+      },
+      poOrdered: {
+        title: "Ordered Purchase Orders",
+        subtitle: "Purchase orders currently awaiting delivery.",
+        totalLabel: "Ordered",
+        totalValue: orderedOrders.length.toString(),
+        rows: toPurchaseOrderRows(orderedOrders, "ordered"),
+        emptyMessage: "No ordered purchase orders found.",
+      },
+      poReceived: {
+        title: "Received Purchase Orders",
+        subtitle: "Purchase orders already received into inventory.",
+        totalLabel: "Received",
+        totalValue: receivedOrders.length.toString(),
+        rows: toPurchaseOrderRows(receivedOrders, "received"),
+        emptyMessage: "No received purchase orders found.",
+      },
+      historyCompleted: {
+        title: "Completed Purchase Order History",
+        subtitle: "Completed orders in the selected history date range.",
+        totalLabel: "Completed Orders",
+        totalValue: completedPurchaseOrders.length.toString(),
+        rows: toPurchaseOrderRows(completedPurchaseOrders, "history"),
+        emptyMessage: "No completed purchase orders match this date range.",
+      },
+      historyToday: {
+        title: "Purchase Orders Received Today",
+        subtitle: "Completed purchase orders received today.",
+        totalLabel: "Received Today",
+        totalValue: receivedTodayOrders.length.toString(),
+        rows: toPurchaseOrderRows(receivedTodayOrders, "today"),
+        emptyMessage: "No purchase orders were received today.",
+      },
+      historyReceipt: {
+        title: "Purchase Orders With Receipts",
+        subtitle: "Completed purchase orders with a receipt number logged.",
+        totalLabel: "Receipts Logged",
+        totalValue: receiptOrders.length.toString(),
+        rows: toPurchaseOrderRows(receiptOrders, "receipt"),
+        emptyMessage: "No completed purchase orders have receipts logged.",
       },
     } satisfies Record<
       DashboardSummaryKey,
@@ -211,7 +331,11 @@ export function useDashboard({
   }, [
     alertCriticalStock,
     attentionItems,
+    completedPurchaseOrders,
     lowStockItems,
+    normalStockItems,
+    outOfStockItems,
+    purchaseOrders,
     stockAlertSettings,
     totalProductsCounted,
   ]);

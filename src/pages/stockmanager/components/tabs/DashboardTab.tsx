@@ -1,7 +1,7 @@
 import { motion, type Variants } from "framer-motion";
 import type { ReactNode, RefObject } from "react";
 import { KPICard } from "../KPICard";
-import type { Product } from "../../types/inventory";
+import type { DashboardSummaryKey, Product } from "../../types/inventory";
 
 export function DashboardTab({
   pageVariants,
@@ -30,9 +30,7 @@ export function DashboardTab({
   wholeChickenProducts: Product[];
   choppedChickenProducts: Product[];
   dashboardSubTab: "main-stock" | "last-updates";
-  onSummarySelect: (
-    key: "products" | "low" | "critical" | "attention",
-  ) => void;
+  onSummarySelect: (key: DashboardSummaryKey) => void;
   mainStockContent: ReactNode;
   lastUpdatesContent: ReactNode;
 }) {

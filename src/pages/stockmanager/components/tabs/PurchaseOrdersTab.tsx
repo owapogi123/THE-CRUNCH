@@ -1,7 +1,8 @@
 import { motion, type Variants } from "framer-motion";
 import { EmptyState } from "../EmptyState";
 import { POBadge } from "../POBadge";
-import type { POStatus, Product, PurchaseOrder, StockAlertSettings } from "../../types/inventory";
+import { KPICard } from "../KPICard";
+import type { DashboardSummaryKey, POStatus, Product, PurchaseOrder, StockAlertSettings } from "../../types/inventory";
 
 function CartIcon() {
   return (
@@ -62,6 +63,7 @@ export function PurchaseOrdersTab({
   onSelectOrder,
   onPrintOrder,
   onDeleteOrder,
+  onSummarySelect,
 }: {
   pageVariants: Variants;
   staggerVariants: Variants;
@@ -88,6 +90,7 @@ export function PurchaseOrdersTab({
   onSelectOrder: (order: PurchaseOrder) => void;
   onPrintOrder: (order: PurchaseOrder) => void;
   onDeleteOrder: (id: string) => void;
+  onSummarySelect: (key: DashboardSummaryKey) => void;
 }) {
   return (
     <motion.div
@@ -108,37 +111,41 @@ export function PurchaseOrdersTab({
             {
               label: "Total Orders",
               value: poOrders.length,
-              accent: "border-t-slate-800",
-              text: "text-slate-700",
+              accent: "slate",
+              summary: "poAll" as const,
+              sub: "all purchase orders",
             },
             {
               label: "Draft",
               value: poOrders.filter((o) => o.status === "Draft").length,
-              accent: "border-t-yellow-400",
-              text: "text-yellow-600",
+              accent: "yellow",
+              summary: "poDraft" as const,
+              sub: "not yet placed",
             },
             {
               label: "Ordered",
               value: poOrders.filter((o) => o.status === "Ordered").length,
-              accent: "border-t-blue-400",
-              text: "text-blue-600",
+              accent: "blue",
+              summary: "poOrdered" as const,
+              sub: "awaiting delivery",
             },
             {
               label: "Received",
               value: poOrders.filter((o) => o.status === "Received").length,
-              accent: "border-t-emerald-400",
-              text: "text-emerald-600",
+              accent: "emerald",
+              summary: "poReceived" as const,
+              sub: "received into stock",
             },
           ].map((k) => (
-            <div
+            <KPICard
               key={k.label}
-              className={`bg-white rounded-2xl p-5 shadow-sm border border-slate-100 border-t-4 ${k.accent}`}
-            >
-              <p className="text-xs text-slate-400 font-medium">{k.label}</p>
-              <p className={`text-3xl font-bold mt-1 leading-none ${k.text}`}>
-                {k.value}
-              </p>
-            </div>
+              itemVariants={itemVariants}
+              label={k.label}
+              value={k.value.toString()}
+              sub={k.sub}
+              accent={k.accent}
+              onClick={() => onSummarySelect(k.summary)}
+            />
           ))}
         </motion.div>
         {(criticalStock.length > 0 || lowStock.length > 0) && (

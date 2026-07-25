@@ -7,23 +7,34 @@ import { useNotifications, useConfirm } from "../lib/NotificationContext";
 import { useAuth } from "../context/authcontext";
 import { useViewport } from "@/hooks/use-tablet";
 
-type Role = "administrator" | "cashier" | "cook" | "inventory_manager";
+type AssignableRole = "administrator" | "cashier" | "inventory_manager";
 
 interface FormState {
   name: string;
   email: string;
   password: string;
-  role: Role;
+  role: AssignableRole;
 }
 
-const ROLES: Role[] = ["administrator", "cashier", "cook", "inventory_manager"];
+const ASSIGNABLE_ROLES: AssignableRole[] = [
+  "administrator",
+  "cashier",
+  "inventory_manager",
+];
 
-const ROLE_LABEL: Record<Role, string> = {
+const ROLE_LABEL: Record<AssignableRole, string> = {
   administrator: "Admin",
   cashier: "Cashier",
-  cook: "Cook",
   inventory_manager: "Inventory Mgr",
 };
+
+function getRoleLabel(role: string): string {
+  if (role === "cook") return "Legacy Cook";
+  if (ASSIGNABLE_ROLES.includes(role as AssignableRole)) {
+    return ROLE_LABEL[role as AssignableRole];
+  }
+  return role;
+}
 
 const AVATAR_PALETTE: [string, string][] = [
   ["#fde8e8", "#c0392b"],
@@ -121,7 +132,7 @@ function validateEmployeeForm(form: FormState): string {
     return "Password must include at least 1 letter and 1 number.";
   }
 
-  if (!ROLES.includes(form.role)) {
+  if (!ASSIGNABLE_ROLES.includes(form.role)) {
     return "Please select a valid role.";
   }
 
@@ -187,7 +198,7 @@ export default function StaffAccounts() {
     { label: "Total", value: employees.length },
     { label: "Active", value: employees.length },
     { label: "Inactive", value: 0 },
-    ...ROLES.filter((r) => employees.some((e) => e.role === r)).map((r) => ({
+    ...ASSIGNABLE_ROLES.filter((r) => employees.some((e) => e.role === r)).map((r) => ({
       label: ROLE_LABEL[r],
       value: employees.filter((e) => e.role === r).length,
     })),
@@ -332,7 +343,6 @@ export default function StaffAccounts() {
                 <AnimatePresence initial={false}>
                   {employees.map((emp, i) => {
                     const [avBg, avFg] = getAvatarColor(emp.username);
-                    const role = ROLES.includes(emp.role as Role) ? (emp.role as Role) : null;
                     return (
                       <motion.tr
                         key={emp.id}
@@ -353,7 +363,7 @@ export default function StaffAccounts() {
                         </td>
                         <td style={tdStyle}>
                           <span style={{ display: "inline-block", fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "#f0f4f8", color: "#4a5568" }}>
-                            {role ? ROLE_LABEL[role] : emp.role}
+                            {getRoleLabel(emp.role)}
                           </span>
                         </td>
                         <td style={{ ...tdStyle, fontSize: 12, color: "#a0aec0" }}>{emp.email}</td>
@@ -428,11 +438,11 @@ export default function StaffAccounts() {
                     style={{ width: "100%", padding: "9px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "'Poppins', sans-serif", background: "#f8f9fa", color: "#2d3748", outline: "none" }}
                     value={form.role}
                     onChange={(e) => {
-                      setForm((f) => ({ ...f, role: e.target.value as Role }));
+                      setForm((f) => ({ ...f, role: e.target.value as AssignableRole }));
                       if (error) setError("");
                     }}
                   >
-                    {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
+                    {ASSIGNABLE_ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
                   </select>
                 </div>
 
