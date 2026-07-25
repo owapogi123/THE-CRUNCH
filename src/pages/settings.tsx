@@ -34,6 +34,7 @@ export interface RestaurantSettings {
   toastDuration: string; enableConfirmDialogs: boolean;
   acceptOnlineOrders: boolean; minimumOrderAmount: string;
   deliveryRadius: string; deliveryFee: string; sessionTimeout: string;
+  newOrderAlertsEnabled: boolean; lowStockAlertsEnabled: boolean;
 }
 
 export const DEFAULT: RestaurantSettings = {
@@ -44,7 +45,7 @@ export const DEFAULT: RestaurantSettings = {
   taxRate: "", serviceCharge: "", enableToastNotifications: true,
   toastPosition: "top-right", toastDuration: "4000", enableConfirmDialogs: true,
   acceptOnlineOrders: true, minimumOrderAmount: "", deliveryRadius: "", deliveryFee: "",
-  sessionTimeout: "30",
+  sessionTimeout: "30", newOrderAlertsEnabled: true, lowStockAlertsEnabled: true,
 };
 
 export interface FeedbackEntry {
@@ -119,6 +120,8 @@ function normalizeSettingsState(
     deliveryRadius: readString(source?.deliveryRadius),
     deliveryFee: readString(source?.deliveryFee),
     sessionTimeout: readString(source?.sessionTimeout, DEFAULT.sessionTimeout),
+    newOrderAlertsEnabled: readBoolean(source?.newOrderAlertsEnabled, true),
+    lowStockAlertsEnabled: readBoolean(source?.lowStockAlertsEnabled, true),
   };
 }
 
@@ -459,10 +462,8 @@ export function NotifTab({ s, setStr, setBool }: { s: RestaurantSettings; setStr
   return <>
     <Card title="Alert Channels">
       <TR label="Toast notifications" value={s.enableToastNotifications} onChange={(v) => setBool("enableToastNotifications", v)} />
-      <TR label="New order alerts" desc="Sound and visual alerts for incoming orders." value={true} onChange={() => {}} />
-      <TR label="Low stock alerts" desc="Notify when inventory falls below threshold." value={true} onChange={() => {}} />
-      <TR label="Email notifications" value={false} onChange={() => {}} />
-      <TR label="SMS notifications" value={false} onChange={() => {}} last />
+      <TR label="New order alerts" desc="Sound and visual alerts for incoming orders." value={s.newOrderAlertsEnabled} onChange={(v) => setBool("newOrderAlertsEnabled", v)} />
+      <TR label="Low stock alerts" desc="Notify when inventory falls below threshold." value={s.lowStockAlertsEnabled} onChange={(v) => setBool("lowStockAlertsEnabled", v)} last />
     </Card>
     <Card title="Toast Settings">
       <FR label="Position">

@@ -11,6 +11,30 @@ import {
 import { useAuth } from "../context/authcontext";
 import { useViewport } from "@/hooks/use-tablet";
 
+/**
+ * ── BACKEND / API NOTES (keep this page consistent with the rest of the app) ──
+ * 1. GET /products?item_type=menu_item currently only returns id/name/price/
+ *    category/image/availability_status/mainStock. It does NOT return
+ *    nutrition, tag, note, maxFlavors, variant, or mealTypes — so those are
+ *    always defaulted client-side right now. Either add these columns to
+ *    /products, or add a dedicated GET /menu-meta endpoint keyed by product_id
+ *    and merge it in mapInventoryRecipes() below (the `meta` param already
+ *    exists for this, it's just never populated).
+ * 2. Stock is now enforced client-side from `mainStock`/`stock`. Confirm the
+ *    field name /products actually returns — this file assumes `mainStock`.
+ * 3. Cart and payment-session state are intentionally NOT persisted in
+ *    localStorage anymore (session-only, in-memory). If cart-across-refresh
+ *    is required, add:
+ *      GET  /cart/:customerUserId   → restore cart on load
+ *      POST /cart/:customerUserId   → sync on every change
+ * 4. Payment-return handling now expects the PayMongo success/cancel redirect
+ *    URL to include `?payment=success&session_id=...` (or `cancelled`). If the
+ *    backend's redirect URL doesn't include `session_id`, add it there —
+ *    localStorage is no longer used as a fallback.
+ * 5. Font: Poppins, loaded globally (not re-declared here) to match
+ *    Login/Settings/Products — do not reintroduce a per-page <link> tag.
+ */
+
 // ── Types ──────────────────────────────────────────────────────────────────
 const formatPHP = (v: number) => formatCurrencyAmount(v);
 const SP  = { type: "spring" as const, stiffness: 340, damping: 30 };
@@ -19,7 +43,7 @@ const EASE: [number,number,number,number] = [0.22,1,0.36,1];
 
 interface Nutrition { calories:number; protein:number; fats:number; carbs:number }
 interface InventoryMenuRow { product_id?:number; id?:number; item_type?:string; product_name?:string; name?:string; price?:number|string; category?:string; image?:string|null; mainStock?:number|string; stock?:number|string; availability_status?:string; isRawMaterial?:boolean|number }
-interface Recipe { id:number; name:string; description:string; image:string; nutrition:Nutrition; price:number; maxFlavors?:number; mealTypes:string[]; tag?:string; note?:string; variant?:"original"|"spicy"; category:string; available:boolean }
+interface Recipe { id:number; name:string; description:string; image:string; nutrition:Nutrition; price:number; stock:number; maxFlavors?:number; mealTypes:string[]; tag?:string; note?:string; variant?:"original"|"spicy"; category:string; available:boolean }
 interface CartItem { recipe:Recipe; quantity:number; flavors:string[] }
 interface CustomerOrderItem { name:string; quantity:number }
 interface CustomerOrder { id:number; orderNumber:string; total:number; createdAt:string; orderType:string; rawStatus:string; trackingStatus:string; paymentReference:string|null; paymentStatus:string|null; paymentMethod:string; items:CustomerOrderItem[] }
@@ -27,22 +51,21 @@ interface PaymentSessionState { checkoutSessionId:string; checkoutUrl:string; st
 interface BillingSettings { taxRate:number; serviceCharge:number }
 interface StoreStatusSettings { weekdayOpenTime:string; weekdayCloseTime:string; weekendOpenTime:string; weekendCloseTime:string; storeStatusMode:"auto"|"manual_open"|"manual_closed"; timezone:string }
 interface BillingBreakdown { subtotal:number; taxAmount:number; serviceChargeAmount:number; grandTotal:number }
-interface PersistedCartItem { recipeId:number; quantity:number; flavors:string[] }
 type PaymentMethodType = "gcash"|"cash";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const DEFAULT_NUTRITION: Nutrition = { calories:0, protein:0, fats:0, carbs:0 };
 const DEFAULT_FLAVORS = ["Original","Spicy"];
-const DEFAULT_MEAL_FILTERS = ["Breakfast","Lunch","Dinner"];
+const MEAL_ORDER = ["Breakfast","Lunch","Dinner"];
 const DEFAULT_BILLING: BillingSettings = { taxRate:0, serviceCharge:0 };
 const DEFAULT_STORE: StoreStatusSettings = { weekdayOpenTime:"10:00", weekdayCloseTime:"22:00", weekendOpenTime:"11:00", weekendCloseTime:"20:30", storeStatusMode:"auto", timezone:"Asia/Manila" };
-const CART_KEY = "the-crunch-cart";
-const PAY_KEY  = "the-crunch-paymongo-session";
 const CATEGORY_ORDER = ["Chicken","Sides","Drinks","Combos"] as const;
+const LOW_STOCK_THRESHOLD = 5;
 const TAG_COLORS: Record<string,{bg:string;text:string}> = { Bestseller:{bg:"rgba(245,200,66,0.15)",text:"#f5c842"}, Hot:{bg:"rgba(239,68,68,0.14)",text:"#ef4444"}, "Fan Fave":{bg:"rgba(34,197,94,0.12)",text:"#4ade80"}, "Must Try":{bg:"rgba(139,92,246,0.12)",text:"#a78bfa"} };
 const NAV_LINKS = [{ label:"Home", path:"/" },{ label:"About", path:"/aboutthecrunch" },{ label:"Menu", path:"/usersmenu" }];
 const DELIVERY_LINKS = { foodpanda:"https://foodpanda.go.link/9O718", grab:"https://r.grab.com/g/6-20260421_220129_6e23187a089147b69736d4cacea38146_MEXMPS-2-C4A3RBCER7NFUE" };
 const CASH_TERMS = "By selecting Cash as your payment method, you agree that your order will not be processed immediately and will only be prepared once full payment is made onsite. You are responsible for completing payment at the store. Delays in payment may result in longer waiting times or possible cancellation of your order. The store reserves the right to refuse or cancel orders that are not paid within a reasonable time.";
+const FONT = "'Poppins', sans-serif";
 
 // ── Icon paths ─────────────────────────────────────────────────────────────
 const D = {
@@ -105,6 +128,11 @@ const calcBilling = (sub: number, s: BillingSettings): BillingBreakdown => {
   const serviceChargeAmount = subtotal*(s.serviceCharge/100);
   return { subtotal, taxAmount, serviceChargeAmount, grandTotal:subtotal+taxAmount+serviceChargeAmount };
 };
+
+// mapInventoryRecipes: `meta` is still an accepted param for nutrition/tag/note/
+// maxFlavors/variant — populate it once the backend exposes menu metadata (see
+// API NOTES above). Stock is now a hard gate: stock <= 0 always forces
+// unavailable, regardless of availability_status ("the catch").
 function mapInventoryRecipes(rows: InventoryMenuRow[], meta: Recipe[], fallbackMeals: string[]): Recipe[] {
   const deduped = new Map<string,InventoryMenuRow>();
   for (const row of rows??[]) {
@@ -122,7 +150,9 @@ function mapInventoryRecipes(rows: InventoryMenuRow[], meta: Recipe[], fallbackM
     const category = normalizeCategory(row.category);
     const m = metaByName.get(normalizeName(name));
     const hasMeal = (m?.mealTypes??[]).map(x=>String(x).trim().toLowerCase()).some(x=>normFB.includes(x));
-    return { id, name, price:Number(row.price??m?.price??0), category, image:resolveAssetUrl(String(row.image||m?.image||"/img/placeholder.jpg")), available:!isUnavailable(row.availability_status), description:m?.description||`Freshly prepared ${category.toLowerCase()} from The Crunch.`, nutrition:m?.nutrition??DEFAULT_NUTRITION, maxFlavors:m?.maxFlavors, mealTypes:(m?.mealTypes&&m.mealTypes.length>0&&hasMeal)?m.mealTypes:fallbackMeals, tag:m?.tag, note:m?.note, variant:m?.variant };
+    const stock = Math.max(0, Math.floor(Number(row.mainStock ?? row.stock ?? 0)) || 0);
+    const statusAvailable = !isUnavailable(row.availability_status);
+    return { id, name, price:Number(row.price??m?.price??0), category, stock, image:resolveAssetUrl(String(row.image||m?.image||"/img/placeholder.jpg")), available: statusAvailable && stock > 0, description:m?.description||`Freshly prepared ${category.toLowerCase()} from The Crunch.`, nutrition:m?.nutrition??DEFAULT_NUTRITION, maxFlavors:m?.maxFlavors, mealTypes:(m?.mealTypes&&m.mealTypes.length>0&&hasMeal)?m.mealTypes:fallbackMeals, tag:m?.tag, note:m?.note, variant:m?.variant };
   });
 }
 
@@ -136,7 +166,7 @@ function Img({ src, size=40, round=true }: { src:string; size?:number; round?:bo
 }
 const Tag = ({ tag }: { tag:string }) => { const c=TAG_COLORS[tag]; return c?<span style={{ fontSize:10,fontWeight:700,padding:"4px 10px",borderRadius:20,background:c.bg,color:c.text,whiteSpace:"nowrap",letterSpacing:"0.06em",textTransform:"uppercase",border:`1px solid ${c.text}28` }}>{tag}</span>:null; };
 const Pill = ({ label,active,onClick,accent="#f5c842" }: { label:string;active:boolean;onClick?:()=>void;accent?:string }) => (
-  <motion.button onClick={onClick} whileHover={{ scale:1.04 }} whileTap={{ scale:0.93 }} transition={SP} style={{ padding:"6px 14px",borderRadius:30,border:`1.5px solid ${active?accent:"rgba(240,237,232,0.12)"}`,background:active?`${accent}1a`:"rgba(240,237,232,0.04)",color:active?accent:"rgba(240,237,232,0.55)",fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:"inherit" }}>{label}</motion.button>
+  <motion.button onClick={onClick} whileHover={{ scale:1.04 }} whileTap={{ scale:0.93 }} transition={SP} style={{ padding:"6px 14px",borderRadius:30,border:`1.5px solid ${active?accent:"rgba(240,237,232,0.12)"}`,background:active?`${accent}1a`:"rgba(240,237,232,0.04)",color:active?accent:"rgba(240,237,232,0.55)",fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:FONT }}>{label}</motion.button>
 );
 const Overlay = ({ onClick }: { onClick:()=>void }) => (
   <motion.div initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }} onClick={onClick} style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:200,backdropFilter:"blur(8px)" }} />
@@ -144,14 +174,14 @@ const Overlay = ({ onClick }: { onClick:()=>void }) => (
 
 function RecipeSkeleton() {
   return (
-    <div style={{ background:"#151210",borderRadius:24,padding:"clamp(20px,4vw,32px) clamp(20px,4vw,36px)",border:"1px solid rgba(240,237,232,0.07)",display:"flex",flexWrap:"wrap",gap:"clamp(20px,4vw,40px)",alignItems:"flex-start",overflow:"hidden",position:"relative" }}>
+    <div style={{ background:"#151210",borderRadius:24,padding:"clamp(20px,4vw,32px) clamp(20px,4vw,36px)",border:"1px solid rgba(240,237,232,0.07)",display:"grid",gridTemplateColumns:"1fr 1fr",gap:"clamp(20px,4vw,40px)",alignItems:"flex-start",overflow:"hidden",position:"relative" }}>
       <motion.div animate={{ x:["-100%","200%"] }} transition={{ duration:1.6,repeat:Infinity,ease:"easeInOut" }} style={{ position:"absolute",inset:0,background:"linear-gradient(90deg,transparent,rgba(255,255,255,0.04),transparent)",zIndex:1 }} />
-      <div style={{ flex:"1 1 260px",display:"flex",flexDirection:"column",gap:12 }}>
+      <div style={{ display:"flex",flexDirection:"column",gap:12 }}>
         {[[22,"60%"],[14,"90%"],[14,"75%"]].map(([h,w],i)=><div key={i} style={{ height:h,width:w,borderRadius:8,background:"rgba(255,255,255,0.06)" }} />)}
         <div style={{ display:"flex",gap:16,marginTop:8 }}>{[1,2,3,4].map(i=><div key={i} style={{ height:40,width:48,borderRadius:8,background:"rgba(255,255,255,0.05)" }} />)}</div>
         <div style={{ display:"flex",gap:10,marginTop:8 }}><div style={{ height:40,width:120,borderRadius:12,background:"rgba(255,255,255,0.05)" }} /><div style={{ height:40,width:140,borderRadius:12,background:"rgba(255,255,255,0.07)" }} /></div>
       </div>
-      <div style={{ width:"clamp(120px,20vw,200px)",height:"clamp(120px,20vw,200px)",borderRadius:"50%",background:"rgba(255,255,255,0.05)",flexShrink:0,alignSelf:"center" }} />
+      <div style={{ width:"100%",aspectRatio:"1",maxWidth:200,borderRadius:"50%",background:"rgba(255,255,255,0.05)",justifySelf:"center" }} />
     </div>
   );
 }
@@ -163,7 +193,7 @@ function FlavorPicker({ maxFlavors,selected,onChange,flavors }: { maxFlavors:num
       <p style={{ fontSize:10,fontWeight:700,color:"rgba(240,237,232,0.3)",marginBottom:10,textTransform:"uppercase",letterSpacing:"0.12em" }}>Pick {maxFlavors===1?"1 flavor":`up to ${maxFlavors} flavors`}</p>
       <div style={{ display:"flex",flexWrap:"wrap",gap:7 }}>
         {flavors.map(n => { const a=selected.includes(n),dis=!a&&selected.length>=maxFlavors; return (
-          <motion.button key={n} onClick={()=>!dis&&toggle(n)} whileHover={dis?{}:{ scale:1.04 }} whileTap={dis?{}:{ scale:0.93 }} transition={SP} style={{ padding:"6px 14px",borderRadius:30,border:`1.5px solid ${a?"#f5c842":"rgba(240,237,232,0.12)"}`,background:a?"rgba(245,200,66,0.12)":"rgba(240,237,232,0.04)",color:a?"#f5c842":dis?"rgba(240,237,232,0.2)":"rgba(240,237,232,0.55)",fontSize:11.5,fontWeight:600,cursor:dis?"not-allowed":"pointer",fontFamily:"inherit",opacity:dis?0.4:1 }}>
+          <motion.button key={n} onClick={()=>!dis&&toggle(n)} whileHover={dis?{}:{ scale:1.04 }} whileTap={dis?{}:{ scale:0.93 }} transition={SP} style={{ padding:"6px 14px",borderRadius:30,border:`1.5px solid ${a?"#f5c842":"rgba(240,237,232,0.12)"}`,background:a?"rgba(245,200,66,0.12)":"rgba(240,237,232,0.04)",color:a?"#f5c842":dis?"rgba(240,237,232,0.2)":"rgba(240,237,232,0.55)",fontSize:11.5,fontWeight:600,cursor:dis?"not-allowed":"pointer",fontFamily:FONT,opacity:dis?0.4:1 }}>
             {n}<AnimatePresence>{a&&<motion.span key="t" initial={{ scale:0 }} animate={{ scale:1 }} exit={{ scale:0 }} transition={SP} style={{ fontSize:9,marginLeft:4 }}>✓</motion.span>}</AnimatePresence>
           </motion.button>
         ); })}
@@ -180,7 +210,7 @@ function PaymentMethodSelector({ selected,onChange,disabled }: { selected:Paymen
       <p style={{ fontSize:10,fontWeight:700,color:"rgba(240,237,232,0.3)",textTransform:"uppercase",letterSpacing:"0.14em",margin:"0 0 10px" }}>Payment Method</p>
       <div style={{ background:"rgba(240,237,232,0.03)",border:"1px solid rgba(240,237,232,0.08)",borderRadius:16,padding:6,display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:6,opacity:disabled?0.5:1,pointerEvents:disabled?"none":"auto" }}>
         {methods.map(m => { const a=selected===m.id; return (
-          <motion.button key={m.id} onClick={()=>onChange(m.id)} whileTap={{ scale:0.97 }} transition={SP} style={{ background:a?`rgba(${m.rgb},0.1)`:"transparent",border:`1.5px solid ${a?`rgba(${m.rgb},0.45)`:"transparent"}`,borderRadius:11,padding:"12px 14px",cursor:"pointer",fontFamily:"inherit",textAlign:"left",display:"flex",alignItems:"center",gap:10,position:"relative" }}>
+          <motion.button key={m.id} onClick={()=>onChange(m.id)} whileTap={{ scale:0.97 }} transition={SP} style={{ background:a?`rgba(${m.rgb},0.1)`:"transparent",border:`1.5px solid ${a?`rgba(${m.rgb},0.45)`:"transparent"}`,borderRadius:11,padding:"12px 14px",cursor:"pointer",fontFamily:FONT,textAlign:"left",display:"flex",alignItems:"center",gap:10,position:"relative" }}>
             {a&&<motion.div layoutId="payDot" transition={SPG} style={{ position:"absolute",top:8,right:10,width:6,height:6,borderRadius:"50%",background:`rgb(${m.rgb})` }} />}
             <span style={{ color:a?`rgb(${m.rgb})`:"rgba(240,237,232,0.35)",display:"flex" }}><Icon d={m.d} size={20} /></span>
             <div><p style={{ fontSize:13,fontWeight:700,color:a?"#f0ede8":"rgba(240,237,232,0.45)",margin:"0 0 2px" }}>{m.label}</p><p style={{ fontSize:10.5,color:a?`rgba(${m.rgb},0.7)`:"rgba(240,237,232,0.22)",margin:0 }}>{m.sub}</p></div>
@@ -198,7 +228,7 @@ function CashTermsModal({ onAccept,onDecline }: { onAccept:()=>void;onDecline:()
   return (
     <motion.div initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }} onClick={onDecline} style={{ position:"fixed",inset:0,zIndex:700,display:"flex",alignItems:"center",justifyContent:"center",padding:24,overflowY:"auto",background:"rgba(0,0,0,0.75)",backdropFilter:"blur(14px)" }}>
       <motion.div initial={{ opacity:0,scale:0.92,y:28 }} animate={{ opacity:1,scale:1,y:0 }} exit={{ opacity:0,scale:0.94,y:16 }} transition={{ ...SPG,delay:0.04 }} onClick={e=>e.stopPropagation()} style={{ position:"relative",width:"min(480px,100%)",maxHeight:"calc(100vh - 48px)",overflowY:"auto",background:"#151210",borderRadius:26,border:"1px solid rgba(240,237,232,0.1)" }}>
-        <motion.button onClick={onDecline} whileHover={{ scale:1.08 }} whileTap={{ scale:0.9 }} transition={SP} style={{ position:"absolute",top:14,right:14,width:36,height:36,borderRadius:"50%",background:"transparent",border:"1px solid rgba(240,237,232,0.1)",color:"rgba(240,237,232,0.6)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,zIndex:1 }}>×</motion.button>
+        <motion.button onClick={onDecline} whileHover={{ scale:1.08 }} whileTap={{ scale:0.9 }} transition={SP} style={{ position:"absolute",top:14,right:14,width:36,height:36,borderRadius:"50%",background:"transparent",border:"1px solid rgba(240,237,232,0.1)",color:"rgba(240,237,232,0.6)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,zIndex:1 }} aria-label="Close">×</motion.button>
         <div style={{ height:3,background:"linear-gradient(90deg,#f5c842,rgba(245,200,66,0.3))" }} />
         <div style={{ padding:isMobile?"24px 20px 20px":"32px 28px 28px" }}>
           <div style={{ display:"flex",alignItems:"center",gap:12,marginBottom:20,paddingRight:44 }}>
@@ -213,8 +243,8 @@ function CashTermsModal({ onAccept,onDecline }: { onAccept:()=>void;onDecline:()
             <span style={{ fontSize:12.5,color:"rgba(240,237,232,0.5)",lineHeight:1.6 }}>I have read and agree to the Cash Payment Terms & Conditions.</span>
           </label>
           <div style={{ display:"flex",flexDirection:isMobile?"column":"row",gap:10 }}>
-            <motion.button onClick={onDecline} whileHover={{ scale:1.02 }} whileTap={{ scale:0.97 }} transition={SP} style={{ flex:1,background:"rgba(240,237,232,0.05)",border:"1px solid rgba(240,237,232,0.12)",color:"rgba(240,237,232,0.5)",borderRadius:12,padding:"13px 0",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit" }}>Cancel</motion.button>
-            <motion.button onClick={()=>checked&&onAccept()} disabled={!checked} whileHover={checked?{ scale:1.02 }:{}} whileTap={checked?{ scale:0.97 }:{}} transition={SP} style={{ flex:2,background:checked?"#f5c842":"rgba(245,200,66,0.18)",color:checked?"#111":"rgba(245,200,66,0.35)",border:"none",borderRadius:12,padding:"13px 0",fontSize:13,fontWeight:700,cursor:checked?"pointer":"not-allowed",fontFamily:"inherit" }}>I Agree & Continue</motion.button>
+            <motion.button onClick={onDecline} whileHover={{ scale:1.02 }} whileTap={{ scale:0.97 }} transition={SP} style={{ flex:1,background:"rgba(240,237,232,0.05)",border:"1px solid rgba(240,237,232,0.12)",color:"rgba(240,237,232,0.5)",borderRadius:12,padding:"13px 0",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:FONT }}>Cancel</motion.button>
+            <motion.button onClick={()=>checked&&onAccept()} disabled={!checked} whileHover={checked?{ scale:1.02 }:{}} whileTap={checked?{ scale:0.97 }:{}} transition={SP} style={{ flex:2,background:checked?"#f5c842":"rgba(245,200,66,0.18)",color:checked?"#111":"rgba(245,200,66,0.35)",border:"none",borderRadius:12,padding:"13px 0",fontSize:13,fontWeight:700,cursor:checked?"pointer":"not-allowed",fontFamily:FONT }}>I Agree & Continue</motion.button>
           </div>
         </div>
       </motion.div>
@@ -229,7 +259,7 @@ function OrderTypeModal({ onClose }: { onClose:()=>void }) {
   return (
     <motion.div initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }} onClick={onClose} style={{ position:"fixed",inset:0,zIndex:600,display:"flex",alignItems:"center",justifyContent:"center",padding:24,overflowY:"auto",background:"rgba(0,0,0,0.72)",backdropFilter:"blur(10px)" }}>
       <motion.div initial={{ opacity:0,scale:0.9,y:24 }} animate={{ opacity:1,scale:1,y:0 }} exit={{ opacity:0,scale:0.92,y:16 }} transition={{ ...SPG,delay:0.04 }} onClick={e=>e.stopPropagation()} style={{ position:"relative",width:"min(720px,100%)",maxHeight:"calc(100vh - 48px)",overflowY:"auto" }}>
-        <motion.button onClick={onClose} whileHover={{ scale:1.08 }} whileTap={{ scale:0.9 }} transition={SP} style={{ position:"absolute",top:14,right:14,width:36,height:36,borderRadius:"50%",background:"transparent",border:"1px solid rgba(240,237,232,0.12)",color:"rgba(240,237,232,0.6)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,zIndex:11 }}>×</motion.button>
+        <motion.button onClick={onClose} whileHover={{ scale:1.08 }} whileTap={{ scale:0.9 }} transition={SP} style={{ position:"absolute",top:14,right:14,width:36,height:36,borderRadius:"50%",background:"transparent",border:"1px solid rgba(240,237,232,0.12)",color:"rgba(240,237,232,0.6)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,zIndex:11 }} aria-label="Close">×</motion.button>
         <AnimatePresence mode="wait">
           {view==="choose" ? (
             <motion.div key="choose" initial={{ opacity:0,x:-18 }} animate={{ opacity:1,x:0 }} exit={{ opacity:0,x:-18 }} transition={SPG} style={{ display:"grid",gridTemplateColumns:narrow?"1fr":"1fr 1fr",gap:14 }}>
@@ -237,7 +267,7 @@ function OrderTypeModal({ onClose }: { onClose:()=>void }) {
                 { icon:D.bag, title:"Pick-up Order", desc:"Order online and pick up your items at the store when it's ready.", cta:"Browse the Menu", action:onClose, ctaStyle:{ background:"#f5c842",color:"#111" } },
                 { icon:D.scooter, title:"Delivery Order", desc:"Order for delivery through Foodpanda or Grab.", cta:"Order via Delivery App", action:()=>setView("delivery"), ctaStyle:{ background:"rgba(249,159,4,0.07)",border:"1px solid rgba(240,237,232,0.12)",color:"rgb(215,162,71)" } },
               ].map(card=>(
-                <motion.button key={card.title} onClick={card.action} whileHover={{ borderColor:"rgba(245,200,66,0.45)",y:-4 }} whileTap={{ scale:0.97 }} transition={SPG} style={{ background:"#151210",border:"1px solid rgba(245,200,66,0.2)",borderRadius:24,padding:"36px 32px 32px",cursor:"pointer",fontFamily:"inherit",textAlign:"left",display:"flex",flexDirection:"column",position:"relative",overflow:"hidden" }}>
+                <motion.button key={card.title} onClick={card.action} whileHover={{ borderColor:"rgba(245,200,66,0.45)",y:-4 }} whileTap={{ scale:0.97 }} transition={SPG} style={{ background:"#151210",border:"1px solid rgba(245,200,66,0.2)",borderRadius:24,padding:"36px 32px 32px",cursor:"pointer",fontFamily:FONT,textAlign:"left",display:"flex",flexDirection:"column",position:"relative",overflow:"hidden" }}>
                   <div style={{ width:56,height:56,borderRadius:16,background:"rgba(245,200,66,0.1)",border:"1px solid rgba(245,200,66,0.2)",display:"flex",alignItems:"center",justifyContent:"center",color:"#f5c842",marginBottom:22 }}><Icon d={card.icon} size={28} sw="1.6" /></div>
                   <p style={{ fontSize:"clamp(20px,3vw,35px)",fontWeight:1000,color:"#f5c842",letterSpacing:"0.2em",textTransform:"uppercase",margin:"0 0 8px" }}>{card.title}</p>
                   <p style={{ fontSize:13,color:"rgba(240,237,232,0.42)",lineHeight:1.7,margin:"0 0 auto" }}>{card.desc}</p>
@@ -248,7 +278,7 @@ function OrderTypeModal({ onClose }: { onClose:()=>void }) {
             </motion.div>
           ) : (
             <motion.div key="delivery" initial={{ opacity:0,x:18 }} animate={{ opacity:1,x:0 }} exit={{ opacity:0,x:18 }} transition={SPG} style={{ background:"#151210",border:"1px solid rgba(240,237,232,0.09)",borderRadius:24,padding:isMobile?"24px 20px 20px":"36px 32px 32px" }}>
-              <motion.button onClick={()=>setView("choose")} whileHover={{ x:-2 }} whileTap={{ scale:0.95 }} transition={SP} style={{ background:"none",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600,color:"rgba(240,237,232,0.35)",padding:0,marginBottom:24 }}>← Back</motion.button>
+              <motion.button onClick={()=>setView("choose")} whileHover={{ x:-2 }} whileTap={{ scale:0.95 }} transition={SP} style={{ background:"none",border:"none",cursor:"pointer",fontFamily:FONT,fontSize:12,fontWeight:600,color:"rgba(240,237,232,0.35)",padding:0,marginBottom:24 }}>← Back</motion.button>
               <h3 style={{ fontSize:24,fontWeight:900,color:"#f0ede8",margin:"0 0 6px" }}>Select a delivery app</h3>
               <p style={{ fontSize:13,color:"rgba(240,237,232,0.38)",margin:"0 0 28px" }}>Opens in a new tab.</p>
               <div style={{ display:"grid",gridTemplateColumns:narrow?"1fr":"1fr 1fr",gap:14 }}>
@@ -307,7 +337,7 @@ function HistoryDrawer({ orders,menuItems,onClose }: { orders:CustomerOrder[];me
       <motion.div initial={{ x:"100%" }} animate={{ x:0 }} exit={{ x:"100%" }} transition={SPG} style={{ position:"fixed",top:0,right:0,bottom:0,width:isMobile?"100vw":"min(460px,100vw)",background:"#151210",zIndex:300,display:"flex",flexDirection:"column",boxShadow:"-24px 0 80px rgba(0,0,0,0.5)",borderLeft:"1px solid rgba(240,237,232,0.07)" }}>
         <div style={{ padding:isPhone?"20px 18px 16px":"28px 28px 20px",borderBottom:"1px solid rgba(240,237,232,0.07)",display:"flex",justifyContent:"space-between",alignItems:"center" }}>
           <div><div style={{ display:"flex",alignItems:"center",gap:9,marginBottom:5 }}><span style={{ color:"#f5c842" }}><Icon d={D.receipt} size={15} /></span><h2 style={{ fontSize:20,fontWeight:800,color:"#f0ede8",margin:0 }}>Order History</h2></div><p style={{ fontSize:12,color:"rgba(240,237,232,0.35)",margin:0 }}>{orders.length} saved order{orders.length!==1?"s":""}</p></div>
-          <motion.button onClick={onClose} whileHover={{ scale:1.08 }} whileTap={{ scale:0.9 }} transition={SP} style={{ background:"transparent",border:"1px solid rgba(240,237,232,0.1)",color:"rgba(240,237,232,0.6)",borderRadius:"50%",width:36,height:36,cursor:"pointer",fontSize:20 }}>×</motion.button>
+          <motion.button onClick={onClose} whileHover={{ scale:1.08 }} whileTap={{ scale:0.9 }} transition={SP} style={{ background:"transparent",border:"1px solid rgba(240,237,232,0.1)",color:"rgba(240,237,232,0.6)",borderRadius:"50%",width:36,height:36,cursor:"pointer",fontSize:20 }} aria-label="Close order history">×</motion.button>
         </div>
         <div style={{ flex:1,overflowY:"auto",padding:isPhone?"12px 16px 24px":"16px 24px 32px" }}>
           {!orders.length ? (
@@ -317,7 +347,7 @@ function HistoryDrawer({ orders,menuItems,onClose }: { orders:CustomerOrder[];me
             const cancelled=order.trackingStatus==="Cancelled";
             return (
               <motion.div key={order.id} initial={{ opacity:0,y:14 }} animate={{ opacity:1,y:0 }} transition={{ ...SPG,delay:oi*0.04 }} style={{ marginBottom:10 }}>
-                <motion.button onClick={()=>setExpanded(isOpen?null:order.id)} whileHover={{ borderColor:"rgba(240,237,232,0.18)" }} style={{ width:"100%",background:isOpen?"rgba(245,200,66,0.05)":"rgba(240,237,232,0.03)",border:`1px solid ${isOpen?"rgba(245,200,66,0.25)":"rgba(240,237,232,0.09)"}`,borderRadius:isOpen?"16px 16px 0 0":16,padding:"14px 16px",cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:12,textAlign:"left" }}>
+                <motion.button onClick={()=>setExpanded(isOpen?null:order.id)} whileHover={{ borderColor:"rgba(240,237,232,0.18)" }} style={{ width:"100%",background:isOpen?"rgba(245,200,66,0.05)":"rgba(240,237,232,0.03)",border:`1px solid ${isOpen?"rgba(245,200,66,0.25)":"rgba(240,237,232,0.09)"}`,borderRadius:isOpen?"16px 16px 0 0":16,padding:"14px 16px",cursor:"pointer",fontFamily:FONT,display:"flex",alignItems:"center",gap:12,textAlign:"left" }}>
                   <div style={{ width:34,height:34,borderRadius:"50%",background:isOpen?"#f5c842":"rgba(240,237,232,0.07)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}><span style={{ fontSize:10.5,fontWeight:800,color:isOpen?"#111":"rgba(240,237,232,0.38)" }}>{order.orderNumber.replace("#","")}</span></div>
                   <div style={{ flex:1,minWidth:0 }}>
                     <div style={{ display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:4 }}><span style={{ fontSize:12.5,fontWeight:700,color:"#f0ede8" }}>{order.orderNumber}</span><span style={{ fontSize:10,fontWeight:700,padding:"3px 8px",borderRadius:999,background:cancelled?"rgba(239,68,68,0.12)":"rgba(34,197,94,0.12)",color:cancelled?"#f87171":"#4ade80",border:`1px solid ${cancelled?"rgba(239,68,68,0.22)":"rgba(34,197,94,0.22)"}` }}>{order.trackingStatus}</span></div>
@@ -351,8 +381,8 @@ function HistoryDrawer({ orders,menuItems,onClose }: { orders:CustomerOrder[];me
   );
 }
 
-function OrderDrawer({ cart,billing,storeOpen,storeClosedMessage,onClose,onRemove,onChangeQty,onClear,onSendPayment,onVerifyPayment,onPlaceOrder,paymentSession,paymentMessage,isSubmitting,selectedPaymentMethod,onPaymentMethodChange,onRequestCashTerms }: {
-  cart:CartItem[];billing:BillingBreakdown;storeOpen:boolean;storeClosedMessage:string;onClose:()=>void;onRemove:(id:number)=>void;onChangeQty:(id:number,delta:number)=>void;onClear:()=>void;onSendPayment:()=>void;onVerifyPayment:()=>void;onPlaceOrder:()=>void;paymentSession:PaymentSessionState|null;paymentMessage:string|null;isSubmitting:boolean;selectedPaymentMethod:PaymentMethodType;onPaymentMethodChange:(m:PaymentMethodType)=>void;onRequestCashTerms:()=>void;
+function OrderDrawer({ cart,billing,storeOpen,storeClosedMessage,stockWarningId,onClose,onRemove,onChangeQty,onClear,onSendPayment,onVerifyPayment,onPlaceOrder,paymentSession,paymentMessage,isSubmitting,selectedPaymentMethod,onPaymentMethodChange,onRequestCashTerms }: {
+  cart:CartItem[];billing:BillingBreakdown;storeOpen:boolean;storeClosedMessage:string;stockWarningId:number|null;onClose:()=>void;onRemove:(id:number)=>void;onChangeQty:(id:number,delta:number)=>void;onClear:()=>void;onSendPayment:()=>void;onVerifyPayment:()=>void;onPlaceOrder:()=>void;paymentSession:PaymentSessionState|null;paymentMessage:string|null;isSubmitting:boolean;selectedPaymentMethod:PaymentMethodType;onPaymentMethodChange:(m:PaymentMethodType)=>void;onRequestCashTerms:()=>void;
 }) {
   const { isMobile,isPhone } = useViewport();
   const totalQty = cart.reduce((s,i)=>s+i.quantity,0);
@@ -366,8 +396,8 @@ function OrderDrawer({ cart,billing,storeOpen,storeClosedMessage,onClose,onRemov
         <div style={{ padding:isPhone?"20px 18px 16px":"24px 28px 18px",borderBottom:"1px solid rgba(240,237,232,0.07)",display:"flex",justifyContent:"space-between",alignItems:"center",gap:12 }}>
           <div><h2 style={{ fontSize:20,fontWeight:800,color:"#f0ede8",margin:0 }}>Your Order</h2><p style={{ fontSize:12,color:"rgba(240,237,232,0.35)",margin:"4px 0 0" }}>{totalQty} item{totalQty!==1?"s":""}</p></div>
           <div style={{ display:"flex",gap:10,alignItems:"center" }}>
-            <AnimatePresence>{cart.length>0&&<motion.button initial={{ opacity:0,scale:0.8 }} animate={{ opacity:1,scale:1 }} exit={{ opacity:0,scale:0.8 }} transition={SP} onClick={onClear} style={{ background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.2)",color:"#ef4444",borderRadius:10,padding:"7px 14px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit" }}>Clear</motion.button>}</AnimatePresence>
-            <motion.button onClick={onClose} whileHover={{ scale:1.08 }} whileTap={{ scale:0.9 }} transition={SP} style={{ background:"transparent",border:"1px solid rgba(240,237,232,0.1)",color:"rgba(240,237,232,0.6)",borderRadius:"50%",width:36,height:36,cursor:"pointer",fontSize:20 }}>×</motion.button>
+            <AnimatePresence>{cart.length>0&&<motion.button initial={{ opacity:0,scale:0.8 }} animate={{ opacity:1,scale:1 }} exit={{ opacity:0,scale:0.8 }} transition={SP} onClick={onClear} style={{ background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.2)",color:"#ef4444",borderRadius:10,padding:"7px 14px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:FONT }}>Clear</motion.button>}</AnimatePresence>
+            <motion.button onClick={onClose} whileHover={{ scale:1.08 }} whileTap={{ scale:0.9 }} transition={SP} style={{ background:"transparent",border:"1px solid rgba(240,237,232,0.1)",color:"rgba(240,237,232,0.6)",borderRadius:"50%",width:36,height:36,cursor:"pointer",fontSize:20 }} aria-label="Close order drawer">×</motion.button>
           </div>
         </div>
         <div style={{ flex:1,overflowY:"auto",padding:isPhone?"10px 16px":"12px 28px" }}>
@@ -378,16 +408,17 @@ function OrderDrawer({ cart,billing,storeOpen,storeClosedMessage,onClose,onRemov
                 <Img src={item.recipe.image} size={50} />
                 <div style={{ flex:1,minWidth:0 }}>
                   <p style={{ fontSize:13,fontWeight:600,color:"#f0ede8",margin:"0 0 3px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{item.recipe.name}</p>
-                  {item.flavors.length>0&&<p style={{ fontSize:11,color:"rgba(240,237,232,0.35)",margin:"0 0 10px" }}>{item.flavors.join(" · ")}</p>}
+                  {item.flavors.length>0&&<p style={{ fontSize:11,color:"rgba(240,237,232,0.35)",margin:"0 0 6px" }}>{item.flavors.join(" · ")}</p>}
+                  {stockWarningId===item.recipe.id&&<p style={{ fontSize:10.5,color:"#f87171",margin:"0 0 8px",fontWeight:600 }}>Only {item.recipe.stock} in stock — can't add more.</p>}
                   <div style={{ display:"flex",alignItems:isPhone?"flex-start":"center",justifyContent:"space-between",gap:10,flexDirection:isPhone?"column":"row" }}>
                     <div style={{ display:"flex",alignItems:"center",gap:12,background:"rgba(240,237,232,0.06)",borderRadius:10,padding:"5px 12px",border:"1px solid rgba(240,237,232,0.08)" }}>
-                      <motion.button whileTap={{ scale:0.75 }} transition={SP} onClick={()=>onChangeQty(item.recipe.id,-1)} style={{ background:"none",border:"none",cursor:"pointer",color:"rgba(240,237,232,0.6)",fontSize:16,lineHeight:1,padding:0,fontWeight:700 }}>-</motion.button>
+                      <motion.button whileTap={{ scale:0.75 }} transition={SP} onClick={()=>onChangeQty(item.recipe.id,-1)} style={{ background:"none",border:"none",cursor:"pointer",color:"rgba(240,237,232,0.6)",fontSize:16,lineHeight:1,padding:0,fontWeight:700 }} aria-label="Decrease quantity">-</motion.button>
                       <AnimatePresence mode="wait"><motion.span key={item.quantity} initial={{ opacity:0,y:3 }} animate={{ opacity:1,y:0 }} exit={{ opacity:0,y:-3 }} transition={SP} style={{ fontSize:13,fontWeight:700,color:"#f0ede8",minWidth:14,textAlign:"center" }}>{item.quantity}</motion.span></AnimatePresence>
-                      <motion.button whileTap={{ scale:0.75 }} transition={SP} onClick={()=>onChangeQty(item.recipe.id,1)} style={{ background:"none",border:"none",cursor:"pointer",color:"rgba(240,237,232,0.6)",fontSize:16,lineHeight:1,padding:0,fontWeight:700 }}>+</motion.button>
+                      <motion.button whileTap={{ scale:0.75 }} transition={SP} onClick={()=>onChangeQty(item.recipe.id,1)} style={{ background:"none",border:"none",cursor:"pointer",color:"rgba(240,237,232,0.6)",fontSize:16,lineHeight:1,padding:0,fontWeight:700 }} aria-label="Increase quantity">+</motion.button>
                     </div>
                     <div style={{ display:"flex",alignItems:"center",gap:12 }}>
                       <AnimatePresence mode="wait"><motion.span key={item.quantity} initial={{ opacity:0,y:-4 }} animate={{ opacity:1,y:0 }} exit={{ opacity:0,y:4 }} transition={SPG} style={{ fontSize:14,fontWeight:700,color:"#f5c842" }}>{formatPHP(item.recipe.price*item.quantity)}</motion.span></AnimatePresence>
-                      <motion.button whileHover={{ scale:1.2 }} whileTap={{ scale:0.85 }} transition={SP} onClick={()=>onRemove(item.recipe.id)} style={{ background:"none",border:"none",cursor:"pointer",color:"rgba(240,237,232,0.2)",fontSize:16,padding:0 }}>×</motion.button>
+                      <motion.button whileHover={{ scale:1.2 }} whileTap={{ scale:0.85 }} transition={SP} onClick={()=>onRemove(item.recipe.id)} style={{ background:"none",border:"none",cursor:"pointer",color:"rgba(240,237,232,0.2)",fontSize:16,padding:0 }} aria-label="Remove item">×</motion.button>
                     </div>
                   </div>
                 </div>
@@ -410,8 +441,8 @@ function OrderDrawer({ cart,billing,storeOpen,storeClosedMessage,onClose,onRemov
             <div style={{ height:1,background:"rgba(240,237,232,0.06)",margin:"0 0 14px" }} />
             {paymentMessage&&!isCash&&<p style={{ fontSize:11.5,color:paymentSession?.paid?"#4ade80":"rgba(240,237,232,0.4)",lineHeight:1.6,margin:"0 0 12px" }}>{paymentMessage}</p>}
             {!storeOpen&&<p style={{ fontSize:11.5,color:"#fca5a5",lineHeight:1.6,margin:"0 0 12px" }}>{storeClosedMessage}</p>}
-            {!isCash&&paymentSession?.checkoutUrl&&!paymentSession.paid&&<motion.a whileHover={{ scale:1.01 }} whileTap={{ scale:0.98 }} transition={SP} href={paymentSession.checkoutUrl} target="_blank" rel="noopener noreferrer" style={{ display:"flex",justifyContent:"center",width:"100%",marginBottom:10,background:"rgba(240,237,232,0.06)",color:"#f0ede8",border:"1px solid rgba(240,237,232,0.12)",borderRadius:14,padding:"12px 16px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",textDecoration:"none" }}>Open GCash Payment</motion.a>}
-            <motion.button onClick={primaryAction} disabled={isSubmitting||!storeOpen} whileHover={{ scale:storeOpen&&!isSubmitting?1.02:1 }} whileTap={{ scale:storeOpen&&!isSubmitting?0.97:1 }} transition={SP} style={{ width:"100%",background:"#f5c842",color:"#111",border:"none",borderRadius:14,padding:"16px",fontSize:15,fontWeight:700,cursor:isSubmitting?"wait":!storeOpen?"not-allowed":"pointer",fontFamily:"inherit",opacity:isSubmitting||!storeOpen?0.55:1 }}>
+            {!isCash&&paymentSession?.checkoutUrl&&!paymentSession.paid&&<motion.a whileHover={{ scale:1.01 }} whileTap={{ scale:0.98 }} transition={SP} href={paymentSession.checkoutUrl} target="_blank" rel="noopener noreferrer" style={{ display:"flex",justifyContent:"center",width:"100%",marginBottom:10,background:"rgba(240,237,232,0.06)",color:"#f0ede8",border:"1px solid rgba(240,237,232,0.12)",borderRadius:14,padding:"12px 16px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:FONT,textDecoration:"none" }}>Open GCash Payment</motion.a>}
+            <motion.button onClick={primaryAction} disabled={isSubmitting||!storeOpen} whileHover={{ scale:storeOpen&&!isSubmitting?1.02:1 }} whileTap={{ scale:storeOpen&&!isSubmitting?0.97:1 }} transition={SP} style={{ width:"100%",background:"#f5c842",color:"#111",border:"none",borderRadius:14,padding:"16px",fontSize:15,fontWeight:700,cursor:isSubmitting?"wait":!storeOpen?"not-allowed":"pointer",fontFamily:FONT,opacity:isSubmitting||!storeOpen?0.55:1 }}>
               {isSubmitting?"Please wait...":primaryLabel}
             </motion.button>
             <p style={{ textAlign:"center",fontSize:11,color:"rgba(240,237,232,0.22)",marginTop:12 }}>{isCash?"Pickup only · Pay onsite at the store":"Pickup only · GCash via PayMongo · Place order after payment"}</p>
@@ -435,28 +466,34 @@ function CheckoutModal({ orderNumber,onClose }: { orderNumber:string|null;onClos
             {orderNumber&&<><strong style={{ color:"#f5c842" }}>{orderNumber}</strong> is your pickup number.<br /></>}
             We're getting everything fresh and crispy for you.
           </motion.p>
-          <motion.button initial={{ opacity:0,y:8 }} animate={{ opacity:1,y:0 }} transition={{ delay:0.36,...SPG }} whileHover={{ scale:1.04,backgroundColor:"#e6b800" }} whileTap={{ scale:0.96 }} onClick={onClose} style={{ background:"#f5c842",color:"#111",border:"none",borderRadius:12,padding:"13px 40px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"inherit" }}>Back to Menu</motion.button>
+          <motion.button initial={{ opacity:0,y:8 }} animate={{ opacity:1,y:0 }} transition={{ delay:0.36,...SPG }} whileHover={{ scale:1.04,backgroundColor:"#e6b800" }} whileTap={{ scale:0.96 }} onClick={onClose} style={{ background:"#f5c842",color:"#111",border:"none",borderRadius:12,padding:"13px 40px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:FONT }}>Back to Menu</motion.button>
         </motion.div>
       </div>
     </>
   );
 }
 
+// RecipeCard: hard 50/50 grid — image column is always exactly half the card
+// width on desktop, not a fluid flex-wrap that can shrink unevenly. Collapses
+// to a single stacked column on phones.
 function RecipeCard({ recipe,isFav,justAdded,flavorSel,variantSel,onToggleFav,onAddToCart,onFlavorChange,onVariantChange,flavors }: {
   recipe:Recipe;isFav:boolean;justAdded:boolean;flavorSel:string[];variantSel:"original"|"spicy";onToggleFav:()=>void;onAddToCart:()=>void;onFlavorChange:(f:string[])=>void;onVariantChange:(v:"original"|"spicy")=>void;flavors:string[];
 }) {
   const avail = recipe.available;
+  const lowStock = avail && recipe.stock>0 && recipe.stock<=LOW_STOCK_THRESHOLD;
   const [imgErr,setImgErr] = useState(false);
   const { isNarrowPhone,isPhone } = useViewport();
+  const stacked = isPhone;
   return (
-    <motion.div layout initial={{ opacity:0,y:24 }} animate={{ opacity:1,y:0 }} exit={{ opacity:0,y:-12 }} transition={SPG} whileHover={{ borderColor:avail?"rgba(245,200,66,0.22)":"rgba(240,237,232,0.1)" }} style={{ background:"#151210",borderRadius:24,padding:isNarrowPhone?"18px 16px":"clamp(20px,4vw,32px) clamp(20px,4vw,36px)",border:"1px solid rgba(240,237,232,0.07)",display:"flex",flexWrap:"wrap",gap:isNarrowPhone?18:"clamp(20px,4vw,40px)",alignItems:"flex-start",position:"relative",overflow:"hidden",opacity:avail?1:0.72 }}>
+    <motion.div layout initial={{ opacity:0,y:24 }} animate={{ opacity:1,y:0 }} exit={{ opacity:0,y:-12 }} transition={SPG} whileHover={{ borderColor:avail?"rgba(245,200,66,0.22)":"rgba(240,237,232,0.1)" }} style={{ background:"#151210",borderRadius:24,padding:isNarrowPhone?"18px 16px":"clamp(20px,4vw,32px) clamp(20px,4vw,36px)",border:"1px solid rgba(240,237,232,0.07)",display:"grid",gridTemplateColumns:stacked?"1fr":"1fr 1fr",gap:isNarrowPhone?18:"clamp(20px,4vw,40px)",alignItems:"center",position:"relative",overflow:"hidden",opacity:avail?1:0.72 }}>
       <div style={{ position:"absolute",top:0,left:32,right:32,height:2,background:avail?"linear-gradient(90deg,transparent,rgba(245,200,66,0.18),transparent)":"linear-gradient(90deg,transparent,rgba(240,237,232,0.06),transparent)" }} />
-      <div style={{ flex:"1 1 260px" }}>
+      <div style={{ order:stacked?2:1,alignSelf:"start" }}>
         <div style={{ display:"flex",alignItems:"flex-start",gap:8,marginBottom:8,flexWrap:"wrap" }}>
           <h2 style={{ fontSize:"clamp(16px,2.5vw,18px)",fontWeight:800,color:avail?"#f0ede8":"rgba(240,237,232,0.45)",margin:0,lineHeight:1.28,flex:1 }}>{recipe.name}</h2>
           <div style={{ display:"flex",alignItems:"center",gap:6,flexShrink:0,flexWrap:"wrap" }}>
             {recipe.tag&&avail&&<Tag tag={recipe.tag} />}
             {!avail&&<span style={{ fontSize:10,fontWeight:800,padding:"4px 10px",borderRadius:20,background:"rgba(239,68,68,0.14)",color:"#f87171",border:"1px solid rgba(239,68,68,0.3)",whiteSpace:"nowrap",letterSpacing:"0.08em",textTransform:"uppercase" }}>OUT OF STOCK</span>}
+            {lowStock&&<span style={{ fontSize:10,fontWeight:800,padding:"4px 10px",borderRadius:20,background:"rgba(245,200,66,0.12)",color:"#f5c842",border:"1px solid rgba(245,200,66,0.28)",whiteSpace:"nowrap",letterSpacing:"0.06em",textTransform:"uppercase" }}>Only {recipe.stock} left</span>}
           </div>
         </div>
         <p style={{ fontSize:13,color:"rgba(240,237,232,0.42)",lineHeight:1.7,marginBottom:recipe.note?6:18,fontWeight:300 }}>{recipe.description}</p>
@@ -475,8 +512,8 @@ function RecipeCard({ recipe,isFav,justAdded,flavorSel,variantSel,onToggleFav,on
         {avail&&recipe.maxFlavors!==undefined&&flavors.length>0&&<FlavorPicker maxFlavors={recipe.maxFlavors} selected={flavorSel} onChange={onFlavorChange} flavors={flavors} />}
         <div style={{ display:"flex",alignItems:isNarrowPhone?"stretch":"center",justifyContent:"space-between",flexWrap:"wrap",gap:12 }}>
           <div style={{ display:"flex",gap:10,flexWrap:"wrap",width:isNarrowPhone?"100%":undefined }}>
-            <motion.button onClick={onToggleFav} whileHover={{ scale:1.04 }} whileTap={{ scale:0.93 }} transition={SP} style={{ display:"flex",alignItems:"center",gap:7,background:isFav?"rgba(245,200,66,0.1)":"rgba(240,237,232,0.05)",color:isFav?"#f5c842":"rgba(240,237,232,0.45)",border:`1px solid ${isFav?"rgba(245,200,66,0.3)":"rgba(240,237,232,0.1)"}`,borderRadius:12,padding:"10px 18px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit",flex:isNarrowPhone?"1 1 100%":"0 0 auto",justifyContent:"center" }}>{isFav?"Saved":"Save"}</motion.button>
-            <motion.button onClick={()=>avail&&onAddToCart()} disabled={!avail} whileHover={avail?{ scale:1.04 }:{}} whileTap={avail?{ scale:0.93 }:{}} transition={SP} style={{ display:"flex",alignItems:"center",gap:7,background:!avail?"rgba(240,237,232,0.04)":justAdded?"rgba(74,222,128,0.1)":"#f5c842",color:!avail?"rgba(240,237,232,0.2)":justAdded?"#4ade80":"#111",border:!avail?"1px solid rgba(240,237,232,0.1)":justAdded?"1px solid rgba(74,222,128,0.25)":"none",borderRadius:12,padding:"10px 22px",fontSize:13,fontWeight:700,cursor:!avail?"not-allowed":"pointer",fontFamily:"inherit",minWidth:isNarrowPhone?0:140,flex:isNarrowPhone?"1 1 100%":"0 0 auto",justifyContent:"center",opacity:!avail?0.55:1 }}>
+            <motion.button onClick={onToggleFav} whileHover={{ scale:1.04 }} whileTap={{ scale:0.93 }} transition={SP} style={{ display:"flex",alignItems:"center",gap:7,background:isFav?"rgba(245,200,66,0.1)":"rgba(240,237,232,0.05)",color:isFav?"#f5c842":"rgba(240,237,232,0.45)",border:`1px solid ${isFav?"rgba(245,200,66,0.3)":"rgba(240,237,232,0.1)"}`,borderRadius:12,padding:"10px 18px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:FONT,flex:isNarrowPhone?"1 1 100%":"0 0 auto",justifyContent:"center" }}>{isFav?"Saved":"Save"}</motion.button>
+            <motion.button onClick={()=>avail&&onAddToCart()} disabled={!avail} whileHover={avail?{ scale:1.04 }:{}} whileTap={avail?{ scale:0.93 }:{}} transition={SP} style={{ display:"flex",alignItems:"center",gap:7,background:!avail?"rgba(240,237,232,0.04)":justAdded?"rgba(74,222,128,0.1)":"#f5c842",color:!avail?"rgba(240,237,232,0.2)":justAdded?"#4ade80":"#111",border:!avail?"1px solid rgba(240,237,232,0.1)":justAdded?"1px solid rgba(74,222,128,0.25)":"none",borderRadius:12,padding:"10px 22px",fontSize:13,fontWeight:700,cursor:!avail?"not-allowed":"pointer",fontFamily:FONT,minWidth:isNarrowPhone?0:140,flex:isNarrowPhone?"1 1 100%":"0 0 auto",justifyContent:"center",opacity:!avail?0.55:1 }}>
               <AnimatePresence mode="wait"><motion.span key={!avail?"na":justAdded?"done":"add"} initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }} transition={SP}>{!avail?"OUT OF STOCK":justAdded?"Added!":"Add to Order"}</motion.span></AnimatePresence>
             </motion.button>
           </div>
@@ -486,7 +523,7 @@ function RecipeCard({ recipe,isFav,justAdded,flavorSel,variantSel,onToggleFav,on
           </div>
         </div>
       </div>
-      <motion.div whileHover={avail?{ scale:1.05 }:{}} transition={SPG} style={{ width:isPhone?"clamp(120px,34vw,160px)":"clamp(120px,20vw,200px)",height:isPhone?"clamp(120px,34vw,160px)":"clamp(120px,20vw,200px)",borderRadius:"50%",overflow:"hidden",flexShrink:0,boxShadow:"0 12px 48px rgba(0,0,0,0.45)",border:"1px solid rgba(240,237,232,0.08)",alignSelf:"center",position:"relative",background:"#1a1208",margin:isNarrowPhone?"0 auto":undefined }}>
+      <motion.div whileHover={avail?{ scale:1.03 }:{}} transition={SPG} style={{ order:stacked?1:2,width:"100%",aspectRatio:"1",maxWidth:stacked?"clamp(160px,50vw,220px)":260,borderRadius:"50%",overflow:"hidden",boxShadow:"0 12px 48px rgba(0,0,0,0.45)",border:"1px solid rgba(240,237,232,0.08)",justifySelf:"center",position:"relative",background:"#1a1208" }}>
         <img src={imgErr?"/img/placeholder.jpg":recipe.image} alt={recipe.name} onError={e=>{e.currentTarget.src="/img/placeholder.jpg";setImgErr(true);}} style={{ width:"100%",height:"100%",objectFit:"cover",filter:avail?"brightness(0.96) saturate(1.1)":"brightness(0.45) saturate(0.3)" }} />
         {!avail&&<div style={{ position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.25)" }}><span style={{ fontSize:11,fontWeight:800,color:"rgba(240,237,232,0.55)",letterSpacing:"0.1em",textTransform:"uppercase",textAlign:"center" }}>Not{"\n"}Available</span></div>}
       </motion.div>
@@ -503,9 +540,9 @@ function EmailVerificationPanel({ email,code,error,success,isVerifying,isResendi
       {error&&<p style={{ margin:"14px 0 0",color:"#fca5a5",fontSize:12 }}>{error}</p>}
       {success&&<p style={{ margin:"14px 0 0",color:"#86efac",fontSize:12 }}>{success}</p>}
       <div style={{ display:"flex",gap:12,marginTop:16,flexWrap:"wrap" }}>
-        <input value={code} onChange={e=>onCodeChange(e.target.value)} inputMode="numeric" maxLength={6} placeholder="123456" style={{ flex:"1 1 180px",minWidth:0,borderRadius:12,border:"1px solid rgba(240,237,232,0.12)",background:"rgba(14,12,10,0.5)",color:"#f0ede8",padding:"13px 14px",textAlign:"center",letterSpacing:"0.35em",fontSize:18,fontWeight:700,outline:"none" }} />
-        <button type="button" onClick={onVerify} disabled={isVerifying||code.trim().length!==6} style={{ flex:"1 1 140px",border:"none",borderRadius:12,background:"#f5c842",color:"#111",padding:"13px 18px",fontWeight:800,cursor:isVerifying?"not-allowed":"pointer",opacity:isVerifying?0.7:1 }}>{isVerifying?"Verifying...":"Verify"}</button>
-        <button type="button" onClick={onResend} disabled={isResending} style={{ flex:"1 1 140px",border:"1px solid rgba(240,237,232,0.12)",borderRadius:12,background:"rgba(240,237,232,0.05)",color:"#f0ede8",padding:"13px 18px",fontWeight:700,cursor:isResending?"not-allowed":"pointer",opacity:isResending?0.7:1 }}>{isResending?"Sending...":"Resend Code"}</button>
+        <input value={code} onChange={e=>onCodeChange(e.target.value)} inputMode="numeric" maxLength={6} placeholder="123456" style={{ flex:"1 1 180px",minWidth:0,borderRadius:12,border:"1px solid rgba(240,237,232,0.12)",background:"rgba(14,12,10,0.5)",color:"#f0ede8",padding:"13px 14px",textAlign:"center",letterSpacing:"0.35em",fontSize:18,fontWeight:700,outline:"none",fontFamily:FONT }} />
+        <button type="button" onClick={onVerify} disabled={isVerifying||code.trim().length!==6} style={{ flex:"1 1 140px",border:"none",borderRadius:12,background:"#f5c842",color:"#111",padding:"13px 18px",fontWeight:800,cursor:isVerifying?"not-allowed":"pointer",opacity:isVerifying?0.7:1,fontFamily:FONT }}>{isVerifying?"Verifying...":"Verify"}</button>
+        <button type="button" onClick={onResend} disabled={isResending} style={{ flex:"1 1 140px",border:"1px solid rgba(240,237,232,0.12)",borderRadius:12,background:"rgba(240,237,232,0.05)",color:"#f0ede8",padding:"13px 18px",fontWeight:700,cursor:isResending?"not-allowed":"pointer",opacity:isResending?0.7:1,fontFamily:FONT }}>{isResending?"Sending...":"Resend Code"}</button>
       </div>
     </motion.div>
   );
@@ -525,12 +562,16 @@ export default function Delicacy() {
   const [menuItems,  setMenuItems]  = useState<Recipe[]>([]);
   const [flavors,    setFlavors]    = useState<string[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
+  const [mealsAvailable, setMealsAvailable] = useState<string[]>(MEAL_ORDER);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [activeCategory, setActiveCategory] = useState("All");
   const [activeMeal,     setActiveMeal]     = useState("Lunch");
   const [favorites,      setFavorites]      = useState<number[]>([]);
   const [flavorSels,     setFlavorSels]     = useState<Record<number,string[]>>({});
   const [variantSels,    setVariantSels]    = useState<Record<number,"original"|"spicy">>({});
+  // Cart & payment session are session-only (in-memory). See API NOTES at top
+  // of file for what's needed to persist these server-side instead.
   const [cart,           setCart]           = useState<CartItem[]>([]);
   const [drawerOpen,     setDrawerOpen]     = useState(false);
   const [historyOpen,    setHistoryOpen]    = useState(false);
@@ -538,6 +579,7 @@ export default function Delicacy() {
   const [lastOrderNum,   setLastOrderNum]   = useState<string|null>(null);
   const [isSubmitting,   setIsSubmitting]   = useState(false);
   const [justAdded,      setJustAdded]      = useState<number|null>(null);
+  const [stockWarningId, setStockWarningId] = useState<number|null>(null);
   const [highlightedId,  setHighlightedId]  = useState<number|null>(null);
   const [scrolled,       setScrolled]       = useState(false);
   const [orderTypeOpen,  setOrderTypeOpen]  = useState(false);
@@ -557,7 +599,6 @@ export default function Delicacy() {
   const [isResending,        setIsResending]        = useState(false);
 
   const cardRefs = useRef<Record<number,HTMLDivElement|null>>({});
-  const cartHydrated = useRef(false);
 
   // scroll lock
   useEffect(() => {
@@ -581,60 +622,35 @@ export default function Delicacy() {
 
   useEffect(() => { let c=false; fetchGeneralSettings().then(d=>{ if (!c) setRestaurantSettings(d); }); return ()=>{ c=true; }; }, []);
 
-  // load menu
+  // load menu — catch: distinguish a genuinely empty menu from a failed fetch
   useEffect(() => {
-    let cancelled = false; setLoading(true);
+    let cancelled = false; setLoading(true); setLoadError(false);
     api.get<InventoryMenuRow[]>("/products?item_type=menu_item").then(rows => {
       if (cancelled) return;
-      const recipes = mapInventoryRecipes(rows,[],DEFAULT_MEAL_FILTERS);
+      const recipes = mapInventoryRecipes(rows,[],MEAL_ORDER);
       setMenuItems(recipes);
       setFlavors(DEFAULT_FLAVORS);
       setCategories(["All",...CATEGORY_ORDER.filter(c=>recipes.some(r=>r.category===c))]);
-      setActiveMeal("Lunch");
-    }).catch(e=>console.error("Failed to load menu:",e)).finally(()=>{ if (!cancelled) setLoading(false); });
+      setMealsAvailable(MEAL_ORDER.filter(m=>recipes.some(r=>r.mealTypes.includes(m))));
+    }).catch(e=>{ console.error("Failed to load menu:",e); if (!cancelled) setLoadError(true); }).finally(()=>{ if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, []);
 
   useEffect(() => { const fn=()=>setScrolled(window.scrollY>40); window.addEventListener("scroll",fn); return ()=>window.removeEventListener("scroll",fn); }, []);
 
-  // persist payment session
-  useEffect(() => { const r=localStorage.getItem(PAY_KEY); if (r) try { setPaymentSession(JSON.parse(r)); } catch { localStorage.removeItem(PAY_KEY); } }, []);
-  useEffect(() => { paymentSession ? localStorage.setItem(PAY_KEY,JSON.stringify(paymentSession)) : localStorage.removeItem(PAY_KEY); }, [paymentSession]);
-
-  // hydrate cart from storage
-  useEffect(() => {
-    if (!menuItems.length||cartHydrated.current) return;
-    const raw = localStorage.getItem(CART_KEY);
-    if (raw) try {
-      const p = JSON.parse(raw) as PersistedCartItem[];
-      if (Array.isArray(p)) {
-        const byId = new Map(menuItems.map(i=>[i.id,i]));
-        setCart(p.map(i=>{ const r=byId.get(Number(i.recipeId)); return r?{ recipe:r, quantity:Math.max(1,Number(i.quantity)||1), flavors:Array.isArray(i.flavors)?i.flavors.map(String):[] }:null; }).filter((x):x is CartItem=>x!==null));
-      } else localStorage.removeItem(CART_KEY);
-    } catch { localStorage.removeItem(CART_KEY); }
-    cartHydrated.current = true;
-  }, [menuItems]);
-
-  useEffect(() => {
-    if (!cartHydrated.current) return;
-    if (!cart.length) { localStorage.removeItem(CART_KEY); return; }
-    localStorage.setItem(CART_KEY,JSON.stringify(cart.map(i=>({ recipeId:i.recipe.id, quantity:i.quantity, flavors:i.flavors }))));
-  }, [cart]);
-
-  // handle payment return
+  // handle payment return — reads session_id from the redirect URL instead of
+  // localStorage (see API NOTES #4: backend must include it in the redirect).
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const state = params.get("payment");
+    const sessionId = params.get("session_id");
     if (!state) return;
-    const clear = () => { const u=new URL(window.location.href); u.searchParams.delete("payment"); window.history.replaceState({},``,`${u.pathname}${u.search}${u.hash}`); };
+    const clear = () => { const u=new URL(window.location.href); u.searchParams.delete("payment"); u.searchParams.delete("session_id"); window.history.replaceState({},``,`${u.pathname}${u.search}${u.hash}`); };
     if (state==="cancelled") { setDrawerOpen(true); setPaymentMessage("GCash checkout was cancelled. You can try again when you're ready."); clear(); return; }
-    if (state!=="success") { clear(); return; }
-    const raw=localStorage.getItem(PAY_KEY); if (!raw) { clear(); return; }
-    let session: PaymentSessionState|null=null;
-    try { session=JSON.parse(raw); setPaymentSession(session!); } catch { localStorage.removeItem(PAY_KEY); clear(); return; }
+    if (state!=="success"||!sessionId) { clear(); return; }
     setDrawerOpen(true); setPaymentMessage("Payment return detected. Verifying your GCash payment...");
     let cancelled=false;
-    (async()=>{ try { const d=await api.get<{paid:boolean;status:string;paymentReference:string|null}>(`/paymongo/verify/${session!.checkoutSessionId}`); if (!cancelled){ setPaymentSession({...session!,...d}); setPaymentMessage(d.paid?"Payment confirmed. You can now click Place Order.":"Payment still pending. Please check again."); } } catch { if (!cancelled) setPaymentMessage("Could not verify payment automatically. Click Check Payment Status."); } finally { clear(); } })();
+    (async()=>{ try { const d=await api.get<{paid:boolean;status:string;paymentReference:string|null}>(`/paymongo/verify/${sessionId}`); if (!cancelled){ setPaymentSession({ checkoutSessionId:sessionId, checkoutUrl:"", status:d.status, paid:d.paid, paymentReference:d.paymentReference }); setPaymentMessage(d.paid?"Payment confirmed. You can now click Place Order.":"Payment still pending. Please check again."); } } catch { if (!cancelled) setPaymentMessage("Could not verify payment automatically. Click Check Payment Status."); } finally { clear(); } })();
     return ()=>{ cancelled=true; };
   }, []);
 
@@ -654,7 +670,14 @@ export default function Delicacy() {
     if (!customerUserId) return;
     try { const d=await api.get<{activeOrders:CustomerOrder[];historyOrders:CustomerOrder[]}>(`/orders/customer/${customerUserId}`); setActiveOrders(d.activeOrders??[]); setOrderHistory(d.historyOrders??[]); } catch(e){ console.error("Failed to load orders:",e); }
   }, [customerUserId]);
-  useEffect(() => { fetchOrders(); if (!customerUserId) return; const t=window.setInterval(fetchOrders,5000); return ()=>window.clearInterval(t); }, [fetchOrders,customerUserId]);
+  useEffect(() => {
+    fetchOrders();
+    if (!customerUserId) return;
+    // Catch: don't poll a hidden/backgrounded tab, and stop entirely once
+    // there's nothing active to track.
+    const t = window.setInterval(() => { if (!document.hidden) fetchOrders(); }, 5000);
+    return () => window.clearInterval(t);
+  }, [fetchOrders,customerUserId]);
 
   const displayed = menuItems.filter(r=>(activeCategory==="All"||r.category===activeCategory)&&(r.mealTypes.length===0||r.mealTypes.includes(activeMeal)));
   const totalItems = cart.reduce((s,i)=>s+i.quantity,0);
@@ -662,17 +685,38 @@ export default function Delicacy() {
   const storeOpen = getStoreOpen(storeSettings);
   const storeClosedMessage = "The store is currently closed. Please come back during business hours.";
 
+  const flashStockWarning = (id:number) => { setStockWarningId(id); setTimeout(()=>setStockWarningId(p=>p===id?null:p),2400); };
   const clearPayment = () => { setPaymentSession(null); setPaymentMessage(null); };
+
   const addToCart = (recipe: Recipe) => {
     if (!recipe.available) return;
     clearPayment();
     const recFlavors = flavorSels[recipe.id]??[];
-    setCart(p=>{ const f=p.find(c=>c.recipe.id===recipe.id); return f?p.map(c=>c.recipe.id===recipe.id?{...c,quantity:c.quantity+1,flavors:recFlavors}:c):[...p,{recipe,quantity:1,flavors:recFlavors}]; });
+    let blocked = false;
+    setCart(p=>{
+      const existing = p.find(c=>c.recipe.id===recipe.id);
+      const nextQty = (existing?.quantity??0)+1;
+      if (nextQty>recipe.stock) { blocked = true; return p; }
+      return existing?p.map(c=>c.recipe.id===recipe.id?{...c,quantity:nextQty,flavors:recFlavors}:c):[...p,{recipe,quantity:1,flavors:recFlavors}];
+    });
+    if (blocked) { flashStockWarning(recipe.id); return; }
     setJustAdded(recipe.id); setTimeout(()=>setJustAdded(null),1400);
   };
   const removeFromCart = (id: number) => { clearPayment(); setCart(p=>p.filter(c=>c.recipe.id!==id)); };
-  const changeQty      = (id: number, delta: number) => { clearPayment(); setCart(p=>p.map(c=>c.recipe.id===id?{...c,quantity:c.quantity+delta}:c).filter(c=>c.quantity>0)); };
-  const clearCart      = () => { setCart([]); clearPayment(); };
+  // Catch: increments are hard-capped at recipe.stock — the cart can never
+  // hold more units of an item than are actually in inventory.
+  const changeQty = (id: number, delta: number) => {
+    clearPayment();
+    let blocked = false;
+    setCart(p=>p.map(c=>{
+      if (c.recipe.id!==id) return c;
+      const next = c.quantity+delta;
+      if (delta>0&&next>c.recipe.stock) { blocked = true; return c; }
+      return { ...c, quantity:next };
+    }).filter(c=>c.quantity>0));
+    if (blocked) flashStockWarning(id);
+  };
+  const clearCart = () => { setCart([]); clearPayment(); };
 
   const buildItems = () => cart.map(i=>({ product_id:i.recipe.id, qty:i.quantity, subtotal:i.recipe.price*i.quantity, name:i.recipe.name, price:i.recipe.price }));
   const canOrder = () => {
@@ -680,6 +724,7 @@ export default function Delicacy() {
     if (user.role&&!isCustomerUser(user.role)) { setPaymentMessage("Please log in using a customer account to place an order."); return false; }
     if (customerNeedsVerification) { setPaymentMessage("Please verify your email before placing an order."); setVerificationError("Please verify your email before placing an order."); setVerificationSuccess(null); return false; }
     if (!storeOpen) { setPaymentMessage(storeClosedMessage); return false; }
+    if (cart.some(i=>i.quantity>i.recipe.stock)) { setPaymentMessage("One or more items in your order exceed available stock. Please adjust quantities."); return false; }
     return true;
   };
 
@@ -692,7 +737,7 @@ export default function Delicacy() {
   const handleSendPayment = async () => {
     if (isSubmitting||!cart.length) return; if (!canOrder()) return;
     setIsSubmitting(true); setPaymentMessage(null);
-    try { const d=await api.post<{checkoutSessionId:string;checkoutUrl:string;status:string}>("/paymongo/create-checkout",{items:buildItems(),total:billing.grandTotal,customerUserId,customerName,customerEmail}); const s:PaymentSessionState={checkoutSessionId:d.checkoutSessionId,checkoutUrl:d.checkoutUrl,status:d.status,paid:false,paymentReference:null}; setPaymentSession(s); setPaymentMessage("Redirecting to GCash checkout."); window.location.href=d.checkoutUrl; }
+    try { const d=await api.post<{checkoutSessionId:string;checkoutUrl:string;status:string}>("/paymongo/create-checkout",{items:buildItems(),total:billing.grandTotal,customerUserId,customerName,customerEmail}); setPaymentSession({checkoutSessionId:d.checkoutSessionId,checkoutUrl:d.checkoutUrl,status:d.status,paid:false,paymentReference:null}); setPaymentMessage("Redirecting to GCash checkout."); window.location.href=d.checkoutUrl; }
     catch { setPaymentMessage("Could not start GCash payment. Please try again."); } finally { setIsSubmitting(false); }
   };
   const handleVerifyPayment = async () => {
@@ -722,13 +767,10 @@ export default function Delicacy() {
   const initials = customerName.split(" ").map((w:string)=>w[0]).join("").slice(0,2).toUpperCase();
 
   return (
-    <div style={{ fontFamily:"'Inter', sans-serif",background:"#0e0c0a",minHeight:"100vh",paddingBottom:120,color:"#f0ede8" }}>
-      <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
-      {/* bg glows */}
+    <div style={{ fontFamily:FONT,background:"#0e0c0a",minHeight:"100vh",paddingBottom:120,color:"#f0ede8" }}>
       <div style={{ position:"fixed",inset:0,pointerEvents:"none",zIndex:0,overflow:"hidden" }}>
         {[{ top:"-8%",left:"10%",w:700,op:0.05 },{ top:"45%",right:"-8%",w:520,op:0.03 },{ bottom:"-8%",left:"30%",w:600,op:0.04 }].map((g,i)=><div key={i} style={{ position:"absolute",...g,width:g.w,height:g.w,borderRadius:"50%",background:`radial-gradient(circle,rgba(245,200,66,${g.op}) 0%,transparent 65%)` }} />)}
       </div>
-      {/* Nav */}
       <motion.nav initial={{ y:-80,opacity:0 }} animate={{ y:0,opacity:1 }} transition={{ duration:0.65,ease:EASE }} style={{ position:"sticky",top:0,zIndex:100,background:scrolled?"rgba(14,12,10,0.96)":"rgba(14,12,10,0.80)",backdropFilter:"blur(24px)",borderBottom:"1px solid rgba(240,237,232,0.07)",padding:isNarrowPhone?"10px 14px":"0 clamp(16px,4vw,40px)",minHeight:68,display:"flex",justifyContent:"space-between",alignItems:"center",gap:isNarrowPhone?10:12,flexWrap:isNarrow?"wrap":"nowrap" }}>
         <div style={{ display:"flex",alignItems:"center",gap:8,minWidth:0 }}>
           <img src="/img/logo24.png" alt={`${restaurantSettings.restaurantName} logo`} style={{ width:32,height:32,objectFit:"contain" }} />
@@ -736,14 +778,14 @@ export default function Delicacy() {
         </div>
         <div style={{ display:"flex",alignItems:"center",gap:isNarrowPhone?6:4,flexWrap:"wrap",justifyContent:isNarrow?"flex-start":"flex-end",width:isNarrow?"100%":undefined }}>
           {NAV_LINKS.map(item=>(
-            <motion.button key={item.label} whileHover={{ scale:1.02 }} whileTap={{ scale:0.97 }} transition={SP} onClick={()=>item.label==="Menu"?setOrderTypeOpen(true):navigate(item.path)} style={{ background:"none",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:isNarrowPhone?12.5:13.5,fontWeight:500,color:"rgba(240,237,232,0.45)",padding:isNarrowPhone?"7px 10px":"7px 14px",borderRadius:8 }} onMouseEnter={e=>{e.currentTarget.style.color="#f0ede8";e.currentTarget.style.background="rgba(240,237,232,0.07)";}} onMouseLeave={e=>{e.currentTarget.style.color="rgba(240,237,232,0.45)";e.currentTarget.style.background="transparent";}}>{item.label}</motion.button>
+            <motion.button key={item.label} whileHover={{ scale:1.02 }} whileTap={{ scale:0.97 }} transition={SP} onClick={()=>item.label==="Menu"?setOrderTypeOpen(true):navigate(item.path)} style={{ background:"none",border:"none",cursor:"pointer",fontFamily:FONT,fontSize:isNarrowPhone?12.5:13.5,fontWeight:500,color:"rgba(240,237,232,0.45)",padding:isNarrowPhone?"7px 10px":"7px 14px",borderRadius:8 }} onMouseEnter={e=>{e.currentTarget.style.color="#f0ede8";e.currentTarget.style.background="rgba(240,237,232,0.07)";}} onMouseLeave={e=>{e.currentTarget.style.color="rgba(240,237,232,0.45)";e.currentTarget.style.background="transparent";}}>{item.label}</motion.button>
           ))}
           {!isNarrowPhone&&<div style={{ width:1,height:16,background:"rgba(240,237,232,0.12)",margin:"0 4px" }} />}
-          <motion.button whileHover={{ scale:1.06 }} whileTap={{ scale:0.9 }} transition={SP} onClick={()=>setHistoryOpen(true)} title="Order History" style={{ position:"relative",background:orderHistory.length>0?"rgba(245,200,66,0.08)":"rgba(240,237,232,0.06)",border:`1px solid ${orderHistory.length>0?"rgba(245,200,66,0.25)":"rgba(240,237,232,0.12)"}`,color:orderHistory.length>0?"#f5c842":"rgba(240,237,232,0.42)",borderRadius:10,width:40,height:40,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center" }}>
+          <motion.button whileHover={{ scale:1.06 }} whileTap={{ scale:0.9 }} transition={SP} onClick={()=>setHistoryOpen(true)} title="Order History" aria-label="Order history" style={{ position:"relative",background:orderHistory.length>0?"rgba(245,200,66,0.08)":"rgba(240,237,232,0.06)",border:`1px solid ${orderHistory.length>0?"rgba(245,200,66,0.25)":"rgba(240,237,232,0.12)"}`,color:orderHistory.length>0?"#f5c842":"rgba(240,237,232,0.42)",borderRadius:10,width:40,height:40,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center" }}>
             <Icon d={D.history} size={17} />
             <AnimatePresence>{orderHistory.length>0&&<motion.span initial={{ scale:0 }} animate={{ scale:1 }} exit={{ scale:0 }} transition={SP} style={{ position:"absolute",top:-5,right:-5,background:"#f5c842",color:"#111",borderRadius:20,minWidth:16,height:16,fontSize:9,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 4px" }}>{orderHistory.length}</motion.span>}</AnimatePresence>
           </motion.button>
-          <motion.button whileHover={{ scale:1.06 }} whileTap={{ scale:0.9 }} transition={SP} onClick={()=>setDrawerOpen(true)} style={{ position:"relative",background:"#f5c842",color:"#111",border:"none",borderRadius:10,padding:isNarrowPhone?"9px 14px":"9px 20px",cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,display:"flex",alignItems:"center",gap:8 }}>
+          <motion.button whileHover={{ scale:1.06 }} whileTap={{ scale:0.9 }} transition={SP} onClick={()=>setDrawerOpen(true)} style={{ position:"relative",background:"#f5c842",color:"#111",border:"none",borderRadius:10,padding:isNarrowPhone?"9px 14px":"9px 20px",cursor:"pointer",fontFamily:FONT,fontSize:13,fontWeight:700,display:"flex",alignItems:"center",gap:8 }}>
             {isNarrowPhone?"Order":"My Order"}
             <AnimatePresence>{totalItems>0&&<motion.span initial={{ scale:0 }} animate={{ scale:1 }} exit={{ scale:0 }} transition={SP} style={{ background:"#111",color:"#f5c842",borderRadius:20,minWidth:20,height:20,fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 5px" }}><AnimatePresence mode="wait"><motion.span key={totalItems} initial={{ opacity:0,scale:0.5 }} animate={{ opacity:1,scale:1 }} exit={{ opacity:0,scale:0.5 }} transition={SP}>{totalItems}</motion.span></AnimatePresence></motion.span>}</AnimatePresence>
           </motion.button>
@@ -753,13 +795,12 @@ export default function Delicacy() {
                 <div style={{ width:26,height:26,borderRadius:"50%",background:"linear-gradient(135deg,#f5c842,#e6a800)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}><span style={{ fontSize:10,fontWeight:800,color:"#111" }}>{initials}</span></div>
                 <span style={{ fontSize:12,fontWeight:600,color:"rgba(240,237,232,0.65)",maxWidth:isNarrowPhone?68:90,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{customerName.split(" ")[0]}</span>
               </motion.div>
-              <motion.button whileHover={{ scale:1.06 }} whileTap={{ scale:0.9 }} transition={SP} onClick={()=>{ logout(); navigate("/aboutthecrunch"); }} style={{ background:"rgba(240,237,232,0.06)",color:"#f0ede8",border:"1px solid rgba(240,237,232,0.12)",borderRadius:10,padding:isNarrowPhone?"9px 12px":"9px 18px",cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600 }}>{isNarrowPhone?"Logout":"Log Out"}</motion.button>
+              <motion.button whileHover={{ scale:1.06 }} whileTap={{ scale:0.9 }} transition={SP} onClick={()=>{ logout(); navigate("/aboutthecrunch"); }} style={{ background:"rgba(240,237,232,0.06)",color:"#f0ede8",border:"1px solid rgba(240,237,232,0.12)",borderRadius:10,padding:isNarrowPhone?"9px 12px":"9px 18px",cursor:"pointer",fontFamily:FONT,fontSize:13,fontWeight:600 }}>{isNarrowPhone?"Logout":"Log Out"}</motion.button>
             </motion.div>
           )}</AnimatePresence>
         </div>
       </motion.nav>
 
-      {/* Main content */}
       <div style={{ maxWidth:1200,margin:"0 auto",padding:"clamp(24px,5vw,52px) clamp(16px,4vw,40px) 0",position:"relative",zIndex:1 }}>
         <motion.div initial={{ opacity:0,y:-20 }} animate={{ opacity:1,y:0 }} transition={{ delay:0.1,duration:0.75,ease:EASE }} style={{ marginBottom:36 }}>
           <div style={{ display:"inline-flex",alignItems:"center",gap:10,marginBottom:14 }}>
@@ -784,18 +825,25 @@ export default function Delicacy() {
         {customerNeedsVerification&&<EmailVerificationPanel email={customerEmail} code={verificationCode} error={verificationError||""} success={verificationSuccess||""} isVerifying={isVerifyingEmail} isResending={isResending} onCodeChange={v=>{setVerificationCode(v.replace(/\D/g,"").slice(0,6));setVerificationError(null);}} onVerify={handleVerifyEmail} onResend={handleResendVerification} />}
         <TrackingPanel orders={activeOrders} />
 
+        {/* Meal-type tabs — previously tracked in state but never rendered */}
+        {mealsAvailable.length>1&&(
+          <div style={{ display:"flex",gap:8,marginBottom:18,flexWrap:"wrap" }}>
+            {mealsAvailable.map(m=><Pill key={m} label={m} active={activeMeal===m} onClick={()=>setActiveMeal(m)} />)}
+          </div>
+        )}
+
         {/* Category tabs */}
         <motion.div initial={{ opacity:0,y:10 }} animate={{ opacity:1,y:0 }} transition={{ delay:0.18,duration:0.65,ease:EASE }} style={{ display:"flex",gap:0,marginBottom:40,borderBottom:"1px solid rgba(240,237,232,0.07)",overflowX:"auto",scrollbarWidth:"none" }}>
           {(loading?["All","Chicken","Sides","Drinks"]:categories).map(cat=>(
-            <motion.button key={cat} onClick={()=>setActiveCategory(cat)} whileTap={{ scale:0.95 }} transition={SP} style={{ background:"none",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:isNarrowPhone?13:14,fontWeight:activeCategory===cat?700:400,color:activeCategory===cat?"#f5c842":"rgba(240,237,232,0.3)",padding:isNarrowPhone?"12px 16px":"13px 22px",position:"relative",whiteSpace:"nowrap" }}>
+            <motion.button key={cat} onClick={()=>setActiveCategory(cat)} whileTap={{ scale:0.95 }} transition={SP} style={{ background:"none",border:"none",cursor:"pointer",fontFamily:FONT,fontSize:isNarrowPhone?13:14,fontWeight:activeCategory===cat?700:400,color:activeCategory===cat?"#f5c842":"rgba(240,237,232,0.3)",padding:isNarrowPhone?"12px 16px":"13px 22px",position:"relative",whiteSpace:"nowrap" }}>
               {cat}{activeCategory===cat&&<motion.div layoutId="catTab" transition={SPG} style={{ position:"absolute",bottom:-1,left:0,right:0,height:2,background:"#f5c842",borderRadius:2 }} />}
             </motion.button>
           ))}
         </motion.div>
 
-        {/* Menu cards */}
         <div style={{ display:"flex",flexDirection:"column",gap:16 }}>
           {loading ? <><RecipeSkeleton /><RecipeSkeleton /><RecipeSkeleton /></>
+          : loadError ? <div style={{ textAlign:"center",padding:"88px 0",color:"rgba(240,237,232,0.3)",fontSize:14 }}>Couldn't load the menu right now. Please refresh or try again shortly.</div>
           : <AnimatePresence mode="popLayout">
               {displayed.length>0 ? displayed.map(recipe=>{
                 const isHL=highlightedId===recipe.id;
@@ -816,7 +864,7 @@ export default function Delicacy() {
       </div>
 
       <AnimatePresence>{orderTypeOpen&&<OrderTypeModal onClose={()=>setOrderTypeOpen(false)} />}</AnimatePresence>
-      <AnimatePresence>{drawerOpen&&<OrderDrawer billing={billing} storeOpen={storeOpen} storeClosedMessage={storeClosedMessage} cart={cart} onClose={()=>setDrawerOpen(false)} onRemove={removeFromCart} onChangeQty={changeQty} onClear={clearCart} onSendPayment={handleSendPayment} onVerifyPayment={handleVerifyPayment} onPlaceOrder={handlePlaceOrder} paymentSession={paymentSession} paymentMessage={paymentMessage} isSubmitting={isSubmitting} selectedPaymentMethod={paymentMethod} onPaymentMethodChange={m=>{setPaymentMethod(m);clearPayment();}} onRequestCashTerms={handleRequestCashTerms} />}</AnimatePresence>
+      <AnimatePresence>{drawerOpen&&<OrderDrawer billing={billing} storeOpen={storeOpen} storeClosedMessage={storeClosedMessage} stockWarningId={stockWarningId} cart={cart} onClose={()=>setDrawerOpen(false)} onRemove={removeFromCart} onChangeQty={changeQty} onClear={clearCart} onSendPayment={handleSendPayment} onVerifyPayment={handleVerifyPayment} onPlaceOrder={handlePlaceOrder} paymentSession={paymentSession} paymentMessage={paymentMessage} isSubmitting={isSubmitting} selectedPaymentMethod={paymentMethod} onPaymentMethodChange={m=>{setPaymentMethod(m);clearPayment();}} onRequestCashTerms={handleRequestCashTerms} />}</AnimatePresence>
       <AnimatePresence>{showCashTerms&&<CashTermsModal onAccept={()=>{ setShowCashTerms(false); handlePlaceCashOrder(); }} onDecline={()=>setShowCashTerms(false)} />}</AnimatePresence>
       <AnimatePresence>{historyOpen&&<HistoryDrawer orders={orderHistory} menuItems={menuItems} onClose={()=>setHistoryOpen(false)} />}</AnimatePresence>
       <AnimatePresence>{showCheckout&&<CheckoutModal orderNumber={lastOrderNum} onClose={()=>{ setShowCheckout(false); setLastOrderNum(null); }} />}</AnimatePresence>
