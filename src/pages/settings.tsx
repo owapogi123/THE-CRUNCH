@@ -1066,19 +1066,21 @@ export default function Settings() {
                     </p>
                   )}
                 </div>
-                <button
-                  onClick={handleSaveSettings}
-                  disabled={settingsSaving || settingsLoading}
-                  style={{
-                    ...S.accentBtn,
-                    textAlign: "center",
-                    opacity: settingsSaving || settingsLoading ? 0.55 : 1,
-                    cursor:
-                      settingsSaving || settingsLoading ? "not-allowed" : "pointer",
-                  }}
-                >
-                  {settingsSaving ? "Saving..." : "Save Settings"}
-                </button>
+                {activeTab !== "personal" && (
+                  <button
+                    onClick={handleSaveSettings}
+                    disabled={settingsSaving || settingsLoading}
+                    style={{
+                      ...S.accentBtn,
+                      textAlign: "center",
+                      opacity: settingsSaving || settingsLoading ? 0.55 : 1,
+                      cursor:
+                        settingsSaving || settingsLoading ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    {settingsSaving ? "Saving..." : "Save Settings"}
+                  </button>
+                )}
               </div>
               <div style={{ marginBottom: 8 }}>
                 <h1 style={{ fontFamily: FONT, fontSize: "1.4rem", fontWeight: 700, color: "#1c1a18", margin: "0 0 4px" }}>

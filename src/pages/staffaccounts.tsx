@@ -9,6 +9,7 @@ import { useViewport } from "@/hooks/use-tablet";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 type Role = "administrator" | "cashier" | "cook" | "inventory_manager";
+type AssignableRole = Exclude<Role, "cook">;
 
 interface FormState {
   name: string;
@@ -19,10 +20,16 @@ interface FormState {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const ROLES: Role[] = ["administrator", "cashier", "cook", "inventory_manager"];
+const ASSIGNABLE_ROLES: AssignableRole[] = [
+  "administrator",
+  "cashier",
+  "inventory_manager",
+];
 
-const ROLE_LABEL: Record<AssignableRole, string> = {
+const ROLE_LABEL: Record<Role, string> = {
   administrator: "Admin",
   cashier: "Cashier",
+  cook: "Legacy Cook",
   inventory_manager: "Inventory Mgr",
 };
 
@@ -39,6 +46,10 @@ const AVATAR_COLORS: [string, string][] = [
 ];
 
 const DEFAULT_FORM: FormState = { name: "", email: "", password: "", role: "cashier" };
+const FIELD_MAX_LENGTH = 100;
+const NAME_PATTERN = /^[A-Za-z][A-Za-z.' -]*[A-Za-z.]$|^[A-Za-z.]$/;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PASSWORD_PATTERN = /^(?=.*[A-Za-z])(?=.*\d).+$/;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const getAvatarColor = (name: string): [string, string] => {
@@ -68,12 +79,22 @@ const isAuthError = (err: unknown): boolean => {
 const validateForm = (form: FormState): string => {
   const name = form.name.trim();
   const email = form.email.trim().toLowerCase();
+  const password = form.password;
 
-  if (!name || name.length < 2) return "Full name must be at least 2 characters.";
-  if (!/^[A-Za-z][A-Za-z.' -]*$/.test(name)) return "Name may only contain letters, spaces, apostrophes, hyphens, and periods.";
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return "Please enter a valid email address.";
-  if (form.password.length < 8) return "Password must be at least 8 characters.";
-  if (!/(?=.*[A-Za-z])(?=.*\d)/.test(form.password)) return "Password must include at least 1 letter and 1 number.";
+  if (!name) return "Full name is required.";
+  if (name.length < 2) return "Full name must be at least 2 characters.";
+  if (name.length > FIELD_MAX_LENGTH) return "Full name must not exceed 100 characters.";
+  if (!NAME_PATTERN.test(name) || !/[A-Za-z]/.test(name)) {
+    return "Full name may only use letters, spaces, apostrophes, hyphens, and periods.";
+  }
+  if (!email) return "Email is required.";
+  if (email.length > FIELD_MAX_LENGTH) return "Email must not exceed 100 characters.";
+  if (!EMAIL_PATTERN.test(email)) return "Please enter a valid email address.";
+  if (!password.trim()) return "Password is required.";
+  if (password.length < 8) return "Password must be at least 8 characters.";
+  if (password.length > FIELD_MAX_LENGTH) return "Password must not exceed 100 characters.";
+  if (!PASSWORD_PATTERN.test(password)) return "Password must include at least 1 letter and 1 number.";
+  if (!ASSIGNABLE_ROLES.includes(form.role)) return "Please select a valid role.";
   return "";
 };
 
@@ -120,7 +141,7 @@ function FormField({ label, value, onChange, type = "text", placeholder }: {
           type={isPassword && showPass ? "text" : type}
           value={value}
           placeholder={placeholder}
-          maxLength={100}
+          maxLength={FIELD_MAX_LENGTH}
           onChange={(e) => onChange(e.target.value)}
           style={{ width: "100%", padding: isPassword ? "9px 38px 9px 12px" : "9px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "'Poppins', sans-serif", background: "#f8f9fa", color: "#2d3748", outline: "none", boxSizing: "border-box" }}
         />
@@ -229,7 +250,15 @@ export default function StaffAccounts() {
   };
 
   const closeModal = () => { setShowModal(false); setForm(DEFAULT_FORM); setSubmitted(false); };
-  const updateField = (key: keyof FormState) => (value: string) => setForm((f) => ({ ...f, [key]: value }));
+  const updateField = (key: keyof FormState) => (value: string) => {
+    const sanitized =
+      key === "name"
+        ? value.replace(/[^A-Za-z.' -]/g, "").slice(0, FIELD_MAX_LENGTH)
+        : key === "email"
+          ? value.replace(/\s+/g, "").slice(0, FIELD_MAX_LENGTH)
+          : value.slice(0, FIELD_MAX_LENGTH);
+    setForm((current) => ({ ...current, [key]: sanitized }));
+  };
 
   const formError = submitted ? validateForm(form) : "";
   const isFormValid = validateForm(form) === "";
@@ -361,7 +390,7 @@ export default function StaffAccounts() {
                   <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#718096", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" }}>Role</label>
                   <select value={form.role} onChange={(e) => updateField("role")(e.target.value)}
                     style={{ width: "100%", padding: "9px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 13, fontFamily: "'Poppins', sans-serif", background: "#f8f9fa", color: "#2d3748", outline: "none" }}>
-                    {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
+                    {ASSIGNABLE_ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
                   </select>
                 </div>
 
