@@ -13,7 +13,6 @@ import {
   formatCurrencyAmount,
   formatInSettingsTimezone,
 } from "@/lib/restaurantSettings";
-import StockAdminTab from "./StockAdminTab";
 
 // ── Real-time clock hook ─────────────────────────────────────────────
 
@@ -43,7 +42,7 @@ interface ApiInventoryRow {
 
 // ── Notification helper ──────────────────────────────────────────────
 
-export function notify(
+function notify(
   addNotification: ReturnType<typeof useNotifications>["addNotification"],
   label: string,
   type: "success" | "error" | "warning" | "info" = "info",
@@ -69,10 +68,8 @@ async function uploadProductImage(file: File): Promise<string> {
 // Warm dashboard palette built from the brand's own burnt-orange + forest
 // green pairing (matches the Settings module), so this reads as "The Crunch
 // Fairview" rather than a generic admin theme.
-// Exported so StockAdminTab.tsx (and any other inventory-adjacent tab) can
-// reuse the exact same visual language instead of redefining it.
 
-export const T = {
+const T = {
   page: "#F6F4EE",
   surface: "#FFFFFF",
   surfaceMuted: "#FBFAF5",
@@ -92,11 +89,11 @@ export const T = {
   badSoft: "#FBEAE8",
 };
 
-export const FONT = "Poppins, sans-serif";
+const FONT = "Poppins, sans-serif";
 
 // ── Shared UI ─────────────────────────────────────────────────────────
 
-export function SMModal({
+function SMModal({
   title,
   eyebrow,
   onClose,
@@ -146,7 +143,7 @@ export function SMModal({
   );
 }
 
-export function FormGroup({ label, children }: { label: string; children: React.ReactNode }) {
+function FormGroup({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="mb-4">
       <label className="mb-1.5 block text-[10.5px] font-semibold uppercase tracking-[0.08em]" style={{ color: T.muted }}>{label}</label>
@@ -155,21 +152,21 @@ export function FormGroup({ label, children }: { label: string; children: React.
   );
 }
 
-export const inputClass = "w-full rounded-xl px-3.5 py-2.5 text-[13px] outline-none transition-all box-border";
-export const inputStyle: React.CSSProperties = { color: T.ink, background: T.surfaceMuted, border: `1.5px solid ${T.line}`, fontFamily: FONT };
-export function focusRing(e: React.FocusEvent<HTMLElement>) {
+const inputClass = "w-full rounded-xl px-3.5 py-2.5 text-[13px] outline-none transition-all box-border";
+const inputStyle: React.CSSProperties = { color: T.ink, background: T.surfaceMuted, border: `1.5px solid ${T.line}`, fontFamily: FONT };
+function focusRing(e: React.FocusEvent<HTMLElement>) {
   e.currentTarget.style.borderColor = T.accent;
   e.currentTarget.style.boxShadow = `0 0 0 4px ${T.accentSoft}`;
   e.currentTarget.style.background = T.surface;
 }
-export function blurRing(e: React.FocusEvent<HTMLElement>) {
+function blurRing(e: React.FocusEvent<HTMLElement>) {
   e.currentTarget.style.borderColor = T.line;
   e.currentTarget.style.boxShadow = "none";
   e.currentTarget.style.background = T.surfaceMuted;
 }
 
 interface FormInputProps extends React.InputHTMLAttributes<HTMLInputElement> { label: string }
-export function FormInput({ label, type, onChange, step, ...rest }: FormInputProps) {
+function FormInput({ label, type, onChange, step, ...rest }: FormInputProps) {
   const isNumber = type === "number";
   const allowDecimal = !(step === 1 || step === "1");
   return (
@@ -224,7 +221,7 @@ function ImageUploadField({ preview, onChange }: { preview: string; onChange: (e
   );
 }
 
-export function SectionHeader({ title, sub, cta }: { title: string; sub: string; cta?: React.ReactNode }) {
+function SectionHeader({ title, sub, cta }: { title: string; sub: string; cta?: React.ReactNode }) {
   return (
     <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
       <div>
@@ -236,7 +233,7 @@ export function SectionHeader({ title, sub, cta }: { title: string; sub: string;
   );
 }
 
-export function DataTable({ cols, rows, emptyHint }: { cols: string[]; rows: React.ReactNode[]; emptyHint: string }) {
+function DataTable({ cols, rows, emptyHint }: { cols: string[]; rows: React.ReactNode[]; emptyHint: string }) {
   return (
     <div className="overflow-hidden rounded-2xl" style={{ border: `1px solid ${T.line}`, background: T.surface }}>
       <table className="w-full border-collapse">
@@ -281,7 +278,7 @@ const STAT_ICONS = {
   ),
 };
 
-export function StatCard({ label, value, meta, tone = "neutral", icon }: { label: string; value: number | string; meta?: string; tone?: "neutral" | "accent" | "deep" | "warn" | "bad"; icon: keyof typeof STAT_ICONS }) {
+function StatCard({ label, value, meta, tone = "neutral", icon }: { label: string; value: number | string; meta?: string; tone?: "neutral" | "accent" | "deep" | "warn" | "bad"; icon: keyof typeof STAT_ICONS }) {
   const toneColor = { neutral: T.ink, accent: T.accent, deep: T.deep, warn: T.warn, bad: T.bad }[tone];
   const toneSoft = { neutral: T.surfaceMuted, accent: T.accentSoft, deep: T.deepSoft, warn: T.warnSoft, bad: T.badSoft }[tone];
   return (
@@ -341,17 +338,17 @@ function CategoryBreakdown({ products }: { products: MgmtProduct[] }) {
   );
 }
 
-export function StatusDot({ tone }: { tone: "good" | "bad" }) {
+function StatusDot({ tone }: { tone: "good" | "bad" }) {
   const color = tone === "good" ? T.good : T.bad;
   return <span className="inline-block h-[6px] w-[6px] rounded-full" style={{ background: color }} />;
 }
 
-export const ghostBtnClass = "border-none cursor-pointer font-medium text-[11.5px] rounded-lg px-2.5 py-1.5 transition-colors";
-export const dangerBtnStyle: React.CSSProperties = { color: T.bad, background: "transparent", fontFamily: FONT };
-export const ghostBtnStyle: React.CSSProperties = { color: T.muted, background: T.surfaceMuted, fontFamily: FONT };
-export const primaryBtnClass = "cursor-pointer font-semibold text-[12.5px] rounded-xl px-4 py-2.5 transition-all";
-export const outlineBtnStyle: React.CSSProperties = { color: T.ink, background: T.surface, border: `1px solid ${T.line}`, fontFamily: FONT };
-export const solidBtnStyle: React.CSSProperties = { color: "#fff", background: T.accent, border: `1px solid ${T.accent}`, fontFamily: FONT };
+const ghostBtnClass = "border-none cursor-pointer font-medium text-[11.5px] rounded-lg px-2.5 py-1.5 transition-colors";
+const dangerBtnStyle: React.CSSProperties = { color: T.bad, background: "transparent", fontFamily: FONT };
+const ghostBtnStyle: React.CSSProperties = { color: T.muted, background: T.surfaceMuted, fontFamily: FONT };
+const primaryBtnClass = "cursor-pointer font-semibold text-[12.5px] rounded-xl px-4 py-2.5 transition-all";
+const outlineBtnStyle: React.CSSProperties = { color: T.ink, background: T.surface, border: `1px solid ${T.line}`, fontFamily: FONT };
+const solidBtnStyle: React.CSSProperties = { color: "#fff", background: T.accent, border: `1px solid ${T.accent}`, fontFamily: FONT };
 
 // ── Menu Management Tab ──────────────────────────────────────────────
 
@@ -1100,7 +1097,6 @@ function MenuAdminTab() {
 
 export default function Inventory() {
   const now = useNow();
-  const [tab, setTab] = useState<"menu" | "stock">("menu");
   const [restaurantSettings, setRestaurantSettings] = useState(GENERAL_SETTINGS_DEFAULTS);
   useEffect(() => {
     let cancelled = false;
@@ -1120,11 +1116,9 @@ export default function Inventory() {
         >
           <div>
             <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.16em]" style={{ color: T.accent }}>
-              Inventory
+              Menu Administration
             </p>
-            <h1 className="text-[32px] font-bold tracking-tight" style={{ color: T.ink }}>
-              {tab === "menu" ? "Menu Management" : "Raw Material Inventory"}
-            </h1>
+            <h1 className="text-[32px] font-bold tracking-tight" style={{ color: T.ink }}>Menu Management</h1>
           </div>
           <UserIdentityBanner className="order-3 w-full sm:order-2 sm:w-auto" />
           <div className="flex select-none items-center gap-3 rounded-2xl px-4 py-2.5" style={{ background: T.surface, border: `1px solid ${T.line}` }}>
@@ -1145,29 +1139,8 @@ export default function Inventory() {
           </div>
         </motion.div>
 
-        <div className="mb-6 inline-flex gap-1 rounded-2xl p-1" style={{ background: T.surfaceMuted, border: `1px solid ${T.line}` }}>
-          {(["menu", "stock"] as const).map((key) => {
-            const active = tab === key;
-            return (
-              <button
-                key={key}
-                onClick={() => setTab(key)}
-                className="cursor-pointer rounded-xl px-4 py-2 text-[12.5px] font-semibold transition-colors"
-                style={{
-                  background: active ? T.surface : "transparent",
-                  color: active ? T.accent : T.muted,
-                  boxShadow: active ? "0 2px 8px rgba(28,27,23,0.06)" : "none",
-                  fontFamily: FONT,
-                }}
-              >
-                {key === "menu" ? "Menu Management" : "Raw Material Inventory"}
-              </button>
-            );
-          })}
-        </div>
-
         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1, duration: 0.22 }}>
-          {tab === "menu" ? <MenuAdminTab /> : <StockAdminTab />}
+          <MenuAdminTab />
         </motion.div>
       </main>
     </div>
