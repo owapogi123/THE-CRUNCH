@@ -79,7 +79,7 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
     icon: UtensilsCrossed,
   },
   {
-    label: "Menu",
+    label: "Menu View",
     path: "/menu",
     permissionKey: "menus",
     icon: BookOpen,

@@ -31,7 +31,7 @@ export const DEFAULT_PERMISSIONS: PermissionsMap = {
     overview: true,
     orders: true,
     menuManagement: true,
-    menus: false,
+    menus: true,
     stockManager: false,
     userAccounts: true,
     salesReports: true,
@@ -95,6 +95,7 @@ export function normalizePermissionsMap(
 
   next.administrator.userAccounts = true;
   next.administrator.settings = true;
+  next.administrator.menus = true;
   for (const role of COOK_VIEW_ROLES) {
     next[role].orders = true;
   }
