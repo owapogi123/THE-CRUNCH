@@ -1,5 +1,10 @@
 const router = require("express").Router();
 const db = require("../config/db");
+const {
+  isPayMongoEnabled,
+  issueBypassCheckout,
+  verifyBypassCheckout,
+} = require("../services/paymongoMode");
 
 const fetchFn = (...args) =>
   typeof fetch === "function"
@@ -91,6 +96,12 @@ function calculateBillingTotals(items, settings) {
 }
 
 async function payMongoRequest(path, options = {}) {
+  if (!isPayMongoEnabled()) {
+    const error = new Error("PayMongo provider requests are disabled");
+    error.statusCode = 503;
+    throw error;
+  }
+
   const secretKey = getPayMongoSecretKey();
   if (!secretKey) {
     const error = new Error("PAYMONGO_SECRET_KEY is not configured");
@@ -143,15 +154,6 @@ router.post("/create-checkout", async (req, res) => {
       return res.status(400).json({ message: "Order items are required" });
     }
 
-    const successUrl = getPayMongoSuccessUrl();
-    const cancelUrl = getPayMongoCancelUrl();
-    if (!successUrl || !cancelUrl) {
-      return res.status(500).json({
-        message:
-          "PAYMONGO_SUCCESS_URL and PAYMONGO_CANCEL_URL must be configured",
-      });
-    }
-
     const billingSettings = await loadBillingSettings();
     const totals = calculateBillingTotals(items, billingSettings);
     const totalPesos = totals.grandTotal;
@@ -160,6 +162,27 @@ router.post("/create-checkout", async (req, res) => {
       return res
         .status(400)
         .json({ message: "A valid total amount is required" });
+    }
+
+    if (!isPayMongoEnabled()) {
+      const bypassCheckout = issueBypassCheckout({ customerUserId, items });
+      return res.json({
+        ...bypassCheckout,
+        checkoutUrl: null,
+        status: "paid",
+        paid: true,
+        bypassed: true,
+        message: "Local test payment completed",
+      });
+    }
+
+    const successUrl = getPayMongoSuccessUrl();
+    const cancelUrl = getPayMongoCancelUrl();
+    if (!successUrl || !cancelUrl) {
+      return res.status(500).json({
+        message:
+          "PAYMONGO_SUCCESS_URL and PAYMONGO_CANCEL_URL must be configured",
+      });
     }
 
     if (totalPesos < 1) {
@@ -261,6 +284,10 @@ router.get("/verify/:checkoutSessionId", async (req, res) => {
       return res.status(400).json({ message: "checkoutSessionId is required" });
     }
 
+    if (!isPayMongoEnabled()) {
+      return res.json(verifyBypassCheckout(checkoutSessionId));
+    }
+
     const session = await payMongoRequest(
       `/checkout_sessions/${checkoutSessionId}`,
       {
@@ -294,6 +321,14 @@ router.get("/verify/:checkoutSessionId", async (req, res) => {
 
 router.get("/methods", async (req, res) => {
   try {
+    if (!isPayMongoEnabled()) {
+      return res.json({
+        paymongoEnabled: false,
+        bypassed: true,
+        paymentMethods: [],
+      });
+    }
+
     const payload = await payMongoRequest(
       "/merchants/capabilities/payment_methods",
       { method: "GET" },

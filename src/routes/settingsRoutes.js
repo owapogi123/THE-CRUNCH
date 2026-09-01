@@ -189,7 +189,7 @@ const DEFAULT_ROLE_PERMISSIONS = {
     overview: true,
     orders: true,
     menuManagement: true,
-    menus: false,
+    menus: true,
     stockManager: false,
     userAccounts: true,
     salesReports: true,
@@ -260,6 +260,7 @@ function normalizePermissionsPayload(payload) {
 
   next.administrator.userAccounts = true;
   next.administrator.settings = true;
+  next.administrator.menus = true;
   for (const role of COOK_VIEW_PERMISSION_ROLES) {
     next[role].orders = true;
   }
@@ -300,6 +301,7 @@ async function loadRolePermissions() {
 
   merged.administrator.userAccounts = true;
   merged.administrator.settings = true;
+  merged.administrator.menus = true;
   for (const role of COOK_VIEW_PERMISSION_ROLES) {
     merged[role].orders = true;
   }

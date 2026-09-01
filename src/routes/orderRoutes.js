@@ -10,6 +10,14 @@ const {
   deductStockForPaidOrder,
   restoreStockForRefundedOrder,
 } = require("../services/inventoryService");
+const {
+  claimBypassCheckout,
+  consumeBypassCheckout,
+  isBypassCheckoutId,
+  isPayMongoEnabled,
+  releaseBypassCheckout,
+  verifyBypassCheckout,
+} = require("../services/paymongoMode");
 const fetchFn = (...args) =>
   (typeof fetch === "function"
     ? fetch(...args)
@@ -355,18 +363,24 @@ function parsePaymentProofDataUrl(dataUrl) {
   return { buffer, extension };
 }
 
-async function verifyPayMongoCheckoutSession(checkoutSessionId) {
+async function verifyPayMongoCheckoutSession(checkoutSessionId, context = {}) {
   const normalizedId = String(checkoutSessionId || "").trim();
   if (!normalizedId) {
     return { paid: false, status: "missing", paymentReference: null };
   }
 
-  if (!getPayMongoSecretKey() && normalizedId.startsWith("TEST-BYPASS-")) {
-    return {
-      paid: true,
-      status: "paid",
-      paymentReference: normalizedId,
-    };
+  if (!isPayMongoEnabled()) {
+    return context.claimBypass
+      ? claimBypassCheckout(normalizedId, context)
+      : verifyBypassCheckout(normalizedId, context);
+  }
+
+  if (isBypassCheckoutId(normalizedId)) {
+    const error = new Error(
+      "Local test payment cannot be used while PayMongo is enabled",
+    );
+    error.statusCode = 403;
+    throw error;
   }
 
   const session = await payMongoRequest(`/checkout_sessions/${normalizedId}`, {
@@ -402,6 +416,12 @@ function getAppBaseUrl(req) {
 }
 
 async function payMongoRequest(path, options = {}) {
+  if (!isPayMongoEnabled()) {
+    const error = new Error("PayMongo provider requests are disabled");
+    error.statusCode = 503;
+    throw error;
+  }
+
   const secretKey = getPayMongoSecretKey();
   if (!secretKey) {
     const error = new Error("PAYMONGO_SECRET_KEY is not configured");
@@ -1121,6 +1141,12 @@ router.get("/payment-proofs/:filename", async (req, res) => {
 // POST /orders/paymongo/checkout — create GCash checkout session
 router.post("/paymongo/checkout", async (req, res) => {
   try {
+    if (!isPayMongoEnabled()) {
+      return res.status(503).json({
+        message: "PayMongo provider checkout is disabled; use /api/paymongo/create-checkout for local test payment",
+      });
+    }
+
     const { items, total, customerUserId, customerName, customerEmail } = req.body || {};
 
     if (!Array.isArray(items) || items.length === 0) {
@@ -1210,6 +1236,12 @@ router.post("/paymongo/checkout", async (req, res) => {
 // GET /orders/paymongo/checkout/:checkoutSessionId — verify payment status
 router.get("/paymongo/checkout/:checkoutSessionId", async (req, res) => {
   try {
+    if (!isPayMongoEnabled()) {
+      return res.status(503).json({
+        message: "PayMongo provider verification is disabled",
+      });
+    }
+
     const { checkoutSessionId } = req.params;
     const session = await payMongoRequest(`/checkout_sessions/${checkoutSessionId}`, {
       method: "GET",
@@ -1240,6 +1272,8 @@ router.get("/paymongo/checkout/:checkoutSessionId", async (req, res) => {
 router.post("/", async (req, res) => {
   let conn;
   let txStarted = false;
+  let bypassSessionToClaim = null;
+  let claimedBypassSessionId = null;
   try {
     await ensureOnlineOrderColumns();
     await ensureOrderStockDeductionColumn();
@@ -1341,12 +1375,18 @@ router.post("/", async (req, res) => {
       }
     } else if (isOnlinePickupOrder && normalizedPaymentMethod === "gcash") {
       const checkoutToVerify = submittedCheckoutSessionId || submittedPaymentReference;
-      const verification = await verifyPayMongoCheckoutSession(checkoutToVerify);
       if (!checkoutToVerify) {
         return res.status(400).json({ message: "Online pickup orders require a PayMongo checkout session" });
       }
+      const verification = await verifyPayMongoCheckoutSession(checkoutToVerify, {
+        customerUserId: resolvedCustomerUserId,
+        items,
+      });
       if (!verification.paid) {
         return res.status(400).json({ message: "Online pickup orders must be paid after backend verification" });
+      }
+      if (verification.bypassed) {
+        bypassSessionToClaim = verification.checkoutSessionId;
       }
       effectivePaymentStatus = "Paid";
       effectivePaymentReference = verification.paymentReference || checkoutToVerify;
@@ -1402,6 +1442,15 @@ router.post("/", async (req, res) => {
       } else if (!effectivePaymentReference) {
         return res.status(400).json({ message: "Online pickup orders require a verified payment reference" });
       }
+    }
+
+    if (bypassSessionToClaim) {
+      const claimedBypass = claimBypassCheckout(bypassSessionToClaim, {
+        customerUserId: resolvedCustomerUserId,
+        items,
+      });
+      claimedBypassSessionId = claimedBypass.checkoutSessionId;
+      effectivePaymentReference = claimedBypass.paymentReference;
     }
 
     conn = await db.getConnection();
@@ -1506,6 +1555,10 @@ router.post("/", async (req, res) => {
 
     await conn.commit();
     txStarted = false;
+    if (claimedBypassSessionId) {
+      consumeBypassCheckout(claimedBypassSessionId);
+      claimedBypassSessionId = null;
+    }
 
     if (isOnlinePickupOrder) {
       const receiptEmail = submittedCustomerEmail || String(onlineCustomerProfile?.email || "").trim().toLowerCase();
@@ -1546,12 +1599,21 @@ router.post("/", async (req, res) => {
     });
   } catch (err) {
     if (conn && txStarted) await conn.rollback();
+    if (claimedBypassSessionId) {
+      releaseBypassCheckout(claimedBypassSessionId);
+      claimedBypassSessionId = null;
+    }
     console.error("POST /orders error:", JSON.stringify({
       message: err.message,
       code: err.code,
       sqlMessage: err.sqlMessage,
     }, null, 2));
-    res.status(500).json({ message: "DB error", error: err.message });
+    const statusCode = Number(err?.statusCode);
+    const isClientError = statusCode >= 400 && statusCode < 500;
+    res.status(isClientError ? statusCode : 500).json({
+      message: isClientError ? err.message : "DB error",
+      error: err.message,
+    });
   } finally {
     if (conn) conn.release();
   }
@@ -1724,7 +1786,10 @@ router.patch("/:id", requireCookViewAccess, async (req, res) => {
       values.push(nextStatus);
     }
 
-    if (hasPaymentStatusUpdate) {
+    if (hasStatusUpdate && nextStatus === "Refunded") {
+      fields.push("payment_status = ?");
+      values.push("Refunded");
+    } else if (hasPaymentStatusUpdate) {
       fields.push("payment_status = ?");
       values.push(nextPaymentStatus);
     } else if (
@@ -1876,7 +1941,7 @@ router.patch("/:id", requireCookViewAccess, async (req, res) => {
       message: "Order updated",
       id,
       status: nextStatus,
-      paymentStatus: nextPaymentStatus,
+      paymentStatus: nextStatus === "Refunded" ? "Refunded" : nextPaymentStatus,
       estimatedPrepMinutes:
         hasTimerUpdate
           ? Math.max(Number(estimatedPrepMinutes) || DEFAULT_ESTIMATED_PREP_MINUTES, 1)

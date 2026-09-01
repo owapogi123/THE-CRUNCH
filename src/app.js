@@ -45,8 +45,6 @@ const authRoutes = require("./routes/authRoutes");
 app.use("/api/auth", authRoutes);
 const usersRoutes = require("./routes/userRoutes");
 app.use("/api/users", usersRoutes);
-const testRoutes = require("./routes/testRoutes");
-app.use("/api/test", testRoutes);
 const productRoutes = require("./routes/productRoutes");
 app.use("/api/products", productRoutes);
 const purchaseOrdersRouter = require("./routes/purchaseOrders");
