@@ -900,11 +900,7 @@ export default function Settings() {
     setFeedbackLoading(true);
     setFeedbackError(null);
 
-    fetch("/api/feedback")
-      .then((res) => {
-        if (!res.ok) throw new Error("Request failed");
-        return res.json();
-      })
+    api.get<FeedbackEntry[]>("/feedback")
       .then((data: FeedbackEntry[]) => setFeedback(data))
       .catch(() => setFeedbackError("Failed to load feedback. Please try again."))
       .finally(() => setFeedbackLoading(false));

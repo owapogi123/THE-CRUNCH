@@ -223,7 +223,6 @@ function ToastContainer({
   settings: NotificationSettings;
 }) {
   const { notifications, removeNotification } = useNotifications();
-  if (!settings.enableToastNotifications) return null;
   const positionStyle = useMemo(() => {
     const isTop = settings.toastPosition.startsWith("top");
     const isRight = settings.toastPosition.endsWith("right");
@@ -235,6 +234,8 @@ function ToastContainer({
       alignItems: isRight ? "flex-end" : "flex-start",
     } as const;
   }, [settings.toastPosition]);
+
+  if (!settings.enableToastNotifications) return null;
 
   return createPortal(
     <div

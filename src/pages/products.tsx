@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom'
 import { useViewport } from '@/hooks/use-tablet'
 import { api, resolveAssetUrl } from '@/lib/api'
 import { fetchGeneralSettings, formatCurrencyAmount } from '@/lib/restaurantSettings'
+import { useAuth } from '@/context/authcontext'
 
 // ── Constants & Types ──────────────────────────────────────────────────────
 const NAV_H = 64, BANNER_H = 40
@@ -351,6 +352,7 @@ interface ProductsProps{isAuthenticated?:boolean;onLogout?:()=>void}
 
 export default function Products({isAuthenticated=false,onLogout}:ProductsProps){
   const navigate=useNavigate(); const {isPhone}=useViewport()
+  const {user}=useAuth()
   const [products,setProducts]=useState<Product[]>([]),[flavors,setFlavors]=useState<FlavorItem[]>([])
   const [menuSections,setMenuSections]=useState<MenuSection[]>([]),[promos,setPromos]=useState<Promo[]>([])
   const [loadingP,setLoadingP]=useState(true),[loadingF,setLoadingF]=useState(true)
@@ -358,7 +360,13 @@ export default function Products({isAuthenticated=false,onLogout}:ProductsProps)
   const [category,setCategory]=useState<Category>('All'),[search,setSearch]=useState('')
   const [isOpen,setIsOpen]=useState(false),[expandedFlavor,setExpandedFlavor]=useState<string|null>(null)
   const [mobileOpen,setMobileOpen]=useState(false),[searchFocused,setSearchFocused]=useState(false)
-  const [currentUser,setCurrentUser]=useState<UserInfo|null>(null)
+  const currentUser:UserInfo|null=isAuthenticated&&user?{
+    id:Number(user.userId)||0,
+    name:user.username,
+    email:user.email,
+    user_type:user.role==='customer'?'customer':'employee',
+    role:user.role,
+  }:null
   const {scrollY}=useScroll(); const heroY=useTransform(scrollY,[0,600],[0,80]); const heroO=useTransform(scrollY,[0,400],[1,.35])
 
   useEffect(()=>{ void fetchGeneralSettings() },[])
@@ -369,12 +377,6 @@ export default function Products({isAuthenticated=false,onLogout}:ProductsProps)
   },[])
 
   useEffect(()=>{ const el=document.createElement('style'); el.id='crunch-lux2'; if(!document.getElementById('crunch-lux2')){el.innerHTML=CSS;document.head.appendChild(el)} return()=>{ document.getElementById('crunch-lux2')?.remove() } },[])
-
-  // Fetch logged-in user info
-  useEffect(()=>{
-    if(!isAuthenticated){setCurrentUser(null);return}
-    api.get<UserInfo>('/api/me').then((d:UserInfo)=>setCurrentUser(d)).catch(()=>{})
-  },[isAuthenticated])
 
   const fetch=<T,>(url:string,set:(d:T[])=>void,setL:(v:boolean)=>void,map?:(d:unknown[])=>T[])=>{
     let c=false; setL(true)

@@ -20,6 +20,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { UserIdentityBanner } from "@/components/UserIdentityBanner";
 import { useViewport } from "@/hooks/use-tablet";
 import { useAuth } from "../context/authcontext";
+import { clampOrderItemQuantity, getEffectiveMaxQuantity } from "../lib/orderQuantity";
 
 // ─── FONT ────────────────────────────────────────────────────────────────────
 if (typeof document !== "undefined" && !document.getElementById("poppins-font")) {
@@ -181,7 +182,7 @@ const mapProducts = (data: Record<string, unknown>[]): MenuItem[] => {
     price: Number(p.price ?? 0),
     category: String(p.category ?? "UNCATEGORIZED").toUpperCase(),
     itemType: String(p.item_type ?? "menu_item"),
-    remainingStock: Number(p.stock ?? p.quantity ?? p.dailyWithdrawn ?? 0),
+    remainingStock: Math.max(0, Math.floor(Number(p.available_servings ?? p.remainingStock ?? p.stock ?? p.quantity ?? p.dailyWithdrawn ?? 0)) || 0),
     availabilityStatus: String(p.availability_status ?? "Available"),
     image: p.image ? resolveAssetUrl(String(p.image)) : null,
   }));
@@ -681,10 +682,11 @@ const CartRow = memo(({ item, onRemove, onQty, onNoteChange }: {
   onNoteChange: (id: number, note: string) => void;
 }) => {
   const [showNote, setShowNote] = useState(false);
+  const effectiveMaximum = getEffectiveMaxQuantity(item.remainingStock);
 
   const qtyBtn = (delta: number, icon: React.ReactNode) => (
-    <motion.button whileTap={{ scale: 0.85 }} onClick={() => onQty(item.id, delta)}
-      style={{ width: 22, height: 22, borderRadius: 7, border: "1px solid #eee", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+    <motion.button whileTap={{ scale: 0.85 }} onClick={() => onQty(item.id, delta)} disabled={delta > 0 && item.quantity >= effectiveMaximum}
+      style={{ width: 22, height: 22, borderRadius: 7, border: "1px solid #eee", background: "#fff", cursor: delta > 0 && item.quantity >= effectiveMaximum ? "not-allowed" : "pointer", opacity: delta > 0 && item.quantity >= effectiveMaximum ? 0.45 : 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
       {icon}
     </motion.button>
   );
@@ -708,10 +710,12 @@ const CartRow = memo(({ item, onRemove, onQty, onNoteChange }: {
           <input
             type="number"
             min={1}
+            max={effectiveMaximum}
+            step={1}
             value={item.quantity}
             onChange={(e) => {
-              const val = parseInt(e.target.value, 10);
-              if (!isNaN(val) && val > 0) onQty(item.id, val - item.quantity);
+              const val = clampOrderItemQuantity(e.target.value, item.remainingStock);
+              if (val > 0) onQty(item.id, val - item.quantity);
             }}
             style={{ width: 32, textAlign: "center", fontSize: 11, fontWeight: 600, color: "#111", border: "1px solid #eee", borderRadius: 6, padding: "2px 0", fontFamily: F, background: "#fff", outline: "none" }}
           />
@@ -1403,6 +1407,7 @@ export default function CashierView() {
   const [savedOrderNote, setSavedOrderNote] = useState("");
   const [orderNumber, setOrderNumber] = useState("");
   const [placing, setPlacing] = useState(false);
+  const placingRef = useRef(false);
 
   // ── Online orders ──
   const [onlineOrderNotifs, setOnlineOrderNotifs] = useState<OnlineNotif[]>([]);
@@ -1462,13 +1467,28 @@ export default function CashierView() {
   }, []);
 
   // ── Load products ──
-  useEffect(() => {
+  const loadProducts = useCallback(async () => {
     setLoadingProducts(true);
-    api.get<Record<string, unknown>[]>("/products?item_type=menu_item")
-      .then((d) => { setProducts(mapProducts(d ?? [])); setProductsError(""); })
-      .catch(() => setProductsError("Failed to load menu items."))
-      .finally(() => setLoadingProducts(false));
+    try {
+      const data = await api.get<Record<string, unknown>[]>("/products?item_type=menu_item");
+      const nextProducts = mapProducts(data ?? []);
+      setProducts(nextProducts);
+      setProductsError("");
+      setCart(previous => previous.flatMap(item => {
+        const current = nextProducts.find(product => product.id === item.id);
+        if (!current) return [];
+        const maximum = getEffectiveMaxQuantity(current.remainingStock);
+        if (maximum === 0) return [];
+        return [{ ...item, ...current, quantity: Math.min(item.quantity, maximum) }];
+      }));
+    } catch {
+      setProductsError("Failed to load menu items.");
+    } finally {
+      setLoadingProducts(false);
+    }
   }, []);
+
+  useEffect(() => { void loadProducts(); }, [loadProducts]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1709,11 +1729,17 @@ export default function CashierView() {
       toast("warning", "Clear the current cart before restoring a held order.");
       return;
     }
-    setCart(h.cart); setOrderType(h.orderType); setPaymentMethod(h.paymentMethod);
+    setCart(h.cart.flatMap(item => {
+      const current = products.find(product => product.id === item.id);
+      if (!current) return [];
+      const maximum = getEffectiveMaxQuantity(current.remainingStock);
+      if (maximum === 0) return [];
+      return [{ ...item, ...current, quantity: Math.min(item.quantity, maximum) }];
+    })); setOrderType(h.orderType); setPaymentMethod(h.paymentMethod);
     setCustomerType(h.customerType); setSelectedTable(h.selectedTable);
     setOrderNote(h.note); setShowOrderNote(!!h.note);
     setHeldOrders((prev) => prev.filter((o) => o.id !== h.id));
-  }, [cart.length]);
+  }, [cart.length, products, toast]);
 
   const handleDiscardHeld = useCallback((id: string) => {
     setHeldOrders((prev) => prev.filter((o) => o.id !== id));
@@ -1780,12 +1806,14 @@ export default function CashierView() {
 
   const addToCart = useCallback((item: MenuItem) => {
     if (isUnavailableStatus(item.availabilityStatus)) return;
+    const maximum = getEffectiveMaxQuantity(item.remainingStock);
+    if (maximum === 0) return;
     setCart((prev) => {
       const ex = prev.find((c) => c.id === item.id);
       if (ex) {
         const next = ex.quantity + 1;
-        if (item.remainingStock > 0 && next > item.remainingStock && !isFood(item)) return prev;
-        return prev.map((c) => c.id === item.id ? { ...c, quantity: next } : c);
+        if (next > maximum) return prev;
+        return prev.map((c) => c.id === item.id ? { ...c, quantity: Math.min(next, maximum) } : c);
       }
       return [...prev, { ...item, quantity: 1 }];
     });
@@ -1799,8 +1827,8 @@ export default function CashierView() {
       prev.map((item) => {
         if (item.id !== id) return item;
         const next = Math.max(0, item.quantity + delta);
-        if ((prod?.remainingStock ?? 0) > 0 && next > (prod?.remainingStock ?? 0) && !isFood(item)) return item;
-        return { ...item, quantity: next };
+        const maximum = getEffectiveMaxQuantity(prod?.remainingStock ?? item.remainingStock);
+        return { ...item, quantity: Math.min(next, maximum) };
       }).filter((i) => i.quantity > 0)
     );
   }, [products]);
@@ -1810,7 +1838,9 @@ export default function CashierView() {
   }, []);
 
   const handleAmountConfirmed = async ({ tendered, selectedImage, proofFileName }: { tendered: number; selectedImage?: File; proofFileName?: string }) => {
+    if (placingRef.current) return;
     if (!isOnline) { toast("error", "No connection. Cannot place order."); return; }
+    placingRef.current = true;
     setShowAmountEntry(false);
     setPlacing(true);
     const discountRate = Number(selectedDiscount?.percentage || 0);
@@ -1819,7 +1849,7 @@ export default function CashierView() {
     let proofImageUrl: string | undefined;
 
     if (paymentMethod === "gcash_onsite") {
-      if (!selectedImage) { toast("error", "Please upload or capture the onsite e-payment proof first."); setPlacing(false); return; }
+      if (!selectedImage) { toast("error", "Please upload or capture the onsite e-payment proof first."); placingRef.current = false; setPlacing(false); return; }
       try {
         const formData = new FormData();
         formData.append("proof", selectedImage, proofFileName || selectedImage.name || `payment-proof-${Date.now()}.jpg`);
@@ -1827,7 +1857,7 @@ export default function CashierView() {
         proofImageUrl = upload.fileUrl;
       } catch {
         toast("error", "Failed to upload the payment proof. Please try again.");
-        setPlacing(false); return;
+        placingRef.current = false; setPlacing(false); return;
       }
     }
 
@@ -1844,6 +1874,7 @@ export default function CashierView() {
 
     try {
       const res = await api.post<{ orderNumber?: string }>("/orders", payload);
+      await loadProducts();
       const num = res?.orderNumber ?? `#${Math.floor(10000 + Math.random() * 90000)}`;
       setSavedCart([...cart]); setSavedMeta({ orderType, paymentMethod, customerType });
       setSavedPricing({ subtotal, discountAmount, taxAmount, serviceChargeAmount, amountDue });
@@ -1852,8 +1883,9 @@ export default function CashierView() {
       if (selectedTable !== null) setTables((prev) => prev.map((t) => t.id === selectedTable ? { ...t, status: "occupied" } : t));
     } catch (err) {
       console.error("Order failed:", err);
-      toast("error", "Failed to submit order. Please try again.");
+      toast("error", err instanceof Error ? err.message : "Failed to submit order. Please try again.");
     } finally {
+      placingRef.current = false;
       setPlacing(false);
     }
   };

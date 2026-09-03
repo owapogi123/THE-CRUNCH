@@ -10,6 +10,7 @@ import {
 } from "../lib/restaurantSettings";
 import { useAuth } from "../context/authcontext";
 import { useViewport } from "@/hooks/use-tablet";
+import { getEffectiveMaxQuantity } from "../lib/orderQuantity";
 
 /**
  * ── BACKEND / API NOTES (keep this page consistent with the rest of the app) ──
@@ -42,12 +43,12 @@ const SPG = { type: "spring" as const, stiffness: 200, damping: 24 };
 const EASE: [number,number,number,number] = [0.22,1,0.36,1];
 
 interface Nutrition { calories:number; protein:number; fats:number; carbs:number }
-interface InventoryMenuRow { product_id?:number; id?:number; item_type?:string; product_name?:string; name?:string; price?:number|string; category?:string; image?:string|null; mainStock?:number|string; stock?:number|string; availability_status?:string; isRawMaterial?:boolean|number }
+interface InventoryMenuRow { product_id?:number; id?:number; item_type?:string; product_name?:string; name?:string; price?:number|string; category?:string; image?:string|null; mainStock?:number|string; stock?:number|string; remainingStock?:number|string; available_servings?:number|string|null; availability_status?:string; available?:boolean|number; manual_override?:boolean|number; manual_status?:string; isRawMaterial?:boolean|number }
 interface Recipe { id:number; name:string; description:string; image:string; nutrition:Nutrition; price:number; stock:number; maxFlavors?:number; mealTypes:string[]; tag?:string; note?:string; variant?:"original"|"spicy"; category:string; available:boolean }
 interface CartItem { recipe:Recipe; quantity:number; flavors:string[] }
 interface CustomerOrderItem { name:string; quantity:number }
 interface CustomerOrder { id:number; orderNumber:string; total:number; createdAt:string; orderType:string; rawStatus:string; trackingStatus:string; paymentReference:string|null; paymentStatus:string|null; paymentMethod:string; items:CustomerOrderItem[] }
-interface PaymentSessionState { checkoutSessionId:string; checkoutUrl:string; status:string; paid:boolean; paymentReference:string|null }
+interface PaymentSessionState { checkoutSessionId:string; checkoutUrl:string|null; status:string; paid:boolean; paymentReference:string|null; bypassed?:boolean }
 interface BillingSettings { taxRate:number; serviceCharge:number }
 interface StoreStatusSettings { weekdayOpenTime:string; weekdayCloseTime:string; weekendOpenTime:string; weekendCloseTime:string; storeStatusMode:"auto"|"manual_open"|"manual_closed"; timezone:string }
 interface BillingBreakdown { subtotal:number; taxAmount:number; serviceChargeAmount:number; grandTotal:number }
@@ -150,9 +151,11 @@ function mapInventoryRecipes(rows: InventoryMenuRow[], meta: Recipe[], fallbackM
     const category = normalizeCategory(row.category);
     const m = metaByName.get(normalizeName(name));
     const hasMeal = (m?.mealTypes??[]).map(x=>String(x).trim().toLowerCase()).some(x=>normFB.includes(x));
-    const stock = Math.max(0, Math.floor(Number(row.mainStock ?? row.stock ?? 0)) || 0);
+    const stock = Math.max(0, Math.floor(Number(row.available_servings ?? row.remainingStock ?? row.mainStock ?? row.stock ?? 0)) || 0);
     const statusAvailable = !isUnavailable(row.availability_status);
-    return { id, name, price:Number(row.price??m?.price??0), category, stock, image:resolveAssetUrl(String(row.image||m?.image||"/img/placeholder.jpg")), available: statusAvailable && stock > 0, description:m?.description||`Freshly prepared ${category.toLowerCase()} from The Crunch.`, nutrition:m?.nutrition??DEFAULT_NUTRITION, maxFlavors:m?.maxFlavors, mealTypes:(m?.mealTypes&&m.mealTypes.length>0&&hasMeal)?m.mealTypes:fallbackMeals, tag:m?.tag, note:m?.note, variant:m?.variant };
+    const backendAvailable = row.available === true || row.available === 1;
+    const hasBackendAvailable = row.available !== undefined && row.available !== null;
+    return { id, name, price:Number(row.price??m?.price??0), category, stock, image:resolveAssetUrl(String(row.image||m?.image||"/img/placeholder.jpg")), available: hasBackendAvailable ? backendAvailable : statusAvailable, description:m?.description||`Freshly prepared ${category.toLowerCase()} from The Crunch.`, nutrition:m?.nutrition??DEFAULT_NUTRITION, maxFlavors:m?.maxFlavors, mealTypes:(m?.mealTypes&&m.mealTypes.length>0&&hasMeal)?m.mealTypes:fallbackMeals, tag:m?.tag, note:m?.note, variant:m?.variant };
   });
 }
 
@@ -414,7 +417,7 @@ function OrderDrawer({ cart,billing,storeOpen,storeClosedMessage,stockWarningId,
                     <div style={{ display:"flex",alignItems:"center",gap:12,background:"rgba(240,237,232,0.06)",borderRadius:10,padding:"5px 12px",border:"1px solid rgba(240,237,232,0.08)" }}>
                       <motion.button whileTap={{ scale:0.75 }} transition={SP} onClick={()=>onChangeQty(item.recipe.id,-1)} style={{ background:"none",border:"none",cursor:"pointer",color:"rgba(240,237,232,0.6)",fontSize:16,lineHeight:1,padding:0,fontWeight:700 }} aria-label="Decrease quantity">-</motion.button>
                       <AnimatePresence mode="wait"><motion.span key={item.quantity} initial={{ opacity:0,y:3 }} animate={{ opacity:1,y:0 }} exit={{ opacity:0,y:-3 }} transition={SP} style={{ fontSize:13,fontWeight:700,color:"#f0ede8",minWidth:14,textAlign:"center" }}>{item.quantity}</motion.span></AnimatePresence>
-                      <motion.button whileTap={{ scale:0.75 }} transition={SP} onClick={()=>onChangeQty(item.recipe.id,1)} style={{ background:"none",border:"none",cursor:"pointer",color:"rgba(240,237,232,0.6)",fontSize:16,lineHeight:1,padding:0,fontWeight:700 }} aria-label="Increase quantity">+</motion.button>
+                      <motion.button whileTap={{ scale:0.75 }} transition={SP} onClick={()=>onChangeQty(item.recipe.id,1)} disabled={item.quantity>=getEffectiveMaxQuantity(item.recipe.stock)} style={{ background:"none",border:"none",cursor:item.quantity>=getEffectiveMaxQuantity(item.recipe.stock)?"not-allowed":"pointer",opacity:item.quantity>=getEffectiveMaxQuantity(item.recipe.stock)?0.4:1,color:"rgba(240,237,232,0.6)",fontSize:16,lineHeight:1,padding:0,fontWeight:700 }} aria-label="Increase quantity">+</motion.button>
                     </div>
                     <div style={{ display:"flex",alignItems:"center",gap:12 }}>
                       <AnimatePresence mode="wait"><motion.span key={item.quantity} initial={{ opacity:0,y:-4 }} animate={{ opacity:1,y:0 }} exit={{ opacity:0,y:4 }} transition={SPG} style={{ fontSize:14,fontWeight:700,color:"#f5c842" }}>{formatPHP(item.recipe.price*item.quantity)}</motion.span></AnimatePresence>
@@ -445,7 +448,7 @@ function OrderDrawer({ cart,billing,storeOpen,storeClosedMessage,stockWarningId,
             <motion.button onClick={primaryAction} disabled={isSubmitting||!storeOpen} whileHover={{ scale:storeOpen&&!isSubmitting?1.02:1 }} whileTap={{ scale:storeOpen&&!isSubmitting?0.97:1 }} transition={SP} style={{ width:"100%",background:"#f5c842",color:"#111",border:"none",borderRadius:14,padding:"16px",fontSize:15,fontWeight:700,cursor:isSubmitting?"wait":!storeOpen?"not-allowed":"pointer",fontFamily:FONT,opacity:isSubmitting||!storeOpen?0.55:1 }}>
               {isSubmitting?"Please wait...":primaryLabel}
             </motion.button>
-            <p style={{ textAlign:"center",fontSize:11,color:"rgba(240,237,232,0.22)",marginTop:12 }}>{isCash?"Pickup only · Pay onsite at the store":"Pickup only · GCash via PayMongo · Place order after payment"}</p>
+            <p style={{ textAlign:"center",fontSize:11,color:"rgba(240,237,232,0.22)",marginTop:12 }}>{isCash?"Pickup only · Pay onsite at the store":paymentSession?.bypassed?"Temporary local test payment · No real GCash charge":"Pickup only · GCash via PayMongo · Place order after payment"}</p>
           </motion.div>
         )}</AnimatePresence>
       </motion.div>
@@ -599,6 +602,7 @@ export default function Delicacy() {
   const [isResending,        setIsResending]        = useState(false);
 
   const cardRefs = useRef<Record<number,HTMLDivElement|null>>({});
+  const submittingRef = useRef(false);
 
   // scroll lock
   useEffect(() => {
@@ -623,18 +627,41 @@ export default function Delicacy() {
   useEffect(() => { let c=false; fetchGeneralSettings().then(d=>{ if (!c) setRestaurantSettings(d); }); return ()=>{ c=true; }; }, []);
 
   // load menu — catch: distinguish a genuinely empty menu from a failed fetch
-  useEffect(() => {
-    let cancelled = false; setLoading(true); setLoadError(false);
-    api.get<InventoryMenuRow[]>("/products?item_type=menu_item").then(rows => {
-      if (cancelled) return;
+  const loadMenuItems = useCallback(async (showLoading = false) => {
+    if (showLoading) setLoading(true);
+    setLoadError(false);
+    try {
+      const rows = await api.get<InventoryMenuRow[]>("/products?item_type=menu_item");
       const recipes = mapInventoryRecipes(rows,[],MEAL_ORDER);
       setMenuItems(recipes);
       setFlavors(DEFAULT_FLAVORS);
       setCategories(["All",...CATEGORY_ORDER.filter(c=>recipes.some(r=>r.category===c))]);
       setMealsAvailable(MEAL_ORDER.filter(m=>recipes.some(r=>r.mealTypes.includes(m))));
-    }).catch(e=>{ console.error("Failed to load menu:",e); if (!cancelled) setLoadError(true); }).finally(()=>{ if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+      setCart(previous => previous.flatMap(item => {
+        const current = recipes.find(recipe => recipe.id === item.recipe.id);
+        if (!current) return [];
+        const maximum = getEffectiveMaxQuantity(current.stock);
+        if (maximum === 0) return [];
+        return [{ ...item, recipe: current, quantity: Math.min(item.quantity, maximum) }];
+      }));
+    } catch (error) {
+      console.error("Failed to load menu:",error);
+      setLoadError(true);
+    } finally {
+      if (showLoading) setLoading(false);
+    }
   }, []);
+
+  useEffect(() => { void loadMenuItems(true); }, [loadMenuItems]);
+  useEffect(() => {
+    const refresh = () => { if (!document.hidden) void loadMenuItems(false); };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [loadMenuItems]);
 
   useEffect(() => { const fn=()=>setScrolled(window.scrollY>40); window.addEventListener("scroll",fn); return ()=>window.removeEventListener("scroll",fn); }, []);
 
@@ -650,7 +677,7 @@ export default function Delicacy() {
     if (state!=="success"||!sessionId) { clear(); return; }
     setDrawerOpen(true); setPaymentMessage("Payment return detected. Verifying your GCash payment...");
     let cancelled=false;
-    (async()=>{ try { const d=await api.get<{paid:boolean;status:string;paymentReference:string|null}>(`/paymongo/verify/${sessionId}`); if (!cancelled){ setPaymentSession({ checkoutSessionId:sessionId, checkoutUrl:"", status:d.status, paid:d.paid, paymentReference:d.paymentReference }); setPaymentMessage(d.paid?"Payment confirmed. You can now click Place Order.":"Payment still pending. Please check again."); } } catch { if (!cancelled) setPaymentMessage("Could not verify payment automatically. Click Check Payment Status."); } finally { clear(); } })();
+    (async()=>{ try { const d=await api.get<{paid:boolean;status:string;paymentReference:string|null}>(`/paymongo/verify/${sessionId}`); if (!cancelled){ setPaymentSession({ checkoutSessionId:sessionId, checkoutUrl:"", status:d.status, paid:d.paid, paymentReference:d.paymentReference }); setPaymentMessage(d.paid?"Payment confirmed. You can now click Place Order.":"Payment still pending. Please check again."); } } catch (error) { if (!cancelled) setPaymentMessage(error instanceof Error ? error.message : "Could not verify payment automatically. Click Check Payment Status."); } finally { clear(); } })();
     return ()=>{ cancelled=true; };
   }, []);
 
@@ -696,7 +723,7 @@ export default function Delicacy() {
     setCart(p=>{
       const existing = p.find(c=>c.recipe.id===recipe.id);
       const nextQty = (existing?.quantity??0)+1;
-      if (nextQty>recipe.stock) { blocked = true; return p; }
+      if (nextQty>getEffectiveMaxQuantity(recipe.stock)) { blocked = true; return p; }
       return existing?p.map(c=>c.recipe.id===recipe.id?{...c,quantity:nextQty,flavors:recFlavors}:c):[...p,{recipe,quantity:1,flavors:recFlavors}];
     });
     if (blocked) { flashStockWarning(recipe.id); return; }
@@ -711,8 +738,9 @@ export default function Delicacy() {
     setCart(p=>p.map(c=>{
       if (c.recipe.id!==id) return c;
       const next = c.quantity+delta;
-      if (delta>0&&next>c.recipe.stock) { blocked = true; return c; }
-      return { ...c, quantity:next };
+      const maximum = getEffectiveMaxQuantity(c.recipe.stock);
+      if (delta>0&&next>maximum) blocked = true;
+      return { ...c, quantity:Math.min(next,maximum) };
     }).filter(c=>c.quantity>0));
     if (blocked) flashStockWarning(id);
   };
@@ -724,32 +752,43 @@ export default function Delicacy() {
     if (user.role&&!isCustomerUser(user.role)) { setPaymentMessage("Please log in using a customer account to place an order."); return false; }
     if (customerNeedsVerification) { setPaymentMessage("Please verify your email before placing an order."); setVerificationError("Please verify your email before placing an order."); setVerificationSuccess(null); return false; }
     if (!storeOpen) { setPaymentMessage(storeClosedMessage); return false; }
-    if (cart.some(i=>i.quantity>i.recipe.stock)) { setPaymentMessage("One or more items in your order exceed available stock. Please adjust quantities."); return false; }
+    if (cart.some(i=>!Number.isInteger(i.quantity)||i.quantity<1||i.quantity>getEffectiveMaxQuantity(i.recipe.stock))) { setPaymentMessage("One or more items in your order exceed the 999-unit or available-stock limit. Please adjust quantities."); return false; }
     return true;
   };
 
   const handleRequestCashTerms = () => { if (isSubmitting||!cart.length) return; if (!canOrder()) return; setShowCashTerms(true); };
   const handlePlaceCashOrder = async () => {
+    if (submittingRef.current || !canOrder()) return;
+    submittingRef.current = true;
     setIsSubmitting(true);
     try { const r=await api.post<{orderId:number;orderNumber:string}>("/orders",{items:buildItems(),total:billing.grandTotal,customerUserId,customer_name:customerName,customer_email:customerEmail,order_type:"take-out",payment_method:"cash_on_pickup",payment_status:"Pending Payment"}); await fetchOrders(); setLastOrderNum(r.orderNumber||`#${r.orderId}`); setDrawerOpen(false); setTimeout(()=>{ setShowCheckout(true); setCart([]); },320); }
-    catch(e){ console.error(e); setPaymentMessage("Could not place your order. Please try again."); } finally { setIsSubmitting(false); }
+    catch(e){ console.error(e); setPaymentMessage(e instanceof Error ? e.message : "Could not place your order. Please try again."); } finally { submittingRef.current = false; setIsSubmitting(false); }
   };
   const handleSendPayment = async () => {
     if (isSubmitting||!cart.length) return; if (!canOrder()) return;
     setIsSubmitting(true); setPaymentMessage(null);
-    try { const d=await api.post<{checkoutSessionId:string;checkoutUrl:string;status:string}>("/paymongo/create-checkout",{items:buildItems(),total:billing.grandTotal,customerUserId,customerName,customerEmail}); setPaymentSession({checkoutSessionId:d.checkoutSessionId,checkoutUrl:d.checkoutUrl,status:d.status,paid:false,paymentReference:null}); setPaymentMessage("Redirecting to GCash checkout."); window.location.href=d.checkoutUrl; }
-    catch { setPaymentMessage("Could not start GCash payment. Please try again."); } finally { setIsSubmitting(false); }
+    try {
+      const d=await api.post<{checkoutSessionId:string;checkoutUrl:string|null;status:string;paid?:boolean;paymentReference?:string|null;bypassed?:boolean}>("/paymongo/create-checkout",{items:buildItems(),total:billing.grandTotal,customerUserId,customerName,customerEmail});
+      const bypassed=d.bypassed===true;
+      const paid=bypassed&&d.paid===true;
+      setPaymentSession({checkoutSessionId:d.checkoutSessionId,checkoutUrl:d.checkoutUrl,status:d.status,paid,paymentReference:d.paymentReference??null,bypassed});
+      if (bypassed) { setPaymentMessage("Test payment completed. Click Place Order to continue. No real GCash charge was made."); return; }
+      if (!d.checkoutUrl) throw new Error("PayMongo checkout URL was not returned");
+      setPaymentMessage("Redirecting to GCash checkout."); window.location.href=d.checkoutUrl;
+    }
+    catch(error) { setPaymentMessage(error instanceof Error ? error.message : "Could not start GCash payment. Please try again."); } finally { setIsSubmitting(false); }
   };
   const handleVerifyPayment = async () => {
     if (isSubmitting||!paymentSession) return; setIsSubmitting(true);
     try { const d=await api.get<{paid:boolean;status:string;paymentReference:string|null}>(`/paymongo/verify/${paymentSession.checkoutSessionId}`); setPaymentSession({...paymentSession,...d}); setPaymentMessage(d.paid?"Payment confirmed. You can now click Place Order.":"Payment still pending. Finish GCash checkout, then check again."); }
-    catch { setPaymentMessage("Could not verify payment. Please try again."); } finally { setIsSubmitting(false); }
+    catch(error) { setPaymentMessage(error instanceof Error ? error.message : "Could not verify payment. Please try again."); } finally { setIsSubmitting(false); }
   };
   const handlePlaceOrder = async () => {
-    if (!canOrder()) return; if (isSubmitting||!paymentSession?.paid) { setPaymentMessage("Please complete and verify your GCash payment first."); return; }
+    if (!canOrder()) return; if (submittingRef.current||isSubmitting||!paymentSession?.paid) { setPaymentMessage("Please complete and verify your GCash payment first."); return; }
+    submittingRef.current = true;
     setIsSubmitting(true);
-    try { const r=await api.post<{orderId:number;orderNumber:string}>("/orders",{items:buildItems(),total:billing.grandTotal,customerUserId,customer_name:customerName,customer_email:customerEmail,order_type:"take-out",payment_method:"gcash",checkout_session_id:paymentSession.checkoutSessionId,payment_reference:paymentSession.paymentReference||paymentSession.checkoutSessionId,payment_status:"Paid"}); await fetchOrders(); setLastOrderNum(r.orderNumber||`#${r.orderId}`); clearPayment(); setDrawerOpen(false); setTimeout(()=>{ setShowCheckout(true); setCart([]); },320); }
-    catch { setPaymentMessage("Payment done, but could not place the order. Please try again."); } finally { setIsSubmitting(false); }
+    try { const r=await api.post<{orderId:number;orderNumber:string}>("/orders",{items:buildItems(),total:billing.grandTotal,customerUserId,customer_name:customerName,customer_email:customerEmail,order_type:"take-out",payment_method:"gcash",checkout_session_id:paymentSession.checkoutSessionId,payment_reference:paymentSession.paymentReference||paymentSession.checkoutSessionId,payment_status:"Paid"}); await Promise.all([fetchOrders(),loadMenuItems(false)]); setLastOrderNum(r.orderNumber||`#${r.orderId}`); clearPayment(); setDrawerOpen(false); setTimeout(()=>{ setShowCheckout(true); setCart([]); },320); }
+    catch(e) { setPaymentMessage(e instanceof Error ? e.message : "Payment done, but could not place the order. Please try again."); } finally { submittingRef.current = false; setIsSubmitting(false); }
   };
   const handleVerifyEmail = async () => {
     const code = verificationCode.replace(/\D/g,"").slice(0,6);
