@@ -20,29 +20,6 @@ function isPaidPaymentStatus(value) {
   return normalizePaymentStatus(value) === "Paid";
 }
 
-function isForceAvailableMenuItem(menuItem) {
-  const manualOverride =
-    menuItem?.manual_override === true ||
-    menuItem?.manual_override === 1 ||
-    String(menuItem?.manual_override).toLowerCase() === "true";
-
-  const status = String(
-    menuItem?.manual_status || menuItem?.availability_status || "",
-  )
-    .trim()
-    .toLowerCase();
-
-  return (
-    manualOverride &&
-    (
-      status === "available" ||
-      status === "force available" ||
-      status.includes("available")
-    ) &&
-    !status.includes("out")
-  );
-}
-
 async function resolveRecordedByAdminId(recordedBy, connection = db) {
   const numericRecordedBy = Number(recordedBy);
   if (!Number.isInteger(numericRecordedBy) || numericRecordedBy <= 0) {
@@ -109,13 +86,21 @@ async function deductStockForOrder(
     [productId],
   );
 
-  await connection.query(
+  const [inventoryUpdate] = await connection.query(
     `UPDATE Inventory
-     SET Stock = GREATEST(COALESCE(Stock, 0) - ?, 0),
+     SET Stock = COALESCE(Stock, 0) - ?,
          Last_Update     = NOW()
-     WHERE Product_ID = ?`,
-    [qty, productId],
+     WHERE Product_ID = ?
+       AND COALESCE(Stock, 0) >= ?`,
+    [qty, productId, qty],
   );
+  if (inventoryUpdate.affectedRows < 1) {
+    const error = new Error(
+      `Insufficient inventory stock for product ${productId}.`,
+    );
+    error.statusCode = 409;
+    throw error;
+  }
 
   await connection.query(
     `UPDATE Menu
@@ -189,28 +174,7 @@ async function restoreStockForOrder(
   );
 }
 
-async function getOrderIngredientDeductions(orderId, connection) {
-  const hasItemTypeColumn = await ensureProductsItemTypeSchema(connection);
-  const orderedItemTypeExpr = getProductItemTypeExpression(
-    hasItemTypeColumn,
-    "p",
-    "m",
-  );
-  const [items] = await connection.query(
-    `SELECT
-       oi.Product_ID AS productId,
-       oi.Quantity AS quantity,
-       COALESCE(m.manual_override, 0) AS manual_override,
-       COALESCE(m.manual_status, '') AS manual_status,
-       COALESCE(p.availability_status, 'Available') AS availability_status,
-       ${orderedItemTypeExpr} AS item_type
-     FROM order_item oi
-     LEFT JOIN Menu m ON m.Product_ID = oi.Product_ID
-     LEFT JOIN products p ON p.id = oi.Product_ID
-     WHERE oi.Order_ID = ?`,
-    [orderId],
-  );
-
+async function buildStockRequirements(items, connection) {
   const menuProductIds = items
     .map((item) => Number(item.productId) || 0)
     .filter((productId) => productId > 0);
@@ -220,12 +184,9 @@ async function getOrderIngredientDeductions(orderId, connection) {
   for (const item of items) {
     const productId = Number(item.productId) || 0;
     const orderedQty = Number(item.quantity) || 0;
-    const isForceAvailable = isForceAvailableMenuItem(item);
 
     if (productId <= 0 || orderedQty <= 0) {
-      throw new Error(
-        `Invalid order item for stock deduction on order ${Number(orderId) || 0}`,
-      );
+      throw new Error("Invalid order item for stock validation");
     }
     if (String(item.item_type || MENU_ITEM).trim().toLowerCase() !== MENU_ITEM) {
       throw new Error(
@@ -233,18 +194,16 @@ async function getOrderIngredientDeductions(orderId, connection) {
       );
     }
 
-    if (isForceAvailable) {
-      console.warn(
-        `[inventoryService] Skipping stock deduction for force-available menu product ${productId}.`,
-      );
-      continue;
-    }
-
     const ingredients = ingredientMap.get(productId) ?? [];
     if (ingredients.length === 0) {
-      throw new Error(
-        `Menu item has no ingredient mapping. Product ${productId}.`,
-      );
+      const existing = deductions.get(productId) ?? {
+        requiredQty: 0,
+        name: String(item.product_name || `Product #${productId}`),
+        directOrderItem: true,
+      };
+      existing.requiredQty += orderedQty;
+      deductions.set(productId, existing);
+      continue;
     }
 
     for (const ingredient of ingredients) {
@@ -261,14 +220,144 @@ async function getOrderIngredientDeductions(orderId, connection) {
           `Ingredient product ${ingredientProductId} must be ${STOCK_ITEM}, found ${ingredientItemType}.`,
         );
       }
-      const totalRequired = orderedQty * quantityRequired;
-      const currentRequiredQty = Number(
-        deductions.get(ingredientProductId) ?? 0,
-      );
-      deductions.set(ingredientProductId, currentRequiredQty + totalRequired);
+      const existing = deductions.get(ingredientProductId) ?? {
+        requiredQty: 0,
+        name: String(
+          ingredient.product_name || `Product #${ingredientProductId}`,
+        ),
+        directOrderItem: false,
+      };
+      existing.requiredQty += orderedQty * quantityRequired;
+      existing.directOrderItem = false;
+      deductions.set(ingredientProductId, existing);
     }
   }
 
+  return deductions;
+}
+
+async function getOrderIngredientDeductions(orderId, connection) {
+  const hasItemTypeColumn = await ensureProductsItemTypeSchema(connection);
+  const orderedItemTypeExpr = getProductItemTypeExpression(
+    hasItemTypeColumn,
+    "p",
+    "m",
+  );
+  const [items] = await connection.query(
+    `SELECT
+       oi.Product_ID AS productId,
+       oi.Quantity AS quantity,
+       COALESCE(m.Product_Name, p.name, CONCAT('Product #', oi.Product_ID)) AS product_name,
+       ${orderedItemTypeExpr} AS item_type
+     FROM order_item oi
+     LEFT JOIN Menu m ON m.Product_ID = oi.Product_ID
+     LEFT JOIN products p ON p.id = oi.Product_ID
+     WHERE oi.Order_ID = ?`,
+    [orderId],
+  );
+
+  return buildStockRequirements(items, connection);
+}
+
+async function lockAndValidateStockRequirements(connection, deductions) {
+  const productIds = Array.from(deductions.keys()).sort((a, b) => a - b);
+  for (const productId of productIds) {
+    await connection.query(
+      `INSERT INTO Inventory (Product_ID, Quantity, Stock, Item_Purchased)
+       SELECT m.Product_ID, m.Stock, m.Stock, m.Product_Name
+       FROM Menu m
+       WHERE m.Product_ID = ?
+         AND NOT EXISTS (
+           SELECT 1 FROM Inventory i WHERE i.Product_ID = m.Product_ID
+         )`,
+      [productId],
+    );
+  }
+
+  if (productIds.length === 0) return;
+  const placeholders = productIds.map(() => "?").join(", ");
+  const [inventoryRows] = await connection.query(
+    `SELECT
+       i.Product_ID AS productId,
+       COALESCE(i.Stock, 0) AS mainStock
+     FROM Inventory i
+     WHERE i.Product_ID IN (${placeholders})
+     ORDER BY i.Product_ID
+     FOR UPDATE`,
+    productIds,
+  );
+  const availableByProduct = new Map(
+    inventoryRows.map((row) => [
+      Number(row.productId),
+      Number(row.mainStock ?? 0),
+    ]),
+  );
+
+  for (const productId of productIds) {
+    const requirement = deductions.get(productId);
+    const requiredQty = Number(requirement?.requiredQty || 0);
+    const availableQty = Number(availableByProduct.get(productId) ?? 0);
+    if (availableQty < requiredQty) {
+      const shownAvailable = Math.max(0, Math.floor(availableQty));
+      const error = new Error(
+        requirement?.directOrderItem
+          ? `Only ${shownAvailable} units of "${requirement.name}" are available.`
+          : `Insufficient stock for "${requirement?.name || `Product #${productId}`}". Required ${requiredQty}, available ${availableQty}.`,
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+  }
+}
+
+async function validateStockForOrderItems(items, connection) {
+  const hasItemTypeColumn = await ensureProductsItemTypeSchema(connection);
+  const itemTypeExpr = getProductItemTypeExpression(
+    hasItemTypeColumn,
+    "p",
+    "m",
+  );
+  const productIds = items.map((item) => Number(item.product_id));
+  const placeholders = productIds.map(() => "?").join(", ");
+  const [productRows] = await connection.query(
+    `SELECT
+       p.id AS productId,
+       COALESCE(m.Product_Name, p.name, CONCAT('Product #', p.id)) AS product_name,
+       COALESCE(m.manual_override, 0) AS manual_override,
+       COALESCE(m.manual_status, 'Available') AS manual_status,
+       ${itemTypeExpr} AS item_type
+     FROM products p
+     LEFT JOIN Menu m ON m.Product_ID = p.id
+     WHERE p.id IN (${placeholders})`,
+    productIds,
+  );
+  const productsById = new Map(
+    productRows.map((row) => [Number(row.productId), row]),
+  );
+  const stockItems = items.map((item) => {
+    const product = productsById.get(Number(item.product_id));
+    if (!product) {
+      const error = new Error(`Unknown product_id ${item.product_id}`);
+      error.statusCode = 400;
+      throw error;
+    }
+    const isForcedOut =
+      Number(product.manual_override) === 1 &&
+      ["out of stock", "unavailable"].includes(
+        String(product.manual_status || "").trim().toLowerCase(),
+      );
+    if (isForcedOut) {
+      const error = new Error(`"${product.product_name}" is unavailable.`);
+      error.statusCode = 409;
+      throw error;
+    }
+    return {
+      ...product,
+      quantity: Number(item.qty),
+    };
+  });
+  const deductions = await buildStockRequirements(stockItems, connection);
+  await lockAndValidateStockRequirements(connection, deductions);
   return deductions;
 }
 
@@ -327,27 +416,10 @@ async function deductStockForPaidOrder(
 
     const deductions = await getOrderIngredientDeductions(numericOrderId, conn);
     const deductionEntries = Array.from(deductions.entries());
-    for (const [productId, requiredQty] of deductionEntries) {
-      const [inventoryRows] = await conn.query(
-        `SELECT COALESCE(Stock, 0) AS mainStock
-         FROM Inventory
-         WHERE Product_ID = ?
-         LIMIT 1
-         FOR UPDATE`,
-        [productId],
-      );
+    await lockAndValidateStockRequirements(conn, deductions);
 
-      const availableQty = Number(inventoryRows[0]?.mainStock ?? 0);
-
-      if (availableQty < Number(requiredQty || 0)) {
-        throw new Error(
-          `Insufficient inventory stock for product ${productId}. Required ${Number(requiredQty || 0)}, available ${availableQty}.`,
-        );
-      }
-    }
-
-    for (const [productId, requiredQty] of deductionEntries) {
-      const strictRequiredQty = Number(requiredQty) || 0;
+    for (const [productId, requirement] of deductionEntries) {
+      const strictRequiredQty = Number(requirement?.requiredQty) || 0;
       if (strictRequiredQty > 0) {
         await deductStockForOrder(productId, strictRequiredQty, recordedBy, conn);
       }
@@ -432,8 +504,8 @@ async function restoreStockForRefundedOrder(
     }
 
     const deductions = await getOrderIngredientDeductions(numericOrderId, conn);
-    for (const [productId, requiredQty] of deductions.entries()) {
-      const strictRequiredQty = Number(requiredQty) || 0;
+    for (const [productId, requirement] of deductions.entries()) {
+      const strictRequiredQty = Number(requirement?.requiredQty) || 0;
       if (strictRequiredQty > 0) {
         await restoreStockForOrder(
           productId,
@@ -485,4 +557,5 @@ module.exports = {
   deductStockForOrder,
   deductStockForPaidOrder,
   restoreStockForRefundedOrder,
+  validateStockForOrderItems,
 };

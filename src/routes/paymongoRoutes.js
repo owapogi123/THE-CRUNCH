@@ -5,6 +5,7 @@ const {
   issueBypassCheckout,
   verifyBypassCheckout,
 } = require("../services/paymongoMode");
+const { loadAuthoritativeOrderItems } = require("../services/orderItemService");
 
 const fetchFn = (...args) =>
   typeof fetch === "function"
@@ -154,8 +155,9 @@ router.post("/create-checkout", async (req, res) => {
       return res.status(400).json({ message: "Order items are required" });
     }
 
+    const authoritativeItems = await loadAuthoritativeOrderItems(db, items);
     const billingSettings = await loadBillingSettings();
-    const totals = calculateBillingTotals(items, billingSettings);
+    const totals = calculateBillingTotals(authoritativeItems, billingSettings);
     const totalPesos = totals.grandTotal;
     const totalAmount = Math.round(totalPesos * 100);
     if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
@@ -165,7 +167,10 @@ router.post("/create-checkout", async (req, res) => {
     }
 
     if (!isPayMongoEnabled()) {
-      const bypassCheckout = issueBypassCheckout({ customerUserId, items });
+      const bypassCheckout = issueBypassCheckout({
+        customerUserId,
+        items: authoritativeItems,
+      });
       return res.json({
         ...bypassCheckout,
         checkoutUrl: null,
@@ -192,7 +197,7 @@ router.post("/create-checkout", async (req, res) => {
       });
     }
 
-    items.forEach((item) => {
+    authoritativeItems.forEach((item) => {
       console.log("PAYMONGO DEBUG", {
         itemName: item.name,
         itemPricePesos: Number(item.price),
@@ -201,7 +206,7 @@ router.post("/create-checkout", async (req, res) => {
       });
     });
 
-    const lineItems = items.map((item) => ({
+    const lineItems = authoritativeItems.map((item) => ({
       amount: Math.round(Number(item.price || 0) * 100),
       currency: "PHP",
       description: item.name,

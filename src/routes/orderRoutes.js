@@ -9,7 +9,12 @@ const { sendCustomerOrderReceiptEmail } = require("../services/emailService");
 const {
   deductStockForPaidOrder,
   restoreStockForRefundedOrder,
+  validateStockForOrderItems,
 } = require("../services/inventoryService");
+const {
+  loadAuthoritativeOrderItems,
+  normalizeOrderItems,
+} = require("../services/orderItemService");
 const {
   claimBypassCheckout,
   consumeBypassCheckout,
@@ -283,47 +288,6 @@ function calculateBillingTotals(subtotal, settings, discountRate = 0) {
   };
 }
 
-async function getCurrentOrderSubtotal(connection, items) {
-  const normalizedItems = Array.isArray(items)
-    ? items
-        .map((item) => ({
-          productId: Number(item?.product_id),
-          quantity: Number(item?.qty || item?.quantity || 0),
-        }))
-        .filter(
-          (item) =>
-            Number.isFinite(item.productId) &&
-            item.productId > 0 &&
-            Number.isFinite(item.quantity) &&
-            item.quantity > 0,
-        )
-    : [];
-
-  if (normalizedItems.length === 0) {
-    return 0;
-  }
-
-  const productIds = [...new Set(normalizedItems.map((item) => item.productId))];
-  const placeholders = productIds.map(() => "?").join(", ");
-  const [rows] = await connection.query(
-    `SELECT
-       p.id AS productId,
-       COALESCE(m.Price, p.price, 0) AS currentPrice
-     FROM products p
-     LEFT JOIN Menu m ON m.Product_ID = p.id
-     WHERE p.id IN (${placeholders})`,
-    productIds,
-  );
-  const priceMap = new Map(
-    rows.map((row) => [Number(row.productId), Number(row.currentPrice || 0)]),
-  );
-
-  return normalizedItems.reduce((sum, item) => {
-    const price = priceMap.get(item.productId) ?? 0;
-    return sum + Math.max(0, price) * item.quantity;
-  }, 0);
-}
-
 async function ensurePaymentProofDirectory() {
   await fs.mkdir(PAYMENT_PROOF_DIR, { recursive: true });
 }
@@ -520,6 +484,17 @@ async function ensureOrderStockDeductionColumn() {
   }
 
   orderStockDeductionColumnReady = true;
+}
+
+async function ensureUniquePaymentReferenceIndex() {
+  const [indexes] = await db.query(
+    "SHOW INDEX FROM orders WHERE Key_name = 'uq_orders_payment_reference'",
+  );
+  if (!indexes.length) {
+    await db.query(
+      "ALTER TABLE orders ADD UNIQUE INDEX uq_orders_payment_reference (payment_reference)",
+    );
+  }
 }
 
 let deliveryTrackingColumnsReady = false;
@@ -1274,9 +1249,11 @@ router.post("/", async (req, res) => {
   let txStarted = false;
   let bypassSessionToClaim = null;
   let claimedBypassSessionId = null;
+  let authoritativeItems = [];
   try {
     await ensureOnlineOrderColumns();
     await ensureOrderStockDeductionColumn();
+    await ensureUniquePaymentReferenceIndex();
 
     const {
       items,
@@ -1315,6 +1292,7 @@ router.post("/", async (req, res) => {
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: "Order items are required" });
     }
+    const validatedItems = normalizeOrderItems(items);
 
     const finalOrderType = normalizeOrderType(order_type || orderType);
     const normalizedPaymentMethod = normalizePaymentMethod(
@@ -1380,7 +1358,7 @@ router.post("/", async (req, res) => {
       }
       const verification = await verifyPayMongoCheckoutSession(checkoutToVerify, {
         customerUserId: resolvedCustomerUserId,
-        items,
+        items: validatedItems,
       });
       if (!verification.paid) {
         return res.status(400).json({ message: "Online pickup orders must be paid after backend verification" });
@@ -1447,7 +1425,7 @@ router.post("/", async (req, res) => {
     if (bypassSessionToClaim) {
       const claimedBypass = claimBypassCheckout(bypassSessionToClaim, {
         customerUserId: resolvedCustomerUserId,
-        items,
+        items: validatedItems,
       });
       claimedBypassSessionId = claimedBypass.checkoutSessionId;
       effectivePaymentReference = claimedBypass.paymentReference;
@@ -1457,7 +1435,12 @@ router.post("/", async (req, res) => {
     await conn.beginTransaction();
     txStarted = true;
     const billingSettings = await loadBillingSettings(conn);
-    const subtotalAmount = await getCurrentOrderSubtotal(conn, items);
+    authoritativeItems = await loadAuthoritativeOrderItems(conn, validatedItems);
+    await validateStockForOrderItems(authoritativeItems, conn);
+    const subtotalAmount = authoritativeItems.reduce(
+      (sum, item) => sum + item.subtotal,
+      0,
+    );
     const requestedDiscountName =
       discount_name || discountName || customer_type || customerType || "";
     const appliedDiscount =
@@ -1496,11 +1479,8 @@ router.post("/", async (req, res) => {
     );
     const orderId = orderResult.insertId;
 
-    for (const item of items) {
-      const requiredQty = Number(item.qty) || 0;
-      if (requiredQty <= 0) {
-        throw new Error(`Invalid quantity for product_id ${item.product_id}`);
-      }
+    for (const item of authoritativeItems) {
+      const requiredQty = item.qty;
 
       // Ensure a Menu row exists for this product (create one if missing)
       const [menuRows] = await conn.query(
@@ -1521,10 +1501,9 @@ router.post("/", async (req, res) => {
             [item.product_id, p.name, Number(p.price) || 0, Number(p.quantity) || 0]
           );
         } else if (item.name) {
-          // Fallback: use the name sent from the client
           await conn.query(
             "INSERT INTO Menu (Product_ID, Product_Name, Price, Stock) VALUES (?, ?, ?, 0)",
-            [item.product_id, item.name, Number(item.price) || 0]
+            [item.product_id, item.name, item.price]
           );
         } else {
           throw new Error(`Unknown product_id ${item.product_id}`);
@@ -1534,7 +1513,7 @@ router.post("/", async (req, res) => {
       // Insert line item
       await conn.query(
         "INSERT INTO order_item (Order_ID, Product_ID, Quantity, Subtotal) VALUES (?, ?, ?, ?)",
-        [orderId, item.product_id, requiredQty, Number(item.price || 0) * requiredQty]
+        [orderId, item.product_id, requiredQty, item.subtotal]
       );
 
     }
@@ -1578,7 +1557,7 @@ router.post("/", async (req, res) => {
               taxAmount: billingTotals.taxAmount,
               serviceChargeAmount: billingTotals.serviceChargeAmount,
               total: billingTotals.grandTotal,
-              items,
+              items: authoritativeItems,
               note: buildCustomerReceiptNote(effectivePaymentStatus),
             },
           });
@@ -1608,10 +1587,15 @@ router.post("/", async (req, res) => {
       code: err.code,
       sqlMessage: err.sqlMessage,
     }, null, 2));
-    const statusCode = Number(err?.statusCode);
+    const duplicatePaymentReference = err?.code === "ER_DUP_ENTRY";
+    const statusCode = duplicatePaymentReference ? 409 : Number(err?.statusCode);
     const isClientError = statusCode >= 400 && statusCode < 500;
     res.status(isClientError ? statusCode : 500).json({
-      message: isClientError ? err.message : "DB error",
+      message: duplicatePaymentReference
+        ? "This payment has already been used to place an order"
+        : isClientError
+          ? err.message
+          : "DB error",
       error: err.message,
     });
   } finally {
@@ -1955,15 +1939,20 @@ router.patch("/:id", requireCookViewAccess, async (req, res) => {
       sqlMessage: err.sqlMessage,
     }, null, 2));
     const errorMessage = String(err?.message || "Unknown error");
-    const isClientError =
+    const statusCode = Number(err?.statusCode);
+    const hasClientStatus = statusCode >= 400 && statusCode < 500;
+    const matchesKnownClientError =
       /cannot move to the cook queue until payment is confirmed as paid/i.test(errorMessage) ||
       /insufficient (daily_withdrawn|inventory stock|stock)/i.test(errorMessage) ||
       /must be stock_item/i.test(errorMessage) ||
       /invalid order status transition/i.test(errorMessage) ||
       /timer can only be updated/i.test(errorMessage);
     res
-      .status(isClientError ? 400 : 500)
-      .json({ message: isClientError ? errorMessage : "DB error", error: errorMessage });
+      .status(hasClientStatus ? statusCode : matchesKnownClientError ? 400 : 500)
+      .json({
+        message: hasClientStatus || matchesKnownClientError ? errorMessage : "DB error",
+        error: errorMessage,
+      });
   } finally {
     if (conn) conn.release();
   }

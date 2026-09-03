@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const { normalizeOrderItems } = require("./orderItemService");
 
 const BYPASS_PREFIX = "PAYMONGO_BYPASS-";
 const BYPASS_TTL_MS = 15 * 60 * 1000;
@@ -27,26 +28,9 @@ function normalizeCustomerUserId(value) {
 }
 
 function fingerprintItems(items) {
-  if (!Array.isArray(items) || items.length === 0) {
-    throw createModeError("Order items are required for a bypass checkout");
-  }
-
-  const quantities = new Map();
-  for (const item of items) {
-    const productId = Number(item?.product_id ?? item?.productId ?? item?.id);
-    const quantity = Number(item?.qty ?? item?.quantity);
-    if (!Number.isInteger(productId) || productId <= 0) {
-      throw createModeError("A valid product ID is required for bypass checkout");
-    }
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      throw createModeError("A valid item quantity is required for bypass checkout");
-    }
-    quantities.set(productId, Number(quantities.get(productId) || 0) + quantity);
-  }
-
-  return Array.from(quantities.entries())
-    .sort(([left], [right]) => left - right)
-    .map(([productId, quantity]) => `${productId}:${quantity}`)
+  return normalizeOrderItems(items)
+    .sort((left, right) => left.product_id - right.product_id)
+    .map((item) => `${item.product_id}:${item.qty}`)
     .join("|");
 }
 

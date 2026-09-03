@@ -294,17 +294,7 @@ function resolveAvailabilityStatus(row, ingredients) {
         return (availableServings ?? 0) > 0 ? "Available" : "Out of Stock";
     }
 
-    const itemType = String(row.item_type ?? "").trim().toLowerCase();
-    if (itemType === MENU_ITEM) {
-        return "Not Configured";
-    }
-
-    const fallback = String(row.availability_status ?? "Available")
-        .trim()
-        .toLowerCase();
-    return fallback === "hidden" || fallback === "unavailable" || fallback === "out of stock"
-        ? "Out of Stock"
-        : "Available";
+    return Number(row.remainingStock ?? 0) > 0 ? "Available" : "Out of Stock";
 }
 
 async function attachIngredientAvailability(rows) {
@@ -319,14 +309,18 @@ async function attachIngredientAvailability(rows) {
         );
         const availableServings = computeAvailableServings(ingredients);
         const availabilityStatus = resolveAvailabilityStatus(row, ingredients);
+        const directStock = Math.max(0, Number(row.remainingStock ?? 0));
+        const effectiveStock = ingredients.length > 0
+            ? Math.max(0, Math.floor(availableServings ?? 0))
+            : Math.floor(directStock);
         return {
             ...row,
             image: sanitizeProductImageValue(row.image),
             ingredient_count: ingredients.length,
-            available_servings: availableServings,
+            available_servings: ingredients.length > 0 ? effectiveStock : null,
             availability_status: availabilityStatus,
             available: availabilityStatus === "Available",
-            remainingStock: availabilityStatus === "Not Configured" ? 0 : Number(row.remainingStock ?? 0),
+            remainingStock: effectiveStock,
             ingredients,
         };
     });
@@ -1027,6 +1021,7 @@ router.put("/:id", async (req, res) => {
         const [rows] = await db.query(
             `SELECT p.*, m.Category_Name AS category,
                     COALESCE(NULLIF(TRIM(i.unit), ''), 'piece') AS unit,
+                    CAST(COALESCE(m.Stock, i.Stock, p.quantity, 0) AS SIGNED) AS remainingStock,
                     COALESCE(m.manual_override, 0) AS manual_override,
                     COALESCE(m.manual_status, 'Available') AS manual_status
              FROM products p
