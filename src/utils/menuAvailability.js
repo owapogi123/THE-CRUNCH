@@ -3,6 +3,9 @@ const {
   getProductItemTypeExpression,
 } = require("./productItemType");
 
+let availabilitySchemaReady = false;
+let availabilitySchemaPromise = null;
+
 async function hasColumn(db, tableName, columnName) {
   const [rows] = await db.query(`SHOW COLUMNS FROM ${tableName} LIKE ?`, [
     columnName,
@@ -96,45 +99,59 @@ function normalizeMenuIngredients(ingredients) {
 }
 
 async function ensureMenuAvailabilitySchema(db) {
-  if (!(await hasColumn(db, "Menu", "manual_override"))) {
+  if (availabilitySchemaReady) return;
+  if (availabilitySchemaPromise) return availabilitySchemaPromise;
+
+  availabilitySchemaPromise = (async () => {
+    if (!(await hasColumn(db, "Menu", "manual_override"))) {
+      await db.query(
+        "ALTER TABLE Menu ADD COLUMN manual_override TINYINT(1) NOT NULL DEFAULT 0",
+      );
+    }
+
+    if (!(await hasColumn(db, "Menu", "manual_status"))) {
+      await db.query(
+        "ALTER TABLE Menu ADD COLUMN manual_status VARCHAR(20) NOT NULL DEFAULT 'Available'",
+      );
+    }
+
     await db.query(
-      "ALTER TABLE Menu ADD COLUMN manual_override TINYINT(1) NOT NULL DEFAULT 0",
+      `CREATE TABLE IF NOT EXISTS menu_item_ingredients (
+        menu_ingredient_id INT AUTO_INCREMENT PRIMARY KEY,
+        menu_product_id INT NOT NULL,
+        product_id INT NOT NULL,
+        quantity_required DECIMAL(10,2) NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_menu_ingredient (menu_product_id, product_id),
+        CONSTRAINT fk_menu_item_ingredients_menu
+          FOREIGN KEY (menu_product_id) REFERENCES Menu(Product_ID) ON DELETE CASCADE,
+        CONSTRAINT fk_menu_item_ingredients_product
+          FOREIGN KEY (product_id) REFERENCES Menu(Product_ID) ON DELETE CASCADE
+      )`,
     );
-  }
 
-  if (!(await hasColumn(db, "Menu", "manual_status"))) {
     await db.query(
-      "ALTER TABLE Menu ADD COLUMN manual_status VARCHAR(20) NOT NULL DEFAULT 'Available'",
+      `UPDATE Menu
+       SET manual_override = 0
+       WHERE manual_override IS NULL`,
     );
+
+    await db.query(
+      `UPDATE Menu
+       SET manual_status = 'Available'
+       WHERE manual_status IS NULL OR TRIM(manual_status) = ''`,
+    );
+
+    availabilitySchemaReady = true;
+  })();
+
+  try {
+    await availabilitySchemaPromise;
+  } catch (error) {
+    availabilitySchemaPromise = null;
+    throw error;
   }
-
-  await db.query(
-    `CREATE TABLE IF NOT EXISTS menu_item_ingredients (
-      menu_ingredient_id INT AUTO_INCREMENT PRIMARY KEY,
-      menu_product_id INT NOT NULL,
-      product_id INT NOT NULL,
-      quantity_required DECIMAL(10,2) NOT NULL DEFAULT 0,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      UNIQUE KEY uniq_menu_ingredient (menu_product_id, product_id),
-      CONSTRAINT fk_menu_item_ingredients_menu
-        FOREIGN KEY (menu_product_id) REFERENCES Menu(Product_ID) ON DELETE CASCADE,
-      CONSTRAINT fk_menu_item_ingredients_product
-        FOREIGN KEY (product_id) REFERENCES Menu(Product_ID) ON DELETE CASCADE
-    )`,
-  );
-
-  await db.query(
-    `UPDATE Menu
-     SET manual_override = 0
-     WHERE manual_override IS NULL`,
-  );
-
-  await db.query(
-    `UPDATE Menu
-     SET manual_status = 'Available'
-     WHERE manual_status IS NULL OR TRIM(manual_status) = ''`,
-  );
 }
 
 async function replaceMenuIngredients(db, menuProductId, ingredients) {

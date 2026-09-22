@@ -16,11 +16,21 @@ const {
     assertProductsMatchItemType,
 } = require("../utils/productItemType");
 const { ensureInventoryUnitColumn } = require("../utils/inventorySchema");
+const {
+    buildProductCacheKey,
+    cache,
+    getProductCacheTtlMs,
+    PRODUCT_CACHE_PREFIX,
+} = require("../services/cacheService");
 
 const PRODUCT_NAME_MAX_LENGTH = 100;
 const PRODUCT_DESCRIPTION_MAX_LENGTH = 100;
 const RAW_MATERIAL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9' -]*[A-Za-z0-9]$|^[A-Za-z0-9]$/;
 const DEFAULT_INVENTORY_UNIT = "piece";
+let menuManagementSchemaReady = false;
+let menuManagementSchemaPromise = null;
+let inventoryThresholdSchemaReady = false;
+let inventoryThresholdSchemaPromise = null;
 
 function normalizeProductName(value, { stockOnly = false } = {}) {
     const normalized = String(value ?? "").trim();
@@ -85,89 +95,116 @@ async function cleanupLegacyBase64ProductImages() {
 }
 
 async function ensureInventoryThresholdColumns() {
-    if (!(await hasColumn("Inventory", "Reorder_Point"))) {
-        await db.query(
-            "ALTER TABLE Inventory ADD COLUMN Reorder_Point DECIMAL(10,2) DEFAULT 20",
-        );
-    }
+    if (inventoryThresholdSchemaReady) return;
+    if (inventoryThresholdSchemaPromise) return inventoryThresholdSchemaPromise;
 
-    if (!(await hasColumn("Inventory", "Critical_Point"))) {
-        await db.query(
-            "ALTER TABLE Inventory ADD COLUMN Critical_Point DECIMAL(10,2) DEFAULT 5",
-        );
-    }
+    inventoryThresholdSchemaPromise = (async () => {
+        if (!(await hasColumn("Inventory", "Reorder_Point"))) {
+            await db.query(
+                "ALTER TABLE Inventory ADD COLUMN Reorder_Point DECIMAL(10,2) DEFAULT 20",
+            );
+        }
 
-    if (!(await hasColumn("Inventory", "use_default_thresholds"))) {
-        await db.query(
-            "ALTER TABLE Inventory ADD COLUMN use_default_thresholds TINYINT(1) NOT NULL DEFAULT 1",
-        );
-    }
+        if (!(await hasColumn("Inventory", "Critical_Point"))) {
+            await db.query(
+                "ALTER TABLE Inventory ADD COLUMN Critical_Point DECIMAL(10,2) DEFAULT 5",
+            );
+        }
 
-    if (!(await hasColumn("Inventory", "low_stock_threshold"))) {
-        await db.query(
-            "ALTER TABLE Inventory ADD COLUMN low_stock_threshold INT NULL",
-        );
-    }
+        if (!(await hasColumn("Inventory", "use_default_thresholds"))) {
+            await db.query(
+                "ALTER TABLE Inventory ADD COLUMN use_default_thresholds TINYINT(1) NOT NULL DEFAULT 1",
+            );
+        }
 
-    if (!(await hasColumn("Inventory", "critical_stock_threshold"))) {
-        await db.query(
-            "ALTER TABLE Inventory ADD COLUMN critical_stock_threshold INT NULL",
-        );
-    }
+        if (!(await hasColumn("Inventory", "low_stock_threshold"))) {
+            await db.query(
+                "ALTER TABLE Inventory ADD COLUMN low_stock_threshold INT NULL",
+            );
+        }
 
-    await ensureInventoryUnitColumn(db);
+        if (!(await hasColumn("Inventory", "critical_stock_threshold"))) {
+            await db.query(
+                "ALTER TABLE Inventory ADD COLUMN critical_stock_threshold INT NULL",
+            );
+        }
+
+        await ensureInventoryUnitColumn(db);
+        inventoryThresholdSchemaReady = true;
+    })();
+
+    try {
+        await inventoryThresholdSchemaPromise;
+    } catch (error) {
+        inventoryThresholdSchemaPromise = null;
+        throw error;
+    }
 }
 
 async function ensureMenuManagementColumns() {
-  await ensureProductsImageColumn();
-    await cleanupLegacyBase64ProductImages();
-    await ensureProductsItemTypeSchema(db);
+    if (menuManagementSchemaReady) return;
+    if (menuManagementSchemaPromise) return menuManagementSchemaPromise;
 
-    if (!(await hasColumn("products", "menu_code"))) {
-        await db.query("ALTER TABLE products ADD COLUMN menu_code VARCHAR(20) NULL");
-    }
+    menuManagementSchemaPromise = (async () => {
+        await ensureProductsImageColumn();
+        await cleanupLegacyBase64ProductImages();
+        await ensureProductsItemTypeSchema(db);
 
-    if (!(await hasColumn("products", "availability_status"))) {
+        if (!(await hasColumn("products", "menu_code"))) {
+            await db.query("ALTER TABLE products ADD COLUMN menu_code VARCHAR(20) NULL");
+        }
+
+        if (!(await hasColumn("products", "availability_status"))) {
+            await db.query(
+                "ALTER TABLE products ADD COLUMN availability_status VARCHAR(20) DEFAULT 'Available'",
+            );
+        }
+
+        if (!(await hasColumn("products", "is_promotional"))) {
+            await db.query(
+                "ALTER TABLE products ADD COLUMN is_promotional TINYINT(1) DEFAULT 0",
+            );
+        }
+
+        if (!(await hasColumn("products", "promo_price"))) {
+            await db.query(
+                "ALTER TABLE products ADD COLUMN promo_price DECIMAL(10,2) NULL",
+            );
+        }
+
+        if (!(await hasColumn("products", "promo_label"))) {
+            await db.query(
+                "ALTER TABLE products ADD COLUMN promo_label VARCHAR(100) NULL",
+            );
+        }
+
         await db.query(
-            "ALTER TABLE products ADD COLUMN availability_status VARCHAR(20) DEFAULT 'Available'",
+            `UPDATE products
+             SET menu_code = CONCAT('M-', LPAD(id, 3, '0'))
+             WHERE menu_code IS NULL OR TRIM(menu_code) = ''`,
         );
-    }
 
-    if (!(await hasColumn("products", "is_promotional"))) {
         await db.query(
-            "ALTER TABLE products ADD COLUMN is_promotional TINYINT(1) DEFAULT 0",
+            `UPDATE products
+             SET availability_status = 'Available'
+             WHERE availability_status IS NULL OR TRIM(availability_status) = ''`,
         );
-    }
 
-    if (!(await hasColumn("products", "promo_price"))) {
         await db.query(
-            "ALTER TABLE products ADD COLUMN promo_price DECIMAL(10,2) NULL",
+            `UPDATE products
+             SET is_promotional = 0
+             WHERE is_promotional IS NULL`,
         );
+
+        menuManagementSchemaReady = true;
+    })();
+
+    try {
+        await menuManagementSchemaPromise;
+    } catch (error) {
+        menuManagementSchemaPromise = null;
+        throw error;
     }
-
-    if (!(await hasColumn("products", "promo_label"))) {
-        await db.query(
-            "ALTER TABLE products ADD COLUMN promo_label VARCHAR(100) NULL",
-        );
-    }
-
-    await db.query(
-        `UPDATE products
-         SET menu_code = CONCAT('M-', LPAD(id, 3, '0'))
-         WHERE menu_code IS NULL OR TRIM(menu_code) = ''`,
-    );
-
-    await db.query(
-        `UPDATE products
-         SET availability_status = 'Available'
-         WHERE availability_status IS NULL OR TRIM(availability_status) = ''`,
-    );
-
-    await db.query(
-        `UPDATE products
-         SET is_promotional = 0
-         WHERE is_promotional IS NULL`,
-    );
 }
 
 function normalizeProductImageValue(value) {
@@ -328,24 +365,43 @@ async function attachIngredientAvailability(rows) {
 
 // GET all products (old backend used `products` table)
 router.get("/", async (req, res) => {
+    const startedAt = process.hrtime.bigint();
     try {
-        await ensureMenuManagementColumns();
-        await ensureMenuAvailabilitySchema(db);
-        const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
-        await ensureInventoryThresholdColumns();
-        const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p", "m");
         const requestedItemType = String(req.query.item_type || "")
             .trim()
             .toLowerCase();
         const includeRaw = String(req.query.includeRaw || "").toLowerCase();
         const includeRawMaterials = includeRaw === "1" || includeRaw === "true";
+        const normalizedItemType =
+            requestedItemType === STOCK_ITEM || requestedItemType === MENU_ITEM
+                ? requestedItemType
+                : "";
+        const cacheKey = buildProductCacheKey({
+            itemType: normalizedItemType,
+            includeRawMaterials,
+        });
+        const cachedProducts = await cache.get(cacheKey);
+        if (cachedProducts !== null) {
+            const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+            console.info(
+                `[CACHE HIT] products key=${cacheKey} durationMs=${durationMs.toFixed(1)}`,
+            );
+            return res.json(cachedProducts);
+        }
+        const cacheVersion = cache.getPrefixVersion(PRODUCT_CACHE_PREFIX);
+
+        await ensureMenuManagementColumns();
+        await ensureMenuAvailabilitySchema(db);
+        const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+        await ensureInventoryThresholdColumns();
+        const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p", "m");
         const filters = [];
         const values = [];
 
-        if (requestedItemType === STOCK_ITEM || requestedItemType === MENU_ITEM) {
+        if (normalizedItemType) {
             filters.push(`${itemTypeExpr} = ?`);
-            values.push(requestedItemType);
-            if (requestedItemType === MENU_ITEM) {
+            values.push(normalizedItemType);
+            if (normalizedItemType === MENU_ITEM) {
                 filters.push("m.Product_ID IS NOT NULL");
             }
         }
@@ -377,17 +433,27 @@ router.get("/", async (req, res) => {
             values,
         );
 
-        res.json(
-            await attachIngredientAvailability(
-                rows.map((row) => ({
-                    ...row,
-                    unit: normalizeInventoryUnit(row.unit),
-                })),
-            ),
+        const products = await attachIngredientAvailability(
+            rows.map((row) => ({
+                ...row,
+                unit: normalizeInventoryUnit(row.unit),
+            })),
         );
+        await cache.setIfPrefixVersion(
+            cacheKey,
+            products,
+            getProductCacheTtlMs(),
+            PRODUCT_CACHE_PREFIX,
+            cacheVersion,
+        );
+        const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+        console.info(
+            `[CACHE MISS] products key=${cacheKey} durationMs=${durationMs.toFixed(1)}`,
+        );
+        return res.json(products);
     } catch (err) {
         console.error(err);
-        res.status(500).json({ message: 'DB error', error: err.message });
+        return res.status(500).json({ message: 'DB error', error: err.message });
     }
 });
 

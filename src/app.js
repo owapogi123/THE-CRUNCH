@@ -40,6 +40,11 @@ app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use("/uploads", express.static(path.join(__dirname, "..", "uploads")));
 
+// Product availability depends on product, inventory, batch, purchase, and paid
+// order writes. Invalidate only the product read cache after a successful write.
+const productCacheInvalidation = require("./middleware/productCacheInvalidation");
+app.use(productCacheInvalidation);
+
 // Routes
 const authRoutes = require("./routes/authRoutes");
 app.use("/api/auth", authRoutes);
