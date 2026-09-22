@@ -332,9 +332,8 @@ function FeedbackModal({onClose,productOptions}:{onClose:()=>void;productOptions
   )
 }
 
-function FeedbackButton(){
-  const {isMobile}=useViewport(); const [open,setOpen]=useState(false); const [products,setProducts]=useState<FeedbackProductOption[]>([])
-  useEffect(()=>{api.get<unknown[]>('/products?item_type=menu_item').then((data:unknown[])=>{if(!Array.isArray(data)) return; setProducts(data.filter((d:any)=>Number.isInteger(d.id)&&typeof d.name==='string'&&String(d.item_type??'menu_item').trim().toLowerCase()==='menu_item').map((d:any)=>({id:+d.id,name:String(d.name).trim()})))}).catch(()=>{})},[])
+function FeedbackButton({products}:{products:FeedbackProductOption[]}){
+  const {isMobile}=useViewport(); const [open,setOpen]=useState(false)
   return(
     <>
       <AnimatePresence>{open&&<FeedbackModal onClose={()=>setOpen(false)} productOptions={products}/>}</AnimatePresence>
@@ -390,6 +389,7 @@ export default function Products({isAuthenticated=false,onLogout}:ProductsProps)
   useEffect(()=>fetch<Promo>('/api/promos',setPromos,setLoadingR),[])
 
   const filtered=products.filter(p=>(category==='All'||p.category===category)&&p.name.toLowerCase().includes(search.toLowerCase()))
+  const feedbackProducts:FeedbackProductOption[]=products
   const topPick=filtered.find(p=>p.badge==='Bestseller')??filtered[0]??null
   const handleOrder=useCallback(()=>navigate('/usersmenu?showOrderModal=true'),[navigate])
   const handleLogout=useCallback(()=>{onLogout?.();navigate('/products')},[onLogout,navigate])
@@ -634,7 +634,7 @@ export default function Products({isAuthenticated=false,onLogout}:ProductsProps)
         </div>
       </footer>
 
-      <FeedbackButton/>
+      <FeedbackButton products={feedbackProducts}/>
     </div>
   )
 }
