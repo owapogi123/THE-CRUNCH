@@ -24,7 +24,12 @@ import {
   Loader2,
 } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
-import { api } from "@/lib/api";
+import {
+  api,
+  fetchAuthenticatedAsset,
+  isConfiguredBackendUrl,
+  resolveBackendUrl,
+} from "@/lib/api";
 import {
   fetchGeneralSettings,
   formatCurrencyAmount,
@@ -385,27 +390,76 @@ function normalizePaymentMethod(value?: string | null): PaymentMethodFilter {
   return "Cash";
 }
 
-function openProofImage(
+const PROOF_NOTICE_EVENT = "the-crunch:proof-notice";
+
+function showProofNotice(message: string) {
+  window.dispatchEvent(
+    new CustomEvent(PROOF_NOTICE_EVENT, { detail: { message } }),
+  );
+}
+
+function resolveProofRequestUrl(proofImageUrl: string): string {
+  const resolvedUrl = resolveBackendUrl(proofImageUrl);
+  const url = new URL(resolvedUrl);
+  if (
+    isConfiguredBackendUrl(resolvedUrl) &&
+    url.pathname.startsWith("/uploads/proofs/")
+  ) {
+    const encodedFilename = url.pathname.slice("/uploads/proofs/".length);
+    const filename = decodeURIComponent(encodedFilename);
+    url.pathname = `/api/upload-proof/${encodeURIComponent(filename)}`;
+  }
+  return url.toString();
+}
+
+async function openProofImage(
   e: { preventDefault: () => void; stopPropagation: () => void },
   proofImageUrl?: string | null,
 ) {
   e.preventDefault();
   e.stopPropagation();
-  if (proofImageUrl) {
-    const trimmed = String(proofImageUrl).trim();
-    const rawApiBase =
-      (import.meta as { env?: { VITE_API_URL?: string } }).env?.VITE_API_URL ??
-      "";
-    const backendBase = rawApiBase
-      ? rawApiBase.replace(/\/+$/, "").replace(/\/api$/i, "")
-      : window.location.origin;
-    const resolvedUrl = /^https?:\/\//i.test(trimmed)
-      ? trimmed
-      : new URL(
-          trimmed.startsWith("/") ? trimmed : `/${trimmed}`,
-          `${backendBase}/`,
-        ).toString();
-    window.open(resolvedUrl, "_blank", "noopener,noreferrer");
+  const trimmed = String(proofImageUrl || "").trim();
+  if (!trimmed) {
+    showProofNotice("Proof image is no longer available.");
+    return;
+  }
+
+  let resolvedUrl: string;
+  try {
+    resolvedUrl = resolveProofRequestUrl(trimmed);
+  } catch {
+    showProofNotice("The stored proof reference is invalid.");
+    return;
+  }
+
+  if (!isConfiguredBackendUrl(resolvedUrl)) {
+    const opened = window.open(resolvedUrl, "_blank", "noopener,noreferrer");
+    if (!opened) showProofNotice("Allow pop-ups to view the payment proof.");
+    return;
+  }
+
+  const proofWindow = window.open("", "_blank", "width=720,height=820");
+  if (!proofWindow) {
+    showProofNotice("Allow pop-ups to view the payment proof.");
+    return;
+  }
+  proofWindow.opener = null;
+  proofWindow.document.title = "Loading payment proof";
+  proofWindow.document.body.innerHTML =
+    '<p style="font:14px system-ui;padding:24px;color:#475569">Loading payment proof…</p>';
+
+  try {
+    const proofBlob = await fetchAuthenticatedAsset(resolvedUrl);
+    const objectUrl = URL.createObjectURL(proofBlob);
+    proofWindow.location.replace(objectUrl);
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 5 * 60 * 1000);
+  } catch (error) {
+    proofWindow.close();
+    showProofNotice(
+      error instanceof Error
+        ? error.message
+        : "Proof image is no longer available.",
+    );
   }
 }
 
@@ -3460,6 +3514,7 @@ export default function SalesReports() {
     useState<GeneralRestaurantSettings>(GENERAL_SETTINGS_DEFAULTS);
   const [isLoading, setIsLoading] = useState(true);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  const [proofNotice, setProofNotice] = useState("");
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ UI state Ã¢â€â‚¬Ã¢â€â‚¬
   const [activeTab, setActiveTab] = useState<TabKey>("logs");
@@ -3513,6 +3568,23 @@ export default function SalesReports() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    const handleProofNotice = (event: Event) => {
+      const customEvent = event as CustomEvent<{ message?: string }>;
+      setProofNotice(
+        String(customEvent.detail?.message || "Proof image is unavailable."),
+      );
+    };
+    window.addEventListener(PROOF_NOTICE_EVENT, handleProofNotice);
+    return () => window.removeEventListener(PROOF_NOTICE_EVENT, handleProofNotice);
+  }, []);
+
+  useEffect(() => {
+    if (!proofNotice) return;
+    const timeout = window.setTimeout(() => setProofNotice(""), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [proofNotice]);
 
   // Reset log page when search/date filters change
   useEffect(() => {
@@ -3669,6 +3741,34 @@ export default function SalesReports() {
       }}
     >
       <Sidebar />
+
+      <AnimatePresence>
+        {proofNotice && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            role="alert"
+            style={{
+              position: "fixed",
+              top: 22,
+              right: 22,
+              zIndex: 500,
+              maxWidth: 380,
+              padding: "12px 16px",
+              borderRadius: 12,
+              border: "1px solid #fecaca",
+              background: "#fff1f2",
+              color: "#be123c",
+              boxShadow: "0 10px 30px rgba(15,23,42,0.12)",
+              fontSize: 12,
+              fontWeight: 600,
+            }}
+          >
+            {proofNotice}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <RefundModal
         open={!!(refundLog || refundOrder)}

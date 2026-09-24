@@ -18,7 +18,47 @@ function normalizeEndpoint(endpoint: string): string {
 }
 
 const API_ORIGIN = resolveApiOrigin();
-const API_ASSET_BASE_URL = API_ORIGIN;
+
+export function resolveBackendUrl(value: string): string {
+  const normalized = String(value || "").trim();
+  if (/^https?:\/\//i.test(normalized)) return normalized;
+  const path = normalized.startsWith("/") ? normalized : `/${normalized}`;
+  return `${API_ORIGIN}${path}`;
+}
+
+export function isConfiguredBackendUrl(value: string): boolean {
+  try {
+    return new URL(resolveBackendUrl(value)).origin === new URL(API_ORIGIN).origin;
+  } catch {
+    return false;
+  }
+}
+
+export async function fetchAuthenticatedAsset(value: string): Promise<Blob> {
+  const resolvedUrl = resolveBackendUrl(value);
+  const headers: Record<string, string> = {};
+  if (isConfiguredBackendUrl(resolvedUrl)) {
+    const token = getStoredAuthToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+  }
+
+  const response = await fetch(resolvedUrl, { method: "GET", headers });
+  if (!response.ok) {
+    const error = new Error(
+      response.status === 404
+        ? "Proof image is no longer available."
+        : `Unable to load proof image (HTTP ${response.status}).`,
+    ) as Error & { status?: number };
+    error.status = response.status;
+    throw error;
+  }
+
+  const blob = await response.blob();
+  if (!String(blob.type || "").toLowerCase().startsWith("image/")) {
+    throw new Error("The proof response was not a valid image.");
+  }
+  return blob;
+}
 
 export function resolveAssetUrl(value?: string | null): string {
   const normalized = String(value || "").trim();
@@ -26,7 +66,7 @@ export function resolveAssetUrl(value?: string | null): string {
   if (/^data:image\//i.test(normalized)) return normalized;
   if (/^https?:\/\//i.test(normalized)) return normalized;
   if (normalized.startsWith("/uploads")) {
-    return `${API_ASSET_BASE_URL}${normalized}`;
+    return resolveBackendUrl(normalized);
   }
   if (normalized.startsWith("/img")) return normalized;
   return "/img/placeholder.jpg";
