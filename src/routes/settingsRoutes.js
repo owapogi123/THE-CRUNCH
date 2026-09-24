@@ -1,188 +1,6 @@
 const router = require("express").Router();
 const db = require("../config/db");
-
-async function addColumnIfMissing(tableName, columnName, definition) {
-  const [rows] = await db.query(
-    `SELECT 1
-       FROM information_schema.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE()
-        AND TABLE_NAME = ?
-        AND COLUMN_NAME = ?
-      LIMIT 1`,
-    [tableName, columnName],
-  );
-
-  if (rows.length === 0) {
-    await db.query(
-      `ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`,
-    );
-  }
-}
-
-async function ensureInventoryMasterTables() {
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS inventory_categories (
-      category_id INT AUTO_INCREMENT PRIMARY KEY,
-      name VARCHAR(100) NOT NULL UNIQUE,
-      type ENUM('raw_material','ingredient','finished') NOT NULL DEFAULT 'ingredient',
-      date_tracking_type ENUM('none','expiry','shelf_life') NOT NULL DEFAULT 'none',
-      is_active BOOLEAN DEFAULT TRUE,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )
-  `);
-
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS inventory_units (
-      unit_id INT AUTO_INCREMENT PRIMARY KEY,
-      name VARCHAR(100) NOT NULL UNIQUE,
-      abbreviation VARCHAR(30) NULL,
-      is_active BOOLEAN DEFAULT TRUE,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )
-  `);
-
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS menu_categories (
-      category_id INT AUTO_INCREMENT PRIMARY KEY,
-      name VARCHAR(100) NOT NULL UNIQUE,
-      display_order INT NOT NULL DEFAULT 0,
-      is_active BOOLEAN DEFAULT TRUE,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )
-  `);
-
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS discount_types (
-      discount_id INT AUTO_INCREMENT PRIMARY KEY,
-      name VARCHAR(100) NOT NULL UNIQUE,
-      percentage DECIMAL(5,2) NOT NULL DEFAULT 0,
-      is_active BOOLEAN DEFAULT TRUE,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )
-  `);
-
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS system_settings (
-      setting_key VARCHAR(100) PRIMARY KEY,
-      settings_json LONGTEXT NULL,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )
-  `);
-
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS role_permissions (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      role VARCHAR(50) NOT NULL,
-      permission_key VARCHAR(80) NOT NULL,
-      enabled TINYINT(1) NOT NULL DEFAULT 0,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      UNIQUE KEY unique_role_permission (role, permission_key)
-    )
-  `);
-
-  await addColumnIfMissing(
-    "inventory_categories",
-    "type",
-    "ENUM('raw_material','ingredient','finished') NOT NULL DEFAULT 'ingredient'",
-  );
-  await addColumnIfMissing(
-    "inventory_categories",
-    "date_tracking_type",
-    "ENUM('none','expiry','shelf_life') NOT NULL DEFAULT 'none'",
-  );
-  await addColumnIfMissing(
-    "inventory_units",
-    "base_unit",
-    "VARCHAR(100) NULL",
-  );
-  await addColumnIfMissing(
-    "inventory_units",
-    "conversion_to_base",
-    "DECIMAL(12,4) NULL",
-  );
-
-  const categorySeeds = [
-    ["Raw Material", "raw_material", "shelf_life"],
-    ["Sauces", "ingredient", "expiry"],
-    ["Ingredients", "ingredient", "expiry"],
-    ["Aromatics", "ingredient", "expiry"],
-    ["Packaging", "finished", "none"],
-  ];
-  const [[{ totalCategories = 0 } = {}]] = await db.query(
-    `SELECT COUNT(*) AS totalCategories FROM inventory_categories`,
-  );
-
-  if (Number(totalCategories) === 0) {
-    for (const [name, type, dateTrackingType] of categorySeeds) {
-      await db.query(
-        `INSERT INTO inventory_categories (name, type, date_tracking_type, is_active)
-         VALUES (?, ?, ?, TRUE)`,
-        [name, type, dateTrackingType],
-      );
-    }
-  }
-
-  const unitSeeds = [
-    ["kg", null],
-    ["g", null],
-    ["liter", null],
-    ["ml", null],
-    ["piece", null],
-    ["pack", null],
-    ["bottle", null],
-    ["case", null],
-  ];
-  for (const [name, abbreviation] of unitSeeds) {
-    await db.query(
-      `INSERT INTO inventory_units (name, abbreviation)
-       SELECT ?, ?
-       WHERE NOT EXISTS (
-         SELECT 1 FROM inventory_units WHERE LOWER(name) = LOWER(?)
-       )`,
-      [name, abbreviation, name],
-    );
-  }
-
-  const menuCategorySeeds = [
-    ["Menu Food", 1],
-    ["Beverages", 2],
-    ["Desserts", 3],
-    ["Combo Meals", 4],
-    ["Snacks", 5],
-    ["Promotional Items", 6],
-  ];
-  for (const [name, displayOrder] of menuCategorySeeds) {
-    await db.query(
-      `INSERT INTO menu_categories (name, display_order, is_active)
-       SELECT ?, ?, TRUE
-       WHERE NOT EXISTS (
-         SELECT 1 FROM menu_categories WHERE LOWER(name) = LOWER(?)
-       )`,
-      [name, displayOrder, name],
-    );
-  }
-
-  const discountTypeSeeds = [
-    ["Regular customer", 0],
-    ["PWD", 20],
-    ["Senior Citizen", 20],
-  ];
-  for (const [name, percentage] of discountTypeSeeds) {
-    await db.query(
-      `INSERT INTO discount_types (name, percentage, is_active)
-       SELECT ?, ?, TRUE
-       WHERE NOT EXISTS (
-         SELECT 1 FROM discount_types WHERE LOWER(name) = LOWER(?)
-       )`,
-      [name, percentage, name],
-    );
-  }
-}
+const { SUPERUSER_ROLE } = require("../middleware/roleAccess");
 
 const DEFAULT_ROLE_PERMISSIONS = {
   administrator: {
@@ -190,7 +8,7 @@ const DEFAULT_ROLE_PERMISSIONS = {
     orders: true,
     menuManagement: true,
     menus: true,
-    stockManager: false,
+    stockManager: true,
     userAccounts: true,
     salesReports: true,
     settings: true,
@@ -242,6 +60,13 @@ const DEFAULT_PERMISSION_ROLE_LOCKS = {
   inventory_manager: false,
 };
 
+function enforceSuperuserPermissions(permissions) {
+  for (const permissionKey of VALID_PERMISSION_KEYS) {
+    permissions[SUPERUSER_ROLE][permissionKey] = true;
+  }
+  return permissions;
+}
+
 function normalizePermissionsPayload(payload) {
   const source = payload && typeof payload === "object" ? payload : {};
   const next = {};
@@ -258,9 +83,7 @@ function normalizePermissionsPayload(payload) {
     }
   }
 
-  next.administrator.userAccounts = true;
-  next.administrator.settings = true;
-  next.administrator.menus = true;
+  enforceSuperuserPermissions(next);
   for (const role of COOK_VIEW_PERMISSION_ROLES) {
     next[role].orders = true;
   }
@@ -283,11 +106,20 @@ function normalizePermissionRoleLocks(payload) {
 }
 
 async function loadRolePermissions() {
-  await ensureInventoryMasterTables();
-  const [rows] = await db.query(
-    `SELECT role, permission_key, enabled
-       FROM role_permissions`,
-  );
+  const [permissionResult, lockResult] = await Promise.all([
+    db.query(
+      `SELECT role, permission_key, enabled
+         FROM role_permissions`,
+    ),
+    db.query(
+      `SELECT settings_json
+         FROM system_settings
+        WHERE setting_key = 'role_permission_locks'
+        LIMIT 1`,
+    ),
+  ]);
+  const [rows] = permissionResult;
+  const [lockRows] = lockResult;
 
   const merged = normalizePermissionsPayload(DEFAULT_ROLE_PERMISSIONS);
 
@@ -299,19 +131,10 @@ async function loadRolePermissions() {
     merged[role][permissionKey] = normalizeBoolean(row.enabled, false);
   }
 
-  merged.administrator.userAccounts = true;
-  merged.administrator.settings = true;
-  merged.administrator.menus = true;
+  enforceSuperuserPermissions(merged);
   for (const role of COOK_VIEW_PERMISSION_ROLES) {
     merged[role].orders = true;
   }
-
-  const [lockRows] = await db.query(
-    `SELECT settings_json
-       FROM system_settings
-      WHERE setting_key = 'role_permission_locks'
-      LIMIT 1`,
-  );
 
   let roleLocks = normalizePermissionRoleLocks(DEFAULT_PERMISSION_ROLE_LOCKS);
   if (lockRows.length > 0 && lockRows[0].settings_json) {
@@ -497,7 +320,6 @@ function sanitizeSettingsPayload(payload) {
 
 router.get("/", async (_req, res) => {
   try {
-    await ensureInventoryMasterTables();
     const [rows] = await db.query(
       `SELECT settings_json
          FROM system_settings
@@ -526,7 +348,6 @@ router.get("/", async (_req, res) => {
 
 router.post("/", async (req, res) => {
   try {
-    await ensureInventoryMasterTables();
     const sanitized = sanitizeSettingsPayload(req.body);
     await db.query(
       `INSERT INTO system_settings (setting_key, settings_json)
@@ -565,8 +386,6 @@ router.put("/permissions", async (req, res) => {
     const roleLocks = normalizePermissionRoleLocks(
       req.body?.roleLocks ?? DEFAULT_PERMISSION_ROLE_LOCKS,
     );
-    await ensureInventoryMasterTables();
-
     for (const role of VALID_PERMISSION_ROLES) {
       for (const permissionKey of VALID_PERMISSION_KEYS) {
         await db.query(
@@ -602,7 +421,6 @@ router.put("/permissions", async (req, res) => {
 
 router.get("/inventory-categories", async (req, res) => {
   try {
-    await ensureInventoryMasterTables();
     const activeOnly = normalizeBoolean(req.query.activeOnly, false);
     const [rows] = await db.query(
       `SELECT
@@ -629,7 +447,6 @@ router.get("/inventory-categories", async (req, res) => {
 
 router.post("/inventory-categories", async (req, res) => {
   try {
-    await ensureInventoryMasterTables();
     const name = normalizeName(req.body?.name, "Category name");
     const dateTrackingType = normalizeEnum(
       req.body?.date_tracking_type,
@@ -686,7 +503,6 @@ router.post("/inventory-categories", async (req, res) => {
 
 router.patch("/inventory-categories/:id", async (req, res) => {
   try {
-    await ensureInventoryMasterTables();
     const categoryId = Number(req.params.id);
     if (!Number.isFinite(categoryId) || categoryId <= 0) {
       return res.status(400).json({ message: "Invalid category id" });
@@ -771,7 +587,6 @@ router.patch("/inventory-categories/:id", async (req, res) => {
 
 router.get("/menu-categories", async (req, res) => {
   try {
-    await ensureInventoryMasterTables();
     const activeOnly = normalizeBoolean(req.query.activeOnly, true);
     const [rows] = await db.query(
       `SELECT
@@ -797,7 +612,6 @@ router.get("/menu-categories", async (req, res) => {
 
 router.post("/menu-categories", async (req, res) => {
   try {
-    await ensureInventoryMasterTables();
     const name = normalizeName(req.body?.name, "Menu category name");
     const displayOrder = Object.prototype.hasOwnProperty.call(
       req.body || {},
@@ -853,7 +667,6 @@ router.post("/menu-categories", async (req, res) => {
 
 router.patch("/menu-categories/:id", async (req, res) => {
   try {
-    await ensureInventoryMasterTables();
     const categoryId = Number(req.params.id);
     if (!Number.isFinite(categoryId) || categoryId <= 0) {
       return res.status(400).json({ message: "Invalid category id" });
@@ -932,7 +745,6 @@ router.patch("/menu-categories/:id", async (req, res) => {
 
 router.get("/discount-types", async (req, res) => {
   try {
-    await ensureInventoryMasterTables();
     const activeOnly = normalizeBoolean(req.query.activeOnly, true);
     const [rows] = await db.query(
       `SELECT discount_id, name, percentage, is_active, created_at, updated_at
@@ -952,7 +764,6 @@ router.get("/discount-types", async (req, res) => {
 
 router.post("/discount-types", async (req, res) => {
   try {
-    await ensureInventoryMasterTables();
     const name = normalizeString(req.body?.name);
     const percentage = normalizePercentage(
       req.body?.percentage,
@@ -998,7 +809,6 @@ router.post("/discount-types", async (req, res) => {
 
 router.patch("/discount-types/:id", async (req, res) => {
   try {
-    await ensureInventoryMasterTables();
     const discountId = Number(req.params.id);
     if (!Number.isFinite(discountId) || discountId <= 0) {
       return res.status(400).json({ message: "Invalid discount type id" });
@@ -1071,7 +881,6 @@ router.patch("/discount-types/:id", async (req, res) => {
 
 router.delete("/inventory-categories/:id", async (req, res) => {
   try {
-    await ensureInventoryMasterTables();
     const categoryId = Number(req.params.id);
     if (!Number.isFinite(categoryId) || categoryId <= 0) {
       return res.status(400).json({ message: "Invalid category id" });
@@ -1100,7 +909,6 @@ router.delete("/inventory-categories/:id", async (req, res) => {
 
 router.get("/inventory-units", async (req, res) => {
   try {
-    await ensureInventoryMasterTables();
     const activeOnly = normalizeBoolean(req.query.activeOnly, false);
     const [rows] = await db.query(
       `SELECT
@@ -1128,7 +936,6 @@ router.get("/inventory-units", async (req, res) => {
 
 router.post("/inventory-units", async (req, res) => {
   try {
-    await ensureInventoryMasterTables();
     const name = normalizeName(req.body?.name, "Unit name");
     const abbreviation = normalizeOptionalString(req.body?.abbreviation);
     const baseUnit = normalizeOptionalString(req.body?.base_unit);
@@ -1193,7 +1000,6 @@ router.post("/inventory-units", async (req, res) => {
 
 router.patch("/inventory-units/:id", async (req, res) => {
   try {
-    await ensureInventoryMasterTables();
     const unitId = Number(req.params.id);
     if (!Number.isFinite(unitId) || unitId <= 0) {
       return res.status(400).json({ message: "Invalid unit id" });
@@ -1287,7 +1093,6 @@ router.patch("/inventory-units/:id", async (req, res) => {
 
 router.delete("/inventory-units/:id", async (req, res) => {
   try {
-    await ensureInventoryMasterTables();
     const unitId = Number(req.params.id);
     if (!Number.isFinite(unitId) || unitId <= 0) {
       return res.status(400).json({ message: "Invalid unit id" });

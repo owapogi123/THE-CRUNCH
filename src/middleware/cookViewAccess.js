@@ -1,4 +1,5 @@
 const jwt = require("jsonwebtoken");
+const { canAccessRoles } = require("./roleAccess");
 
 const JWT_SECRET = process.env.JWT_SECRET || "secretkey";
 
@@ -27,7 +28,7 @@ function requireCookViewAccess(req, res, next) {
   }
 
   const role = String(decoded?.role || "").trim().toLowerCase();
-  if (!COOK_VIEW_ROLES.includes(role)) {
+  if (!canAccessRoles(role, COOK_VIEW_ROLES)) {
     return res.status(403).json({
       message: "Cook View employee access required",
     });

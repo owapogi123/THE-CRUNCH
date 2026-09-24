@@ -3,6 +3,9 @@ const mysql = require("mysql2/promise");
 const fs = require("fs");
 const path = require("path");
 const { ensureProductsItemTypeSchema } = require("../utils/productItemType");
+const {
+  initializeStockManagerSchema,
+} = require("../services/stockManagerSchemaService");
 
 const DB_HOST = process.env.DB_HOST || "localhost";
 const DB_USER = process.env.DB_USER || "root";
@@ -501,6 +504,22 @@ CREATE TABLE IF NOT EXISTS discount_types (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS system_settings (
+    setting_key VARCHAR(100) PRIMARY KEY,
+    settings_json LONGTEXT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS role_permissions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    role VARCHAR(50) NOT NULL,
+    permission_key VARCHAR(80) NOT NULL,
+    enabled TINYINT(1) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY unique_role_permission (role, permission_key)
+);
 `;
 
     await connection.query(createStatements);
@@ -996,6 +1015,7 @@ END
       );
     }
 
+    await initializeStockManagerSchema(connection);
     log.log("Database setup completed successfully.");
     return true;
   } catch (err) {

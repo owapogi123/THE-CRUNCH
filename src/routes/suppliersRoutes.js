@@ -6,10 +6,12 @@ const {
   getProductItemTypeExpression,
 } = require("../utils/productItemType");
 
-async function getSuppliersColumns() {
-  const [rows] = await db.query("SHOW COLUMNS FROM Suppliers");
-  return new Set(rows.map((r) => String(r.Field).toLowerCase()));
-}
+const SUPPLIER_COLUMNS = new Set([
+  "delivery_schedule",
+  "product_id",
+  "email",
+  "products_supplied",
+]);
 
 function buildSupplierSelect(columns) {
   const hasEmail = columns.has("email");
@@ -142,7 +144,7 @@ async function logSupplierHistory({
 // GET /api/suppliers
 router.get("/", async (req, res) => {
   try {
-    const columns = await getSuppliersColumns();
+    const columns = SUPPLIER_COLUMNS;
     const [rows] = await db.query(
       `${buildSupplierSelect(columns)}
        ORDER BY Supplier_ID ASC`,
@@ -176,7 +178,7 @@ router.put("/:supplier_id", async (req, res) => {
       return res.status(400).json({ message: "Invalid supplier_id" });
     }
 
-    const columns = await getSuppliersColumns();
+    const columns = SUPPLIER_COLUMNS;
     const [existingRows] = await db.query(
       `${buildSupplierSelect(columns)} WHERE Supplier_ID = ?`,
       [supplierId],
@@ -320,7 +322,7 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ message: "supplier_name is required" });
     }
 
-    const columns = await getSuppliersColumns();
+    const columns = SUPPLIER_COLUMNS;
     const fieldNames = ["SupplierName", "Contact_Number"];
     const values = [supplier_name, contact_number ?? null];
 
@@ -447,7 +449,7 @@ router.patch("/:supplier_id/products", async (req, res) => {
         .json({ message: "products must be a non-empty array" });
     }
 
-    const columns = await getSuppliersColumns();
+    const columns = SUPPLIER_COLUMNS;
     if (!columns.has("products_supplied")) {
       return res
         .status(400)
@@ -551,7 +553,7 @@ router.delete("/:supplier_id/products/:product_name", async (req, res) => {
       return res.status(400).json({ message: "product_name is required" });
     }
 
-    const columns = await getSuppliersColumns();
+    const columns = SUPPLIER_COLUMNS;
 
     const [[existing]] = await db.query(
       `SELECT Supplier_ID AS supplier_id,

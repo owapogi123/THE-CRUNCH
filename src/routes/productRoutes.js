@@ -2,7 +2,6 @@ const router = require("express").Router();
 const db = require("../config/db");
 const {
     deriveManualOverrideState,
-    ensureMenuAvailabilitySchema,
     fetchMenuIngredients,
     normalizeMenuIngredients,
     replaceMenuIngredients,
@@ -10,27 +9,26 @@ const {
 const {
     MENU_ITEM,
     STOCK_ITEM,
-    ensureProductsItemTypeSchema,
     getProductItemTypeExpression,
     normalizeItemType,
     assertProductsMatchItemType,
 } = require("../utils/productItemType");
-const { ensureInventoryUnitColumn } = require("../utils/inventorySchema");
+const { ensureProductSchema } = require("../services/productSchemaService");
 const {
     buildProductCacheKey,
     cache,
     getProductCacheTtlMs,
     PRODUCT_CACHE_PREFIX,
 } = require("../services/cacheService");
+const {
+    isDevelopmentTimingEnabled,
+    runWithDbQueryTiming,
+} = require("../services/requestTiming");
 
 const PRODUCT_NAME_MAX_LENGTH = 100;
 const PRODUCT_DESCRIPTION_MAX_LENGTH = 100;
 const RAW_MATERIAL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9' -]*[A-Za-z0-9]$|^[A-Za-z0-9]$/;
 const DEFAULT_INVENTORY_UNIT = "piece";
-let menuManagementSchemaReady = false;
-let menuManagementSchemaPromise = null;
-let inventoryThresholdSchemaReady = false;
-let inventoryThresholdSchemaPromise = null;
 
 function normalizeProductName(value, { stockOnly = false } = {}) {
     const normalized = String(value ?? "").trim();
@@ -69,142 +67,6 @@ function normalizeInventoryUnit(value) {
         throw new Error("Unit must not exceed 30 characters.");
     }
     return normalized;
-}
-
-async function hasColumn(tableName, columnName) {
-    const [rows] = await db.query(`SHOW COLUMNS FROM ${tableName} LIKE ?`, [
-        columnName,
-    ]);
-    return rows.length > 0;
-}
-
-async function ensureProductsImageColumn() {
-    if (!(await hasColumn("products", "image"))) {
-        await db.query("ALTER TABLE products ADD COLUMN image LONGTEXT NULL");
-    }
-}
-
-async function cleanupLegacyBase64ProductImages() {
-    await db.query(
-        `UPDATE products
-         SET image = '/img/placeholder.jpg'
-         WHERE image IS NOT NULL
-           AND TRIM(image) <> ''
-           AND image LIKE 'data:image%'`,
-    );
-}
-
-async function ensureInventoryThresholdColumns() {
-    if (inventoryThresholdSchemaReady) return;
-    if (inventoryThresholdSchemaPromise) return inventoryThresholdSchemaPromise;
-
-    inventoryThresholdSchemaPromise = (async () => {
-        if (!(await hasColumn("Inventory", "Reorder_Point"))) {
-            await db.query(
-                "ALTER TABLE Inventory ADD COLUMN Reorder_Point DECIMAL(10,2) DEFAULT 20",
-            );
-        }
-
-        if (!(await hasColumn("Inventory", "Critical_Point"))) {
-            await db.query(
-                "ALTER TABLE Inventory ADD COLUMN Critical_Point DECIMAL(10,2) DEFAULT 5",
-            );
-        }
-
-        if (!(await hasColumn("Inventory", "use_default_thresholds"))) {
-            await db.query(
-                "ALTER TABLE Inventory ADD COLUMN use_default_thresholds TINYINT(1) NOT NULL DEFAULT 1",
-            );
-        }
-
-        if (!(await hasColumn("Inventory", "low_stock_threshold"))) {
-            await db.query(
-                "ALTER TABLE Inventory ADD COLUMN low_stock_threshold INT NULL",
-            );
-        }
-
-        if (!(await hasColumn("Inventory", "critical_stock_threshold"))) {
-            await db.query(
-                "ALTER TABLE Inventory ADD COLUMN critical_stock_threshold INT NULL",
-            );
-        }
-
-        await ensureInventoryUnitColumn(db);
-        inventoryThresholdSchemaReady = true;
-    })();
-
-    try {
-        await inventoryThresholdSchemaPromise;
-    } catch (error) {
-        inventoryThresholdSchemaPromise = null;
-        throw error;
-    }
-}
-
-async function ensureMenuManagementColumns() {
-    if (menuManagementSchemaReady) return;
-    if (menuManagementSchemaPromise) return menuManagementSchemaPromise;
-
-    menuManagementSchemaPromise = (async () => {
-        await ensureProductsImageColumn();
-        await cleanupLegacyBase64ProductImages();
-        await ensureProductsItemTypeSchema(db);
-
-        if (!(await hasColumn("products", "menu_code"))) {
-            await db.query("ALTER TABLE products ADD COLUMN menu_code VARCHAR(20) NULL");
-        }
-
-        if (!(await hasColumn("products", "availability_status"))) {
-            await db.query(
-                "ALTER TABLE products ADD COLUMN availability_status VARCHAR(20) DEFAULT 'Available'",
-            );
-        }
-
-        if (!(await hasColumn("products", "is_promotional"))) {
-            await db.query(
-                "ALTER TABLE products ADD COLUMN is_promotional TINYINT(1) DEFAULT 0",
-            );
-        }
-
-        if (!(await hasColumn("products", "promo_price"))) {
-            await db.query(
-                "ALTER TABLE products ADD COLUMN promo_price DECIMAL(10,2) NULL",
-            );
-        }
-
-        if (!(await hasColumn("products", "promo_label"))) {
-            await db.query(
-                "ALTER TABLE products ADD COLUMN promo_label VARCHAR(100) NULL",
-            );
-        }
-
-        await db.query(
-            `UPDATE products
-             SET menu_code = CONCAT('M-', LPAD(id, 3, '0'))
-             WHERE menu_code IS NULL OR TRIM(menu_code) = ''`,
-        );
-
-        await db.query(
-            `UPDATE products
-             SET availability_status = 'Available'
-             WHERE availability_status IS NULL OR TRIM(availability_status) = ''`,
-        );
-
-        await db.query(
-            `UPDATE products
-             SET is_promotional = 0
-             WHERE is_promotional IS NULL`,
-        );
-
-        menuManagementSchemaReady = true;
-    })();
-
-    try {
-        await menuManagementSchemaPromise;
-    } catch (error) {
-        menuManagementSchemaPromise = null;
-        throw error;
-    }
 }
 
 function normalizeProductImageValue(value) {
@@ -334,12 +196,7 @@ function resolveAvailabilityStatus(row, ingredients) {
     return Number(row.remainingStock ?? 0) > 0 ? "Available" : "Out of Stock";
 }
 
-async function attachIngredientAvailability(rows) {
-    const ingredientMap = await fetchMenuIngredients(
-        db,
-        rows.map((row) => row.id),
-    );
-
+function enrichIngredientAvailability(rows, ingredientMap) {
     return rows.map((row) => {
         const ingredients = (ingredientMap.get(Number(row.id)) ?? []).filter(
             (ingredient) => String(ingredient.item_type || STOCK_ITEM) === STOCK_ITEM,
@@ -363,9 +220,47 @@ async function attachIngredientAvailability(rows) {
     });
 }
 
-// GET all products (old backend used `products` table)
-router.get("/", async (req, res) => {
+async function attachIngredientAvailability(rows) {
+    const ingredientMap = await fetchMenuIngredients(
+        db,
+        rows.map((row) => row.id),
+    );
+    return enrichIngredientAvailability(rows, ingredientMap);
+}
+
+async function measureOperation(timings, label, operation) {
     const startedAt = process.hrtime.bigint();
+    try {
+        return await operation();
+    } finally {
+        timings[label] = Number(process.hrtime.bigint() - startedAt) / 1e6;
+    }
+}
+
+function logProductTimings(timings, queryTiming, totalMs) {
+    if (!isDevelopmentTimingEnabled()) return;
+
+    const querySummary = (queryTiming?.queries ?? [])
+        .map(
+            (query, index) =>
+                `q${index + 1}:${query.operation}=${query.durationMs.toFixed(1)}ms`,
+        )
+        .join(" ");
+    const operationSummary = Object.entries(timings)
+        .map(([label, durationMs]) => `${label}=${durationMs.toFixed(1)}ms`)
+        .join(" ");
+
+    console.info(
+        `[TIMING] products ${operationSummary} dbQueries=${
+            queryTiming?.queries?.length ?? 0
+        } ${querySummary} total=${totalMs.toFixed(1)}ms`,
+    );
+}
+
+// GET all products (old backend used `products` table)
+router.get("/", (req, res) => runWithDbQueryTiming(async (queryTiming) => {
+    const startedAt = process.hrtime.bigint();
+    const timings = {};
     try {
         const requestedItemType = String(req.query.item_type || "")
             .trim()
@@ -382,6 +277,9 @@ router.get("/", async (req, res) => {
         });
         const cachedProducts = await cache.get(cacheKey);
         if (cachedProducts !== null) {
+            await measureOperation(timings, "serialization", async () => {
+                JSON.stringify(cachedProducts);
+            });
             const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
             console.info(
                 `[CACHE HIT] products key=${cacheKey} durationMs=${durationMs.toFixed(1)}`,
@@ -390,11 +288,9 @@ router.get("/", async (req, res) => {
         }
         const cacheVersion = cache.getPrefixVersion(PRODUCT_CACHE_PREFIX);
 
-        await ensureMenuManagementColumns();
-        await ensureMenuAvailabilitySchema(db);
-        const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
-        await ensureInventoryThresholdColumns();
-        const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p", "m");
+        // Startup initialization guarantees the item_type column before the
+        // server accepts traffic. Reads never perform schema maintenance.
+        const itemTypeExpr = getProductItemTypeExpression(true, "p", "m");
         const filters = [];
         const values = [];
 
@@ -414,8 +310,9 @@ router.get("/", async (req, res) => {
             ? `WHERE ${filters.join(" AND ")}`
             : "";
 
-        const [rows] = await db.query(
-            `SELECT
+        const [rows] = await measureOperation(timings, "productQuery", () =>
+            db.query(
+                `SELECT
                 p.*,
                 ${itemTypeExpr} AS item_type,
                 m.Category_Name AS category,
@@ -429,15 +326,28 @@ router.get("/", async (req, res) => {
              FROM products p
              LEFT JOIN Menu m ON m.Product_ID = p.id
              LEFT JOIN Inventory i ON i.Product_ID = p.id
-             ${whereClause}`,
-            values,
+                 ${whereClause}`,
+                values,
+            ),
         );
 
-        const products = await attachIngredientAvailability(
-            rows.map((row) => ({
-                ...row,
-                unit: normalizeInventoryUnit(row.unit),
-            })),
+        let ingredientMap;
+        await measureOperation(timings, "ingredientQuery", async () => {
+            ingredientMap = await fetchMenuIngredients(
+                db,
+                rows.map((row) => row.id),
+            );
+        });
+        const products = await measureOperation(
+            timings,
+            "availabilityCalculation",
+            async () => enrichIngredientAvailability(
+                rows.map((row) => ({
+                    ...row,
+                    unit: normalizeInventoryUnit(row.unit),
+                })),
+                ingredientMap,
+            ),
         );
         await cache.setIfPrefixVersion(
             cacheKey,
@@ -446,24 +356,27 @@ router.get("/", async (req, res) => {
             PRODUCT_CACHE_PREFIX,
             cacheVersion,
         );
+        await measureOperation(timings, "serialization", async () => {
+            JSON.stringify(products);
+        });
         const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+        logProductTimings(timings, queryTiming, durationMs);
         console.info(
             `[CACHE MISS] products key=${cacheKey} durationMs=${durationMs.toFixed(1)}`,
         );
         return res.json(products);
     } catch (err) {
+        const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+        logProductTimings(timings, queryTiming, durationMs);
         console.error(err);
         return res.status(500).json({ message: 'DB error', error: err.message });
     }
-});
+}));
 
 // ADD product
 router.post("/", async (req, res) => {
     try {
-        await ensureMenuManagementColumns();
-        await ensureMenuAvailabilitySchema(db);
-        const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
-        await ensureInventoryThresholdColumns();
+        const hasItemTypeColumn = await ensureProductSchema(db);
         const {
             name,
             price,
@@ -728,10 +641,7 @@ router.post("/", async (req, res) => {
 // UPDATE product
 router.put("/:id", async (req, res) => {
     try {
-        await ensureMenuManagementColumns();
-        await ensureMenuAvailabilitySchema(db);
-        const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
-        await ensureInventoryThresholdColumns();
+        const hasItemTypeColumn = await ensureProductSchema(db);
 
         const productId = Number(req.params.id);
         if (!Number.isFinite(productId) || productId <= 0) {
@@ -1134,7 +1044,7 @@ router.put("/:id", async (req, res) => {
 // DELETE product
 router.delete("/:id", async (req, res) => {
     try {
-        await ensureMenuAvailabilitySchema(db);
+        await ensureProductSchema(db);
         const productId = Number(req.params.id);
         if (!Number.isFinite(productId) || productId <= 0) {
             return res.status(400).json({ message: "Invalid product ID" });

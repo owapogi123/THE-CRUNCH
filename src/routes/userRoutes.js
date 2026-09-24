@@ -3,6 +3,7 @@ const router = express.Router();
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const db = require("../config/db");
+const { isSuperuserRole } = require("../middleware/roleAccess");
 
 const JWT_SECRET = process.env.JWT_SECRET || "secretkey";
 const STAFF_FIELD_MAX_LENGTH = 100;
@@ -94,7 +95,7 @@ const verifyAdmin = (req, res, next) => {
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
 
-    if (decoded.role !== "administrator") {
+    if (!isSuperuserRole(decoded.role)) {
       return res.status(403).json({ message: "Administrator access required" });
     }
 

@@ -1,7 +1,10 @@
 const app = require("./app");
 const db = require("./config/db");
 const { setup } = require("./db/setup");
-const { ensureInventoryUnitColumn } = require("./utils/inventorySchema");
+const { ensureProductSchema } = require("./services/productSchemaService");
+const {
+  initializeStockManagerSchema,
+} = require("./services/stockManagerSchemaService");
 
 // default port 5000 to match frontend proxy, but allow override
 const PORT = process.env.PORT || 5000;
@@ -11,7 +14,21 @@ async function startServer() {
     await setup({
       log: console,
     });
-    await ensureInventoryUnitColumn(db);
+    const productSchemaStartedAt = process.hrtime.bigint();
+    await ensureProductSchema(db);
+    console.log(
+      `Product schema initialization completed in ${(
+        Number(process.hrtime.bigint() - productSchemaStartedAt) / 1e6
+      ).toFixed(1)}ms`,
+    );
+
+    const stockManagerSchemaStartedAt = process.hrtime.bigint();
+    await initializeStockManagerSchema(db);
+    console.log(
+      `Stock Manager schema initialization completed in ${(
+        Number(process.hrtime.bigint() - stockManagerSchemaStartedAt) / 1e6
+      ).toFixed(1)}ms`,
+    );
 
     const info = await db.verifyConnection();
     console.log(

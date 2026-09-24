@@ -2,7 +2,6 @@ const router = require("express").Router();
 const db = require("../config/db");
 const { deductStockForOrder } = require("../services/inventoryService");
 const {
-  ensureMenuAvailabilitySchema,
   fetchMenuIngredients,
 } = require("../utils/menuAvailability");
 const {
@@ -10,49 +9,7 @@ const {
   ensureProductsItemTypeSchema,
   getProductItemTypeExpression,
 } = require("../utils/productItemType");
-const { ensureInventoryUnitColumn } = require("../utils/inventorySchema");
 const { requireCookViewAccess } = require("../middleware/cookViewAccess");
-
-async function hasColumn(tableName, columnName) {
-  const [rows] = await db.query(`SHOW COLUMNS FROM ${tableName} LIKE ?`, [
-    columnName,
-  ]);
-  return rows.length > 0;
-}
-
-async function ensureInventoryAlertColumns() {
-  if (!(await hasColumn("Inventory", "Reorder_Point"))) {
-    await db.query(
-      "ALTER TABLE Inventory ADD COLUMN Reorder_Point DECIMAL(10,2) DEFAULT 20",
-    );
-  }
-
-  if (!(await hasColumn("Inventory", "Critical_Point"))) {
-    await db.query(
-      "ALTER TABLE Inventory ADD COLUMN Critical_Point DECIMAL(10,2) DEFAULT 5",
-    );
-  }
-
-  if (!(await hasColumn("Inventory", "use_default_thresholds"))) {
-    await db.query(
-      "ALTER TABLE Inventory ADD COLUMN use_default_thresholds TINYINT(1) NOT NULL DEFAULT 1",
-    );
-  }
-
-  if (!(await hasColumn("Inventory", "low_stock_threshold"))) {
-    await db.query(
-      "ALTER TABLE Inventory ADD COLUMN low_stock_threshold INT NULL",
-    );
-  }
-
-  if (!(await hasColumn("Inventory", "critical_stock_threshold"))) {
-    await db.query(
-      "ALTER TABLE Inventory ADD COLUMN critical_stock_threshold INT NULL",
-    );
-  }
-
-  await ensureInventoryUnitColumn(db);
-}
 
 function normalizeBooleanFlag(value, fallback = true) {
   if (value === undefined || value === null || value === "") return fallback;
@@ -140,126 +97,11 @@ function getInventoryAlertSeverity(stockValue, thresholds) {
   return "normal";
 }
 
-async function ensureProductsImageColumn() {
-  if (!(await hasColumn("products", "image"))) {
-    await db.query("ALTER TABLE products ADD COLUMN image LONGTEXT NULL");
-  }
-}
-
-async function cleanupLegacyBase64ProductImages() {
-  await db.query(
-    `UPDATE products
-     SET image = '/img/placeholder.jpg'
-     WHERE image IS NOT NULL
-       AND TRIM(image) <> ''
-       AND image LIKE 'data:image%'`,
-  );
-}
-
-async function ensureBatchShelfLifeColumns() {
-  if (!(await hasColumn("batches", "shelf_life_days"))) {
-    await db.query(
-      "ALTER TABLE batches ADD COLUMN shelf_life_days INT DEFAULT NULL",
-    );
-  }
-
-  if (!(await hasColumn("batches", "shelf_life_hours"))) {
-    await db.query(
-      "ALTER TABLE batches ADD COLUMN shelf_life_hours INT DEFAULT NULL",
-    );
-  }
-
-  if (!(await hasColumn("batches", "usable_until"))) {
-    await db.query(
-      "ALTER TABLE batches ADD COLUMN usable_until DATETIME DEFAULT NULL",
-    );
-  }
-}
-
-async function ensureMenuManagementColumns() {
-  await ensureProductsImageColumn();
-  await cleanupLegacyBase64ProductImages();
-  await ensureProductsItemTypeSchema(db);
-
-  if (!(await hasColumn("products", "menu_code"))) {
-    await db.query("ALTER TABLE products ADD COLUMN menu_code VARCHAR(20) NULL");
-  }
-
-  if (!(await hasColumn("products", "availability_status"))) {
-    await db.query(
-      "ALTER TABLE products ADD COLUMN availability_status VARCHAR(20) DEFAULT 'Available'",
-    );
-  }
-
-  if (!(await hasColumn("products", "is_promotional"))) {
-    await db.query(
-      "ALTER TABLE products ADD COLUMN is_promotional TINYINT(1) DEFAULT 0",
-    );
-  }
-
-  if (!(await hasColumn("products", "promo_price"))) {
-    await db.query(
-      "ALTER TABLE products ADD COLUMN promo_price DECIMAL(10,2) NULL",
-    );
-  }
-
-  if (!(await hasColumn("products", "promo_label"))) {
-    await db.query(
-      "ALTER TABLE products ADD COLUMN promo_label VARCHAR(100) NULL",
-    );
-  }
-
-  await db.query(
-    `UPDATE products
-     SET menu_code = CONCAT('M-', LPAD(id, 3, '0'))
-     WHERE menu_code IS NULL OR TRIM(menu_code) = ''`,
-  );
-
-  await db.query(
-    `UPDATE products
-     SET availability_status = 'Available'
-     WHERE availability_status IS NULL OR TRIM(availability_status) = ''`,
-  );
-
-  await db.query(
-    `UPDATE products
-     SET is_promotional = 0
-     WHERE is_promotional IS NULL`,
-  );
-}
-
 function toMySqlDateTime(value) {
   if (!value) return null;
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return null;
   return d.toISOString().slice(0, 19).replace("T", " ");
-}
-
-async function ensureBatchTable() {
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS batches (
-      batch_id INT PRIMARY KEY AUTO_INCREMENT,
-      product_id INT,
-      delivery_batch_id VARCHAR(50),
-      quantity DECIMAL(10,2) NOT NULL,
-      remaining_qty DECIMAL(10,2) NOT NULL,
-      unit VARCHAR(50),
-      received_date DATE NOT NULL,
-      expiry_date DATE NULL,
-      status VARCHAR(20) DEFAULT 'active',
-      returned_qty DECIMAL(10,2) DEFAULT 0,
-      notes VARCHAR(255) NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      FOREIGN KEY (product_id) REFERENCES Menu(Product_ID)
-    );
-  `);
-
-  if (!(await hasColumn("batches", "delivery_batch_id"))) {
-    await db.query(
-      "ALTER TABLE batches ADD COLUMN delivery_batch_id VARCHAR(50)",
-    );
-  }
 }
 
 async function addColumnIfMissing(conn, tableName, columnName, definition) {
@@ -507,79 +349,12 @@ async function buildDailyUsagePayload({
 // GET /api/inventory
 router.get("/", requireCookViewAccess, async (req, res) => {
   try {
-    await ensureBatchTable();
-    await ensureInventoryAlertColumns();
-    await ensureMenuManagementColumns();
-    await ensureBatchShelfLifeColumns();
-    await ensureMenuAvailabilitySchema(db);
-    const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+    const hasItemTypeColumn = true;
     const productItemTypeExpr = getProductItemTypeExpression(
       hasItemTypeColumn,
       "p",
       "m",
     );
-
-    // Ensure inventory rows exist for all menu products.
-    await db.query(
-      `INSERT INTO Inventory (
-         Product_ID,
-         Quantity,
-         Stock,
-         Item_Purchased,
-         Reorder_Point,
-         Critical_Point,
-         use_default_thresholds,
-         low_stock_threshold,
-         critical_stock_threshold
-       )
-       SELECT
-         m.Product_ID,
-         m.Stock,
-         m.Stock,
-         m.Product_Name,
-         20,
-         5,
-         1,
-         NULL,
-         NULL
-       FROM Menu m
-       JOIN products p ON p.id = m.Product_ID
-       LEFT JOIN Inventory i ON i.Product_ID = m.Product_ID
-       WHERE i.Inventory_ID IS NULL
-         AND ${productItemTypeExpr} = ?`,
-      [STOCK_ITEM],
-    );
-
-    const hasReorderPoint = await hasColumn("Inventory", "Reorder_Point");
-    const hasCriticalPoint = await hasColumn("Inventory", "Critical_Point");
-    const hasUseDefaultThresholds = await hasColumn(
-      "Inventory",
-      "use_default_thresholds",
-    );
-    const hasLowStockThreshold = await hasColumn(
-      "Inventory",
-      "low_stock_threshold",
-    );
-    const hasCriticalStockThreshold = await hasColumn(
-      "Inventory",
-      "critical_stock_threshold",
-    );
-
-    const reorderExpr = hasReorderPoint
-      ? "COALESCE(i.Reorder_Point, 20)"
-      : "20";
-    const criticalExpr = hasCriticalPoint
-      ? "COALESCE(i.Critical_Point, 5)"
-      : "5";
-    const useDefaultThresholdsExpr = hasUseDefaultThresholds
-      ? "COALESCE(i.use_default_thresholds, 1)"
-      : "1";
-    const lowStockThresholdExpr = hasLowStockThreshold
-      ? "i.low_stock_threshold"
-      : "NULL";
-    const criticalStockThresholdExpr = hasCriticalStockThreshold
-      ? "i.critical_stock_threshold"
-      : "NULL";
 
     const [rows] = await db.query(
       `SELECT
@@ -592,11 +367,11 @@ router.get("/", requireCookViewAccess, async (req, res) => {
          COALESCE(i.Quantity, 0)                                                AS quantity,
          COALESCE(i.Item_Purchased, m.Product_Name, 'Unnamed Product')          AS item_purchased,
          i.Last_Update                                                           AS last_update,
-         ${reorderExpr}                                                          AS reorderPoint,
-         ${criticalExpr}                                                         AS criticalPoint,
-         ${useDefaultThresholdsExpr}                                             AS useDefaultThresholds,
-         ${lowStockThresholdExpr}                                                AS lowStockThreshold,
-         ${criticalStockThresholdExpr}                                           AS criticalStockThreshold,
+         COALESCE(i.Reorder_Point, 20)                                           AS reorderPoint,
+         COALESCE(i.Critical_Point, 5)                                          AS criticalPoint,
+         COALESCE(i.use_default_thresholds, 1)                                  AS useDefaultThresholds,
+         i.low_stock_threshold                                                   AS lowStockThreshold,
+         i.critical_stock_threshold                                              AS criticalStockThreshold,
          COALESCE(sa.supplier_name, 'No Supplier')                              AS supplier_name,
          COALESCE(i.Daily_Withdrawn, 0)                                         AS dailyWithdrawn,
          COALESCE(i.Returned, 0)                                                AS returned,
@@ -727,18 +502,17 @@ router.get("/", requireCookViewAccess, async (req, res) => {
 
 router.get("/alerts", async (_req, res) => {
   try {
-    await ensureInventoryAlertColumns();
-    await ensureMenuManagementColumns();
-    const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+    const hasItemTypeColumn = true;
     const productItemTypeExpr = getProductItemTypeExpression(
       hasItemTypeColumn,
       "p",
       "m",
     );
 
-    const defaults = await readStockAlertDefaults();
-    const [rows] = await db.query(
-      `SELECT
+    const [defaults, [rows]] = await Promise.all([
+      readStockAlertDefaults(),
+      db.query(
+        `SELECT
          i.Inventory_ID AS inventory_id,
          i.Product_ID AS product_id,
          COALESCE(m.Product_Name, i.Item_Purchased, 'Unnamed Product') AS product_name,
@@ -759,8 +533,9 @@ router.get("/alerts", async (_req, res) => {
        ) bu ON bu.product_id = i.Product_ID
        WHERE ${productItemTypeExpr} = ?
        ORDER BY product_name ASC`,
-      [STOCK_ITEM],
-    );
+        [STOCK_ITEM],
+      ),
+    ]);
 
     const items = rows.map((row) => {
       const thresholds = getAppliedInventoryAlertThresholds(row, defaults);
@@ -868,8 +643,6 @@ router.put("/:inventory_id", async (req, res) => {
       lowStockThreshold !== undefined ||
       criticalStockThreshold !== undefined
     ) {
-      await ensureInventoryAlertColumns();
-
       const [existingRows] = await db.query(
         `SELECT
            COALESCE(Reorder_Point, 20) AS reorderPoint,
@@ -1014,8 +787,6 @@ router.put("/:inventory_id", async (req, res) => {
 // POST /api/inventory/batches
 router.post("/batches", async (req, res) => {
   try {
-    await ensureBatchTable();
-
     const { productId, productName, quantity, unit, expiresAt } = req.body;
     const qty = Number(quantity) || 0;
 

@@ -158,50 +158,6 @@ function computeUsableUntil(baseValue, shelfLifeDays, shelfLifeHours) {
   return toSqlDateTime(usableUntil);
 }
 
-async function ensureBatchShelfLifeColumns(connOrDb = db) {
-  await connOrDb.query(`
-    CREATE TABLE IF NOT EXISTS batches (
-      batch_id INT PRIMARY KEY AUTO_INCREMENT,
-      product_id INT NOT NULL,
-      delivery_batch_id VARCHAR(50),
-      quantity DECIMAL(10,2) NOT NULL,
-      remaining_qty DECIMAL(10,2) NOT NULL,
-      unit VARCHAR(20) DEFAULT 'kg',
-      received_date DATE NOT NULL,
-      expiry_date DATE NULL,
-      shelf_life_days INT DEFAULT NULL,
-      shelf_life_hours INT DEFAULT NULL,
-      usable_until DATETIME DEFAULT NULL,
-      status ENUM('active','withdrawn','returned','expired') DEFAULT 'active',
-      returned_qty DECIMAL(10,2) DEFAULT 0,
-      notes VARCHAR(255) NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )
-  `);
-
-  const [cols] = await connOrDb.query(`SHOW COLUMNS FROM batches`);
-  const fieldSet = new Set(cols.map((c) => c.Field));
-
-  if (!fieldSet.has("shelf_life_days")) {
-    await connOrDb.query(
-      `ALTER TABLE batches ADD COLUMN shelf_life_days INT DEFAULT NULL`,
-    );
-  }
-
-  if (!fieldSet.has("shelf_life_hours")) {
-    await connOrDb.query(
-      `ALTER TABLE batches ADD COLUMN shelf_life_hours INT DEFAULT NULL`,
-    );
-  }
-
-  if (!fieldSet.has("usable_until")) {
-    await connOrDb.query(
-      `ALTER TABLE batches ADD COLUMN usable_until DATETIME DEFAULT NULL`,
-    );
-  }
-}
-
 // ─── supplier history logger ──────────────────────────────────────────────────
 
 async function logSupplierHistory(
@@ -226,71 +182,6 @@ async function logSupplierHistory(
 }
 
 // ─── table bootstrap ─────────────────────────────────────────────────────────
-
-async function ensureTables() {
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS po_counter (
-      id    INT PRIMARY KEY DEFAULT 1,
-      value INT NOT NULL DEFAULT 0,
-      CHECK (id = 1)
-    )
-  `);
-
-  await db.query(`
-    INSERT IGNORE INTO po_counter (id, value) VALUES (1, 0)
-  `);
-
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS purchase_orders (
-      po_id         VARCHAR(12)  NOT NULL PRIMARY KEY,
-      supplier      VARCHAR(255) NOT NULL,
-      contact       VARCHAR(100) DEFAULT '',
-      order_date    DATE         NOT NULL,
-      delivery_date DATE         NOT NULL,
-      status        ENUM('Draft','Ordered','Received','Cancelled') NOT NULL DEFAULT 'Draft',
-      notes         TEXT         DEFAULT NULL,
-      receipt_no    VARCHAR(255) DEFAULT NULL,
-      received_by   VARCHAR(255) DEFAULT NULL,
-      received_date DATE         DEFAULT NULL,
-      created_at    TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
-      updated_at    TIMESTAMP    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )
-  `);
-
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS purchase_order_items (
-      item_id              INT          PRIMARY KEY AUTO_INCREMENT,
-      po_id                VARCHAR(12)  NOT NULL,
-      name                 VARCHAR(255) NOT NULL,
-      category             VARCHAR(100) DEFAULT '',
-      unit                 VARCHAR(50)  DEFAULT '',
-      quantity             DECIMAL(10,2) NOT NULL DEFAULT 0,
-      unit_cost            DECIMAL(10,2) NOT NULL DEFAULT 0,
-      expected_expiry_date DATE         DEFAULT NULL,
-      FOREIGN KEY (po_id) REFERENCES purchase_orders(po_id) ON DELETE CASCADE
-    )
-  `);
-
-  {
-    const [cols] = await db.query(`SHOW COLUMNS FROM purchase_order_items`);
-    const fieldSet = new Set(cols.map((c) => c.Field));
-    if (!fieldSet.has("expected_expiry_date")) {
-      await db.query(
-        `ALTER TABLE purchase_order_items ADD COLUMN expected_expiry_date DATE DEFAULT NULL`,
-      );
-    }
-  }
-
-  {
-    const [cols] = await db.query(`SHOW COLUMNS FROM purchase_orders`);
-    const fieldSet = new Set(cols.map((c) => c.Field));
-    if (!fieldSet.has("receipt_no")) {
-      await db.query(
-        `ALTER TABLE purchase_orders ADD COLUMN receipt_no VARCHAR(255) DEFAULT NULL`,
-      );
-    }
-  }
-}
 
 // ─── shape helpers ────────────────────────────────────────────────────────────
 
@@ -322,8 +213,6 @@ function shapePO(row, items = []) {
 
 router.get("/", async (_req, res) => {
   try {
-    await ensureTables();
-
     const [orders] = await db.query(
       `SELECT * FROM purchase_orders ORDER BY created_at DESC`,
     );
@@ -357,8 +246,6 @@ router.get("/:id", async (req, res) => {
   const poId = req.params.id;
 
   try {
-    await ensureTables();
-
     const [[order]] = await db.query(
       `SELECT * FROM purchase_orders WHERE po_id = ?`,
       [poId],
@@ -458,8 +345,6 @@ router.post("/", async (req, res) => {
 
   let conn;
   try {
-    await ensureTables();
-
     conn = await db.getConnection();
     await conn.beginTransaction();
 
@@ -549,8 +434,6 @@ router.patch("/:id/status", async (req, res) => {
 
   let conn;
   try {
-    await ensureTables();
-
     conn = await db.getConnection();
     await conn.beginTransaction();
 
@@ -629,8 +512,6 @@ router.patch("/:id/receive", async (req, res) => {
 
   let conn;
   try {
-    await ensureTables();
-    await ensureBatchShelfLifeColumns();
     const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
     const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p", "m");
 
@@ -924,8 +805,6 @@ router.delete("/:id", async (req, res) => {
   const poId = req.params.id;
 
   try {
-    await ensureTables();
-
     const [[existing]] = await db.query(
       `SELECT * FROM purchase_orders WHERE po_id = ?`,
       [poId],
