@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useState } from "react";
 import type { Product } from "../../types/inventory";
+import { fmtInt } from "../../utils/formatters";
 
 function CartIcon() {
   return (
@@ -130,7 +131,7 @@ export function StockAlertRestockBanner({
                       );
                       const deficit = Math.max(
                         0,
-                        Math.round(p.reorderPoint - p.mainStock),
+                        p.reorderPoint - p.mainStock,
                       );
                       return (
                         <div
@@ -180,7 +181,7 @@ export function StockAlertRestockBanner({
                               <p
                                 className={`text-sm font-bold ${severity === "critical" ? "text-red-600" : "text-amber-600"}`}
                               >
-                                +{deficit}{" "}
+                                +{fmtInt(deficit)}{" "}
                                 <span className="text-xs font-normal text-slate-400">
                                   {p.unit}
                                 </span>

@@ -9,6 +9,7 @@ import type {
   StockAlertSettings,
   Tab,
 } from "../../types/inventory";
+import { fmtInt } from "../../utils/formatters";
 
 function CartIcon() {
   return (
@@ -230,7 +231,7 @@ export function AlertsTab({
                       : appliedThresholds.low;
                   const deficit = Math.max(
                     0,
-                    Math.round(thresholdTarget - toNumber(p.mainStock)),
+                    thresholdTarget - toNumber(p.mainStock),
                   );
                   return (
                     <motion.div
@@ -269,7 +270,7 @@ export function AlertsTab({
                             {severity === "out"
                               ? `No stock left. Need ${Math.max(0, appliedThresholds.low)} ${p.unit} to reach warning threshold`
                               : deficit > 0
-                                ? `Need ${deficit} ${p.unit} to reach ${status === "critical" ? "critical" : "warning"} threshold`
+                                ? `Need ${fmtInt(deficit)} ${p.unit} to reach ${status === "critical" ? "critical" : "warning"} threshold`
                                 : "Below critical threshold"}
                           </p>
                         </div>

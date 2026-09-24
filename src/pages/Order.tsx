@@ -72,6 +72,17 @@ interface OrderCard {
   timerUpdatedBy?: number | null;
   timerUpdatedAt?: number;
 }
+interface OrderUpdateResponse {
+  id: string | number;
+  status: string;
+  paymentStatus?: string;
+  estimatedPrepMinutes?: number;
+  prepStartedAt?: number;
+  readyAt?: number;
+  dueAt?: number;
+  preparationStarted?: boolean;
+  inventoryRestored?: boolean | null;
+}
 interface KitchenUsageItem {
   usage_item_id?: number;
   product_id: number | null;
@@ -292,48 +303,73 @@ export default function Order() {
     refunded: 0,
   });
   const [settlingId, setSettlingId] = useState<string | null>(null);
+  const [processingAction, setProcessingAction] = useState<{
+    orderId: string;
+    action: "start" | "complete";
+  } | null>(null);
   const [usageOpen, setUsageOpen] = useState(false);
   const [usageLoading, setUsageLoading] = useState(false);
   const [usageSaving, setUsageSaving] = useState(false);
   const [usageReport, setUsageReport] = useState<KitchenUsageReport | null>(null);
   const [usageItems, setUsageItems] = useState<KitchenUsageItem[]>([]);
   const [usageProducts, setUsageProducts] = useState<UsageProductOption[]>([]);
+  const fetchAllInFlight = useRef<Promise<void> | null>(null);
   const { addNotification } = useNotifications();
   const { isMobile, isTablet } = useViewport();
 
-  const fetchAll = async () => {
-    try {
-      const [queue, all] = await Promise.all([
-        api.get<OrderCard[]>("/orders/queue"),
-        api.get<{ id?: number | string; orderId?: number | string; status: string }[]>("/orders"),
-      ]);
-      setOrders((queue ?? []).filter((o) => !o.isFinished));
-      const nextCounts: OrderStatusCounts = {
-        pendingPayment: 0,
-        queued: 0,
-        preparing: 0,
-        ready: 0,
-        completed: 0,
-        refunded: 0,
-      };
-      for (const entry of all ?? []) {
-        const status = String(entry.status || "").trim().toLowerCase();
-        if (status === "pending payment") {
-          nextCounts.pendingPayment += 1;
-        } else if (status === "queued") {
-          nextCounts.queued += 1;
-        } else if (status === "preparing") {
-          nextCounts.preparing += 1;
-        } else if (status === "ready" || status === "ready for pickup") {
-          nextCounts.ready += 1;
-        } else if (status === "completed" || status === "picked up") {
-          nextCounts.completed += 1;
-        } else if (status === "refunded") {
-          nextCounts.refunded += 1;
+  const fetchAll = () => {
+    if (fetchAllInFlight.current) return fetchAllInFlight.current;
+
+    const request = (async () => {
+      try {
+        const [queue, all] = await Promise.all([
+          api.get<OrderCard[]>("/orders/queue"),
+          api.get<{ id?: number | string; orderId?: number | string; status: string }[]>("/orders"),
+        ]);
+        setOrders((queue ?? []).filter((o) => !o.isFinished));
+        const nextCounts: OrderStatusCounts = {
+          pendingPayment: 0,
+          queued: 0,
+          preparing: 0,
+          ready: 0,
+          completed: 0,
+          refunded: 0,
+        };
+        for (const entry of all ?? []) {
+          const status = String(entry.status || "").trim().toLowerCase();
+          if (status === "pending payment") {
+            nextCounts.pendingPayment += 1;
+          } else if (status === "queued") {
+            nextCounts.queued += 1;
+          } else if (status === "preparing") {
+            nextCounts.preparing += 1;
+          } else if (status === "ready" || status === "ready for pickup") {
+            nextCounts.ready += 1;
+          } else if (status === "completed" || status === "picked up") {
+            nextCounts.completed += 1;
+          } else if (status === "refunded") {
+            nextCounts.refunded += 1;
+          }
         }
+        setStatusCounts(nextCounts);
+      } catch (error) {
+        console.error(error);
       }
-      setStatusCounts(nextCounts);
-    } catch (e) { console.error(e); }
+    })();
+    fetchAllInFlight.current = request;
+    void request.then(() => {
+      if (fetchAllInFlight.current === request) {
+        fetchAllInFlight.current = null;
+      }
+    });
+    return request;
+  };
+
+  const fetchAllAfterCurrentRequest = async () => {
+    if (fetchAllInFlight.current) {
+      await fetchAllInFlight.current;
+    }
+    await fetchAll();
   };
 
   const fetchUsage = async () => {
@@ -390,33 +426,115 @@ export default function Order() {
     };
   }, []);
 
-  const patch = async (id: string, body: object) => {
+  const applyConfirmedOrderUpdate = (update: OrderUpdateResponse) => {
+    const normalizedStatus = normalizeWorkflowStatus(update.status);
+    setOrders((current) => {
+      if (["completed", "refunded", "cancelled"].includes(normalizedStatus)) {
+        return current.filter((order) => order.id !== String(update.id));
+      }
+      return current.map((order) => {
+        if (order.id !== String(update.id)) return order;
+        return {
+          ...order,
+          currentStatus: update.status,
+          paymentStatus: update.paymentStatus ?? order.paymentStatus,
+          isPreparing: normalizedStatus === "preparing",
+          isReady:
+            normalizedStatus === "ready" ||
+            normalizedStatus === "ready for pickup",
+          isFinished: false,
+          prepStartedAt: update.prepStartedAt ?? order.prepStartedAt,
+          readyAt: update.readyAt ?? order.readyAt,
+          dueAt: update.dueAt ?? order.dueAt,
+          estimatedPrepMinutes:
+            update.estimatedPrepMinutes ?? order.estimatedPrepMinutes,
+        };
+      });
+    });
+  };
+
+  const reconcileAfterAction = (
+    label: string,
+    actionStartedAt: number,
+    responseReceivedAt: number,
+    localUpdateScheduledAt: number,
+  ) => {
+    const refetchStartedAt = performance.now();
+    void fetchAllAfterCurrentRequest().then(() => {
+      if (import.meta.env.DEV) {
+        console.info("[TIMING CASHIER ACTION]", {
+          action: label,
+          responseMs: Number((responseReceivedAt - actionStartedAt).toFixed(1)),
+          responseToLocalStateMs: Number(
+            (localUpdateScheduledAt - responseReceivedAt).toFixed(1),
+          ),
+          reconciliationMs: Number((performance.now() - refetchStartedAt).toFixed(1)),
+          totalMs: Number((performance.now() - actionStartedAt).toFixed(1)),
+        });
+      }
+    });
+  };
+
+  const handleStart = async (id: string) => {
+    if (processingAction?.orderId === id) return;
+    const actionStartedAt = performance.now();
+    setProcessingAction({ orderId: id, action: "start" });
     try {
-      await api.patch(`/orders/${id}`, body);
-      fetchAll();
-      return true;
+      const update = await api.patch<OrderUpdateResponse>(`/orders/${id}`, {
+        status: "preparing",
+      });
+      const responseReceivedAt = performance.now();
+      applyConfirmedOrderUpdate(update);
+      reconcileAfterAction(
+        "start",
+        actionStartedAt,
+        responseReceivedAt,
+        performance.now(),
+      );
     } catch (error) {
       addNotification({
         id: crypto.randomUUID(),
         label:
           error instanceof Error
             ? error.message
-            : "Failed to update order status.",
+            : "Failed to start order.",
         type: "error",
       });
-      return false;
+    } finally {
+      setProcessingAction(null);
     }
   };
-  const handleStart  = (id: string) => patch(id, { status: "preparing" });
   const handleReady = async (order: OrderCard) => {
+    if (processingAction?.orderId === order.id) return;
     const effectiveOrderType = order.orderType || order.status;
+    const actionStartedAt = performance.now();
+    let latestConfirmedUpdate: OrderUpdateResponse | null = null;
+    setProcessingAction({ orderId: order.id, action: "complete" });
     try {
-      await api.patch(`/orders/${order.id}`, { status: "Ready for Pickup" });
       if (effectiveOrderType !== "delivery" && !order.isOnlinePickup) {
-        await api.patch(`/orders/${order.id}`, { status: "Completed" });
+        latestConfirmedUpdate = await api.patch<OrderUpdateResponse>(
+          `/orders/${order.id}`,
+          { status: "Completed", completeFromPreparing: true },
+        );
+      } else {
+        latestConfirmedUpdate = await api.patch<OrderUpdateResponse>(
+          `/orders/${order.id}`,
+          { status: "Ready for Pickup" },
+        );
       }
-      fetchAll();
+      const responseReceivedAt = performance.now();
+      applyConfirmedOrderUpdate(latestConfirmedUpdate);
+      reconcileAfterAction(
+        "complete",
+        actionStartedAt,
+        responseReceivedAt,
+        performance.now(),
+      );
     } catch (error) {
+      if (latestConfirmedUpdate) {
+        applyConfirmedOrderUpdate(latestConfirmedUpdate);
+        void fetchAll();
+      }
       addNotification({
         id: crypto.randomUUID(),
         label:
@@ -425,6 +543,8 @@ export default function Order() {
             : "Failed to complete order.",
         type: "error",
       });
+    } finally {
+      setProcessingAction(null);
     }
   };
   const handleSettlementAction = async (order: OrderCard) => {
@@ -432,11 +552,21 @@ export default function Order() {
     if (!action) return;
     setSettlingId(order.id);
     try {
-      await api.patch(`/orders/${order.id}`, {
+      const update = await api.patch<OrderUpdateResponse>(`/orders/${order.id}`, {
         status: action === "refund" ? "Refunded" : "Cancelled",
       });
-      fetchAll();
-    } catch {} finally {
+      applyConfirmedOrderUpdate(update);
+      void fetchAll();
+    } catch (error) {
+      addNotification({
+        id: crypto.randomUUID(),
+        label:
+          error instanceof Error
+            ? error.message
+            : "Failed to settle order.",
+        type: "error",
+      });
+    } finally {
       setSettlingId(null);
     }
   };
@@ -775,8 +905,13 @@ export default function Order() {
                     order.paymentStatus,
                   );
                   const isSettling = settlingId === order.id;
+                  const pendingAction =
+                    processingAction?.orderId === order.id
+                      ? processingAction.action
+                      : null;
+                  const isActionPending = pendingAction !== null;
                   const isTerminal = isTerminalOrderStatus(order.currentStatus);
-                  const settlementLocked = isSettling || isTerminal;
+                  const settlementLocked = isSettling || isActionPending || isTerminal;
                   const timerEditable = isNew || isPrep;
                   const timerBase = order.prepStartedAt;
                   const estimatedPrepMinutes = Math.max(order.estimatedPrepMinutes ?? 10, 1);
@@ -882,33 +1017,35 @@ export default function Order() {
                         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                           <div style={{ display: "flex", gap: 6 }}>
                             {/* Start */}
-                            <button onClick={() => isNew && handleStart(order.id)} disabled={!isNew}
+                            <button onClick={() => isNew && !isActionPending && handleStart(order.id)} disabled={!isNew || isActionPending}
                               style={{
                                 flex: 1, padding: "7px 0", borderRadius: 9, fontSize: 11, fontWeight: 500,
-                                cursor: isNew ? "pointer" : "not-allowed", fontFamily: F,
+                                cursor: isNew && !isActionPending ? "pointer" : "not-allowed", fontFamily: F,
                                 border: "1px solid",
-                                borderColor: isNew ? "#e5e7eb" : "#f3f4f6",
-                                background: isNew ? "#fff" : "#fafafa",
-                                color: isNew ? "#374151" : "#d1d5db",
+                                borderColor: isNew && !isActionPending ? "#e5e7eb" : "#f3f4f6",
+                                background: isNew && !isActionPending ? "#fff" : "#fafafa",
+                                color: isNew && !isActionPending ? "#374151" : "#d1d5db",
                                 display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
                                 transition: "all 0.12s",
                               }}>
-                              <Play size={9} /> Start
+                              <Play size={9} /> {pendingAction === "start" ? "Starting..." : "Start"}
                             </button>
 
                             {/* Ready / Served */}
                             {!isReady ? (
-                              <button onClick={() => isPrep && handleReady(order)} disabled={!isPrep}
+                              <button onClick={() => isPrep && !isActionPending && handleReady(order)} disabled={!isPrep || isActionPending}
                                 style={{
                                   flex: 1, padding: "7px 0", borderRadius: 9, fontSize: 11, fontWeight: 500,
-                                  cursor: isPrep ? "pointer" : "not-allowed", fontFamily: F,
+                                  cursor: isPrep && !isActionPending ? "pointer" : "not-allowed", fontFamily: F,
                                   border: "1px solid",
-                                  borderColor: isPrep ? "#d1d5db" : "#f3f4f6",
-                                  background: isPrep ? "#f9fafb" : "#fafafa",
-                                  color: isPrep ? "#374151" : "#d1d5db",
+                                  borderColor: isPrep && !isActionPending ? "#d1d5db" : "#f3f4f6",
+                                  background: isPrep && !isActionPending ? "#f9fafb" : "#fafafa",
+                                  color: isPrep && !isActionPending ? "#374151" : "#d1d5db",
                                   transition: "all 0.12s",
                                 }}>
-                                {((order.orderType || order.status) === "delivery") || order.isOnlinePickup
+                                {pendingAction === "complete"
+                                  ? "Completing..."
+                                  : ((order.orderType || order.status) === "delivery") || order.isOnlinePickup
                                   ? "Ready for Pickup"
                                   : "Complete"}
                               </button>

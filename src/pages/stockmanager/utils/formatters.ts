@@ -6,7 +6,9 @@ export function toNumber(v: unknown, fb = 0): number {
 }
 
 export function fmtInt(v: unknown): string {
-  return Math.round(toNumber(v)).toLocaleString();
+  return toNumber(v).toLocaleString(undefined, {
+    maximumFractionDigits: 4,
+  });
 }
 
 export const fmtDate = (v?: string | null) => {

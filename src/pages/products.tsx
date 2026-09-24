@@ -638,4 +638,3 @@ export default function Products({isAuthenticated=false,onLogout}:ProductsProps)
     </div>
   )
 }
-t
