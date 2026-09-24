@@ -120,7 +120,7 @@ async function ensureMenuAvailabilitySchema(db) {
         menu_ingredient_id INT AUTO_INCREMENT PRIMARY KEY,
         menu_product_id INT NOT NULL,
         product_id INT NOT NULL,
-        quantity_required DECIMAL(10,2) NOT NULL DEFAULT 0,
+        quantity_required DECIMAL(14,4) NOT NULL DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         UNIQUE KEY uniq_menu_ingredient (menu_product_id, product_id),

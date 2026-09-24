@@ -320,7 +320,7 @@ router.get("/", (req, res) => runWithDbQueryTiming(async (queryTiming) => {
                 COALESCE(NULLIF(TRIM(i.unit), ''), 'piece') AS unit,
                 COALESCE(i.Stock, 0) AS stock,
                 COALESCE(i.Daily_Withdrawn, 0) AS dailyWithdrawn,
-                CAST(COALESCE(m.Stock, i.Stock, p.quantity, 0) AS SIGNED) AS remainingStock,
+                CAST(COALESCE(m.Stock, i.Stock, p.quantity, 0) AS DECIMAL(14,4)) AS remainingStock,
                 COALESCE(m.manual_override, 0) AS manual_override,
                 COALESCE(m.manual_status, 'Available') AS manual_status
              FROM products p
@@ -997,7 +997,7 @@ router.put("/:id", async (req, res) => {
         const [rows] = await db.query(
             `SELECT p.*, m.Category_Name AS category,
                     COALESCE(NULLIF(TRIM(i.unit), ''), 'piece') AS unit,
-                    CAST(COALESCE(m.Stock, i.Stock, p.quantity, 0) AS SIGNED) AS remainingStock,
+                    CAST(COALESCE(m.Stock, i.Stock, p.quantity, 0) AS DECIMAL(14,4)) AS remainingStock,
                     COALESCE(m.manual_override, 0) AS manual_override,
                     COALESCE(m.manual_status, 'Available') AS manual_status
              FROM products p

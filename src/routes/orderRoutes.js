@@ -527,106 +527,6 @@ async function payMongoRequest(path, options = {}) {
 }
 
 // Ensure startedAt column exists once at startup
-let startedAtColumnReady = false;
-async function ensureStartedAtColumn() {
-  if (startedAtColumnReady) return;
-  try {
-    await db.query(`ALTER TABLE orders ADD COLUMN startedAt DATETIME NULL`);
-  } catch (_) {
-    // Column already exists — this is expected after first run
-  }
-  startedAtColumnReady = true;
-}
-
-let onlineOrderColumnsReady = false;
-async function ensureOnlineOrderColumns() {
-  if (onlineOrderColumnsReady) return;
-  const statements = [
-    "ALTER TABLE orders ADD COLUMN customer_user_id INT NULL",
-    "ALTER TABLE orders ADD COLUMN payment_reference VARCHAR(255) NULL",
-    "ALTER TABLE orders ADD COLUMN payment_status VARCHAR(50) NULL",
-    "ALTER TABLE orders ADD COLUMN payment_method VARCHAR(50) NULL",
-    "ALTER TABLE orders ADD COLUMN proof_image_url VARCHAR(500) NULL",
-    "ALTER TABLE orders ADD COLUMN verified_by INT NULL",
-    "ALTER TABLE orders ADD COLUMN verified_at DATETIME NULL",
-  ];
-
-  for (const statement of statements) {
-    try {
-      await db.query(statement);
-    } catch (_) {
-      // Column already exists on subsequent runs.
-    }
-  }
-
-  onlineOrderColumnsReady = true;
-}
-
-let orderStockDeductionColumnReady = false;
-async function ensureOrderStockDeductionColumn() {
-  if (orderStockDeductionColumnReady) return;
-  try {
-    await db.query(
-      "ALTER TABLE orders ADD COLUMN stock_deducted TINYINT(1) NOT NULL DEFAULT 0",
-    );
-  } catch (_) {
-    // Column already exists on subsequent runs.
-  }
-
-  try {
-    await db.query(
-      "UPDATE orders SET stock_deducted = 0 WHERE stock_deducted IS NULL",
-    );
-  } catch (_) {
-    // Safe backfill if the column already existed with nullable values.
-  }
-
-  orderStockDeductionColumnReady = true;
-}
-
-let deliveryTrackingColumnsReady = false;
-async function ensureDeliveryTrackingColumns() {
-  if (deliveryTrackingColumnsReady) return;
-  const statements = [
-    "ALTER TABLE orders ADD COLUMN handoverTimestamp DATETIME NULL",
-    "ALTER TABLE orders ADD COLUMN riderName VARCHAR(255) NULL",
-  ];
-
-  for (const statement of statements) {
-    try {
-      await db.query(statement);
-    } catch (_) {
-      // Column already exists on subsequent runs.
-    }
-  }
-
-  deliveryTrackingColumnsReady = true;
-}
-
-let kitchenTimingColumnsReady = false;
-async function ensureKitchenTimingColumns() {
-  if (kitchenTimingColumnsReady) return;
-  const statements = [
-    "ALTER TABLE orders ADD COLUMN queuedAt DATETIME NULL",
-    "ALTER TABLE orders ADD COLUMN prepStartedAt DATETIME NULL",
-    "ALTER TABLE orders ADD COLUMN readyAt DATETIME NULL",
-    "ALTER TABLE orders ADD COLUMN dueAt DATETIME NULL",
-    "ALTER TABLE orders ADD COLUMN estimatedPrepMinutes INT NULL",
-    "ALTER TABLE orders ADD COLUMN timerUpdatedBy INT NULL",
-    "ALTER TABLE orders ADD COLUMN timerUpdatedAt DATETIME NULL",
-  ];
-
-  for (const statement of statements) {
-    try {
-      await db.query(statement);
-    } catch (_) {
-      // Column already exists on subsequent runs.
-    }
-  }
-
-  kitchenTimingColumnsReady = true;
-}
-
 async function ensureLegacyCashierContext(conn, cashierId) {
   const normalizedCashierId = Number(cashierId);
   if (!Number.isFinite(normalizedCashierId) || normalizedCashierId <= 0) {
@@ -687,8 +587,6 @@ async function ensureLegacyCashierRow(conn, cashierId) {
 // GET /orders — list all orders for dashboard
 router.get("/", requireCookViewAccess, async (req, res) => {
   try {
-    await ensureOnlineOrderColumns();
-    await ensureDeliveryTrackingColumns();
     const [orders] = await db.query(
       `SELECT
          o.Order_ID        AS id,
@@ -737,9 +635,6 @@ router.get("/", requireCookViewAccess, async (req, res) => {
 // GET /orders/queue — kitchen/order queue view
 router.get("/queue", requireCookViewAccess, async (req, res) => {
   try {
-    await ensureStartedAtColumn();
-    await ensureKitchenTimingColumns();
-
     const [rows] = await db.query(
       `SELECT
          o.Order_ID   AS id,
@@ -864,7 +759,6 @@ router.get("/queue", requireCookViewAccess, async (req, res) => {
 //     "new-online" as an :id parameter.
 router.get("/new-online", async (req, res) => {
   try {
-    await ensureOnlineOrderColumns();
     const [rows] = await db.query(
       `SELECT
          o.Order_ID        AS id,
@@ -927,7 +821,6 @@ router.get("/new-online", async (req, res) => {
 // GET /orders/ready-pickup — cashier pickup confirmation list for online pickup orders
 router.get("/ready-pickup", async (req, res) => {
   try {
-    await ensureDeliveryTrackingColumns();
     const [rows] = await db.query(
       `SELECT
          o.Order_ID        AS id,
@@ -999,7 +892,6 @@ router.get("/ready-pickup", async (req, res) => {
 // GET /orders/delivery-handover — cashier handover list for POS delivery orders
 router.get("/delivery-handover", async (req, res) => {
   try {
-    await ensureDeliveryTrackingColumns();
     const [rows] = await db.query(
       `SELECT
          o.Order_ID          AS id,
@@ -1068,8 +960,6 @@ router.get("/delivery-handover", async (req, res) => {
 // GET /orders/customer/:customerUserId — customer tracking + history
 router.get("/customer/:customerUserId", requireAuthenticatedUser, async (req, res) => {
   try {
-    await ensureOnlineOrderColumns();
-
     const customerUserId = Number(req.params.customerUserId);
     if (!Number.isFinite(customerUserId) || customerUserId <= 0) {
       return res.status(400).json({ message: "Invalid customer user id" });
@@ -1723,7 +1613,7 @@ router.post("/", withOrderRequestTiming, async (req, res) => {
 
 // PATCH /orders/:id — update order status
 // ⚠️  Wildcard param routes go LAST so they don't shadow named paths above.
-router.patch("/:id", requireCookViewAccess, async (req, res) => {
+router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, res) => {
   let conn;
   let txStarted = false;
   try {
@@ -1739,13 +1629,9 @@ router.patch("/:id", requireCookViewAccess, async (req, res) => {
       timerUpdatedBy,
       paymentStatus,
       payment_status,
+      completeFromPreparing,
     } = req.body;
     const resolvedCashierId = cashierId ?? cashier_id ?? null;
-
-    await ensureStartedAtColumn();
-    await ensureDeliveryTrackingColumns();
-    await ensureKitchenTimingColumns();
-    await ensureOrderStockDeductionColumn();
 
     conn = await db.getConnection();
     const persistedCashierId = await ensureLegacyCashierRow(
@@ -1760,6 +1646,8 @@ router.patch("/:id", requireCookViewAccess, async (req, res) => {
          customer_user_id AS customerUserId,
          queuedAt AS queuedAt,
          prepStartedAt AS prepStartedAt,
+         startedAt AS startedAt,
+         readyAt AS readyAt,
          dueAt AS dueAt,
          estimatedPrepMinutes AS estimatedPrepMinutes,
          payment_status AS paymentStatus,
@@ -1783,6 +1671,13 @@ router.patch("/:id", requireCookViewAccess, async (req, res) => {
 
     const currentRawStatus = existingRows[0].status;
     const currentStatus = normalizeKitchenStatus(currentRawStatus);
+    const preparationStartedBeforeUpdate =
+      Boolean(
+        existingRows[0].prepStartedAt ||
+        existingRows[0].startedAt ||
+        existingRows[0].readyAt,
+      ) ||
+      ["Preparing", "Ready for Pickup", "Completed"].includes(currentStatus);
     const currentOrderType = normalizeOrderType(existingRows[0].orderType);
     const isOnlinePickupCompletion =
       Number(existingRows[0].customerUserId) > 0 &&
@@ -1822,7 +1717,16 @@ router.patch("/:id", requireCookViewAccess, async (req, res) => {
     let nextStatus = currentStatus;
     if (hasStatusUpdate) {
       nextStatus = normalizeKitchenStatus(status);
-      if (!isStrictKitchenTransitionAllowed(currentStatus, nextStatus)) {
+      const isAtomicDineInCompletion =
+        completeFromPreparing === true &&
+        currentStatus === "Preparing" &&
+        nextStatus === "Completed" &&
+        currentOrderType !== "delivery" &&
+        !isOnlinePickupCompletion;
+      if (
+        !isAtomicDineInCompletion &&
+        !isStrictKitchenTransitionAllowed(currentStatus, nextStatus)
+      ) {
         return res.status(400).json({
           message: `Invalid order status transition: ${currentStatus} -> ${nextStatus}`,
         });
@@ -1882,6 +1786,16 @@ router.patch("/:id", requireCookViewAccess, async (req, res) => {
 
     const fields = [];
     const values = [];
+    let responsePrepStartedAt = existingRows[0].prepStartedAt
+      ? new Date(existingRows[0].prepStartedAt)
+      : null;
+    let responseReadyAt = existingRows[0].readyAt
+      ? new Date(existingRows[0].readyAt)
+      : null;
+    let responseDueAt = existingRows[0].dueAt
+      ? new Date(existingRows[0].dueAt)
+      : null;
+    let inventoryRestored = null;
 
     if (hasStatusUpdate) {
       fields.push("Status = ?");
@@ -1934,6 +1848,7 @@ router.patch("/:id", requireCookViewAccess, async (req, res) => {
         );
         fields.push("dueAt = ?");
         values.push(nextDueAt);
+        responseDueAt = nextDueAt;
       }
     }
 
@@ -1954,15 +1869,30 @@ router.patch("/:id", requireCookViewAccess, async (req, res) => {
       fields.push("readyAt = NULL");
       fields.push("dueAt = ?");
       values.push(nextDueAt);
+      responsePrepStartedAt = prepStartDate;
+      responseReadyAt = null;
+      responseDueAt = nextDueAt;
       if (estimatedPrepMinutes === undefined) {
         fields.push("estimatedPrepMinutes = ?");
         values.push(prepMinutes);
       }
     }
 
-    if (hasStatusUpdate && nextStatus === "Ready for Pickup") {
+    if (
+      hasStatusUpdate &&
+      (
+        nextStatus === "Ready for Pickup" ||
+        (
+          completeFromPreparing === true &&
+          currentStatus === "Preparing" &&
+          nextStatus === "Completed"
+        )
+      )
+    ) {
+      const readyAt = new Date();
       fields.push("readyAt = ?");
-      values.push(new Date());
+      values.push(readyAt);
+      responseReadyAt = readyAt;
     }
 
     if (persistedCashierId != null) {
@@ -2013,7 +1943,18 @@ router.patch("/:id", requireCookViewAccess, async (req, res) => {
       console.info(
         `[orderRoutes] Recorded paid refund for order ${id}.`,
       );
-      await restoreStockForRefundedOrder(id, resolvedCashierId, conn);
+      if (preparationStartedBeforeUpdate) {
+        inventoryRestored = false;
+        console.info(
+          `[orderRoutes] Order ${id} inventory remains deducted because preparation had started.`,
+        );
+      } else {
+        inventoryRestored = await restoreStockForRefundedOrder(
+          id,
+          resolvedCashierId,
+          conn,
+        );
+      }
     }
 
     if (
@@ -2048,6 +1989,11 @@ router.patch("/:id", requireCookViewAccess, async (req, res) => {
         hasTimerUpdate
           ? Math.max(Number(estimatedPrepMinutes) || DEFAULT_ESTIMATED_PREP_MINUTES, 1)
           : undefined,
+      prepStartedAt: responsePrepStartedAt?.getTime(),
+      readyAt: responseReadyAt?.getTime(),
+      dueAt: responseDueAt?.getTime(),
+      preparationStarted: preparationStartedBeforeUpdate || nextStatus === "Preparing",
+      inventoryRestored,
     });
   } catch (err) {
     if (conn && txStarted) await conn.rollback();
@@ -2073,6 +2019,10 @@ router.patch("/:id", requireCookViewAccess, async (req, res) => {
       });
   } finally {
     if (conn) conn.release();
+    logOrderTiming(
+      req,
+      res.statusCode >= 400 ? `status-${res.statusCode}` : "status-success",
+    );
   }
 });
 

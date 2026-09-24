@@ -529,6 +529,61 @@ async function applyStockDeductions(
   );
 }
 
+async function applyStockRestorations(
+  connection,
+  deductions,
+  recordedByAdminId,
+) {
+  const entries = Array.from(deductions.entries())
+    .filter(([, requirement]) => Number(requirement?.requiredQty) > 0)
+    .sort(([left], [right]) => Number(left) - Number(right));
+  if (entries.length === 0) return;
+
+  const productIds = entries.map(([productId]) => productId);
+  await connection.query(
+    `INSERT INTO Inventory (Product_ID, Quantity, Stock, Item_Purchased)
+     SELECT p.id, COALESCE(p.quantity, 0), COALESCE(p.quantity, 0), p.name
+     FROM products p
+     LEFT JOIN Inventory i ON i.Product_ID = p.id
+     WHERE p.id IN (?)
+       AND i.Product_ID IS NULL`,
+    [productIds],
+  );
+
+  const inventoryCase = buildQuantityCase(entries, "i.Product_ID");
+  const menuCase = buildQuantityCase(entries, "m.Product_ID");
+  const productCase = buildQuantityCase(entries, "p.id");
+  await connection.query(
+    `UPDATE Inventory i
+     LEFT JOIN Menu m ON m.Product_ID = i.Product_ID
+     LEFT JOIN products p ON p.id = i.Product_ID
+     SET i.Stock = COALESCE(i.Stock, 0) + ${inventoryCase.sql},
+         i.Last_Update = NOW(),
+         m.Stock = COALESCE(m.Stock, 0) + ${menuCase.sql},
+         p.quantity = COALESCE(p.quantity, 0) + ${productCase.sql}
+     WHERE i.Product_ID IN (?)`,
+    [
+      ...inventoryCase.params,
+      ...menuCase.params,
+      ...productCase.params,
+      productIds,
+    ],
+  );
+
+  const valuesSql = entries.map(() => "(?, 'Stock In', ?, NOW(), ?)").join(", ");
+  const values = entries.flatMap(([productId, requirement]) => [
+    productId,
+    Number(requirement.requiredQty),
+    recordedByAdminId,
+  ]);
+  await connection.query(
+    `INSERT INTO Stock_Status
+       (Product_ID, Type, Quantity, Status_Date, RecordedBy)
+     VALUES ${valuesSql}`,
+    values,
+  );
+}
+
 async function deductPrevalidatedStockForPaidOrder(
   orderId,
   paymentStatus,
@@ -749,17 +804,8 @@ async function restoreStockForRefundedOrder(
     }
 
     const deductions = await getOrderIngredientDeductions(numericOrderId, conn);
-    for (const [productId, requirement] of deductions.entries()) {
-      const strictRequiredQty = Number(requirement?.requiredQty) || 0;
-      if (strictRequiredQty > 0) {
-        await restoreStockForOrder(
-          productId,
-          strictRequiredQty,
-          recordedBy,
-          conn,
-        );
-      }
-    }
+    const recordedByAdminId = await resolveRecordedByAdminId(recordedBy, conn);
+    await applyStockRestorations(conn, deductions, recordedByAdminId);
 
     const [updateResult] = await conn.query(
       `UPDATE orders

@@ -26,6 +26,26 @@ async function ensureColumn(connection, tableName, columnName, definitionSql) {
   }
 }
 
+async function ensureDecimalQuantityColumn(
+  connection,
+  tableName,
+  columnName,
+  definitionSql,
+) {
+  const [rows] = await connection.query(
+    `SHOW COLUMNS FROM \`${tableName}\` LIKE ?`,
+    [columnName],
+  );
+  if (rows.length === 0) return;
+
+  if (String(rows[0].Type || "").toLowerCase() === "decimal(14,4)") return;
+
+  await connection.query(
+    `ALTER TABLE \`${tableName}\` MODIFY COLUMN ${definitionSql}`,
+  );
+  console.log(`Migrated ${tableName}.${columnName} to DECIMAL(14,4)`);
+}
+
 async function ensureIndex(connection, tableName, indexName, definitionSql) {
   const [rows] = await connection.query(
     `SHOW INDEX FROM \`${tableName}\` WHERE Key_name = ?`,
@@ -188,7 +208,7 @@ CREATE TABLE IF NOT EXISTS Menu (
     Price DECIMAL(10,2) NOT NULL,
     Availability BOOLEAN DEFAULT TRUE,
     Promo VARCHAR(100),
-    Stock INT DEFAULT 0,
+    Stock DECIMAL(14,4) DEFAULT 0,
     manual_override TINYINT(1) NOT NULL DEFAULT 0,
     manual_status VARCHAR(20) NOT NULL DEFAULT 'Available',
     FOREIGN KEY (Category_ID) REFERENCES Categories(Category_ID)
@@ -198,7 +218,7 @@ CREATE TABLE IF NOT EXISTS menu_item_ingredients (
     menu_ingredient_id INT AUTO_INCREMENT PRIMARY KEY,
     menu_product_id INT NOT NULL,
     product_id INT NOT NULL,
-    quantity_required DECIMAL(10,2) NOT NULL DEFAULT 0,
+    quantity_required DECIMAL(14,4) NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uniq_menu_ingredient (menu_product_id, product_id),
@@ -214,7 +234,7 @@ CREATE TABLE IF NOT EXISTS menu_item_ingredients (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     price DECIMAL(10,2) NOT NULL,
-    quantity INT DEFAULT 0,
+    quantity DECIMAL(14,4) DEFAULT 0,
     description TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
@@ -222,8 +242,8 @@ CREATE TABLE IF NOT EXISTS menu_item_ingredients (
 CREATE TABLE IF NOT EXISTS Inventory (
     Inventory_ID INT AUTO_INCREMENT PRIMARY KEY,
     Product_ID INT,
-    Quantity INT NOT NULL,
-    Stock INT,
+    Quantity DECIMAL(14,4) NOT NULL,
+    Stock DECIMAL(14,4),
     Reorder_Point DECIMAL(10,2) DEFAULT 20,
     Critical_Point DECIMAL(10,2) DEFAULT 5,
     use_default_thresholds TINYINT(1) NOT NULL DEFAULT 1,
@@ -284,7 +304,7 @@ CREATE TABLE IF NOT EXISTS Stock_Status (
     Status_ID INT AUTO_INCREMENT PRIMARY KEY,
     Product_ID INT,
     Type VARCHAR(50),
-    Quantity INT,
+    Quantity DECIMAL(14,4),
     Status_Date DATETIME DEFAULT CURRENT_TIMESTAMP,
     RecordedBy INT,
     FOREIGN KEY (Product_ID) REFERENCES Menu(Product_ID),
@@ -746,20 +766,47 @@ END
       connection,
       "Inventory",
       "Daily_Withdrawn",
-      "`Daily_Withdrawn` DECIMAL(10,2) DEFAULT 0",
+      "`Daily_Withdrawn` DECIMAL(14,4) DEFAULT 0",
     );
     await ensureColumn(
       connection,
       "Inventory",
       "Returned",
-      "`Returned` DECIMAL(10,2) DEFAULT 0",
+      "`Returned` DECIMAL(14,4) DEFAULT 0",
     );
     await ensureColumn(
       connection,
       "Inventory",
       "Wasted",
-      "`Wasted` DECIMAL(10,2) DEFAULT 0",
+      "`Wasted` DECIMAL(14,4) DEFAULT 0",
     );
+    const decimalQuantityColumns = [
+      ["Menu", "Stock", "`Stock` DECIMAL(14,4) DEFAULT 0"],
+      ["products", "quantity", "`quantity` DECIMAL(14,4) DEFAULT 0"],
+      ["Inventory", "Quantity", "`Quantity` DECIMAL(14,4) NOT NULL"],
+      ["Inventory", "Stock", "`Stock` DECIMAL(14,4) NULL"],
+      [
+        "Inventory",
+        "Daily_Withdrawn",
+        "`Daily_Withdrawn` DECIMAL(14,4) DEFAULT 0",
+      ],
+      ["Inventory", "Returned", "`Returned` DECIMAL(14,4) DEFAULT 0"],
+      ["Inventory", "Wasted", "`Wasted` DECIMAL(14,4) DEFAULT 0"],
+      ["Stock_Status", "Quantity", "`Quantity` DECIMAL(14,4) NULL"],
+      [
+        "menu_item_ingredients",
+        "quantity_required",
+        "`quantity_required` DECIMAL(14,4) NOT NULL DEFAULT 0",
+      ],
+    ];
+    for (const [tableName, columnName, definitionSql] of decimalQuantityColumns) {
+      await ensureDecimalQuantityColumn(
+        connection,
+        tableName,
+        columnName,
+        definitionSql,
+      );
+    }
     await ensureColumn(
       connection,
       "Inventory",
