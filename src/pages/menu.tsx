@@ -1467,7 +1467,7 @@ export default function CashierView() {
   }, []);
 
   // ── Load products ──
-  const loadProducts = useCallback(async () => {
+  const loadProducts = useCallback(async (): Promise<boolean> => {
     setLoadingProducts(true);
     try {
       const data = await api.get<Record<string, unknown>[]>("/products?item_type=menu_item");
@@ -1481,8 +1481,10 @@ export default function CashierView() {
         if (maximum === 0) return [];
         return [{ ...item, ...current, quantity: Math.min(item.quantity, maximum) }];
       }));
+      return true;
     } catch {
       setProductsError("Failed to load menu items.");
+      return false;
     } finally {
       setLoadingProducts(false);
     }
@@ -1872,16 +1874,32 @@ export default function CashierView() {
       ...(orderNote.trim() && { order_note: orderNote.trim() }),
     };
 
+    const submitStartedAt = performance.now();
     try {
       const res = await api.post<{ orderNumber?: string }>("/orders", payload);
-      await loadProducts();
+      const backendConfirmedAt = performance.now();
       const num = res?.orderNumber ?? `#${Math.floor(10000 + Math.random() * 90000)}`;
       setSavedCart([...cart]); setSavedMeta({ orderType, paymentMethod, customerType });
       setSavedPricing({ subtotal, discountAmount, taxAmount, serviceChargeAmount, amountDue });
       setSavedCash({ tendered, change }); setSavedOrderNote(orderNote);
       setOrderNumber(num); setShowSuccess(true);
       if (selectedTable !== null) setTables((prev) => prev.map((t) => t.id === selectedTable ? { ...t, status: "occupied" } : t));
+
+      if (import.meta.env.DEV) {
+        console.info(`[TIMING ORDER] backend confirmation ${(backendConfirmedAt - submitStartedAt).toFixed(1)}ms`);
+      }
+      const refreshStartedAt = performance.now();
+      void loadProducts().then((refreshed) => {
+        if (import.meta.env.DEV) {
+          console.info(
+            `[TIMING ORDER] background product refresh ${(performance.now() - refreshStartedAt).toFixed(1)}ms (${refreshed ? "success" : "failed"})`,
+          );
+        }
+      });
     } catch (err) {
+      if (import.meta.env.DEV) {
+        console.info(`[TIMING ORDER] failed after ${(performance.now() - submitStartedAt).toFixed(1)}ms`);
+      }
       console.error("Order failed:", err);
       toast("error", err instanceof Error ? err.message : "Failed to submit order. Please try again.");
     } finally {
