@@ -7,14 +7,18 @@ const jwt = require("jsonwebtoken");
 const { requireCookViewAccess } = require("../middleware/cookViewAccess");
 const { sendCustomerOrderReceiptEmail } = require("../services/emailService");
 const {
+  deductPrevalidatedStockForPaidOrder,
   deductStockForPaidOrder,
+  prepareOrderItemsAndStock,
   restoreStockForRefundedOrder,
-  validateStockForOrderItems,
 } = require("../services/inventoryService");
 const {
-  loadAuthoritativeOrderItems,
   normalizeOrderItems,
 } = require("../services/orderItemService");
+const {
+  isDevelopmentTimingEnabled,
+  runWithDbQueryTiming,
+} = require("../services/requestTiming");
 const {
   claimBypassCheckout,
   consumeBypassCheckout,
@@ -28,6 +32,81 @@ const fetchFn = (...args) =>
     ? fetch(...args)
     : import("node-fetch").then(({ default: nodeFetch }) => nodeFetch(...args)));
 const JWT_SECRET = process.env.JWT_SECRET || "secretkey";
+
+function withOrderRequestTiming(req, _res, next) {
+  if (!isDevelopmentTimingEnabled()) return next();
+  return runWithDbQueryTiming((queryTiming) => {
+    req.orderTiming = {
+      startedAt: process.hrtime.bigint(),
+      stages: [],
+      queryTiming,
+    };
+    return next();
+  });
+}
+
+async function runOrderStage(req, name, callback) {
+  const startedAt = process.hrtime.bigint();
+  try {
+    return await callback();
+  } finally {
+    if (req.orderTiming) {
+      req.orderTiming.stages.push({
+        name,
+        durationMs: Number(process.hrtime.bigint() - startedAt) / 1e6,
+      });
+    }
+  }
+}
+
+function logOrderTiming(req, outcome) {
+  const timing = req.orderTiming;
+  if (!timing) return;
+  const queries = timing.queryTiming?.queries ?? [];
+  const slowestQuery = queries.reduce(
+    (slowest, query) =>
+      !slowest || query.durationMs > slowest.durationMs ? query : slowest,
+    null,
+  );
+  console.info("[TIMING ORDER]", JSON.stringify({
+    outcome,
+    totalMs: Number(
+      (Number(process.hrtime.bigint() - timing.startedAt) / 1e6).toFixed(1),
+    ),
+    dbStatementCount: queries.length,
+    dbTotalMs: Number(
+      queries.reduce((sum, query) => sum + query.durationMs, 0).toFixed(1),
+    ),
+    slowestQuery: slowestQuery
+      ? {
+          operation: slowestQuery.operation,
+          sql: slowestQuery.sql,
+          durationMs: Number(slowestQuery.durationMs.toFixed(1)),
+        }
+      : null,
+    stages: timing.stages.map((stage) => ({
+      name: stage.name,
+      durationMs: Number(stage.durationMs.toFixed(1)),
+    })),
+  }));
+}
+
+function startOrderTransactionTiming(req) {
+  if (req.orderTiming) {
+    req.orderTiming.transactionStartedAt = process.hrtime.bigint();
+  }
+}
+
+function finishOrderTransactionTiming(req) {
+  const timing = req.orderTiming;
+  if (!timing?.transactionStartedAt || timing.transactionFinished) return;
+  timing.transactionFinished = true;
+  timing.stages.push({
+    name: "transaction total",
+    durationMs:
+      Number(process.hrtime.bigint() - timing.transactionStartedAt) / 1e6,
+  });
+}
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 
@@ -242,32 +321,51 @@ async function loadBillingSettings(connection = db) {
   }
 }
 
-async function resolveCashierDiscount(connection, discountName) {
+async function loadCashierOrderConfiguration(connection, discountName) {
   const normalizedName = String(discountName || "").trim();
-  if (!normalizedName) {
-    return { discountName: "", discountRate: 0 };
-  }
+  const [rows] = await connection.query(
+    `SELECT
+       settings.settings_json,
+       discount.name AS discount_name,
+       discount.percentage AS discount_percentage
+     FROM (SELECT 1 AS singleton) anchor
+     LEFT JOIN system_settings settings
+       ON settings.setting_key = 'restaurant_settings'
+     LEFT JOIN (
+       SELECT name, percentage
+       FROM discount_types
+       WHERE LOWER(name) = LOWER(?)
+         AND is_active = TRUE
+       LIMIT 1
+     ) discount ON TRUE`,
+    [normalizedName],
+  );
+  let parsedSettings = {};
   try {
-    const [rows] = await connection.query(
-      `SELECT name, percentage
-         FROM discount_types
-        WHERE LOWER(name) = LOWER(?)
-          AND is_active = TRUE
-        LIMIT 1`,
-      [normalizedName],
-    );
-
-    if (!rows.length) {
-      return { discountName: "", discountRate: 0 };
-    }
-
-    return {
-      discountName: String(rows[0].name || normalizedName),
-      discountRate: Math.max(0, Number(rows[0].percentage || 0) || 0),
-    };
+    parsedSettings = rows[0]?.settings_json
+      ? JSON.parse(rows[0].settings_json)
+      : {};
   } catch {
-    return { discountName: "", discountRate: 0 };
+    parsedSettings = {};
   }
+  return {
+    billingSettings: {
+      taxRate: Math.max(0, Number(parsedSettings?.taxRate ?? 0) || 0),
+      serviceCharge: Math.max(
+        0,
+        Number(parsedSettings?.serviceCharge ?? 0) || 0,
+      ),
+    },
+    discount: rows[0]?.discount_name
+      ? {
+          discountName: String(rows[0].discount_name),
+          discountRate: Math.max(
+            0,
+            Number(rows[0].discount_percentage || 0) || 0,
+          ),
+        }
+      : { discountName: "", discountRate: 0 },
+  };
 }
 
 function calculateBillingTotals(subtotal, settings, discountRate = 0) {
@@ -486,17 +584,6 @@ async function ensureOrderStockDeductionColumn() {
   orderStockDeductionColumnReady = true;
 }
 
-async function ensureUniquePaymentReferenceIndex() {
-  const [indexes] = await db.query(
-    "SHOW INDEX FROM orders WHERE Key_name = 'uq_orders_payment_reference'",
-  );
-  if (!indexes.length) {
-    await db.query(
-      "ALTER TABLE orders ADD UNIQUE INDEX uq_orders_payment_reference (payment_reference)",
-    );
-  }
-}
-
 let deliveryTrackingColumnsReady = false;
 async function ensureDeliveryTrackingColumns() {
   if (deliveryTrackingColumnsReady) return;
@@ -540,18 +627,28 @@ async function ensureKitchenTimingColumns() {
   kitchenTimingColumnsReady = true;
 }
 
-async function ensureLegacyCashierRow(conn, cashierId) {
+async function ensureLegacyCashierContext(conn, cashierId) {
   const normalizedCashierId = Number(cashierId);
   if (!Number.isFinite(normalizedCashierId) || normalizedCashierId <= 0) {
-    return null;
+    return { cashierId: null, recordedByAdminId: null };
   }
 
   const [cashierRows] = await conn.query(
-    "SELECT Cashier_ID FROM Cashier WHERE Cashier_ID = ? LIMIT 1",
+    `SELECT
+       cashier.Cashier_ID AS cashierId,
+       admin.Admin_ID AS recordedByAdminId
+     FROM (SELECT ? AS requestedId) requested
+     LEFT JOIN Cashier cashier ON cashier.Cashier_ID = requested.requestedId
+     LEFT JOIN Admin admin ON admin.Admin_ID = requested.requestedId`,
     [normalizedCashierId],
   );
-  if (cashierRows.length > 0) {
-    return normalizedCashierId;
+  if (cashierRows[0]?.cashierId != null) {
+    return {
+      cashierId: normalizedCashierId,
+      recordedByAdminId: cashierRows[0].recordedByAdminId == null
+        ? null
+        : normalizedCashierId,
+    };
   }
 
   const [userRows] = await conn.query(
@@ -563,7 +660,7 @@ async function ensureLegacyCashierRow(conn, cashierId) {
     [normalizedCashierId],
   );
   if (userRows.length === 0) {
-    return null;
+    return { cashierId: null, recordedByAdminId: null };
   }
 
   await conn.query(
@@ -572,7 +669,17 @@ async function ensureLegacyCashierRow(conn, cashierId) {
     [normalizedCashierId, userRows[0].username || `staff-${normalizedCashierId}`, ""],
   );
 
-  return normalizedCashierId;
+  return {
+    cashierId: normalizedCashierId,
+    recordedByAdminId: cashierRows[0]?.recordedByAdminId == null
+      ? null
+      : normalizedCashierId,
+  };
+}
+
+async function ensureLegacyCashierRow(conn, cashierId) {
+  const context = await ensureLegacyCashierContext(conn, cashierId);
+  return context.cashierId;
 }
 
 // ─── ROUTES (specific paths MUST come before /:id wildcards) ──────────────────
@@ -1244,17 +1351,14 @@ router.get("/paymongo/checkout/:checkoutSessionId", async (req, res) => {
 });
 
 // POST /orders — place a new order (cashier or online customer)
-router.post("/", async (req, res) => {
+router.post("/", withOrderRequestTiming, async (req, res) => {
   let conn;
   let txStarted = false;
   let bypassSessionToClaim = null;
   let claimedBypassSessionId = null;
   let authoritativeItems = [];
+  let orderOutcome = "failed";
   try {
-    await ensureOnlineOrderColumns();
-    await ensureOrderStockDeductionColumn();
-    await ensureUniquePaymentReferenceIndex();
-
     const {
       items,
       total,
@@ -1431,109 +1535,120 @@ router.post("/", async (req, res) => {
       effectivePaymentReference = claimedBypass.paymentReference;
     }
 
-    conn = await db.getConnection();
-    await conn.beginTransaction();
+    conn = await runOrderStage(req, "acquire connection", () => db.getConnection());
+    startOrderTransactionTiming(req);
+    await runOrderStage(req, "begin transaction", () => conn.beginTransaction());
     txStarted = true;
-    const billingSettings = await loadBillingSettings(conn);
-    authoritativeItems = await loadAuthoritativeOrderItems(conn, validatedItems);
-    await validateStockForOrderItems(authoritativeItems, conn);
+    const requestedDiscountName =
+      discount_name || discountName || customer_type || customerType || "";
+    const configuration = await runOrderStage(
+      req,
+      "load billing and discount configuration",
+      () => loadCashierOrderConfiguration(
+        conn,
+        resolvedCashierId != null && !isOnlinePickupOrder
+          ? requestedDiscountName
+          : "",
+      ),
+    );
+    const billingSettings = configuration.billingSettings;
+    const stockPlan = await runOrderStage(
+      req,
+      "load items and lock stock",
+      () => prepareOrderItemsAndStock(conn, validatedItems),
+    );
+    authoritativeItems = stockPlan.authoritativeItems;
     const subtotalAmount = authoritativeItems.reduce(
       (sum, item) => sum + item.subtotal,
       0,
     );
-    const requestedDiscountName =
-      discount_name || discountName || customer_type || customerType || "";
     const appliedDiscount =
       resolvedCashierId != null && !isOnlinePickupOrder
-        ? await resolveCashierDiscount(conn, requestedDiscountName)
+        ? configuration.discount
         : { discountName: "", discountRate: 0 };
     const billingTotals = calculateBillingTotals(
       subtotalAmount,
       billingSettings,
       appliedDiscount.discountRate,
     );
-    const persistedCashierId = await ensureLegacyCashierRow(
-      conn,
-      resolvedCashierId,
+    const cashierContext = await runOrderStage(
+      req,
+      "resolve cashier",
+      () => ensureLegacyCashierContext(conn, resolvedCashierId),
     );
+    const persistedCashierId = cashierContext.cashierId;
 
     // Insert the order header
-    const [orderResult] = await conn.query(
-      `INSERT INTO orders
-         (Total_Amount, Customer_ID, Cashier_ID, Order_Type, Status, customer_user_id, payment_reference, payment_status, payment_method, proof_image_url, verified_by, verified_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        billingTotals.grandTotal,
-        customerId || null,
-        persistedCashierId,
-        finalOrderType,
-        initialStatus,
-        resolvedCustomerUserId,
-        effectivePaymentReference,
-        effectivePaymentStatus,
-        storedPaymentMethod,
-        submittedProofImageUrl,
-        verifiedBy,
-        verifiedAt,
-      ]
+    const [orderResult] = await runOrderStage(
+      req,
+      "insert order",
+      () => conn.query(
+        `INSERT INTO orders
+           (Total_Amount, Customer_ID, Cashier_ID, Order_Type, Status, customer_user_id, payment_reference, payment_status, payment_method, proof_image_url, verified_by, verified_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          billingTotals.grandTotal,
+          customerId || null,
+          persistedCashierId,
+          finalOrderType,
+          initialStatus,
+          resolvedCustomerUserId,
+          effectivePaymentReference,
+          effectivePaymentStatus,
+          storedPaymentMethod,
+          submittedProofImageUrl,
+          verifiedBy,
+          verifiedAt,
+        ],
+      ),
     );
     const orderId = orderResult.insertId;
 
-    for (const item of authoritativeItems) {
-      const requiredQty = item.qty;
-
-      // Ensure a Menu row exists for this product (create one if missing)
-      const [menuRows] = await conn.query(
-        "SELECT Product_ID FROM Menu WHERE Product_ID = ?",
-        [item.product_id]
-      );
-
-      if (menuRows.length === 0) {
-        const [productRows] = await conn.query(
-          "SELECT name, price, quantity FROM products WHERE id = ?",
-          [item.product_id]
-        );
-
-        if (productRows.length > 0) {
-          const p = productRows[0];
-          await conn.query(
-            "INSERT INTO Menu (Product_ID, Product_Name, Price, Stock) VALUES (?, ?, ?, ?)",
-            [item.product_id, p.name, Number(p.price) || 0, Number(p.quantity) || 0]
-          );
-        } else if (item.name) {
-          await conn.query(
-            "INSERT INTO Menu (Product_ID, Product_Name, Price, Stock) VALUES (?, ?, ?, 0)",
-            [item.product_id, item.name, item.price]
-          );
-        } else {
-          throw new Error(`Unknown product_id ${item.product_id}`);
-        }
-      }
-
-      // Insert line item
-      await conn.query(
-        "INSERT INTO order_item (Order_ID, Product_ID, Quantity, Subtotal) VALUES (?, ?, ?, ?)",
-        [orderId, item.product_id, requiredQty, item.subtotal]
-      );
-
-    }
+    const itemValuesSql = authoritativeItems
+      .map(() => "(?, ?, ?, ?)")
+      .join(", ");
+    const itemValues = authoritativeItems.flatMap((item) => [
+      orderId,
+      item.product_id,
+      item.qty,
+      item.subtotal,
+    ]);
+    await runOrderStage(req, "insert order items", () => conn.query(
+      `INSERT INTO order_item (Order_ID, Product_ID, Quantity, Subtotal)
+       VALUES ${itemValuesSql}`,
+      itemValues,
+    ));
 
     // Insert payment record
-    await conn.query(
-      "INSERT INTO payments (Order_ID, Payment_Type, Payment_Status, ProcessBy) VALUES (?, ?, 'Pending', ?)",
-      [orderId, storedPaymentMethod, persistedCashierId]
-    );
+    await runOrderStage(req, "insert payment", () => conn.query(
+      `INSERT INTO payments
+         (Order_ID, Payment_Type, Payment_Status, ProcessBy)
+       VALUES (?, ?, ?, ?)`,
+      [
+        orderId,
+        storedPaymentMethod,
+        isPaidPaymentStatus(effectivePaymentStatus) ? "Completed" : "Pending",
+        persistedCashierId,
+      ],
+    ));
 
     if (isPaidPaymentStatus(effectivePaymentStatus)) {
-      await conn.query(
-        "UPDATE payments SET Payment_Status = 'Completed' WHERE Order_ID = ?",
-        [orderId]
+      await runOrderStage(
+        req,
+        "deduct stock",
+        () => deductPrevalidatedStockForPaidOrder(
+          orderId,
+          effectivePaymentStatus,
+          stockPlan.deductions,
+          cashierContext.recordedByAdminId,
+          conn,
+        ),
       );
-      await deductStockForPaidOrder(orderId, resolvedCashierId, conn);
     }
 
-    await conn.commit();
+    await runOrderStage(req, "commit", () => conn.commit());
     txStarted = false;
+    finishOrderTransactionTiming(req);
     if (claimedBypassSessionId) {
       consumeBypassCheckout(claimedBypassSessionId);
       claimedBypassSessionId = null;
@@ -1570,6 +1685,7 @@ router.post("/", async (req, res) => {
       }
     }
 
+    orderOutcome = "success";
     res.json({
       message: "Order placed",
       orderId,
@@ -1578,6 +1694,7 @@ router.post("/", async (req, res) => {
     });
   } catch (err) {
     if (conn && txStarted) await conn.rollback();
+    finishOrderTransactionTiming(req);
     if (claimedBypassSessionId) {
       releaseBypassCheckout(claimedBypassSessionId);
       claimedBypassSessionId = null;
@@ -1600,6 +1717,7 @@ router.post("/", async (req, res) => {
     });
   } finally {
     if (conn) conn.release();
+    logOrderTiming(req, orderOutcome);
   }
 });
 

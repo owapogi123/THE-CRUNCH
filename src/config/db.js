@@ -1,7 +1,10 @@
 const mysql = require("mysql2");
 const fs = require("fs");
 const path = require("path");
-const { timeDbQuery } = require("../services/requestTiming");
+const {
+  timeDbQuery,
+  wrapConnectionWithDbTiming,
+} = require("../services/requestTiming");
 
 require("dotenv").config({ path: path.resolve(__dirname, "../../.env") });
 
@@ -48,6 +51,9 @@ const promisePool = pool.promise();
 const rawQuery = promisePool.query.bind(promisePool);
 promisePool.query = (...args) =>
   timeDbQuery(args[0], () => rawQuery(...args));
+const rawGetConnection = promisePool.getConnection.bind(promisePool);
+promisePool.getConnection = async () =>
+  wrapConnectionWithDbTiming(await rawGetConnection());
 
 async function verifyConnection() {
   const connection = await promisePool.getConnection();

@@ -26,6 +26,19 @@ async function ensureColumn(connection, tableName, columnName, definitionSql) {
   }
 }
 
+async function ensureIndex(connection, tableName, indexName, definitionSql) {
+  const [rows] = await connection.query(
+    `SHOW INDEX FROM \`${tableName}\` WHERE Key_name = ?`,
+    [indexName],
+  );
+  if (rows.length === 0) {
+    await connection.query(
+      `ALTER TABLE \`${tableName}\` ADD ${definitionSql}`,
+    );
+    console.log(`Added index ${indexName} to ${tableName}`);
+  }
+}
+
 async function tableExists(connection, tableName) {
   const [rows] = await connection.query(
     "SHOW TABLES LIKE ?",
@@ -894,6 +907,15 @@ END
       "orders",
       "stock_deducted",
       "`stock_deducted` TINYINT(1) NOT NULL DEFAULT 0",
+    );
+    await connection.query(
+      "UPDATE orders SET stock_deducted = 0 WHERE stock_deducted IS NULL",
+    );
+    await ensureIndex(
+      connection,
+      "orders",
+      "uq_orders_payment_reference",
+      "UNIQUE INDEX `uq_orders_payment_reference` (`payment_reference`)",
     );
     await ensureColumn(
       connection,
