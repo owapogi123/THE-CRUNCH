@@ -152,12 +152,11 @@ function getStoredPaymentMethod(method, options = {}) {
 }
 
 const DEFAULT_ESTIMATED_PREP_MINUTES = 10;
-const PAYMENT_PROOF_DIR = path.join(
-  __dirname,
-  "..",
-  "..",
-  "uploads",
-  "payment-proofs"
+const PAYMENT_PROOF_DIR = path.resolve(
+  process.env.PAYMENT_PROOF_UPLOAD_DIR ||
+    (process.env.RAILWAY_VOLUME_MOUNT_PATH
+      ? path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, "payment-proofs")
+      : path.join(__dirname, "..", "..", "uploads", "payment-proofs")),
 );
 
 function normalizeKitchenStatus(value) {
@@ -1063,7 +1062,7 @@ router.get("/customer/:customerUserId", requireAuthenticatedUser, async (req, re
 });
 
 // POST /orders/payment-proofs — save cashier onsite e-payment proof image
-router.post("/payment-proofs", async (req, res) => {
+router.post("/payment-proofs", requireCookViewAccess, async (req, res) => {
   try {
     const { dataUrl, originalName } = req.body || {};
     const { buffer, extension } = parsePaymentProofDataUrl(dataUrl);
@@ -1087,7 +1086,7 @@ router.post("/payment-proofs", async (req, res) => {
 });
 
 // GET /orders/payment-proofs/:filename — serve cashier onsite e-payment proof image
-router.get("/payment-proofs/:filename", async (req, res) => {
+router.get("/payment-proofs/:filename", requireCookViewAccess, async (req, res) => {
   try {
     const requested = decodeURIComponent(String(req.params.filename || ""));
     const safeFilename = path.basename(requested);

@@ -38,6 +38,9 @@ app.use(
 );
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+app.use(["/uploads/proofs", "/uploads/payment-proofs"], (_req, res) => {
+  res.status(404).json({ message: "Payment proofs require staff access" });
+});
 app.use("/uploads", express.static(path.join(__dirname, "..", "uploads")));
 
 // Product availability depends on product, inventory, batch, purchase, and paid
