@@ -7,12 +7,15 @@
  * Nothing is stored in the browser.
  */
 
+import { api } from "./api";
+
 /* -------------------------------------------------------------------------- */
 /* Roles & permission keys                                                    */
 /* -------------------------------------------------------------------------- */
 
 // Staff roles that can use the back office.
 export const STAFF_ROLES = ["administrator", "cashier", "inventory_manager"] as const;
+export const SUPERUSER_ROLE = "administrator" as const;
 
 // One permission per back-office page.
 export const PERMISSION_KEYS = [
@@ -43,7 +46,7 @@ export const DEFAULT_PERMISSIONS: PermissionsMap = {
     orders: true,
     menuManagement: true,
     menus: true,
-    stockManager: false,
+    stockManager: true,
     userAccounts: true,
     salesReports: true,
     settings: true,
@@ -71,9 +74,8 @@ export const DEFAULT_PERMISSIONS: PermissionsMap = {
 };
 
 // Permissions that are always on, whatever is saved.
-// Administrators can never lock themselves out of these pages.
 const REQUIRED_PERMISSIONS: Record<NonNullRole, PermissionKey[]> = {
-  administrator: ["orders", "menus", "userAccounts", "settings"],
+  administrator: [...PERMISSION_KEYS],
   cashier: ["orders"],
   inventory_manager: ["orders"],
 };
@@ -103,7 +105,10 @@ export function normalizePermissionsMap(
     const permissions = {} as RolePermissions;
 
     for (const key of PERMISSION_KEYS) {
-      permissions[key] = toBoolean(saved[key], DEFAULT_PERMISSIONS[role][key]);
+      permissions[key] =
+        role === SUPERUSER_ROLE
+          ? true
+          : toBoolean(saved[key], DEFAULT_PERMISSIONS[role][key]);
     }
     for (const key of REQUIRED_PERMISSIONS[role]) {
       permissions[key] = true;
@@ -133,6 +138,7 @@ export function normalizeRole(value: unknown): NonNullRole | "customer" | null {
  */
 
 let loadedPermissions: PermissionsMap | null = null;
+let permissionsRequest: Promise<PermissionsMap> | null = null;
 
 // Roles that can open the orders view. Cook is no longer a role.
 export const COOK_VIEW_ROLES: readonly NonNullRole[] = STAFF_ROLES;
@@ -150,4 +156,54 @@ export function hasCachedPermissions(): boolean {
 export function cachePermissions(permissions: PermissionsMap) {
   loadedPermissions = normalizePermissionsMap(permissions);
   if (typeof window !== "undefined") window.dispatchEvent(new Event("permissionsChange"));
+}
+
+export function fetchPermissions(): Promise<PermissionsMap> {
+  if (!permissionsRequest) {
+    permissionsRequest = api
+      .get<Record<string, unknown>>("/settings/permissions")
+      .then((data) => {
+        const raw =
+          data && typeof data === "object" && "permissions" in data
+            ? data.permissions
+            : data;
+        const normalized = normalizePermissionsMap(
+          (raw as Partial<PermissionsMap> | null | undefined) ?? null,
+        );
+        cachePermissions(normalized);
+        return normalized;
+      })
+      .finally(() => {
+        permissionsRequest = null;
+      });
+  }
+  return permissionsRequest;
+}
+
+// Administrators keep their database role but bypass staff page restrictions.
+export function isSuperuserRole(value: unknown): boolean {
+  return normalizeRole(value) === SUPERUSER_ROLE;
+}
+
+export function hasPagePermission(
+  role: unknown,
+  permissionKey: PermissionKey,
+  permissions: PermissionsMap,
+): boolean {
+  const normalizedRole = normalizeRole(role);
+  if (!normalizedRole || normalizedRole === "customer") return false;
+  if (normalizedRole === SUPERUSER_ROLE) return true;
+  return permissions[normalizedRole]?.[permissionKey] === true;
+}
+
+export function canAccessStaffRoles(
+  role: unknown,
+  allowedRoles: readonly string[],
+): boolean {
+  const normalizedRole = normalizeRole(role);
+  if (!normalizedRole || normalizedRole === "customer") return false;
+  return (
+    normalizedRole === SUPERUSER_ROLE ||
+    allowedRoles.some((allowedRole) => normalizeRole(allowedRole) === normalizedRole)
+  );
 }

@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type Dispatch,
   type SetStateAction,
@@ -55,9 +56,15 @@ export function useSuppliers({
   isMenuFoodProduct,
 }: UseSuppliersParams) {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [suppliersLoaded, setSuppliersLoaded] = useState(false);
+  const [supplierLoading, setSupplierLoading] = useState(false);
+  const [supplierError, setSupplierError] = useState<string | null>(null);
+  const supplierLoadStarted = useRef(false);
   const [supplierSearch, setSupplierSearch] = useState("");
   const [supplierHistory, setSupplierHistory] = useState<SupplierHistory[]>([]);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const historyLoadStarted = useRef(false);
   const [historySearch, setHistorySearch] = useState("");
   const [historyDateFrom, setHistoryDateFrom] = useState("");
   const [historyDateTo, setHistoryDateTo] = useState("");
@@ -68,9 +75,21 @@ export function useSuppliers({
   const [supplierProductInput, setSupplierProductInput] = useState("");
 
   const fetchSuppliers = useCallback(async () => {
-    const data = await api.getSuppliers();
-    setSuppliers(data);
-    return data;
+    setSupplierLoading(true);
+    setSupplierError(null);
+    try {
+      const data = await api.getSuppliers();
+      setSuppliers(data);
+      setSuppliersLoaded(true);
+      return data;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to load suppliers.";
+      setSupplierError(message);
+      throw error;
+    } finally {
+      setSupplierLoading(false);
+    }
   }, []);
 
   const fetchSupplierHistory = useCallback(async () => {
@@ -78,6 +97,7 @@ export function useSuppliers({
     try {
       const data = await api.getSupplierHistory();
       setSupplierHistory(data);
+      setHistoryLoaded(true);
     } catch {
       /* non-critical */
     } finally {
@@ -86,8 +106,17 @@ export function useSuppliers({
   }, []);
 
   useEffect(() => {
-    if (tab === "suppliers") fetchSupplierHistory();
-  }, [tab, fetchSupplierHistory]);
+    const needsSuppliers = tab === "suppliers" || tab === "purchases";
+    if (!needsSuppliers || suppliersLoaded || supplierLoadStarted.current) return;
+    supplierLoadStarted.current = true;
+    void fetchSuppliers().catch(() => undefined);
+  }, [tab, suppliersLoaded, fetchSuppliers]);
+
+  useEffect(() => {
+    if (tab !== "suppliers" || historyLoaded || historyLoadStarted.current) return;
+    historyLoadStarted.current = true;
+    void fetchSupplierHistory();
+  }, [tab, historyLoaded, fetchSupplierHistory]);
 
   const filteredSuppliers = useMemo(() => {
     const q = supplierSearch.trim().toLowerCase();
@@ -261,6 +290,9 @@ export function useSuppliers({
 
   return {
     suppliers,
+    suppliersLoaded,
+    supplierLoading,
+    supplierError,
     setSuppliers,
     supplierSearch,
     supplierHistory,

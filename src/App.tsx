@@ -5,13 +5,13 @@ import {
   PermissionKey,
   PermissionsMap,
   readCachedPermissions,
-  normalizePermissionsMap,
-  cachePermissions,
+  fetchPermissions,
   hasCachedPermissions,
   normalizeRole,
   COOK_VIEW_ROLES,
+  canAccessStaffRoles,
+  hasPagePermission,
 } from "./lib/permissions";
-import { api } from "./lib/api";
 
 // ── Admin pages
 import AdminDashboard from "./pages/index";
@@ -67,20 +67,25 @@ function getHomePathForRole(
   if (role === "customer") return ROLE_MAP.customer;
 
   const fallback = ROLE_MAP[role] ?? "/unauthorized";
-  const rolePermissions = permissions[role];
+  const rolePermissions = role === "cook" ? undefined : permissions[role];
   if (!rolePermissions) return fallback;
 
   const fallbackPermission = (
     Object.entries(PERMISSION_ROUTE_MAP) as [PermissionKey, string][]
   ).find(([, path]) => path === fallback)?.[0];
 
-  if (!fallbackPermission || rolePermissions[fallbackPermission]) {
+  if (
+    !fallbackPermission ||
+    hasPagePermission(role, fallbackPermission, permissions)
+  ) {
     return fallback;
   }
 
   const firstAllowedRoute = (
     Object.entries(PERMISSION_ROUTE_MAP) as [PermissionKey, string][]
-  ).find(([permissionKey]) => rolePermissions[permissionKey])?.[1];
+  ).find(([permissionKey]) =>
+    hasPagePermission(role, permissionKey, permissions),
+  )?.[1];
 
   return firstAllowedRoute ?? "/unauthorized";
 }
@@ -121,14 +126,20 @@ function ProtectedRoute({
   if (!userRole || userRole === "customer") {
     return <Navigate to="/unauthorized" replace />;
   }
-  if (allowedRoles && !allowedRoles.includes(userRole)) {
+  if (allowedRoles && !canAccessStaffRoles(userRole, allowedRoles)) {
     return <Navigate to="/unauthorized" replace />;
   }
   if (!permissionsReady) {
     return null;
   }
-  console.log("[App] route check", { userRole, permissionKey, allowed: permissionKey ? permissions[userRole]?.[permissionKey] : true });
-  if (permissionKey && !permissions[userRole]?.[permissionKey]) {
+  console.log("[App] route check", {
+    userRole,
+    permissionKey,
+    allowed: permissionKey
+      ? hasPagePermission(userRole, permissionKey, permissions)
+      : true,
+  });
+  if (permissionKey && !hasPagePermission(userRole, permissionKey, permissions)) {
     return <Navigate to="/unauthorized" replace />;
   }
   return element;
@@ -191,18 +202,10 @@ export default function App() {
 
     const loadPermissions = async () => {
       try {
-        const data = await api.get<Record<string, unknown>>(
-          "/settings/permissions",
-        );
-        if (cancelled || !data || typeof data !== "object") return;
-        const next = normalizePermissionsMap(
-          "permissions" in data
-            ? (data.permissions as Partial<PermissionsMap> | null | undefined) ?? null
-            : (data as Partial<PermissionsMap>),
-        );
+        const next = await fetchPermissions();
+        if (cancelled) return;
         console.log("[App] loaded permissions", next);
         setPermissions(next);
-        cachePermissions(next);
         setPermissionsReady(true);
       } catch {
         syncPermissions();

@@ -9,9 +9,10 @@ import { Sidebar } from "@/components/Sidebar";
 import { useNotifications } from "@/lib/NotificationContext";
 import { useAuth } from "../../context/authcontext";
 import {
-  fetchGeneralSettings,
+  fetchGeneralSettingsPayload,
   GENERAL_SETTINGS_DEFAULTS,
   formatInSettingsTimezone,
+  normalizeGeneralSettings,
 } from "@/lib/restaurantSettings";
 import { api } from "./services/api";
 import type {
@@ -289,6 +290,7 @@ export default function StockManager() {
       window.localStorage.getItem(ACTIVE_TAB_STORAGE_KEY),
     );
   });
+  const activeTab = sanitizeStockManagerTab(tab);
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -308,9 +310,13 @@ export default function StockManager() {
     useState<StockAlertSettings>(DEFAULT_STOCK_ALERT_SETTINGS);
   const [backendAlerts, setBackendAlerts] =
     useState<InventoryAlertsPayload | null>(null);
+  const [alertsLoading, setAlertsLoading] = useState(false);
+  const [alertsError, setAlertsError] = useState<string | null>(null);
   const [showDashboardBackToTop, setShowDashboardBackToTop] = useState(false);
   const dashboardTopRef = useRef<HTMLDivElement | null>(null);
   const refreshInventoryRef = useRef<() => Promise<void>>(async () => {});
+  const alertsLoadStarted = useRef(false);
+  const inventoryUnitsLoadStarted = useRef(false);
   const currentStaffDisplayName = useMemo(() => {
     const authUser = user as
       | (typeof user & { full_name?: string | null })
@@ -332,21 +338,9 @@ export default function StockManager() {
     [addNotification],
   );
 
-  useEffect(() => {
-    let cancelled = false;
-    void fetchGeneralSettings().then((settings) => {
-      if (!cancelled) {
-        setRestaurantSettings(settings);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const supplier = useSuppliers({
     products,
-    tab: sanitizeStockManagerTab(tab),
+    tab: activeTab,
     showToast,
     setSubmitting,
     isMenuFoodProduct,
@@ -366,39 +360,29 @@ export default function StockManager() {
     setIsRefreshing(true);
     setError(null);
     try {
-      const [
-        invRes,
-        supRes,
-        categoryRes,
-        unitRes,
-        settingsRes,
-        alertRes,
-      ] =
-        await Promise.allSettled([
-          api.getInventory(),
-          supplier.fetchSuppliers(),
-          api.getInventoryCategories(),
-          api.getInventoryUnits(),
-          api.getSettings(),
-          api.getInventoryAlerts(),
-        ]);
+      const [invRes, categoryRes, settingsRes] = await Promise.allSettled([
+        api.getInventory(),
+        api.getInventoryCategories(),
+        fetchGeneralSettingsPayload(),
+      ]);
 
-      if (
-        invRes.status !== "fulfilled" ||
-        supRes.status !== "fulfilled"
-      ) {
-        throw new Error("Failed to load data.");
+      if (invRes.status !== "fulfilled") {
+        const detail =
+          invRes.reason instanceof Error
+            ? invRes.reason.message
+            : String(invRes.reason ?? "Unknown error");
+        throw new Error(`Inventory request failed: ${detail}`);
       }
-
       const inv = invRes.value;
       const categoryList =
         categoryRes.status === "fulfilled" ? categoryRes.value : [];
-      const unitList = unitRes.status === "fulfilled" ? unitRes.value : [];
       const nextStockAlertSettings =
         settingsRes.status === "fulfilled"
           ? normalizeStockAlertSettings(settingsRes.value)
           : DEFAULT_STOCK_ALERT_SETTINGS;
-      setBackendAlerts(alertRes.status === "fulfilled" ? alertRes.value : null);
+      if (settingsRes.status === "fulfilled") {
+        setRestaurantSettings(normalizeGeneralSettings(settingsRes.value));
+      }
       inventoryCategoryNameLookup.clear();
       inventoryCategoryDateTrackingLookup.clear();
       for (const category of categoryList) {
@@ -412,7 +396,6 @@ export default function StockManager() {
         );
       }
       setInventoryCategories(categoryList);
-      setInventoryUnits(unitList);
       setStockAlertSettings(nextStockAlertSettings);
 
       const candidateProducts: Product[] = inv
@@ -514,12 +497,50 @@ export default function StockManager() {
       setIsRefreshing(false);
       setIsLoading(false);
     }
-  }, [supplier.fetchSuppliers]);
+  }, []);
   refreshInventoryRef.current = fetchAll;
 
   useEffect(() => {
     fetchAll();
   }, [fetchAll]);
+
+  const fetchAlerts = useCallback(async () => {
+    setAlertsLoading(true);
+    setAlertsError(null);
+    try {
+      setBackendAlerts(await api.getInventoryAlerts());
+    } catch (alertError) {
+      setAlertsError(
+        alertError instanceof Error
+          ? alertError.message
+          : "Failed to load inventory alerts.",
+      );
+    } finally {
+      setAlertsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== "alerts" || alertsLoadStarted.current) return;
+    alertsLoadStarted.current = true;
+    void fetchAlerts();
+  }, [activeTab, fetchAlerts]);
+
+  useEffect(() => {
+    if (!showRawMaterialForm || inventoryUnitsLoadStarted.current) return;
+    inventoryUnitsLoadStarted.current = true;
+    void api
+      .getInventoryUnits()
+      .then(setInventoryUnits)
+      .catch((unitError) => {
+        showToast(
+          unitError instanceof Error
+            ? unitError.message
+            : "Failed to load inventory units.",
+          "error",
+        );
+      });
+  }, [showRawMaterialForm, showToast]);
   useEffect(() => {
     if (sanitizeStockManagerTab(tab) !== "dashboard") {
       setShowDashboardBackToTop(false);
@@ -544,6 +565,7 @@ export default function StockManager() {
       getAlertSeverity(p, stockAlertSettings) === "critical",
   );
   const po = usePurchaseOrders({
+    enabled: activeTab === "purchases" || activeTab === "purchase-history",
     criticalStock,
     lowStock,
     suppliers: supplier.suppliers,
@@ -586,8 +608,6 @@ export default function StockManager() {
       sanitizeStockManagerTab(tab),
     );
   }, [tab]);
-
-  const activeTab = sanitizeStockManagerTab(tab);
 
   useEffect(() => {
     if (activeTab !== "dashboard") return;
@@ -925,7 +945,7 @@ export default function StockManager() {
           )}
           {isLoading ? (
             <LoadingSkeleton />
-          ) : (
+          ) : error ? null : (
             <AnimatePresence mode="wait">
               {/* ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ Dashboard ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ */}
               {activeTab === "dashboard" && (
@@ -1197,7 +1217,18 @@ export default function StockManager() {
               {/* ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ Withdrawal ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ */}
 
               {/* ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ Alerts ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ */}
-              {activeTab === "alerts" && (
+              {activeTab === "alerts" && alertsError && (
+                <ErrorBanner
+                  message={`Inventory alerts request failed: ${alertsError}`}
+                  onRetry={() => {
+                    void fetchAlerts();
+                  }}
+                />
+              )}
+              {activeTab === "alerts" && alertsLoading && !backendAlerts && (
+                <LoadingSkeleton />
+              )}
+              {activeTab === "alerts" && !alertsError && !alertsLoading && (
                 <AlertsTab
                   pageVariants={pageVariants}
                   staggerVariants={staggerVariants}
@@ -1222,7 +1253,20 @@ export default function StockManager() {
               )}
 
               {/* ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ Suppliers ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ */}
-              {activeTab === "suppliers" && (
+              {activeTab === "suppliers" && supplier.supplierError && (
+                <ErrorBanner
+                  message={`Suppliers request failed: ${supplier.supplierError}`}
+                  onRetry={() => {
+                    void supplier.fetchSuppliers();
+                  }}
+                />
+              )}
+              {activeTab === "suppliers" &&
+                supplier.supplierLoading &&
+                !supplier.suppliersLoaded && <LoadingSkeleton />}
+              {activeTab === "suppliers" &&
+                !supplier.supplierError &&
+                !supplier.supplierLoading && (
                 <SuppliersTab
                   pageVariants={pageVariants}
                   staggerVariants={staggerVariants}
@@ -1259,7 +1303,15 @@ export default function StockManager() {
               )}
 
               {/* ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ Purchase Orders ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†'Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†'Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ */}
-              {activeTab === "purchases" && (
+              {activeTab === "purchases" && po.poError && (
+                <ErrorBanner
+                  message={`Purchase orders request failed: ${po.poError}`}
+                  onRetry={() => {
+                    void po.fetchPurchaseOrders();
+                  }}
+                />
+                )}
+              {activeTab === "purchases" && !po.poError && (
                 <PurchaseOrdersTab
                   pageVariants={pageVariants}
                   staggerVariants={staggerVariants}
@@ -1293,7 +1345,15 @@ export default function StockManager() {
                   onSummarySelect={dashboard.selectDashboardSummary}
                 />
               )}
-              {activeTab === "purchase-history" && (
+              {activeTab === "purchase-history" && po.poError && (
+                <ErrorBanner
+                  message={`Purchase order history request failed: ${po.poError}`}
+                  onRetry={() => {
+                    void po.fetchPurchaseOrders();
+                  }}
+                />
+              )}
+              {activeTab === "purchase-history" && !po.poError && (
                 <PurchaseHistoryTab
                   pageVariants={pageVariants}
                   staggerVariants={staggerVariants}

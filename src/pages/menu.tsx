@@ -623,7 +623,7 @@ function ProceedConfirmModal({ show, order, confirming, onConfirm, onCancel, res
 
 // ─── PRODUCT CARD ─────────────────────────────────────────────────────────────
 const ProductCard = memo(({ item, onAdd, inCart }: { item: MenuItem; onAdd: (i: MenuItem) => void; inCart: boolean }) => {
-  const out = isUnavailableStatus(item.availabilityStatus);
+  const out = isUnavailableStatus(item.availabilityStatus) || getEffectiveMaxQuantity(item.remainingStock) === 0;
   return (
     <motion.button layout onClick={() => !out && onAdd(item)} disabled={out}
       whileHover={!out ? { y: -2, boxShadow: "0 4px 16px rgba(0,0,0,0.07)" } : {}}

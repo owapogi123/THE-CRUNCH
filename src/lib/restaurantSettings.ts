@@ -26,6 +26,7 @@ export const GENERAL_SETTINGS_DEFAULTS: GeneralRestaurantSettings = {
 
 const GENERAL_SETTINGS_STORAGE_KEY = "the-crunch-general-settings";
 export const GENERAL_SETTINGS_EVENT = "generalSettingsChange";
+let generalSettingsRequest: Promise<Record<string, unknown>> | null = null;
 
 function readString(value: unknown, fallback = ""): string {
   const normalized = String(value ?? "").trim();
@@ -96,9 +97,20 @@ export function syncGeneralSettings(
   return normalized;
 }
 
+export function fetchGeneralSettingsPayload(): Promise<Record<string, unknown>> {
+  if (!generalSettingsRequest) {
+    generalSettingsRequest = api
+      .get<Record<string, unknown>>("/settings")
+      .finally(() => {
+        generalSettingsRequest = null;
+      });
+  }
+  return generalSettingsRequest;
+}
+
 export async function fetchGeneralSettings(): Promise<GeneralRestaurantSettings> {
   try {
-    const data = await api.get<Record<string, unknown>>("/settings");
+    const data = await fetchGeneralSettingsPayload();
     return syncGeneralSettings(data);
   } catch {
     return readCachedGeneralSettings();

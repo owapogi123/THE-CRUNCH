@@ -19,10 +19,9 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "../context/authcontext";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useViewport } from "@/hooks/use-tablet";
-import { api } from "@/lib/api";
 import {
-  cachePermissions,
-  normalizePermissionsMap,
+  fetchPermissions,
+  hasPagePermission,
   normalizeRole,
   readCachedPermissions,
   type NonNullRole,
@@ -86,15 +85,10 @@ function usePermissions(enabled: boolean) {
     if (!enabled) return;
 
     let cancelled = false;
-    api.get<Record<string, unknown>>("/settings/permissions")
-      .then((data) => {
-        if (cancelled || !data || typeof data !== "object") return;
-
-        // The API may return { permissions: {...} } or the map itself.
-        const raw = "permissions" in data ? data.permissions : data;
-        const next = normalizePermissionsMap((raw as Partial<PermissionsMap> | null | undefined) ?? null);
+    fetchPermissions()
+      .then((next) => {
+        if (cancelled) return;
         setPermissions(next);
-        cachePermissions(next); // memory only, lets other pages start from the loaded permissions
       })
       .catch(() => {
         // Keep showing the current menu if the request fails.
@@ -130,12 +124,19 @@ function useRestaurantName() {
         });
     };
 
+    const syncFromEvent = (event: Event) => {
+      const settings = (event as CustomEvent).detail;
+      if (!settings || typeof settings !== "object") return;
+      lastRestaurantName = String(settings.restaurantName || "");
+      if (!cancelled) setName(lastRestaurantName);
+    };
+
     load();
-    window.addEventListener(GENERAL_SETTINGS_EVENT, load);
+    window.addEventListener(GENERAL_SETTINGS_EVENT, syncFromEvent);
 
     return () => {
       cancelled = true;
-      window.removeEventListener(GENERAL_SETTINGS_EVENT, load);
+      window.removeEventListener(GENERAL_SETTINGS_EVENT, syncFromEvent);
     };
   }, []);
 
@@ -167,7 +168,9 @@ export function Sidebar() {
   // Only show the links this role is allowed to open.
   const visibleItems = useMemo(() => {
     if (!staffRole) return [];
-    return SIDEBAR_ITEMS.filter((item) => permissions[staffRole][item.permissionKey] === true);
+    return SIDEBAR_ITEMS.filter((item) =>
+      hasPagePermission(staffRole, item.permissionKey, permissions),
+    );
   }, [permissions, staffRole]);
 
   const closeSidebar = () => setIsOpen(false);

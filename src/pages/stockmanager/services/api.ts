@@ -28,9 +28,20 @@ export async function apiFetch<T>(
   const normalizedPath = cleanPath.startsWith("/api/")
     ? cleanPath.slice(4)
     : cleanPath;
+  const headers = new Headers(options?.headers);
+  if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  const token =
+    typeof window === "undefined" ? null : window.localStorage.getItem("authToken");
+  if (token?.trim() && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token.trim()}`);
+  }
+
   const res = await fetch(`${API_BASE}${normalizedPath}`, {
-    headers: { "Content-Type": "application/json" },
     ...options,
+    headers,
   });
   if (!res.ok) {
     throw new Error(

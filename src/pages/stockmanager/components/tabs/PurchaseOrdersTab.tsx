@@ -260,7 +260,7 @@ export function PurchaseOrdersTab({
                   );
                 })}
               {products.filter((p) => !isMenuFoodProduct(p)).length === 0 && (
-                <EmptyState message="No products found in inventory." />
+                <EmptyState message="No stock items are configured for purchase ordering." />
               )}
             </div>
           </div>

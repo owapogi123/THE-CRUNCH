@@ -155,7 +155,7 @@ function mapInventoryRecipes(rows: InventoryMenuRow[], meta: Recipe[], fallbackM
     const statusAvailable = !isUnavailable(row.availability_status);
     const backendAvailable = row.available === true || row.available === 1;
     const hasBackendAvailable = row.available !== undefined && row.available !== null;
-    return { id, name, price:Number(row.price??m?.price??0), category, stock, image:resolveAssetUrl(String(row.image||m?.image||"/img/placeholder.jpg")), available: hasBackendAvailable ? backendAvailable : statusAvailable, description:m?.description||`Freshly prepared ${category.toLowerCase()} from The Crunch.`, nutrition:m?.nutrition??DEFAULT_NUTRITION, maxFlavors:m?.maxFlavors, mealTypes:(m?.mealTypes&&m.mealTypes.length>0&&hasMeal)?m.mealTypes:fallbackMeals, tag:m?.tag, note:m?.note, variant:m?.variant };
+    return { id, name, price:Number(row.price??m?.price??0), category, stock, image:resolveAssetUrl(String(row.image||m?.image||"/img/placeholder.jpg")), available: stock > 0 && (hasBackendAvailable ? backendAvailable : statusAvailable), description:m?.description||`Freshly prepared ${category.toLowerCase()} from The Crunch.`, nutrition:m?.nutrition??DEFAULT_NUTRITION, maxFlavors:m?.maxFlavors, mealTypes:(m?.mealTypes&&m.mealTypes.length>0&&hasMeal)?m.mealTypes:fallbackMeals, tag:m?.tag, note:m?.note, variant:m?.variant };
   });
 }
 

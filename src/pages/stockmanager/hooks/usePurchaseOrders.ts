@@ -26,6 +26,7 @@ export type POPrefillProduct =
   | undefined;
 
 type UsePurchaseOrdersParams = {
+  enabled: boolean;
   criticalStock: Product[];
   lowStock: Product[];
   suppliers: Supplier[];
@@ -36,6 +37,7 @@ type UsePurchaseOrdersParams = {
 };
 
 export function usePurchaseOrders({
+  enabled,
   criticalStock,
   lowStock,
   suppliers,
@@ -45,6 +47,8 @@ export function usePurchaseOrders({
   addNotification,
 }: UsePurchaseOrdersParams) {
   const [poOrders, setPoOrders] = useState<PurchaseOrder[]>([]);
+  const [poLoaded, setPoLoaded] = useState(false);
+  const poLoadStarted = useRef(false);
   const [selectedOrder, setSelectedOrder] = useState<PurchaseOrder | null>(
     null,
   );
@@ -54,6 +58,7 @@ export function usePurchaseOrders({
   );
   const [poFilterStatus, setPoFilterStatus] = useState<POStatus | "All">("All");
   const [poLoading, setPoLoading] = useState(false);
+  const [poError, setPoError] = useState<string | null>(null);
   const [poHistoryDateFrom, setPoHistoryDateFrom] = useState("");
   const [poHistoryDateTo, setPoHistoryDateTo] = useState("");
   const [poHistoryPage, setPoHistoryPage] = useState(1);
@@ -64,14 +69,17 @@ export function usePurchaseOrders({
 
   const fetchPurchaseOrders = useCallback(async () => {
     setPoLoading(true);
+    setPoError(null);
     try {
       const orders = await api.po.getAll();
       setPoOrders(orders);
+      setPoLoaded(true);
     } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to load purchase orders.";
+      setPoError(message);
       showToast(
-        err instanceof Error
-          ? err.message
-          : "Failed to load purchase orders.",
+        message,
         "error",
       );
     } finally {
@@ -128,8 +136,10 @@ export function usePurchaseOrders({
   }, [filteredCompletedPOs, poHistoryPage]);
 
   useEffect(() => {
+    if (!enabled || poLoaded || poLoadStarted.current) return;
+    poLoadStarted.current = true;
     void fetchPurchaseOrders();
-  }, [fetchPurchaseOrders]);
+  }, [enabled, poLoaded, fetchPurchaseOrders]);
 
   useEffect(() => {
     setPoHistoryPage(1);
@@ -324,11 +334,13 @@ export function usePurchaseOrders({
 
   return {
     poOrders,
+    poLoaded,
     selectedOrder,
     printOrder,
     receivingOrder,
     poFilterStatus,
     poLoading,
+    poError,
     poHistoryDateFrom,
     poHistoryDateTo,
     poHistoryPage,
