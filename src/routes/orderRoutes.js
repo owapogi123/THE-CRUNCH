@@ -16,9 +16,21 @@ const {
   normalizeOrderItems,
 } = require("../services/orderItemService");
 const {
+  allocateOrderIdentifiers,
+  formatOrderNumber,
+  formatTransactionId,
+} = require("../services/orderIdentifierService");
+const {
+  collectOrderItemNotes,
+  createReceiptSnapshot,
+  loadReceiptDto,
+} = require("../services/receiptSnapshotService");
+const { isSuperuserRole, normalizeRole } = require("../middleware/roleAccess");
+const {
   isDevelopmentTimingEnabled,
   runWithDbQueryTiming,
 } = require("../services/requestTiming");
+const { publishOrderMutation } = require("../services/applicationEvents");
 const {
   claimBypassCheckout,
   consumeBypassCheckout,
@@ -116,6 +128,19 @@ function normalizeOrderType(value) {
   if (v === "take-out" || v === "takeout") return "take-out";
   if (v === "delivery") return "delivery";
   return "dine-in";
+}
+
+function getPublicOrderIdentifiers(row) {
+  return {
+    transactionId: formatTransactionId(
+      row?.transactionId ?? row?.transaction_id,
+    ),
+    orderNumber: formatOrderNumber(
+      row?.orderNumberValue ?? row?.order_number,
+      row?.id ?? row?.Order_ID,
+    ),
+    businessDate: row?.businessDate ?? row?.business_date ?? null,
+  };
 }
 
 function normalizePaymentMethod(value) {
@@ -355,6 +380,17 @@ async function loadCashierOrderConfiguration(connection, discountName) {
         Number(parsedSettings?.serviceCharge ?? 0) || 0,
       ),
     },
+    receiptSettings: {
+      restaurantName:
+        String(parsedSettings?.restaurantName || "").trim() || "The Crunch",
+      tagline: String(parsedSettings?.tagline || "").trim(),
+      email: String(parsedSettings?.email || "").trim(),
+      phone: String(parsedSettings?.phone || "").trim(),
+      address: String(parsedSettings?.address || "").trim(),
+      currency: String(parsedSettings?.currency || "").trim() || "PHP",
+      timezone:
+        String(parsedSettings?.timezone || "").trim() || "Asia/Manila",
+    },
     discount: rows[0]?.discount_name
       ? {
           discountName: String(rows[0].discount_name),
@@ -365,6 +401,25 @@ async function loadCashierOrderConfiguration(connection, discountName) {
         }
       : { discountName: "", discountRate: 0 },
   };
+}
+
+async function requireSalesReportReceiptAccess(req, res, next) {
+  const role = normalizeRole(req.user?.role);
+  if (isSuperuserRole(role)) return next();
+  try {
+    const [rows] = await db.query(
+      `SELECT enabled
+       FROM role_permissions
+       WHERE role = ? AND permission_key = 'salesReports'
+       LIMIT 1`,
+      [role],
+    );
+    if (Number(rows[0]?.enabled) === 1) return next();
+    return res.status(403).json({ message: "Sales Report access required" });
+  } catch (error) {
+    console.error("Receipt permission check failed:", error.message);
+    return res.status(500).json({ message: "Unable to verify receipt access" });
+  }
 }
 
 function calculateBillingTotals(subtotal, settings, discountRate = 0) {
@@ -593,6 +648,9 @@ router.get("/", requireCookViewAccess, async (req, res) => {
          o.Status          AS status,
          o.Order_Date      AS date,
          o.Order_Type      AS orderType,
+         o.transaction_id  AS transactionId,
+         o.order_number    AS orderNumberValue,
+         o.business_date   AS businessDate,
          o.payment_reference AS paymentReference,
          o.payment_status  AS paymentStatus,
          o.payment_method  AS paymentMethod,
@@ -624,7 +682,12 @@ router.get("/", requireCookViewAccess, async (req, res) => {
          ) latest ON latest.maxPaymentId = p1.Payment_ID
        ) p ON p.Order_ID = o.Order_ID`
     );
-    res.json(orders);
+    res.json(
+      orders.map((row) => {
+        const { orderNumberValue: _orderNumberValue, ...publicRow } = row;
+        return { ...publicRow, ...getPublicOrderIdentifiers(row) };
+      }),
+    );
   } catch (err) {
     console.error("GET /orders error:", err.message);
     res.status(500).json({ message: "DB error", error: err.message });
@@ -639,6 +702,9 @@ router.get("/queue", requireCookViewAccess, async (req, res) => {
          o.Order_ID   AS id,
          o.Status     AS status,
          o.Order_Type AS orderType,
+         o.transaction_id AS transactionId,
+         o.order_number AS orderNumberValue,
+         o.business_date AS businessDate,
          o.customer_user_id AS customerUserId,
          o.payment_status AS paymentStatus,
          o.Order_Date AS createdAt,
@@ -685,7 +751,7 @@ router.get("/queue", requireCookViewAccess, async (req, res) => {
         const normalizedOrderType = normalizeOrderType(r.orderType);
         grouped[r.id] = {
           id: String(r.id),
-          orderNumber: `#${r.id}`,
+          ...getPublicOrderIdentifiers(r),
           tableNumber: 0,
           status: normalizedOrderType,
           orderType: normalizedOrderType,
@@ -765,6 +831,9 @@ router.get("/new-online", async (req, res) => {
          o.Total_Amount    AS total,
          o.Order_Date      AS createdAt,
          o.Order_Type      AS orderType,
+         o.transaction_id  AS transactionId,
+         o.order_number    AS orderNumberValue,
+         o.business_date   AS businessDate,
          o.payment_status  AS paymentStatus,
          o.payment_method  AS paymentMethod,
          (
@@ -790,7 +859,7 @@ router.get("/new-online", async (req, res) => {
       if (!grouped[r.id]) {
         grouped[r.id] = {
           id: r.id,
-          orderNumber: `#${r.id}`,
+          ...getPublicOrderIdentifiers(r),
           total: Number(r.total) || 0,
           createdAt: r.createdAt,
           orderType: normalizeOrderType(r.orderType),
@@ -827,6 +896,9 @@ router.get("/ready-pickup", async (req, res) => {
          o.Total_Amount    AS total,
          o.Order_Date      AS createdAt,
          o.Order_Type      AS orderType,
+         o.transaction_id  AS transactionId,
+         o.order_number    AS orderNumberValue,
+         o.business_date   AS businessDate,
          o.payment_status  AS paymentStatus,
          o.payment_method  AS paymentMethod,
          (
@@ -855,7 +927,7 @@ router.get("/ready-pickup", async (req, res) => {
       if (!grouped[r.id]) {
         grouped[r.id] = {
           id: r.id,
-          orderNumber: `#${r.id}`,
+          ...getPublicOrderIdentifiers(r),
           total: Number(r.total) || 0,
           createdAt: r.createdAt,
           orderType: normalizeOrderType(r.orderType),
@@ -898,6 +970,9 @@ router.get("/delivery-handover", async (req, res) => {
          o.Total_Amount      AS total,
          o.Order_Date        AS createdAt,
          o.Order_Type        AS orderType,
+         o.transaction_id    AS transactionId,
+         o.order_number      AS orderNumberValue,
+         o.business_date     AS businessDate,
          o.payment_status    AS paymentStatus,
          o.payment_method    AS paymentMethod,
          (
@@ -927,7 +1002,7 @@ router.get("/delivery-handover", async (req, res) => {
       if (!grouped[r.id]) {
         grouped[r.id] = {
           id: r.id,
-          orderNumber: `#${r.id}`,
+          ...getPublicOrderIdentifiers(r),
           total: Number(r.total) || 0,
           createdAt: r.createdAt,
           orderType: normalizeOrderType(r.orderType),
@@ -982,6 +1057,9 @@ router.get("/customer/:customerUserId", requireAuthenticatedUser, async (req, re
          o.Status AS status,
          o.Order_Date AS createdAt,
          o.Order_Type AS orderType,
+         o.transaction_id AS transactionId,
+         o.order_number AS orderNumberValue,
+         o.business_date AS businessDate,
          o.payment_reference AS paymentReference,
          o.payment_status AS paymentStatus,
          o.payment_method AS storedPaymentMethod,
@@ -1015,7 +1093,7 @@ router.get("/customer/:customerUserId", requireAuthenticatedUser, async (req, re
         );
         grouped[row.id] = {
           id: row.id,
-          orderNumber: `#${row.id}`,
+          ...getPublicOrderIdentifiers(row),
           total: Number(row.total) || 0,
           createdAt: row.createdAt,
           orderType: normalizeOrderType(row.orderType),
@@ -1062,6 +1140,30 @@ router.get("/customer/:customerUserId", requireAuthenticatedUser, async (req, re
 });
 
 // POST /orders/payment-proofs — save cashier onsite e-payment proof image
+// Load one immutable receipt on demand. `id` remains orders.Order_ID.
+router.get(
+  "/:id/receipt",
+  requireCookViewAccess,
+  requireSalesReportReceiptAccess,
+  async (req, res) => {
+    try {
+      const orderId = Number(req.params.id);
+      if (!Number.isSafeInteger(orderId) || orderId <= 0) {
+        return res.status(400).json({ message: "Invalid order id" });
+      }
+      const receipt = await loadReceiptDto(db, orderId);
+      if (!receipt) return res.status(404).json({ message: "Order not found" });
+      return res.json(receipt);
+    } catch (error) {
+      console.error("GET /orders/:id/receipt error:", error.message);
+      return res.status(500).json({
+        message: "Failed to load receipt",
+        error: error.message,
+      });
+    }
+  },
+);
+
 router.post("/payment-proofs", requireCookViewAccess, async (req, res) => {
   try {
     const { dataUrl, originalName } = req.body || {};
@@ -1246,6 +1348,7 @@ router.post("/", withOrderRequestTiming, async (req, res) => {
   let bypassSessionToClaim = null;
   let claimedBypassSessionId = null;
   let authoritativeItems = [];
+  let receiptDto = null;
   let orderOutcome = "failed";
   try {
     const {
@@ -1277,6 +1380,14 @@ router.post("/", withOrderRequestTiming, async (req, res) => {
       discount_name,
       discountRate,
       discount_rate,
+      cashTendered,
+      cash_tendered,
+      tableId,
+      table_id,
+      tableNumber,
+      table_number,
+      orderNote,
+      order_note,
     } = req.body;
 
     // Online orders from usersmenu.tsx send NO cashierId — that's intentional.
@@ -1285,6 +1396,7 @@ router.post("/", withOrderRequestTiming, async (req, res) => {
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: "Order items are required" });
     }
+    const itemNotesByProduct = collectOrderItemNotes(items);
     const validatedItems = normalizeOrderItems(items);
 
     const finalOrderType = normalizeOrderType(order_type || orderType);
@@ -1301,6 +1413,19 @@ router.post("/", withOrderRequestTiming, async (req, res) => {
       String(customer_name || customerName || "").trim() || null;
     const submittedCustomerEmail =
       String(customer_email || customerEmail || "").trim().toLowerCase() || null;
+    const submittedCustomerType =
+      String(customer_type || customerType || "").trim() || null;
+    const submittedTableNumber =
+      String(table_number ?? tableNumber ?? table_id ?? tableId ?? "").trim() || null;
+    const submittedOrderNote =
+      String(order_note || orderNote || "").trim().slice(0, 2000) || null;
+    const tenderedCandidate = Number(cash_tendered ?? cashTendered);
+    const submittedCashTendered =
+      normalizedPaymentMethod === "cash" &&
+      Number.isFinite(tenderedCandidate) &&
+      tenderedCandidate >= 0
+        ? tenderedCandidate
+        : null;
     const resolvedCustomerUserId = Number(customerUserId) > 0 ? Number(customerUserId) : null;
     const isOnlinePickupOrder =
       resolvedCustomerUserId && resolvedCashierId == null && finalOrderType === "take-out";
@@ -1446,7 +1571,10 @@ router.post("/", withOrderRequestTiming, async (req, res) => {
       "load items and lock stock",
       () => prepareOrderItemsAndStock(conn, validatedItems),
     );
-    authoritativeItems = stockPlan.authoritativeItems;
+    authoritativeItems = stockPlan.authoritativeItems.map((item) => ({
+      ...item,
+      note: itemNotesByProduct.get(item.product_id) || null,
+    }));
     const subtotalAmount = authoritativeItems.reduce(
       (sum, item) => sum + item.subtotal,
       0,
@@ -1460,12 +1588,22 @@ router.post("/", withOrderRequestTiming, async (req, res) => {
       billingSettings,
       appliedDiscount.discountRate,
     );
+    const snapshotCashTendered =
+      normalizedPaymentMethod === "cash" ? submittedCashTendered : null;
+    const snapshotChange = snapshotCashTendered === null
+      ? null
+      : Math.max(0, snapshotCashTendered - billingTotals.grandTotal);
     const cashierContext = await runOrderStage(
       req,
       "resolve cashier",
       () => ensureLegacyCashierContext(conn, resolvedCashierId),
     );
     const persistedCashierId = cashierContext.cashierId;
+    const identifiers = await runOrderStage(
+      req,
+      "allocate order identifiers",
+      () => allocateOrderIdentifiers(conn, finalOrderType),
+    );
 
     // Insert the order header
     const [orderResult] = await runOrderStage(
@@ -1473,8 +1611,8 @@ router.post("/", withOrderRequestTiming, async (req, res) => {
       "insert order",
       () => conn.query(
         `INSERT INTO orders
-           (Total_Amount, Customer_ID, Cashier_ID, Order_Type, Status, customer_user_id, payment_reference, payment_status, payment_method, proof_image_url, verified_by, verified_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (Total_Amount, Customer_ID, Cashier_ID, Order_Type, Status, customer_user_id, payment_reference, payment_status, payment_method, proof_image_url, verified_by, verified_at, transaction_id, order_number, business_date)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           billingTotals.grandTotal,
           customerId || null,
@@ -1488,6 +1626,9 @@ router.post("/", withOrderRequestTiming, async (req, res) => {
           submittedProofImageUrl,
           verifiedBy,
           verifiedAt,
+          identifiers.transactionId,
+          identifiers.orderNumberValue,
+          identifiers.businessDate,
         ],
       ),
     );
@@ -1521,6 +1662,45 @@ router.post("/", withOrderRequestTiming, async (req, res) => {
       ],
     ));
 
+    receiptDto = await runOrderStage(
+      req,
+      "insert receipt snapshot",
+      () => createReceiptSnapshot(conn, {
+        orderId,
+        transactionId: identifiers.transactionId,
+        orderNumberValue: identifiers.orderNumberValue,
+        orderType: finalOrderType,
+        currentStatus: initialStatus,
+        currentPaymentStatus: effectivePaymentStatus,
+        paymentMethod: storedPaymentMethod,
+        subtotal: billingTotals.subtotal,
+        discountName: appliedDiscount.discountName || null,
+        discountRate: appliedDiscount.discountRate,
+        discountAmount: billingTotals.discountAmount,
+        taxRate: billingSettings.taxRate,
+        taxAmount: billingTotals.taxAmount,
+        serviceChargeRate: billingSettings.serviceCharge,
+        serviceChargeAmount: billingTotals.serviceChargeAmount,
+        total: billingTotals.grandTotal,
+        amountPaid: isPaidPaymentStatus(effectivePaymentStatus)
+          ? billingTotals.grandTotal
+          : 0,
+        cashTendered: snapshotCashTendered,
+        changeAmount: snapshotChange,
+        customerType: submittedCustomerType,
+        tableNumber: finalOrderType === "dine-in" ? submittedTableNumber : null,
+        orderNote: submittedOrderNote,
+        currency: configuration.receiptSettings.currency,
+        merchantName: configuration.receiptSettings.restaurantName,
+        merchantTagline: configuration.receiptSettings.tagline,
+        merchantEmail: configuration.receiptSettings.email,
+        merchantPhone: configuration.receiptSettings.phone,
+        merchantAddress: configuration.receiptSettings.address,
+        timezone: configuration.receiptSettings.timezone,
+        items: authoritativeItems,
+      }),
+    );
+
     if (isPaidPaymentStatus(effectivePaymentStatus)) {
       await runOrderStage(
         req,
@@ -1538,6 +1718,12 @@ router.post("/", withOrderRequestTiming, async (req, res) => {
     await runOrderStage(req, "commit", () => conn.commit());
     txStarted = false;
     finishOrderTransactionTiming(req);
+    publishOrderMutation({
+      reason: "order.created",
+      customerUserId: resolvedCustomerUserId,
+      paymentChanged: true,
+      inventoryChanged: isPaidPaymentStatus(effectivePaymentStatus),
+    });
     if (claimedBypassSessionId) {
       consumeBypassCheckout(claimedBypassSessionId);
       claimedBypassSessionId = null;
@@ -1553,7 +1739,8 @@ router.post("/", withOrderRequestTiming, async (req, res) => {
             to: receiptEmail,
             customerName: receiptCustomerName,
             order: {
-              orderNumber: `#${orderId}`,
+              orderNumber: identifiers.orderNumber,
+              transactionId: identifiers.transactionId,
               orderType: finalOrderType,
               paymentMethod: storedPaymentMethod,
               paymentStatus: effectivePaymentStatus,
@@ -1578,8 +1765,12 @@ router.post("/", withOrderRequestTiming, async (req, res) => {
     res.json({
       message: "Order placed",
       orderId,
-      orderNumber: `#${orderId}`,
+      id: orderId,
+      transactionId: identifiers.transactionId,
+      orderNumber: identifiers.orderNumber,
+      businessDate: identifiers.businessDate,
       trackingStatus: initialStatus,
+      receipt: receiptDto,
     });
   } catch (err) {
     if (conn && txStarted) await conn.rollback();
@@ -1593,12 +1784,18 @@ router.post("/", withOrderRequestTiming, async (req, res) => {
       code: err.code,
       sqlMessage: err.sqlMessage,
     }, null, 2));
-    const duplicatePaymentReference = err?.code === "ER_DUP_ENTRY";
-    const statusCode = duplicatePaymentReference ? 409 : Number(err?.statusCode);
+    const duplicateEntry = err?.code === "ER_DUP_ENTRY";
+    const duplicatePaymentReference =
+      duplicateEntry && /payment_reference/i.test(String(err?.sqlMessage || err?.message || ""));
+    const duplicateBusinessIdentifier =
+      duplicateEntry && !duplicatePaymentReference;
+    const statusCode = duplicateEntry ? 409 : Number(err?.statusCode);
     const isClientError = statusCode >= 400 && statusCode < 500;
     res.status(isClientError ? statusCode : 500).json({
       message: duplicatePaymentReference
         ? "This payment has already been used to place an order"
+        : duplicateBusinessIdentifier
+          ? "An order identifier allocation conflict occurred; please retry the order"
         : isClientError
           ? err.message
           : "DB error",
@@ -1649,6 +1846,9 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
          readyAt AS readyAt,
          dueAt AS dueAt,
          estimatedPrepMinutes AS estimatedPrepMinutes,
+         transaction_id AS transactionId,
+         order_number AS orderNumberValue,
+         business_date AS businessDate,
          payment_status AS paymentStatus,
          (
            SELECT p.Payment_Status
@@ -1979,9 +2179,29 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
     await conn.commit();
     txStarted = false;
 
+    publishOrderMutation({
+      reason:
+        nextStatus === "Refunded"
+          ? "order.refunded"
+          : nextStatus === "Cancelled"
+            ? "order.cancelled"
+          : hasStatusUpdate
+            ? "order.status_updated"
+            : hasPaymentStatusUpdate
+              ? "order.payment_updated"
+              : "order.updated",
+      customerUserId: existingRows[0].customerUserId,
+      paymentChanged:
+        hasPaymentStatusUpdate ||
+        nextStatus === "Completed" ||
+        nextStatus === "Refunded",
+      inventoryChanged: shouldDeductStockNow || inventoryRestored === true,
+    });
+
     res.json({
       message: "Order updated",
       id,
+      ...getPublicOrderIdentifiers({ id, ...existingRows[0] }),
       status: nextStatus,
       paymentStatus: nextStatus === "Refunded" ? "Refunded" : nextPaymentStatus,
       estimatedPrepMinutes:

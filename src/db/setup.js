@@ -115,11 +115,14 @@ async function setup(options = {}) {
       "DROP TABLE IF EXISTS menu_item_ingredients;",
       "DROP TABLE IF EXISTS Order_Tracking;",
       "DROP TABLE IF EXISTS Kitchen;",
+      "DROP TABLE IF EXISTS receipt_snapshot_items;",
+      "DROP TABLE IF EXISTS receipt_snapshots;",
       "DROP TABLE IF EXISTS Receipt;",
       "DROP TABLE IF EXISTS payments;",
       "DROP TABLE IF EXISTS Payments;",
       "DROP TABLE IF EXISTS order_item;",
       "DROP TABLE IF EXISTS Order_Item;",
+      "DROP TABLE IF EXISTS order_daily_counters;",
       "DROP TABLE IF EXISTS orders;",
       "DROP TABLE IF EXISTS Orders;",
       "DROP TABLE IF EXISTS Stock_Status;",
@@ -319,9 +322,22 @@ CREATE TABLE IF NOT EXISTS orders (
     Status VARCHAR(50),
     Total_Amount DECIMAL(10,2),
     Order_Date DATETIME DEFAULT CURRENT_TIMESTAMP,
+    transaction_id CHAR(12) NULL,
+    order_number INT UNSIGNED NULL,
+    business_date DATE NULL,
+    UNIQUE KEY uq_orders_transaction_id (transaction_id),
+    UNIQUE KEY uq_orders_business_order_number (business_date, order_number),
     FOREIGN KEY (Customer_ID) REFERENCES Customers(Customer_ID),
     FOREIGN KEY (Cashier_ID) REFERENCES Cashier(Cashier_ID)
 );
+
+CREATE TABLE IF NOT EXISTS order_daily_counters (
+    business_date DATE NOT NULL,
+    counter_scope VARCHAR(16) NOT NULL,
+    counter_value INT UNSIGNED NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (business_date, counter_scope)
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS order_item (
     Order_Item_ID INT AUTO_INCREMENT PRIMARY KEY,
@@ -351,6 +367,56 @@ CREATE TABLE IF NOT EXISTS Receipt (
     Date_Issued DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (Order_ID) REFERENCES orders(Order_ID)
 );
+
+CREATE TABLE IF NOT EXISTS receipt_snapshots (
+    order_id INT PRIMARY KEY,
+    transaction_id CHAR(12) NOT NULL,
+    order_number INT UNSIGNED NOT NULL,
+    order_date DATETIME NOT NULL,
+    order_type VARCHAR(50) NOT NULL,
+    payment_method VARCHAR(50) NOT NULL,
+    subtotal DECIMAL(12,2) NOT NULL,
+    discount_name VARCHAR(100) NULL,
+    discount_rate DECIMAL(7,4) NOT NULL DEFAULT 0,
+    discount_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+    tax_rate DECIMAL(7,4) NOT NULL DEFAULT 0,
+    tax_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+    service_charge_rate DECIMAL(7,4) NOT NULL DEFAULT 0,
+    service_charge_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+    total DECIMAL(12,2) NOT NULL,
+    amount_paid DECIMAL(12,2) NOT NULL DEFAULT 0,
+    cash_tendered DECIMAL(12,2) NULL,
+    change_amount DECIMAL(12,2) NULL,
+    customer_type VARCHAR(100) NULL,
+    table_number VARCHAR(50) NULL,
+    order_note TEXT NULL,
+    currency VARCHAR(12) NOT NULL,
+    merchant_name VARCHAR(150) NOT NULL,
+    merchant_tagline VARCHAR(255) NULL,
+    merchant_email VARCHAR(150) NULL,
+    merchant_phone VARCHAR(100) NULL,
+    merchant_address VARCHAR(500) NULL,
+    timezone VARCHAR(100) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_receipt_snapshots_order
+      FOREIGN KEY (order_id) REFERENCES orders(Order_ID)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS receipt_snapshot_items (
+    receipt_item_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    order_id INT NOT NULL,
+    original_product_id INT NULL,
+    product_name VARCHAR(255) NOT NULL,
+    unit_price DECIMAL(12,2) NOT NULL,
+    quantity INT NOT NULL,
+    line_subtotal DECIMAL(12,2) NOT NULL,
+    item_note TEXT NULL,
+    sort_order INT NOT NULL DEFAULT 0,
+    INDEX idx_receipt_snapshot_items_order (order_id, sort_order),
+    CONSTRAINT fk_receipt_snapshot_items_snapshot
+      FOREIGN KEY (order_id) REFERENCES receipt_snapshots(order_id)
+      ON DELETE CASCADE
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS Kitchen (
     Kitchen_ID INT AUTO_INCREMENT PRIMARY KEY,
@@ -955,6 +1021,24 @@ END
       "stock_deducted",
       "`stock_deducted` TINYINT(1) NOT NULL DEFAULT 0",
     );
+    await ensureColumn(
+      connection,
+      "orders",
+      "transaction_id",
+      "`transaction_id` CHAR(12) NULL",
+    );
+    await ensureColumn(
+      connection,
+      "orders",
+      "order_number",
+      "`order_number` INT UNSIGNED NULL",
+    );
+    await ensureColumn(
+      connection,
+      "orders",
+      "business_date",
+      "`business_date` DATE NULL",
+    );
     await connection.query(
       "UPDATE orders SET stock_deducted = 0 WHERE stock_deducted IS NULL",
     );
@@ -963,6 +1047,18 @@ END
       "orders",
       "uq_orders_payment_reference",
       "UNIQUE INDEX `uq_orders_payment_reference` (`payment_reference`)",
+    );
+    await ensureIndex(
+      connection,
+      "orders",
+      "uq_orders_transaction_id",
+      "UNIQUE INDEX `uq_orders_transaction_id` (`transaction_id`)",
+    );
+    await ensureIndex(
+      connection,
+      "orders",
+      "uq_orders_business_order_number",
+      "UNIQUE INDEX `uq_orders_business_order_number` (`business_date`, `order_number`)",
     );
     await ensureColumn(
       connection,

@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
+const jwt = require("jsonwebtoken");
 const mysql = require("mysql2/promise");
 require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
 
@@ -69,6 +70,29 @@ function postJson(port, route, body) {
   });
 }
 
+function getJson(port, route, token) {
+  return new Promise((resolve, reject) => {
+    const request = http.request({
+      hostname: "127.0.0.1",
+      port,
+      path: route,
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    }, (response) => {
+      let text = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => { text += chunk; });
+      response.on("end", () => {
+        let parsed = null;
+        try { parsed = text ? JSON.parse(text) : null; } catch { parsed = text; }
+        resolve({ status: response.statusCode, body: parsed });
+      });
+    });
+    request.once("error", reject);
+    request.end();
+  });
+}
+
 function cashPayload(items, overrides = {}) {
   return {
     items,
@@ -90,6 +114,18 @@ async function main() {
   await setup({ log: quietLog });
   await setup({ log: quietLog });
 
+  const { getBusinessDateParts } = require("../src/services/orderIdentifierService");
+  const expectedBusinessDate = getBusinessDateParts();
+  const assertBusinessIdentifiers = (response, expectedOrderNumber, expectedSequence) => {
+    assert.equal(response.body.id, response.body.orderId);
+    assert.equal(response.body.orderNumber, expectedOrderNumber);
+    assert.equal(
+      response.body.transactionId,
+      `100${expectedBusinessDate.compactDate}${String(expectedSequence).padStart(3, "0")}`,
+    );
+    assert.equal(response.body.businessDate, expectedBusinessDate.businessDate);
+  };
+
   const db = require("../src/config/db");
   const { ensureProductSchema } = require("../src/services/productSchemaService");
   const { initializeStockManagerSchema } = require("../src/services/stockManagerSchemaService");
@@ -103,6 +139,9 @@ async function main() {
     "payment_status",
     "payment_method",
     "stock_deducted",
+    "transaction_id",
+    "order_number",
+    "business_date",
   ]) {
     assert(orderColumnNames.has(required), `missing startup column ${required}`);
   }
@@ -170,16 +209,60 @@ async function main() {
     candidate.once("error", reject);
   });
   const port = server.address().port;
+  const token = jwt.sign(
+    { id: 1, userId: 1, role: "administrator", username: "verify-admin" },
+    process.env.JWT_SECRET || "secretkey",
+    { expiresIn: "10m" },
+  );
   const results = [];
   const record = (name, response) => {
     results.push({ name, status: response.status, message: response.body?.message });
   };
 
   try {
+    const [legacyResult] = await db.query(
+      `INSERT INTO orders
+         (Total_Amount, Cashier_ID, Order_Type, Status, customer_user_id,
+          payment_status, payment_method)
+       VALUES (1, 1, 'dine-in', 'Pending', 1, 'Paid', 'Cash')`,
+    );
+    await db.query(
+      `INSERT INTO payments (Order_ID, Payment_Type, Payment_Status, ProcessBy)
+       VALUES (?, 'Cash', 'Completed', 1)`,
+      [legacyResult.insertId],
+    );
+
+    const dashboardOrders = await getJson(port, "/api/orders", token);
+    assert.equal(dashboardOrders.status, 200);
+    const dashboardLegacy = dashboardOrders.body.find(
+      (order) => Number(order.id) === Number(legacyResult.insertId),
+    );
+    assert.equal(dashboardLegacy.orderNumber, `#${legacyResult.insertId}`);
+    assert.equal(dashboardLegacy.transactionId, null);
+    assert.equal(dashboardLegacy.businessDate, null);
+
+    const cookOrders = await getJson(port, "/api/orders/queue", token);
+    assert.equal(cookOrders.status, 200);
+    const cookLegacy = cookOrders.body.find(
+      (order) => Number(order.id) === Number(legacyResult.insertId),
+    );
+    assert.equal(cookLegacy.orderNumber, `#${legacyResult.insertId}`);
+    assert.equal(cookLegacy.transactionId, null);
+
+    const customerOrders = await getJson(port, "/api/orders/customer/1", token);
+    assert.equal(customerOrders.status, 200);
+    const customerLegacy = [
+      ...customerOrders.body.activeOrders,
+      ...customerOrders.body.historyOrders,
+    ].find((order) => Number(order.id) === Number(legacyResult.insertId));
+    assert.equal(customerLegacy.orderNumber, `#${legacyResult.insertId}`);
+    assert.equal(customerLegacy.transactionId, null);
+
     let response = await postJson(port, "/api/orders", cashPayload([
       { product_id: 1, qty: 1 },
     ]));
     assert.equal(response.status, 200);
+    assertBusinessIdentifiers(response, "#1000", 1);
     record("valid cash", response);
     let [rows] = await db.query(
       `SELECT i.Stock AS inventoryStock, m.Stock AS menuStock, p.quantity AS productStock
@@ -222,6 +305,7 @@ async function main() {
       { product_id: 7, qty: 3 },
     ]));
     assert.equal(response.status, 200);
+    assertBusinessIdentifiers(response, "#1001", 2);
     record("multi-item aggregated ingredients", response);
     [rows] = await db.query(
       `SELECT Product_ID AS id, Stock
@@ -256,6 +340,7 @@ async function main() {
       { product_id: 1, qty: 4 },
     ]));
     assert.equal(response.status, 200);
+    assertBusinessIdentifiers(response, "#1002", 3);
     record("exact available quantity", response);
     [rows] = await db.query("SELECT Stock FROM Inventory WHERE Product_ID = 1");
     assert.equal(Number(rows[0].Stock), 0);
@@ -317,6 +402,9 @@ async function main() {
     );
     response = await postJson(port, "/api/orders", onsitePayload);
     assert.equal(response.status, 200);
+    // The forced failure allocated the fourth pair inside its transaction, so
+    // this successful order must reuse it after the rollback.
+    assertBusinessIdentifiers(response, "#1003", 4);
     record("unique payment reference first use", response);
     response = await postJson(port, "/api/orders", onsitePayload);
     assert.equal(response.status, 409);
@@ -329,6 +417,8 @@ async function main() {
     // This is legacy behavior: cashier-side non-cash methods are accepted as
     // paid. The performance change deliberately does not redefine that rule.
     assert.equal(response.status, 200);
+    // The duplicate payment-reference request also rolled its allocation back.
+    assertBusinessIdentifiers(response, "#1004", 5);
     record("legacy unknown payment method behavior", response);
 
     assert.equal(payMongoRequests, 0, "cashier orders unexpectedly called PayMongo");
@@ -336,6 +426,7 @@ async function main() {
       database: databaseName,
       repeatedStartup: "pass",
       schemaAndUniqueIndex: "pass",
+      legacyApiFallbacks: "pass",
       payMongoRequests,
       results,
       rollback: "no partial rows or stock mutations",

@@ -7,7 +7,10 @@
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
     "db:setup": "node src/db/setup.js",
-    "db:reset": "node src/db/setup.js --reset"
+    "db:reset": "node src/db/setup.js --reset",
+    "test:order-identifiers": "node scripts/testOrderIdentifiers.js",
+    "test:receipt-snapshots": "node scripts/testReceiptSnapshots.js",
+    "test:sse": "node scripts/testSseEvents.js && node scripts/testStage3StaticAudit.js"
   },
   "dependencies": {
     "@babel/parser": "^7.29.0",

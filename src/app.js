@@ -90,6 +90,10 @@ app.use("/api", contentRoutes);
 const paymongoRoutes = require("./routes/paymongoRoutes");
 app.use("/api/paymongo", paymongoRoutes);
 
+// Authenticated, lightweight application invalidation stream.
+const eventRoutes = require("./routes/eventRoutes");
+app.use("/api/events", eventRoutes);
+
 // order endpoints (used by POS & dashboard)
 const orderRoutes = require("./routes/orderRoutes");
 app.use("/api/orders", orderRoutes);

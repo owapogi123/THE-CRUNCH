@@ -270,15 +270,15 @@ async function main() {
   );
   assert.deepEqual(postRollbackRows.map((row) => Number(row.stock)), [10, 5]);
 
-  async function seedOrder(status, prepared, ready = false) {
+  async function seedOrder(status, prepared, ready = false, paymentStatus = "Paid") {
     const [result] = await db.query(
       `INSERT INTO orders
          (Total_Amount, Cashier_ID, Order_Type, Status, payment_status,
           payment_method, stock_deducted, queuedAt, prepStartedAt, startedAt, readyAt)
-       VALUES (100, 1, 'dine-in', ?, 'Paid', 'Cash', 1, NOW(),
+       VALUES (100, 1, 'dine-in', ?, ?, 'Cash', 1, NOW(),
                ${prepared ? "NOW()" : "NULL"}, ${prepared ? "NOW()" : "NULL"},
                ${ready ? "NOW()" : "NULL"})`,
-      [status],
+      [status, paymentStatus],
     );
     await db.query(
       `INSERT INTO order_item (Order_ID, Product_ID, Quantity, Subtotal)
@@ -287,8 +287,8 @@ async function main() {
     );
     await db.query(
       `INSERT INTO payments (Order_ID, Payment_Type, Payment_Status, ProcessBy)
-       VALUES (?, 'Cash', 'Completed', 1)`,
-      [result.insertId],
+       VALUES (?, 'Cash', ?, 1)`,
+      [result.insertId, paymentStatus === "Paid" ? "Completed" : "Pending"],
     );
     return result.insertId;
   }
@@ -301,6 +301,7 @@ async function main() {
     preparedRefund: await seedOrder("Preparing", true),
     readyRefund: await seedOrder("Ready for Pickup", true, true),
     completedRefund: await seedOrder("Completed", true, true),
+    cancellation: await seedOrder("Pending", false, false, "Pending"),
   };
 
   const originalPoolQuery = db.query.bind(db);
@@ -349,6 +350,12 @@ async function main() {
     process.env.JWT_SECRET || "secretkey",
     { expiresIn: "10m" },
   );
+  const workflowEvents = [];
+  const { subscribe } = require("../src/services/applicationEvents");
+  const unsubscribeEvents = subscribe({
+    audience: "staff",
+    onEvent: (event) => workflowEvents.push(event),
+  });
 
   async function measure(name, requests) {
     currentStatements = [];
@@ -409,6 +416,10 @@ async function main() {
     results.push(await measure("Refund from Completed", [
       { orderId: orderIds.completedRefund, body: { status: "Refunded" } },
     ]));
+    results.push(await measure("Cancel queued order", [
+      { orderId: orderIds.cancellation, body: { status: "Cancelled" } },
+    ]));
+    assert.equal(results[7].responseBodies[0].status, "Cancelled");
 
     const [[refundState]] = await db.query(
       `SELECT
@@ -484,6 +495,21 @@ async function main() {
     );
     assert.equal(decimalColumns.length, 6);
     assert.ok(decimalColumns.every((column) => column.columnType === "decimal(14,4)"));
+    assert.equal(
+      workflowEvents.filter((event) => event.topic === "orders.changed").length,
+      8,
+    );
+    assert.equal(
+      workflowEvents.filter((event) => event.topic === "payments.changed").length,
+      5,
+    );
+    assert.equal(
+      workflowEvents.filter((event) => event.topic === "inventory.changed").length,
+      1,
+    );
+    assert(workflowEvents.some((event) => event.reason === "order.status_updated"));
+    assert(workflowEvents.some((event) => event.reason === "order.refunded"));
+    assert(workflowEvents.some((event) => event.reason === "order.cancelled"));
 
     console.log(JSON.stringify({
       databaseName,
@@ -495,10 +521,17 @@ async function main() {
         refundState,
         secondIngredientRefundState,
         decimalColumns,
+        eventCoverage: {
+          orderEvents: 8,
+          paymentEvents: 5,
+          inventoryEvents: 1,
+          reasons: [...new Set(workflowEvents.map((event) => event.reason))],
+        },
       },
       results,
     }, null, 2));
   } finally {
+    unsubscribeEvents();
     await new Promise((resolve) => server.close(resolve));
     await db.end();
   }

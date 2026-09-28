@@ -177,6 +177,7 @@ async function sendCustomerOrderReceiptEmail({
   const recipient = String(to || "").trim();
   const safeName = String(customerName || "Customer").trim() || "Customer";
   const orderNumber = String(order?.orderNumber || "").trim();
+  const transactionId = String(order?.transactionId || "").trim();
   const orderType = String(order?.orderType || "").trim();
   const paymentMethod = String(order?.paymentMethod || "").trim();
   const paymentStatus = String(order?.paymentStatus || "").trim();
@@ -215,6 +216,7 @@ async function sendCustomerOrderReceiptEmail({
 
   const summaryRows = [
     ["Order Number", orderNumber],
+    ...(transactionId ? [["Transaction ID", transactionId]] : []),
     ["Order Type", orderType],
     ["Payment Method", paymentMethod],
     ["Payment Status", paymentStatus],
@@ -291,7 +293,7 @@ async function sendCustomerOrderReceiptEmail({
         </div>
       </div>
     `,
-    text: `Hi ${safeName}, your ${restaurantName} order ${orderNumber} is confirmed. Order type: ${orderType}. Payment method: ${paymentMethod}. Payment status: ${paymentStatus}. Total: ${currency} ${total.toFixed(2)}. ${note}`,
+    text: `Hi ${safeName}, your ${restaurantName} order ${orderNumber} is confirmed.${transactionId ? ` Transaction ID: ${transactionId}.` : ""} Order type: ${orderType}. Payment method: ${paymentMethod}. Payment status: ${paymentStatus}. Total: ${currency} ${total.toFixed(2)}. ${note}`,
   });
 }
 
