@@ -9,7 +9,7 @@ const {
   getProductItemTypeExpression,
 } = require("../utils/productItemType");
 
-// ─── helpers ─────────────────────────────────────────────────────────────────
+//  helpers 
 
 function toNumber(value, fallback = 0) {
   const n = Number(value);
@@ -158,7 +158,7 @@ function computeUsableUntil(baseValue, shelfLifeDays, shelfLifeHours) {
   return toSqlDateTime(usableUntil);
 }
 
-// ─── supplier history logger ──────────────────────────────────────────────────
+//  supplier history logger 
 
 async function logSupplierHistory(
   { supplier_name, action, details, performed_by = null },
@@ -181,9 +181,9 @@ async function logSupplierHistory(
   }
 }
 
-// ─── table bootstrap ─────────────────────────────────────────────────────────
+//  table bootstrap 
 
-// ─── shape helpers ────────────────────────────────────────────────────────────
+//  shape helpers 
 
 function shapePO(row, items = []) {
   return {
@@ -209,7 +209,7 @@ function shapePO(row, items = []) {
   };
 }
 
-// ─── GET /api/purchase-orders ─────────────────────────────────────────────────
+//  GET /api/purchase-orders 
 
 router.get("/", async (_req, res) => {
   try {
@@ -240,7 +240,7 @@ router.get("/", async (_req, res) => {
   }
 });
 
-// ─── GET /api/purchase-orders/:id ────────────────────────────────────────────
+//  GET /api/purchase-orders/:id 
 
 router.get("/:id", async (req, res) => {
   const poId = req.params.id;
@@ -266,7 +266,7 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// ─── POST /api/purchase-orders ────────────────────────────────────────────────
+// POST /api/purchase-orders 
 
 router.post("/", async (req, res) => {
   const {
@@ -392,7 +392,7 @@ router.post("/", async (req, res) => {
 
     await conn.commit();
 
-    // ── Log PO Created ──────────────────────────────────────────────────────
+    //  Log PO Created 
     await logSupplierHistory({
       supplier_name: supplier.trim(),
       action: "Purchase Order Created",
@@ -419,7 +419,7 @@ router.post("/", async (req, res) => {
   }
 });
 
-// ─── PATCH /api/purchase-orders/:id/status ───────────────────────────────────
+//  PATCH /api/purchase-orders/:id/status 
 
 router.patch("/:id/status", async (req, res) => {
   const poId = req.params.id;
@@ -461,7 +461,7 @@ router.patch("/:id/status", async (req, res) => {
 
     await conn.commit();
 
-    // ── Log status change ───────────────────────────────────────────────────
+    //  Log status change 
     const actionMap = {
       Ordered: "Purchase Order Sent to Supplier",
       Cancelled: "Purchase Order Cancelled",
@@ -494,7 +494,7 @@ router.patch("/:id/status", async (req, res) => {
   }
 });
 
-// ─── PATCH /api/purchase-orders/:id/receive ──────────────────────────────────
+//  PATCH /api/purchase-orders/:id/receive 
 
 router.patch("/:id/receive", async (req, res) => {
   const poId = req.params.id;

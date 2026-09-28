@@ -154,7 +154,7 @@ router.post("/", async (req, res) => {
     await ensureInventoryRow(conn, product_id);
 
     if (typeLow === "return") {
-      // Return → mainStock goes UP, dailyWithdrawn goes DOWN
+      // Return → mainStock goes UP, dailyWithdrawn goes DOWN (wala na to pero sa ngayon wag muna)
       await conn.query(
         `UPDATE Inventory
          SET Stock           = COALESCE(Stock, 0) + ?,
@@ -170,7 +170,7 @@ router.post("/", async (req, res) => {
       );
     } else {
       // Withdrawal (initial / supplementary)
-      // → mainStock goes DOWN, dailyWithdrawn goes UP
+      // → mainStock goes DOWN, dailyWithdrawn goes UP (tatanggalin to pero sa ngayon wag muna)
       await conn.query(
         `UPDATE Inventory
          SET Stock           = GREATEST(COALESCE(Stock, 0) - ?, 0),

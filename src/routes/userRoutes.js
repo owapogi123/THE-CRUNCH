@@ -81,7 +81,7 @@ function normalizeStaffRole(value) {
 }
 
 // ─────────────────────────────────────────────
-// MIDDLEWARE - Admin only
+// MIDDLEWARE - Admin only to
 // ─────────────────────────────────────────────
 const verifyAdmin = (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -238,9 +238,9 @@ router.put("/me/password", verifyEmployee, async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────
+
 // GET /api/users/staff — get all staff accounts
-// ─────────────────────────────────────────────
+
 router.get("/staff", verifyAdmin, async (req, res) => {
   try {
     const [rows] = await db.query(
@@ -255,9 +255,9 @@ router.get("/staff", verifyAdmin, async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────
+
 // POST /api/users/staff/create — create staff
-// ─────────────────────────────────────────────
+
 router.post("/staff/create", verifyAdmin, async (req, res) => {
   try {
     const username = normalizeStaffName(req.body?.username);
@@ -276,7 +276,7 @@ router.post("/staff/create", verifyAdmin, async (req, res) => {
         .json({ message: "Username or email already exists" });
     }
 
-    // Hash password then insert
+    // Hash password tas insert
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const [result] = await db.query(
@@ -315,9 +315,8 @@ router.post("/staff/create", verifyAdmin, async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────
 // DELETE /api/users/staff/:id — delete staff
-// ─────────────────────────────────────────────
+
 router.delete("/staff/:id", verifyAdmin, async (req, res) => {
   try {
     const { id } = req.params;

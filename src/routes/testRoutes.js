@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const db = require('../config/db');
 
-// Insert an admin (for testing)
+// Insert an admin (pang testing lang )
 router.post('/admin', async (req, res) => {
   try {
     const { username, email, password } = req.body;

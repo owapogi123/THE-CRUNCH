@@ -137,7 +137,7 @@ async function logSupplierHistory({
     );
   } catch (err) {
     console.error("Failed to log supplier history:", err.message);
-    // Non-fatal — don't throw, just log
+    // Non-fatal — no tapon, just log
   }
 }
 
@@ -157,7 +157,7 @@ router.get("/", async (req, res) => {
   }
 });
 
-// GET /api/suppliers/history  <-- must be BEFORE /:supplier_id
+// GET /api/suppliers/history  <-- must be BEFORE /:supplier_id muna
 router.get("/history", async (req, res) => {
   try {
     const [history] = await db.query(
@@ -364,7 +364,7 @@ router.post("/", async (req, res) => {
       [result.insertId],
     );
 
-    // ── Log the addition ──────────────────────────────────────────
+    //  Log the addition
     await logSupplierHistory({
       supplier_id: result.insertId,
       supplier_name,
@@ -399,7 +399,7 @@ router.delete("/:supplier_id", async (req, res) => {
       return res.status(400).json({ message: "Invalid supplier_id" });
     }
 
-    // ── Fetch name BEFORE deleting ────────────────────────────────
+    //  Fetch name BEFORE deleting 
     const [[supplier]] = await db.query(
       `SELECT SupplierName AS supplier_name, Contact_Number AS contact_number
        FROM Suppliers WHERE Supplier_ID = ?`,
@@ -414,7 +414,7 @@ router.delete("/:supplier_id", async (req, res) => {
       return res.status(404).json({ message: "Supplier not found" });
     }
 
-    // ── Log the removal ───────────────────────────────────────────
+    // Log the removal 
     if (supplier) {
       await logSupplierHistory({
         supplier_id: supplierId,
