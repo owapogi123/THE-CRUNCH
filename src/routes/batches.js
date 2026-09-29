@@ -833,7 +833,7 @@ router.post("/default", async (req, res) => {
     }
 
     const [inventoryRows] = await conn.query(
-      `SELECT COALESCE(i.Stock, m.Stock, 0) AS stock
+      `SELECT COALESCE(i.Stock, 0) AS stock
        FROM Menu m
        LEFT JOIN Inventory i ON i.Product_ID = m.Product_ID
        WHERE m.Product_ID = ?
