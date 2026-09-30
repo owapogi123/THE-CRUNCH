@@ -56,7 +56,7 @@ const usersRoutes = require("./routes/userRoutes");
 app.use("/api/users", usersRoutes);
 const productRoutes = require("./routes/productRoutes");
 app.use("/api/products", productRoutes);
-const purchaseOrdersRouter = require("./routes/Purchaseorders");
+const purchaseOrdersRouter = require("./routes/purchaseOrdersRoutes");
 app.use("/api/purchase-orders", purchaseOrdersRouter);
 
 // inventory and batch endpoints (new)
