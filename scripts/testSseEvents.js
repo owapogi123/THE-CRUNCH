@@ -3,6 +3,7 @@ const express = require("express");
 const jwt = require("jsonwebtoken");
 
 process.env.NODE_ENV = "test";
+process.env.JWT_SECRET ||= "sse-events-test-only-secret";
 
 const {
   EVENT_TOPICS,
@@ -12,7 +13,7 @@ const {
 } = require("../src/services/applicationEvents");
 const { createEventRouter } = require("../src/routes/eventRoutes");
 
-const secret = process.env.JWT_SECRET || "secretkey";
+const secret = process.env.JWT_SECRET;
 
 function token(payload) {
   return jwt.sign(payload, secret, { expiresIn: "5m" });

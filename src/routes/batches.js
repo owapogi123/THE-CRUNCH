@@ -7,6 +7,10 @@ const {
   getProductItemTypeExpression,
   assertProductsMatchItemType,
 } = require("../utils/productItemType");
+const {
+  requireInventoryManagerAccess,
+  requireKitchenInventoryAccess,
+} = require("../middleware/staffAccess");
 
 async function ensureBatchesTable() {
   const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
@@ -278,7 +282,7 @@ router.get("/kitchen/today", async (_req, res) => {
   }
 });
 
-router.post("/kitchen", async (req, res) => {
+router.post("/kitchen", requireKitchenInventoryAccess, async (req, res) => {
   const { product_id, quantity, storage_batch_id } = req.body;
 
   const productId = toNumber(product_id);
@@ -357,7 +361,7 @@ router.post("/kitchen", async (req, res) => {
   }
 });
 
-router.patch("/kitchen/:kitchen_batch_id/supplement", async (req, res) => {
+router.patch("/kitchen/:kitchen_batch_id/supplement", requireKitchenInventoryAccess, async (req, res) => {
   const kitchenBatchId = toNumber(req.params.kitchen_batch_id);
   const qty = toNumber(req.body.qty);
   const storageBatchId =
@@ -428,7 +432,7 @@ router.patch("/kitchen/:kitchen_batch_id/supplement", async (req, res) => {
   }
 });
 
-router.patch("/kitchen/:kitchen_batch_id/return", async (req, res) => {
+router.patch("/kitchen/:kitchen_batch_id/return", requireKitchenInventoryAccess, async (req, res) => {
   const kitchenBatchId = toNumber(req.params.kitchen_batch_id);
   const requestedQty =
     req.body && req.body.qty !== undefined ? toNumber(req.body.qty) : null;
@@ -568,7 +572,7 @@ router.patch("/kitchen/:kitchen_batch_id/return", async (req, res) => {
   }
 });
 
-router.patch("/kitchen/:kitchen_batch_id/reconcile", async (req, res) => {
+router.patch("/kitchen/:kitchen_batch_id/reconcile", requireKitchenInventoryAccess, async (req, res) => {
   const kitchenBatchId = toNumber(req.params.kitchen_batch_id);
 
   if (!kitchenBatchId) {
@@ -731,7 +735,7 @@ router.get("/active", async (_req, res) => {
 });
 
 // POST create default batch from current stock (no stock increment)
-router.post("/default", async (req, res) => {
+router.post("/default", requireInventoryManagerAccess, async (req, res) => {
   const productId = toNumber(req.body.product_id);
 
   if (!productId) {
@@ -887,7 +891,7 @@ router.post("/default", async (req, res) => {
 });
 
 // POST add a new batch
-router.post("/", async (req, res) => {
+router.post("/", requireInventoryManagerAccess, async (req, res) => {
   const { product_id, quantity, unit, received_date, expiry_date, notes } =
     req.body;
 
@@ -959,7 +963,7 @@ router.post("/", async (req, res) => {
 });
 
 // POST withdraw using FIFO or FEFO
-router.post("/withdraw", async (req, res) => {
+router.post("/withdraw", requireInventoryManagerAccess, async (req, res) => {
   const {
     product_id,
     qty_needed,
@@ -1102,7 +1106,7 @@ router.post("/withdraw", async (req, res) => {
 });
 
 // PUT edit batch (expiry/status/notes/unit and quantities)
-router.put("/:batch_id", async (req, res) => {
+router.put("/:batch_id", requireInventoryManagerAccess, async (req, res) => {
   const batchId = toNumber(req.params.batch_id);
   if (!batchId) {
     return res.status(400).json({ error: "Invalid batch_id" });
@@ -1241,7 +1245,7 @@ router.put("/:batch_id", async (req, res) => {
 });
 
 // POST return stock back to a batch
-router.post("/return", async (req, res) => {
+router.post("/return", requireInventoryManagerAccess, async (req, res) => {
   const { batch_id, return_qty, recorded_by } = req.body;
 
   const batchId = toNumber(batch_id);

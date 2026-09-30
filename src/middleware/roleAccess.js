@@ -1,4 +1,8 @@
 const SUPERUSER_ROLE = "administrator";
+const PERSISTED_ORDER_SETTLEMENT_ROLES = Object.freeze([
+  SUPERUSER_ROLE,
+  "inventory_manager",
+]);
 
 function normalizeRole(value) {
   return String(value ?? "").trim().toLowerCase();
@@ -15,8 +19,14 @@ function canAccessRoles(value, allowedRoles) {
   return allowedRoles.some((allowedRole) => normalizeRole(allowedRole) === role);
 }
 
+function canSettlePersistedOrders(value) {
+  return canAccessRoles(value, PERSISTED_ORDER_SETTLEMENT_ROLES);
+}
+
 module.exports = {
+  PERSISTED_ORDER_SETTLEMENT_ROLES,
   SUPERUSER_ROLE,
+  canSettlePersistedOrders,
   normalizeRole,
   isSuperuserRole,
   canAccessRoles,

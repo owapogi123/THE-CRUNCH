@@ -1,5 +1,9 @@
 const router = require("express").Router();
 const db = require("../config/db");
+const {
+  requireInventoryManagerAccess,
+  requireKitchenInventoryAccess,
+} = require("../middleware/staffAccess");
 
 async function addColumnIfMissing(conn, tableName, columnName, definition) {
   const [rows] = await conn.query(`SHOW COLUMNS FROM \`${tableName}\` LIKE ?`, [
@@ -202,7 +206,7 @@ async function findLatestPopulatedReportDate() {
   return rows.length > 0 ? String(rows[0].report_date) : null;
 }
 
-router.get("/today", async (req, res) => {
+router.get("/today", requireKitchenInventoryAccess, async (req, res) => {
   try {
     const reportDate = toDateString(req.query.date);
     let payload = await buildReportPayload(reportDate);
@@ -224,14 +228,14 @@ router.get("/today", async (req, res) => {
   }
 });
 
-router.put("/today", async (req, res) => {
+router.put("/today", requireKitchenInventoryAccess, async (req, res) => {
   let conn;
   try {
     const reportDate = toDateString(req.body.report_date);
     const status = ["draft", "submitted"].includes(String(req.body.status || "").toLowerCase())
       ? String(req.body.status).toLowerCase()
       : "draft";
-    const preparedBy = req.body.prepared_by == null ? null : Number(req.body.prepared_by);
+    const preparedBy = Number(req.user?.userId);
     const items = Array.isArray(req.body.items) ? req.body.items : [];
 
     conn = await db.getConnection();
@@ -294,11 +298,11 @@ router.put("/today", async (req, res) => {
   }
 });
 
-router.patch("/:reportId/finalize", async (req, res) => {
+router.patch("/:reportId/finalize", requireInventoryManagerAccess, async (req, res) => {
   try {
     await ensureKitchenUsageTables();
     const reportId = Number(req.params.reportId);
-    const finalizedBy = req.body.finalized_by == null ? null : Number(req.body.finalized_by);
+    const finalizedBy = Number(req.user?.userId);
 
     if (!Number.isFinite(reportId) || reportId <= 0) {
       return res.status(400).json({ message: "Invalid report id" });

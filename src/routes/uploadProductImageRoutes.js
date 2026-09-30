@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const multer = require("multer");
+const { requireInventoryManagerAccess } = require("../middleware/staffAccess");
 
 const uploadRoot = path.join(__dirname, "..", "..", "uploads", "products");
 fs.mkdirSync(uploadRoot, { recursive: true });
@@ -61,17 +62,22 @@ const upload = multer({
   },
 });
 
-router.post("/", upload.single("image"), (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ message: "Product image is required" });
-  }
+router.post(
+  "/",
+  requireInventoryManagerAccess,
+  upload.single("image"),
+  (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ message: "Product image is required" });
+    }
 
-  return res.json({
-    message: "Product image uploaded",
-    fileUrl: `/uploads/products/${encodeURIComponent(req.file.filename)}`,
-    originalName: req.file.originalname || null,
-  });
-});
+    return res.json({
+      message: "Product image uploaded",
+      fileUrl: `/uploads/products/${encodeURIComponent(req.file.filename)}`,
+      originalName: req.file.originalname || null,
+    });
+  },
+);
 
 router.use((err, _req, res, next) => {
   if (!err) return next();

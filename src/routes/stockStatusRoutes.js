@@ -6,6 +6,7 @@ const {
   getProductItemTypeExpression,
   assertProductsMatchItemType,
 } = require("../utils/productItemType");
+const { requireInventoryManagerAccess } = require("../middleware/staffAccess");
 
 function normaliseRecordedBy(recorded_by) {
   if (recorded_by == null) return null;
@@ -123,7 +124,7 @@ router.get("/today", async (req, res) => {
 
 // POST /api/stock-status
 // Handles: initial, supplementary (withdrawal) and return
-router.post("/", async (req, res) => {
+router.post("/", requireInventoryManagerAccess, async (req, res) => {
   let conn;
   try {
     const { product_id, type, quantity, recorded_by } = req.body;
@@ -225,7 +226,7 @@ router.post("/", async (req, res) => {
 });
 
 // POST /api/stock-status/spoilage
-router.post("/spoilage", async (req, res) => {
+router.post("/spoilage", requireInventoryManagerAccess, async (req, res) => {
   let conn;
   try {
     const { product_id, quantity, recorded_by } = req.body;

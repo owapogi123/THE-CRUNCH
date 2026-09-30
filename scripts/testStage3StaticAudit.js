@@ -22,8 +22,8 @@ for (const file of pagesWithoutBackendIntervals) {
 const cookSource = read("Frontend/src/pages/Order.tsx");
 assert.equal(/setInterval\s*\(\s*fetchAll/.test(cookSource), false);
 assert.equal((cookSource.match(/\bsetInterval\s*\(/g) || []).length, 2);
-assert.match(cookSource, /setElapsed\(s\)/);
-assert.match(cookSource, /setCurrentTime\(new Date\(\)\)/);
+assert.match(cookSource, /setNow\(Date\.now\(\)\)/);
+assert.match(cookSource, /setNow\(new Date\(\)\)/);
 
 for (const file of [
   ...pagesWithoutBackendIntervals,

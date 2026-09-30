@@ -1,16 +1,18 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const jwt = require("jsonwebtoken");
+process.env.JWT_SECRET ||= "role-access-test-only-secret";
 const {
   isSuperuserRole,
   canAccessRoles,
+  canSettlePersistedOrders,
 } = require("./roleAccess");
 const { requireCookViewAccess } = require("./cookViewAccess");
 
 function runCookViewMiddleware(role) {
   const token = jwt.sign(
     { userId: 1, role },
-    process.env.JWT_SECRET || "secretkey",
+    process.env.JWT_SECRET,
   );
   const result = { nextCalled: false, status: null, body: null };
   const req = { headers: { authorization: `Bearer ${token}` } };
@@ -54,4 +56,11 @@ test("guarded staff APIs accept Admin and retain customer denial", () => {
   const customerResult = runCookViewMiddleware("customer");
   assert.equal(customerResult.nextCalled, false);
   assert.equal(customerResult.status, 403);
+});
+
+test("persisted order settlements are limited to stock manager and administrator", () => {
+  assert.equal(canSettlePersistedOrders("administrator"), true);
+  assert.equal(canSettlePersistedOrders("inventory_manager"), true);
+  assert.equal(canSettlePersistedOrders("cashier"), false);
+  assert.equal(canSettlePersistedOrders("customer"), false);
 });

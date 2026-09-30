@@ -6,15 +6,13 @@ const {
   verifyBypassCheckout,
 } = require("../services/paymongoMode");
 const { loadAuthoritativeOrderItems } = require("../services/orderItemService");
-
-const fetchFn = (...args) =>
-  typeof fetch === "function"
-    ? fetch(...args)
-    : import("node-fetch").then(({ default: nodeFetch }) => nodeFetch(...args));
-
-function getPayMongoSecretKey() {
-  return String(process.env.PAYMONGO_SECRET_KEY || "").trim();
-}
+const { requireAuthenticatedUser } = require("../middleware/cookViewAccess");
+const { normalizeRole } = require("../middleware/roleAccess");
+const {
+  createCheckoutContextToken,
+  payMongoRequest,
+  verifyPayMongoCheckoutSession,
+} = require("../services/paymongoCheckoutService");
 
 function getPayMongoSuccessUrl() {
   return String(process.env.PAYMONGO_SUCCESS_URL || "").trim();
@@ -24,30 +22,10 @@ function getPayMongoCancelUrl() {
   return String(process.env.PAYMONGO_CANCEL_URL || "").trim();
 }
 
-function getPayMongoBaseUrl() {
-  return String(
-    process.env.PAYMONGO_API_BASE_URL || "https://api.paymongo.com/v1",
-  ).replace(/\/+$/, "");
-}
-
-function hasPaidCheckout(attributes) {
-  const checkoutStatus = String(attributes?.status || "")
-    .toLowerCase()
-    .trim();
-  const paymentStatus = String(
-    attributes?.payments?.[0]?.attributes?.status ||
-      attributes?.payments?.[0]?.status ||
-      "",
-  )
-    .toLowerCase()
-    .trim();
-
-  return (
-    checkoutStatus === "paid" ||
-    checkoutStatus === "completed" ||
-    paymentStatus === "paid" ||
-    paymentStatus === "completed"
-  );
+function requireCustomerCheckoutActor(req, res, next) {
+  const role = normalizeRole(req.user?.role);
+  if (role === "customer" || role === "user") return next();
+  return res.status(403).json({ message: "Customer checkout access required" });
 }
 
 async function loadBillingSettings() {
@@ -96,60 +74,10 @@ function calculateBillingTotals(items, settings) {
   return { subtotal, taxAmount, serviceChargeAmount, grandTotal };
 }
 
-async function payMongoRequest(path, options = {}) {
-  if (!isPayMongoEnabled()) {
-    const error = new Error("PayMongo provider requests are disabled");
-    error.statusCode = 503;
-    throw error;
-  }
-
-  const secretKey = getPayMongoSecretKey();
-  if (!secretKey) {
-    const error = new Error("PAYMONGO_SECRET_KEY is not configured");
-    error.statusCode = 500;
-    throw error;
-  }
-
-  const headers = {
-    Accept: "application/json",
-    Authorization: `Basic ${Buffer.from(`${secretKey}:`).toString("base64")}`,
-    ...options.headers,
-  };
-
-  const response = await fetchFn(`${getPayMongoBaseUrl()}${path}`, {
-    ...options,
-    headers,
-  });
-  const text = await response.text();
-  let payload = {};
-
-  if (text) {
-    try {
-      payload = JSON.parse(text);
-    } catch (_) {
-      payload = { raw: text };
-    }
-  }
-
-  if (!response.ok) {
-    const message =
-      payload?.errors?.[0]?.detail ||
-      payload?.errors?.[0]?.code ||
-      payload?.message ||
-      `PayMongo request failed with HTTP ${response.status}`;
-    const error = new Error(message);
-    error.statusCode = response.status;
-    error.payload = payload;
-    throw error;
-  }
-
-  return payload;
-}
-
-router.post("/create-checkout", async (req, res) => {
+async function createCheckoutHandler(req, res) {
   try {
-    const { items, total, customerUserId, customerName, customerEmail } =
-      req.body || {};
+    const { items, customerName, customerEmail } = req.body || {};
+    const customerUserId = Number(req.user?.userId);
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: "Order items are required" });
@@ -190,21 +118,12 @@ router.post("/create-checkout", async (req, res) => {
       });
     }
 
-    if (totalPesos < 1) {
+    if (totalPesos < 20) {
       return res.status(400).json({
         message:
           "PayMongo QRPh minimum test amount is ₱20. Please use at least ₱20 for online payment testing.",
       });
     }
-
-    authoritativeItems.forEach((item) => {
-      console.log("PAYMONGO DEBUG", {
-        itemName: item.name,
-        itemPricePesos: Number(item.price),
-        amountSentCentavos: Math.round(Number(item.price) * 100),
-        quantity: Number(item.qty || item.quantity || 1),
-      });
-    });
 
     const lineItems = authoritativeItems.map((item) => ({
       amount: Math.round(Number(item.price || 0) * 100),
@@ -213,25 +132,31 @@ router.post("/create-checkout", async (req, res) => {
       name: item.name,
       quantity: Math.max(1, Number(item.qty || item.quantity || 1)),
     }));
-    if (totals.taxAmount > 0) {
-      lineItems.push({
-        amount: Math.round(totals.taxAmount * 100),
-        currency: "PHP",
-        description: "Tax",
-        name: "Tax",
-        quantity: 1,
+    const productLineTotal = lineItems.reduce(
+      (sum, lineItem) => sum + lineItem.amount * lineItem.quantity,
+      0,
+    );
+    const billingAdjustment = totalAmount - productLineTotal;
+    if (billingAdjustment < 0) {
+      return res.status(409).json({
+        message: "Authoritative checkout line items do not match the order total",
       });
     }
-    if (totals.serviceChargeAmount > 0) {
+    if (billingAdjustment > 0) {
       lineItems.push({
-        amount: Math.round(totals.serviceChargeAmount * 100),
+        amount: billingAdjustment,
         currency: "PHP",
-        description: "Service Charge",
-        name: "Service Charge",
+        description: "Tax and service charge",
+        name: "Tax and service charge",
         quantity: 1,
       });
     }
 
+    const paymentContext = createCheckoutContextToken({
+      customerUserId,
+      items: authoritativeItems,
+      expectedAmountCentavos: totalAmount,
+    });
     const payload = {
       data: {
         attributes: {
@@ -248,18 +173,11 @@ router.post("/create-checkout", async (req, res) => {
           success_url: process.env.PAYMONGO_SUCCESS_URL,
           cancel_url: process.env.PAYMONGO_CANCEL_URL,
           metadata: {
-            customerUserId: customerUserId ? String(customerUserId) : "",
-            submittedTotal: String(total || 0),
-            subtotal: String(totals.subtotal),
-            taxAmount: String(totals.taxAmount),
-            serviceChargeAmount: String(totals.serviceChargeAmount),
-            grandTotal: String(totals.grandTotal),
+            payment_context: paymentContext,
           },
         },
       },
     };
-
-    console.log("PayMongo payload:", JSON.stringify(payload, null, 2));
 
     const session = await payMongoRequest("/checkout_sessions", {
       method: "POST",
@@ -280,9 +198,16 @@ router.post("/create-checkout", async (req, res) => {
       error: err.payload || null,
     });
   }
-});
+}
 
-router.get("/verify/:checkoutSessionId", async (req, res) => {
+router.post(
+  "/create-checkout",
+  requireAuthenticatedUser,
+  requireCustomerCheckoutActor,
+  createCheckoutHandler,
+);
+
+async function verifyCheckoutHandler(req, res) {
   try {
     const checkoutSessionId = String(req.params.checkoutSessionId || "").trim();
     if (!checkoutSessionId) {
@@ -290,28 +215,18 @@ router.get("/verify/:checkoutSessionId", async (req, res) => {
     }
 
     if (!isPayMongoEnabled()) {
-      return res.json(verifyBypassCheckout(checkoutSessionId));
+      return res.json(
+        verifyBypassCheckout(checkoutSessionId, {
+          customerUserId: Number(req.user?.userId),
+        }),
+      );
     }
 
-    const session = await payMongoRequest(
-      `/checkout_sessions/${checkoutSessionId}`,
-      {
-        method: "GET",
-      },
+    return res.json(
+      await verifyPayMongoCheckoutSession(checkoutSessionId, {
+        customerUserId: Number(req.user?.userId),
+      }),
     );
-    const attributes = session?.data?.attributes || {};
-    const paid = hasPaidCheckout(attributes);
-
-    return res.json({
-      checkoutSessionId,
-      paid,
-      status: paid ? "paid" : attributes.status || "active",
-      paymentReference:
-        attributes.reference_number ||
-        attributes.payments?.[0]?.id ||
-        checkoutSessionId,
-      checkoutUrl: attributes.checkout_url || null,
-    });
   } catch (err) {
     console.error(
       "GET /api/paymongo/verify/:checkoutSessionId error:",
@@ -322,7 +237,14 @@ router.get("/verify/:checkoutSessionId", async (req, res) => {
       error: err.payload || null,
     });
   }
-});
+}
+
+router.get(
+  "/verify/:checkoutSessionId",
+  requireAuthenticatedUser,
+  requireCustomerCheckoutActor,
+  verifyCheckoutHandler,
+);
 
 router.get("/methods", async (req, res) => {
   try {
@@ -349,3 +271,6 @@ router.get("/methods", async (req, res) => {
 });
 
 module.exports = router;
+module.exports.createCheckoutHandler = createCheckoutHandler;
+module.exports.requireCustomerCheckoutActor = requireCustomerCheckoutActor;
+module.exports.verifyCheckoutHandler = verifyCheckoutHandler;

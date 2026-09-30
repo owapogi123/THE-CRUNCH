@@ -5,12 +5,14 @@ const { ensureProductSchema } = require("./services/productSchemaService");
 const {
   initializeStockManagerSchema,
 } = require("./services/stockManagerSchemaService");
+const { assertJwtSecretConfigured } = require("./services/jwtConfig");
 
 // default port 5000 to match frontend proxy, but allow override
 const PORT = process.env.PORT || 5000;
 
 async function startServer() {
   try {
+    assertJwtSecretConfigured();
     await setup({
       log: console,
     });

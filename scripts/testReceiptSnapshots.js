@@ -7,6 +7,7 @@ const mysql = require("mysql2/promise");
 require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
 
 process.env.NODE_ENV = "test";
+process.env.JWT_SECRET ||= "receipt-snapshot-test-only-secret";
 const databaseName = `the_crunch_receipt_verify_${Date.now()}_${process.pid}`;
 process.env.DB_NAME = databaseName;
 
@@ -120,7 +121,7 @@ async function main() {
     candidate.once("error", reject);
   });
   const port = server.address().port;
-  const secret = process.env.JWT_SECRET || "secretkey";
+  const secret = process.env.JWT_SECRET;
   const adminToken = jwt.sign(
     { id: 1, userId: 1, role: "administrator", username: "receipt-admin" },
     secret,

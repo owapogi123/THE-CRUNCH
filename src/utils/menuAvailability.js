@@ -20,6 +20,70 @@ function normalizeManualStatus(value) {
     : "Available";
 }
 
+function isManualOverrideEnabled(row = {}) {
+  return Number(row.manual_override ?? row.manualOverride ?? 0) === 1;
+}
+
+function computeAvailableServings(ingredients) {
+  if (!Array.isArray(ingredients) || ingredients.length === 0) {
+    return null;
+  }
+
+  let servings = Number.POSITIVE_INFINITY;
+  for (const ingredient of ingredients) {
+    const quantityRequired = Number(ingredient.quantity_required ?? 0);
+    if (!Number.isFinite(quantityRequired) || quantityRequired <= 0) {
+      return 0;
+    }
+    const availableStock = Number(ingredient.stock ?? 0);
+    servings = Math.min(servings, availableStock / quantityRequired);
+  }
+
+  return Number.isFinite(servings) ? servings : null;
+}
+
+function isAutoMenuMissingIngredients(row = {}, ingredients = []) {
+  const itemType = String(row.item_type ?? row.itemType ?? "menu_item")
+    .trim()
+    .toLowerCase();
+  return (
+    itemType === "menu_item" &&
+    !isManualOverrideEnabled(row) &&
+    ingredients.length === 0
+  );
+}
+
+function resolveProductAvailabilityStatus(row = {}, ingredients = []) {
+  const manualStatus = String(
+    row.manual_status ?? row.manualStatus ?? "Available",
+  )
+    .trim()
+    .toLowerCase();
+
+  if (isManualOverrideEnabled(row)) {
+    return manualStatus === "out of stock" || manualStatus === "unavailable"
+      ? "Out of Stock"
+      : "Available";
+  }
+
+  const itemType = String(row.item_type ?? row.itemType ?? "menu_item")
+    .trim()
+    .toLowerCase();
+  if (itemType === "menu_item") {
+    if (isAutoMenuMissingIngredients(row, ingredients)) {
+      return "Out of Stock";
+    }
+    if (ingredients.length === 0) return "Out of Stock";
+    return (computeAvailableServings(ingredients) ?? 0) > 0
+      ? "Available"
+      : "Out of Stock";
+  }
+
+  return Number(row.remainingStock ?? row.stock ?? 0) > 0
+    ? "Available"
+    : "Out of Stock";
+}
+
 function deriveManualOverrideState(payload = {}) {
   const hasExplicitOverride =
     payload.override_mode !== undefined ||
@@ -233,10 +297,13 @@ async function fetchMenuIngredients(db, menuIds) {
 }
 
 module.exports = {
+  computeAvailableServings,
   deriveManualOverrideState,
   ensureMenuAvailabilitySchema,
   fetchMenuIngredients,
+  isAutoMenuMissingIngredients,
   normalizeManualStatus,
   normalizeMenuIngredients,
   replaceMenuIngredients,
+  resolveProductAvailabilityStatus,
 };

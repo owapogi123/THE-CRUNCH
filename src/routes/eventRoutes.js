@@ -2,8 +2,8 @@ const express = require("express");
 const jwt = require("jsonwebtoken");
 const { normalizeRole } = require("../middleware/roleAccess");
 const { subscribe } = require("../services/applicationEvents");
+const { getJwtSecret } = require("../services/jwtConfig");
 
-const JWT_SECRET = process.env.JWT_SECRET || "secretkey";
 const STAFF_ROLES = new Set([
   "administrator",
   "cashier",
@@ -22,7 +22,7 @@ function authenticateEventStream(req, res, next) {
 
   try {
     const token = authHeader.slice("Bearer ".length).trim();
-    req.user = jwt.verify(token, JWT_SECRET);
+    req.user = jwt.verify(token, getJwtSecret());
   } catch {
     return res.status(401).json({ message: "Invalid or expired token" });
   }

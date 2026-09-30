@@ -1,10 +1,12 @@
 const router = require("express").Router();
 const db = require("../config/db");
 const {
+    computeAvailableServings,
     deriveManualOverrideState,
     fetchMenuIngredients,
     normalizeMenuIngredients,
     replaceMenuIngredients,
+    resolveProductAvailabilityStatus,
 } = require("../utils/menuAvailability");
 const {
     MENU_ITEM,
@@ -24,6 +26,7 @@ const {
     isDevelopmentTimingEnabled,
     runWithDbQueryTiming,
 } = require("../services/requestTiming");
+const { requireInventoryManagerAccess } = require("../middleware/staffAccess");
 
 const PRODUCT_NAME_MAX_LENGTH = 100;
 const PRODUCT_DESCRIPTION_MAX_LENGTH = 100;
@@ -159,50 +162,13 @@ function normalizePromoValues(isPromotional, promoPrice, promoLabel) {
     };
 }
 
-function computeAvailableServings(ingredients) {
-    if (!ingredients || ingredients.length === 0) {
-        return null;
-    }
-
-    let servings = Number.POSITIVE_INFINITY;
-    for (const ingredient of ingredients) {
-        const quantityRequired = Number(ingredient.quantity_required ?? 0);
-        if (!Number.isFinite(quantityRequired) || quantityRequired <= 0) {
-            return 0;
-        }
-        const availableStock = Number(ingredient.stock ?? 0);
-        servings = Math.min(servings, availableStock / quantityRequired);
-    }
-
-    return Number.isFinite(servings) ? servings : null;
-}
-
-function resolveAvailabilityStatus(row, ingredients) {
-    const manualOverride = Number(row.manual_override ?? 0) === 1;
-    const manualStatus = String(row.manual_status ?? "Available")
-        .trim()
-        .toLowerCase();
-    if (manualOverride) {
-        return manualStatus === "out of stock" || manualStatus === "unavailable"
-            ? "Out of Stock"
-            : "Available";
-    }
-
-    if (ingredients.length > 0) {
-        const availableServings = computeAvailableServings(ingredients);
-        return (availableServings ?? 0) > 0 ? "Available" : "Out of Stock";
-    }
-
-    return Number(row.remainingStock ?? 0) > 0 ? "Available" : "Out of Stock";
-}
-
 function enrichIngredientAvailability(rows, ingredientMap) {
     return rows.map((row) => {
         const ingredients = (ingredientMap.get(Number(row.id)) ?? []).filter(
             (ingredient) => String(ingredient.item_type || STOCK_ITEM) === STOCK_ITEM,
         );
         const availableServings = computeAvailableServings(ingredients);
-        const availabilityStatus = resolveAvailabilityStatus(row, ingredients);
+        const availabilityStatus = resolveProductAvailabilityStatus(row, ingredients);
         const directStock = Math.max(0, Number(row.remainingStock ?? 0));
         const effectiveStock = ingredients.length > 0
             ? Math.max(0, Math.floor(availableServings ?? 0))
@@ -377,7 +343,7 @@ router.get("/", (req, res) => runWithDbQueryTiming(async (queryTiming) => {
 }));
 
 // ADD product
-router.post("/", async (req, res) => {
+router.post("/", requireInventoryManagerAccess, async (req, res) => {
     try {
         const hasItemTypeColumn = await ensureProductSchema(db);
         const {
@@ -642,7 +608,7 @@ router.post("/", async (req, res) => {
 });
 
 // UPDATE product
-router.put("/:id", async (req, res) => {
+router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
     try {
         const hasItemTypeColumn = await ensureProductSchema(db);
 
@@ -1053,7 +1019,7 @@ router.put("/:id", async (req, res) => {
 });
 
 // DELETE product
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", requireInventoryManagerAccess, async (req, res) => {
     try {
         await ensureProductSchema(db);
         const productId = Number(req.params.id);

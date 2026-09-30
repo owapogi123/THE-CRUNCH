@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const db = require("../config/db");
 const { SUPERUSER_ROLE } = require("../middleware/roleAccess");
+const { requireAdministratorAccess } = require("../middleware/staffAccess");
 
 const DEFAULT_ROLE_PERMISSIONS = {
   administrator: {
@@ -14,7 +15,7 @@ const DEFAULT_ROLE_PERMISSIONS = {
     settings: true,
   },
   cashier: {
-    overview: false,
+    overview: true,
     orders: true,
     menuManagement: false,
     menus: true,
@@ -87,6 +88,7 @@ function normalizePermissionsPayload(payload) {
   for (const role of COOK_VIEW_PERMISSION_ROLES) {
     next[role].orders = true;
   }
+  next.cashier.overview = true;
 
   return next;
 }
@@ -135,6 +137,7 @@ async function loadRolePermissions() {
   for (const role of COOK_VIEW_PERMISSION_ROLES) {
     merged[role].orders = true;
   }
+  merged.cashier.overview = true;
 
   let roleLocks = normalizePermissionRoleLocks(DEFAULT_PERMISSION_ROLE_LOCKS);
   if (lockRows.length > 0 && lockRows[0].settings_json) {
@@ -346,7 +349,7 @@ router.get("/", async (_req, res) => {
   }
 });
 
-router.post("/", async (req, res) => {
+router.post("/", requireAdministratorAccess, async (req, res) => {
   try {
     const sanitized = sanitizeSettingsPayload(req.body);
     await db.query(
@@ -378,7 +381,7 @@ router.get("/permissions", async (_req, res) => {
   }
 });
 
-router.put("/permissions", async (req, res) => {
+router.put("/permissions", requireAdministratorAccess, async (req, res) => {
   try {
     const permissions = normalizePermissionsPayload(
       req.body?.permissions ?? req.body,
@@ -445,7 +448,7 @@ router.get("/inventory-categories", async (req, res) => {
   }
 });
 
-router.post("/inventory-categories", async (req, res) => {
+router.post("/inventory-categories", requireAdministratorAccess, async (req, res) => {
   try {
     const name = normalizeName(req.body?.name, "Category name");
     const dateTrackingType = normalizeEnum(
@@ -501,7 +504,7 @@ router.post("/inventory-categories", async (req, res) => {
   }
 });
 
-router.patch("/inventory-categories/:id", async (req, res) => {
+router.patch("/inventory-categories/:id", requireAdministratorAccess, async (req, res) => {
   try {
     const categoryId = Number(req.params.id);
     if (!Number.isFinite(categoryId) || categoryId <= 0) {
@@ -610,7 +613,7 @@ router.get("/menu-categories", async (req, res) => {
   }
 });
 
-router.post("/menu-categories", async (req, res) => {
+router.post("/menu-categories", requireAdministratorAccess, async (req, res) => {
   try {
     const name = normalizeName(req.body?.name, "Menu category name");
     const displayOrder = Object.prototype.hasOwnProperty.call(
@@ -665,7 +668,7 @@ router.post("/menu-categories", async (req, res) => {
   }
 });
 
-router.patch("/menu-categories/:id", async (req, res) => {
+router.patch("/menu-categories/:id", requireAdministratorAccess, async (req, res) => {
   try {
     const categoryId = Number(req.params.id);
     if (!Number.isFinite(categoryId) || categoryId <= 0) {
@@ -762,7 +765,7 @@ router.get("/discount-types", async (req, res) => {
   }
 });
 
-router.post("/discount-types", async (req, res) => {
+router.post("/discount-types", requireAdministratorAccess, async (req, res) => {
   try {
     const name = normalizeString(req.body?.name);
     const percentage = normalizePercentage(
@@ -807,7 +810,7 @@ router.post("/discount-types", async (req, res) => {
   }
 });
 
-router.patch("/discount-types/:id", async (req, res) => {
+router.patch("/discount-types/:id", requireAdministratorAccess, async (req, res) => {
   try {
     const discountId = Number(req.params.id);
     if (!Number.isFinite(discountId) || discountId <= 0) {
@@ -879,7 +882,7 @@ router.patch("/discount-types/:id", async (req, res) => {
   }
 });
 
-router.delete("/inventory-categories/:id", async (req, res) => {
+router.delete("/inventory-categories/:id", requireAdministratorAccess, async (req, res) => {
   try {
     const categoryId = Number(req.params.id);
     if (!Number.isFinite(categoryId) || categoryId <= 0) {
@@ -934,7 +937,7 @@ router.get("/inventory-units", async (req, res) => {
   }
 });
 
-router.post("/inventory-units", async (req, res) => {
+router.post("/inventory-units", requireAdministratorAccess, async (req, res) => {
   try {
     const name = normalizeName(req.body?.name, "Unit name");
     const abbreviation = normalizeOptionalString(req.body?.abbreviation);
@@ -998,7 +1001,7 @@ router.post("/inventory-units", async (req, res) => {
   }
 });
 
-router.patch("/inventory-units/:id", async (req, res) => {
+router.patch("/inventory-units/:id", requireAdministratorAccess, async (req, res) => {
   try {
     const unitId = Number(req.params.id);
     if (!Number.isFinite(unitId) || unitId <= 0) {
@@ -1091,7 +1094,7 @@ router.patch("/inventory-units/:id", async (req, res) => {
   }
 });
 
-router.delete("/inventory-units/:id", async (req, res) => {
+router.delete("/inventory-units/:id", requireAdministratorAccess, async (req, res) => {
   try {
     const unitId = Number(req.params.id);
     if (!Number.isFinite(unitId) || unitId <= 0) {

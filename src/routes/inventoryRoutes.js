@@ -9,7 +9,14 @@ const {
   ensureProductsItemTypeSchema,
   getProductItemTypeExpression,
 } = require("../utils/productItemType");
-const { requireCookViewAccess } = require("../middleware/cookViewAccess");
+const {
+  requireCookViewAccess,
+  requireRoleAccess,
+} = require("../middleware/cookViewAccess");
+const {
+  requireInventoryManagerAccess,
+  requireKitchenInventoryAccess,
+} = require("../middleware/staffAccess");
 
 function normalizeBooleanFlag(value, fallback = true) {
   if (value === undefined || value === null || value === "") return fallback;
@@ -500,7 +507,12 @@ router.get("/", requireCookViewAccess, async (req, res) => {
   }
 });
 
-router.get("/alerts", async (_req, res) => {
+const requireInventoryAlertAccess = requireRoleAccess(
+  ["administrator", "inventory_manager"],
+  "Inventory alert access denied",
+);
+
+router.get("/alerts", requireInventoryAlertAccess, async (_req, res) => {
   try {
     const hasItemTypeColumn = true;
     const productItemTypeExpr = getProductItemTypeExpression(
@@ -587,7 +599,7 @@ router.get("/alerts", async (_req, res) => {
 });
 
 // PUT /api/inventory/:inventory_id
-router.put("/:inventory_id", async (req, res) => {
+router.put("/:inventory_id", requireInventoryManagerAccess, async (req, res) => {
   try {
     const inventoryId = Number(req.params.inventory_id);
     if (!Number.isFinite(inventoryId) || inventoryId <= 0) {
@@ -785,7 +797,7 @@ router.put("/:inventory_id", async (req, res) => {
 });
 
 // POST /api/inventory/batches
-router.post("/batches", async (req, res) => {
+router.post("/batches", requireInventoryManagerAccess, async (req, res) => {
   try {
     const { productId, productName, quantity, unit, expiresAt } = req.body;
     const qty = Number(quantity) || 0;
@@ -868,7 +880,7 @@ router.post("/batches", async (req, res) => {
 });
 
 // POST /api/inventory/batches/:batchId/return
-router.post("/batches/:batchId/return", async (req, res) => {
+router.post("/batches/:batchId/return", requireInventoryManagerAccess, async (req, res) => {
   try {
     const { batchId } = req.params;
     const qtyToReturn = Number(req.body.quantity) || 0;
@@ -951,7 +963,7 @@ router.get("/daily-usage", requireCookViewAccess, async (req, res) => {
   }
 });
 
-router.post("/daily-usage", requireCookViewAccess, async (req, res) => {
+router.post("/daily-usage", requireKitchenInventoryAccess, async (req, res) => {
   let conn;
   try {
     const reportDate = toReportDateString(req.body.report_date);
@@ -1105,7 +1117,7 @@ router.post("/daily-usage", requireCookViewAccess, async (req, res) => {
   }
 });
 
-router.patch("/daily-usage/:id/finalize", async (req, res) => {
+router.patch("/daily-usage/:id/finalize", requireInventoryManagerAccess, async (req, res) => {
   let conn;
   try {
     const reportId = Number(req.params.id);

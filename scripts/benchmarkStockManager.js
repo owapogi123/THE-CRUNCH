@@ -1,6 +1,7 @@
 "use strict";
 
 require("dotenv").config();
+process.env.JWT_SECRET ||= "stock-manager-benchmark-test-only-secret";
 
 const jwt = require("jsonwebtoken");
 const db = require("../src/config/db");
@@ -44,7 +45,7 @@ const completePageEndpoints = [...firstRenderEndpoints];
 function getAdminToken() {
   return jwt.sign(
     { id: 0, username: "stock-manager-benchmark", role: "administrator" },
-    process.env.JWT_SECRET || "secretkey",
+    process.env.JWT_SECRET,
     { expiresIn: "5m" },
   );
 }

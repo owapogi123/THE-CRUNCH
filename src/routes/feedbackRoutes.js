@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const jwt = require("jsonwebtoken");
 const db = require("../config/db");
+const { getJwtSecret } = require("../services/jwtConfig");
 
 const MAX_FEEDBACK_LENGTH = 200;
 
@@ -16,9 +17,7 @@ function verifyToken(req, res, next) {
   }
 
   try {
-    const secret =
-      process.env.JWT_SECRET || process.env.JWT_KEY || "your_jwt_secret";
-    req.user = jwt.verify(token, secret);
+    req.user = jwt.verify(token, getJwtSecret());
     return next();
   } catch (error) {
     return res.status(401).json({

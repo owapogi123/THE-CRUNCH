@@ -1,5 +1,8 @@
 const db = require("../config/db");
-const { fetchMenuIngredients } = require("../utils/menuAvailability");
+const {
+  fetchMenuIngredients,
+  isAutoMenuMissingIngredients,
+} = require("../utils/menuAvailability");
 const {
   MENU_ITEM,
   STOCK_ITEM,
@@ -175,7 +178,11 @@ async function restoreStockForOrder(
   );
 }
 
-async function buildStockRequirements(items, connection) {
+async function buildStockRequirements(
+  items,
+  connection,
+  { enforceAutoRecipe = false } = {},
+) {
   const menuProductIds = items
     .map((item) => Number(item.productId) || 0)
     .filter((productId) => productId > 0);
@@ -197,6 +204,13 @@ async function buildStockRequirements(items, connection) {
 
     const ingredients = ingredientMap.get(productId) ?? [];
     if (ingredients.length === 0) {
+      if (enforceAutoRecipe && isAutoMenuMissingIngredients(item, ingredients)) {
+        const error = new Error(
+          `"${String(item.product_name || `Product #${productId}`)}" is unavailable because no ingredients are configured.`,
+        );
+        error.statusCode = 409;
+        throw error;
+      }
       const existing = deductions.get(productId) ?? {
         requiredQty: 0,
         name: String(item.product_name || `Product #${productId}`),
@@ -237,7 +251,11 @@ async function buildStockRequirements(items, connection) {
   return deductions;
 }
 
-async function getOrderIngredientDeductions(orderId, connection) {
+async function getOrderIngredientDeductions(
+  orderId,
+  connection,
+  { enforceAutoRecipe = false } = {},
+) {
   const hasItemTypeColumn = await ensureProductsItemTypeSchema(connection);
   const orderedItemTypeExpr = getProductItemTypeExpression(
     hasItemTypeColumn,
@@ -249,6 +267,8 @@ async function getOrderIngredientDeductions(orderId, connection) {
        oi.Product_ID AS productId,
        oi.Quantity AS quantity,
        COALESCE(m.Product_Name, p.name, CONCAT('Product #', oi.Product_ID)) AS product_name,
+       COALESCE(m.manual_override, 0) AS manual_override,
+       COALESCE(m.manual_status, 'Available') AS manual_status,
        ${orderedItemTypeExpr} AS item_type
      FROM order_item oi
      LEFT JOIN Menu m ON m.Product_ID = oi.Product_ID
@@ -257,7 +277,7 @@ async function getOrderIngredientDeductions(orderId, connection) {
     [orderId],
   );
 
-  return buildStockRequirements(items, connection);
+  return buildStockRequirements(items, connection, { enforceAutoRecipe });
 }
 
 async function lockAndValidateStockRequirements(connection, deductions) {
@@ -416,6 +436,13 @@ async function prepareOrderItemsAndStock(connection, items) {
     const ingredientRows = productRows.filter(
       (row) => Number(row.ingredientProductId) > 0,
     );
+    if (isAutoMenuMissingIngredients(product, ingredientRows)) {
+      const error = new Error(
+        `"${product.productName}" is unavailable because no ingredients are configured.`,
+      );
+      error.statusCode = 409;
+      throw error;
+    }
     const stockRows = ingredientRows.length > 0 ? ingredientRows : [product];
     for (const stockRow of stockRows) {
       const stockProductId =
@@ -656,7 +683,9 @@ async function validateStockForOrderItems(items, connection) {
       quantity: Number(item.qty),
     };
   });
-  const deductions = await buildStockRequirements(stockItems, connection);
+  const deductions = await buildStockRequirements(stockItems, connection, {
+    enforceAutoRecipe: true,
+  });
   await lockAndValidateStockRequirements(connection, deductions);
   return deductions;
 }
@@ -714,7 +743,9 @@ async function deductStockForPaidOrder(
       return false;
     }
 
-    const deductions = await getOrderIngredientDeductions(numericOrderId, conn);
+    const deductions = await getOrderIngredientDeductions(numericOrderId, conn, {
+      enforceAutoRecipe: true,
+    });
     const deductionEntries = Array.from(deductions.entries());
     await lockAndValidateStockRequirements(conn, deductions);
 

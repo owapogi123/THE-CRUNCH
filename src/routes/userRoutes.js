@@ -4,8 +4,8 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const db = require("../config/db");
 const { isSuperuserRole } = require("../middleware/roleAccess");
+const { getJwtSecret } = require("../services/jwtConfig");
 
-const JWT_SECRET = process.env.JWT_SECRET || "secretkey";
 const STAFF_FIELD_MAX_LENGTH = 100;
 const STAFF_NAME_MIN_LENGTH = 2;
 const STAFF_PASSWORD_MIN_LENGTH = 8;
@@ -93,7 +93,7 @@ const verifyAdmin = (req, res, next) => {
   const token = authHeader.split(" ")[1];
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, getJwtSecret());
 
     if (!isSuperuserRole(decoded.role)) {
       return res.status(403).json({ message: "Administrator access required" });
@@ -115,7 +115,7 @@ const verifyEmployee = async (req, res, next) => {
 
   let decoded;
   try {
-    decoded = jwt.verify(authHeader.split(" ")[1], JWT_SECRET);
+    decoded = jwt.verify(authHeader.split(" ")[1], getJwtSecret());
   } catch {
     return res.status(401).json({ message: "Invalid or expired token" });
   }

@@ -5,6 +5,7 @@ const {
   ensureProductsItemTypeSchema,
   getProductItemTypeExpression,
 } = require("../utils/productItemType");
+const { requireInventoryManagerAccess } = require("../middleware/staffAccess");
 
 const SUPPLIER_COLUMNS = new Set([
   "delivery_schedule",
@@ -171,7 +172,7 @@ router.get("/history", async (req, res) => {
 });
 
 // PUT /api/suppliers/:supplier_id
-router.put("/:supplier_id", async (req, res) => {
+router.put("/:supplier_id", requireInventoryManagerAccess, async (req, res) => {
   try {
     const supplierId = Number(req.params.supplier_id);
     if (!Number.isFinite(supplierId) || supplierId <= 0) {
@@ -307,7 +308,7 @@ router.put("/:supplier_id", async (req, res) => {
 });
 
 // POST /api/suppliers
-router.post("/", async (req, res) => {
+router.post("/", requireInventoryManagerAccess, async (req, res) => {
   try {
     const {
       supplier_name,
@@ -392,14 +393,14 @@ router.post("/", async (req, res) => {
 });
 
 // DELETE /api/suppliers/:supplier_id
-router.delete("/:supplier_id", async (req, res) => {
+router.delete("/:supplier_id", requireInventoryManagerAccess, async (req, res) => {
   try {
     const supplierId = Number(req.params.supplier_id);
     if (!Number.isFinite(supplierId) || supplierId <= 0) {
       return res.status(400).json({ message: "Invalid supplier_id" });
     }
 
-    //  Fetch name BEFORE deleting 
+    // Fetch name BEFORE deleting
     const [[supplier]] = await db.query(
       `SELECT SupplierName AS supplier_name, Contact_Number AS contact_number
        FROM Suppliers WHERE Supplier_ID = ?`,
@@ -414,7 +415,7 @@ router.delete("/:supplier_id", async (req, res) => {
       return res.status(404).json({ message: "Supplier not found" });
     }
 
-    // Log the removal 
+    // Log the removal
     if (supplier) {
       await logSupplierHistory({
         supplier_id: supplierId,
@@ -435,7 +436,7 @@ router.delete("/:supplier_id", async (req, res) => {
 
 // PATCH /api/suppliers/:supplier_id/products
 // Called automatically after every PO is saved
-router.patch("/:supplier_id/products", async (req, res) => {
+router.patch("/:supplier_id/products", requireInventoryManagerAccess, async (req, res) => {
   try {
     const supplierId = Number(req.params.supplier_id);
     if (!Number.isFinite(supplierId) || supplierId <= 0) {
@@ -541,7 +542,7 @@ router.patch("/:supplier_id/products", async (req, res) => {
 
 // DELETE /api/suppliers/:supplier_id/products/:product_name
 // Called when staff clicks × on a product chip in the supplier table
-router.delete("/:supplier_id/products/:product_name", async (req, res) => {
+router.delete("/:supplier_id/products/:product_name", requireInventoryManagerAccess, async (req, res) => {
   try {
     const supplierId = Number(req.params.supplier_id);
     const productName = decodeURIComponent(req.params.product_name).trim();

@@ -7,10 +7,10 @@ const {
   sendVerificationEmail,
   sendPasswordResetEmail,
 } = require("../services/emailService");
+const { getJwtSecret } = require("../services/jwtConfig");
 
 const router = express.Router();
 
-const JWT_SECRET = process.env.JWT_SECRET || "secretkey";
 const SIGNUP_FIELD_MAX_LENGTH = 50;
 
 function normalizeEmail(value) {
@@ -285,7 +285,7 @@ router.post("/login", async (req, res) => {
         role: user.role,
         email_verified: emailVerified,
       },
-      JWT_SECRET,
+      getJwtSecret(),
       { expiresIn: "1h" },
     );
 
@@ -683,7 +683,7 @@ router.post("/logout", (req, res) => {
   }
 
   try {
-    jwt.verify(authHeader.split(" ")[1], JWT_SECRET);
+    jwt.verify(authHeader.split(" ")[1], getJwtSecret());
     return res.json({ message: "Logout successful" });
   } catch {
     return res.status(401).json({ message: "Invalid or expired token" });

@@ -7,6 +7,7 @@ const mysql = require("mysql2/promise");
 require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
 
 process.env.NODE_ENV = "test";
+process.env.JWT_SECRET ||= "cashier-order-test-only-secret";
 const databaseName = `the_crunch_cashier_verify_${Date.now()}_${process.pid}`;
 process.env.DB_NAME = databaseName;
 
@@ -211,7 +212,7 @@ async function main() {
   const port = server.address().port;
   const token = jwt.sign(
     { id: 1, userId: 1, role: "administrator", username: "verify-admin" },
-    process.env.JWT_SECRET || "secretkey",
+    process.env.JWT_SECRET,
     { expiresIn: "10m" },
   );
   const results = [];

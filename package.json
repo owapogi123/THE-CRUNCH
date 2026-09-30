@@ -10,7 +10,9 @@
     "db:reset": "node src/db/setup.js --reset",
     "test:order-identifiers": "node scripts/testOrderIdentifiers.js",
     "test:receipt-snapshots": "node scripts/testReceiptSnapshots.js",
-    "test:sse": "node scripts/testSseEvents.js && node scripts/testStage3StaticAudit.js"
+    "test:sse": "node scripts/testSseEvents.js && node scripts/testStage3StaticAudit.js",
+    "test:batch4": "node src/utils/menuAvailability.test.js && node src/middleware/inventoryAlertAccess.test.js && node src/middleware/productCacheInvalidation.test.js",
+    "test:blockers": "node src/services/jwtConfig.test.js && node src/services/paymongoCheckoutService.test.js && node src/routes/mutationAuthorization.test.js && node src/routes/staffQueueAuthorization.test.js && node src/services/orderSecurity.test.js && node src/routes/orderRoutes.security.test.js && node src/routes/orderSettlementAuthorization.test.js"
   },
   "dependencies": {
     "@babel/parser": "^7.29.0",
