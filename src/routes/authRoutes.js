@@ -4,9 +4,9 @@ const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const db = require("../config/db");
 const {
-  sendVerificationEmail,
-  sendPasswordResetEmail,
-} = require("../services/emailService");
+  OTP_PURPOSES,
+  deliverOtp,
+} = require("../services/otpDeliveryService");
 const { getJwtSecret } = require("../services/jwtConfig");
 
 const router = express.Router();
@@ -64,6 +64,7 @@ async function sendVerificationEmailOrThrow({
   email,
   otpCode,
   name,
+  expiresAt,
 }) {
   if (!email) {
     throw new Error("Recipient email is required for OTP delivery");
@@ -74,9 +75,11 @@ async function sendVerificationEmailOrThrow({
   }
 
   try {
-    await sendVerificationEmail({
-      to: email,
-      code: otpCode,
+    await deliverOtp({
+      email,
+      otp: otpCode,
+      purpose: OTP_PURPOSES.SIGNUP_VERIFICATION,
+      expiresAt,
       customerName: name,
     });
   } catch (emailError) {
@@ -183,6 +186,7 @@ router.post("/register", async (req, res) => {
         email,
         otpCode,
         name: userName,
+        expiresAt: verificationExpires,
       });
     } catch (emailError) {
       // Resend free/testing mode only allows sending to the verified account email unless a custom domain is verified.
@@ -484,6 +488,7 @@ router.post("/resend-verification", async (req, res) => {
           email: pendingSignup.email,
           otpCode: verificationCode,
           name: pendingSignup.username,
+          expiresAt: verificationExpires,
         });
       } catch (emailError) {
         return res.status(500).json({
@@ -536,6 +541,7 @@ router.post("/resend-verification", async (req, res) => {
         email: user.email,
         otpCode: verificationCode,
         name: user.username,
+        expiresAt: verificationExpires,
       });
     } catch (emailError) {
       return res.status(500).json({
@@ -593,9 +599,11 @@ router.post("/forgot-password", async (req, res) => {
     );
 
     try {
-      await sendPasswordResetEmail({
-        to: user.email,
-        code: resetCode,
+      await deliverOtp({
+        email: user.email,
+        otp: resetCode,
+        purpose: OTP_PURPOSES.PASSWORD_RESET,
+        expiresAt: resetExpires,
         customerName: user.username,
       });
     } catch (emailError) {
