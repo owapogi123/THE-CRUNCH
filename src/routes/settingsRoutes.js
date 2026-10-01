@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const db = require("../config/db");
-const { SUPERUSER_ROLE } = require("../middleware/roleAccess");
+const { SUPERUSER_ROLE, normalizeRole } = require("../middleware/roleAccess");
+const { requireCookViewAccess } = require("../middleware/cookViewAccess");
 const { requireAdministratorAccess } = require("../middleware/staffAccess");
 
 const DEFAULT_ROLE_PERMISSIONS = {
@@ -68,13 +69,35 @@ function enforceSuperuserPermissions(permissions) {
   return permissions;
 }
 
+function enforcePermissionInvariants(permissions) {
+  enforceSuperuserPermissions(permissions);
+  for (const role of COOK_VIEW_PERMISSION_ROLES) {
+    permissions[role].orders = true;
+  }
+  permissions.cashier.overview = true;
+  return permissions;
+}
+
+function getRoleSource(source, role) {
+  const merged = {};
+  for (const [rawRole, value] of Object.entries(source)) {
+    if (normalizeRole(rawRole) !== role || !value || typeof value !== "object") {
+      continue;
+    }
+    Object.assign(merged, value);
+  }
+  if (source[role] && typeof source[role] === "object") {
+    Object.assign(merged, source[role]);
+  }
+  return merged;
+}
+
 function normalizePermissionsPayload(payload) {
   const source = payload && typeof payload === "object" ? payload : {};
   const next = {};
 
   for (const role of VALID_PERMISSION_ROLES) {
-    const roleSource =
-      source[role] && typeof source[role] === "object" ? source[role] : {};
+    const roleSource = getRoleSource(source, role);
     next[role] = {};
     for (const permissionKey of VALID_PERMISSION_KEYS) {
       next[role][permissionKey] = normalizeBoolean(
@@ -84,13 +107,25 @@ function normalizePermissionsPayload(payload) {
     }
   }
 
-  enforceSuperuserPermissions(next);
-  for (const role of COOK_VIEW_PERMISSION_ROLES) {
-    next[role].orders = true;
-  }
-  next.cashier.overview = true;
+  return enforcePermissionInvariants(next);
+}
 
-  return next;
+function mergePermissionsPayload(currentPermissions, payload) {
+  const next = normalizePermissionsPayload(currentPermissions);
+  const source = payload && typeof payload === "object" ? payload : {};
+
+  for (const role of VALID_PERMISSION_ROLES) {
+    const roleChanges = getRoleSource(source, role);
+    for (const permissionKey of VALID_PERMISSION_KEYS) {
+      if (!Object.prototype.hasOwnProperty.call(roleChanges, permissionKey)) continue;
+      next[role][permissionKey] = normalizeBoolean(
+        roleChanges[permissionKey],
+        next[role][permissionKey],
+      );
+    }
+  }
+
+  return enforcePermissionInvariants(next);
 }
 
 function normalizePermissionRoleLocks(payload) {
@@ -98,12 +133,38 @@ function normalizePermissionRoleLocks(payload) {
   const next = {};
 
   for (const role of VALID_PERMISSION_ROLES) {
-    next[role] = normalizeBoolean(
-      source[role],
-      DEFAULT_PERMISSION_ROLE_LOCKS[role],
-    );
+    let savedValue;
+    for (const [rawRole, value] of Object.entries(source)) {
+      if (normalizeRole(rawRole) === role) savedValue = value;
+    }
+    if (Object.prototype.hasOwnProperty.call(source, role)) {
+      savedValue = source[role];
+    }
+    next[role] = normalizeBoolean(savedValue, DEFAULT_PERMISSION_ROLE_LOCKS[role]);
   }
 
+  return next;
+}
+
+function mergePermissionRoleLocks(currentLocks, payload) {
+  const next = normalizePermissionRoleLocks(currentLocks);
+  const source = payload && typeof payload === "object" ? payload : {};
+  for (const role of VALID_PERMISSION_ROLES) {
+    let savedValue;
+    let hasSavedValue = false;
+    for (const [rawRole, value] of Object.entries(source)) {
+      if (normalizeRole(rawRole) !== role) continue;
+      savedValue = value;
+      hasSavedValue = true;
+    }
+    if (Object.prototype.hasOwnProperty.call(source, role)) {
+      savedValue = source[role];
+      hasSavedValue = true;
+    }
+    if (hasSavedValue) {
+      next[role] = normalizeBoolean(savedValue, next[role]);
+    }
+  }
   return next;
 }
 
@@ -125,19 +186,23 @@ async function loadRolePermissions() {
 
   const merged = normalizePermissionsPayload(DEFAULT_ROLE_PERMISSIONS);
 
-  for (const row of rows) {
-    const role = String(row.role || "").trim().toLowerCase();
+  const orderedRows = [...rows].sort((left, right) => {
+    const leftRole = String(left.role || "").trim().toLowerCase();
+    const rightRole = String(right.role || "").trim().toLowerCase();
+    const leftCanonical = leftRole === normalizeRole(left.role) ? 1 : 0;
+    const rightCanonical = rightRole === normalizeRole(right.role) ? 1 : 0;
+    return leftCanonical - rightCanonical;
+  });
+
+  for (const row of orderedRows) {
+    const role = normalizeRole(row.role);
     const permissionKey = String(row.permission_key || "").trim();
     if (!VALID_PERMISSION_ROLES.includes(role)) continue;
     if (!VALID_PERMISSION_KEYS.includes(permissionKey)) continue;
     merged[role][permissionKey] = normalizeBoolean(row.enabled, false);
   }
 
-  enforceSuperuserPermissions(merged);
-  for (const role of COOK_VIEW_PERMISSION_ROLES) {
-    merged[role].orders = true;
-  }
-  merged.cashier.overview = true;
+  enforcePermissionInvariants(merged);
 
   let roleLocks = normalizePermissionRoleLocks(DEFAULT_PERMISSION_ROLE_LOCKS);
   if (lockRows.length > 0 && lockRows[0].settings_json) {
@@ -368,7 +433,7 @@ router.post("/", requireAdministratorAccess, async (req, res) => {
   }
 });
 
-router.get("/permissions", async (_req, res) => {
+router.get("/permissions", requireCookViewAccess, async (_req, res) => {
   try {
     const permissions = await loadRolePermissions();
     res.json(permissions);
@@ -382,16 +447,30 @@ router.get("/permissions", async (_req, res) => {
 });
 
 router.put("/permissions", requireAdministratorAccess, async (req, res) => {
+  let connection;
+  let transactionStarted = false;
   try {
-    const permissions = normalizePermissionsPayload(
-      req.body?.permissions ?? req.body,
+    const current = await loadRolePermissions();
+    const permissionChanges = Object.prototype.hasOwnProperty.call(
+      req.body || {},
+      "permissions",
+    )
+      ? req.body.permissions
+      : req.body;
+    const permissions = mergePermissionsPayload(
+      current.permissions,
+      permissionChanges,
     );
-    const roleLocks = normalizePermissionRoleLocks(
-      req.body?.roleLocks ?? DEFAULT_PERMISSION_ROLE_LOCKS,
+    const roleLocks = mergePermissionRoleLocks(
+      current.roleLocks,
+      req.body?.roleLocks,
     );
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    transactionStarted = true;
     for (const role of VALID_PERMISSION_ROLES) {
       for (const permissionKey of VALID_PERMISSION_KEYS) {
-        await db.query(
+        await connection.query(
           `INSERT INTO role_permissions (role, permission_key, enabled)
            VALUES (?, ?, ?)
            ON DUPLICATE KEY UPDATE enabled = VALUES(enabled)`,
@@ -404,12 +483,14 @@ router.put("/permissions", requireAdministratorAccess, async (req, res) => {
       }
     }
 
-    await db.query(
+    await connection.query(
       `INSERT INTO system_settings (setting_key, settings_json)
        VALUES ('role_permission_locks', ?)
        ON DUPLICATE KEY UPDATE settings_json = VALUES(settings_json)`,
       [JSON.stringify(roleLocks)],
     );
+    await connection.commit();
+    transactionStarted = false;
 
     const savedPermissions = await loadRolePermissions();
     res.json(savedPermissions);
@@ -419,6 +500,9 @@ router.put("/permissions", requireAdministratorAccess, async (req, res) => {
       message: error.message || "Failed to save permissions",
       error: error.message,
     });
+  } finally {
+    if (connection && transactionStarted) await connection.rollback();
+    if (connection) connection.release();
   }
 });
 
@@ -1123,3 +1207,12 @@ router.delete("/inventory-units/:id", requireAdministratorAccess, async (req, re
 });
 
 module.exports = router;
+module.exports.permissionPolicy = {
+  DEFAULT_ROLE_PERMISSIONS,
+  VALID_PERMISSION_KEYS,
+  VALID_PERMISSION_ROLES,
+  mergePermissionRoleLocks,
+  mergePermissionsPayload,
+  normalizePermissionRoleLocks,
+  normalizePermissionsPayload,
+};

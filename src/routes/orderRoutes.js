@@ -37,7 +37,10 @@ const {
   isDevelopmentTimingEnabled,
   runWithDbQueryTiming,
 } = require("../services/requestTiming");
-const { publishOrderMutation } = require("../services/applicationEvents");
+const {
+  publishOrderMutation,
+  publishRefundRequestMutation,
+} = require("../services/applicationEvents");
 const { validateCashTender } = require("../services/cashValidationService");
 const {
   APPROVAL_TTL_SECONDS,
@@ -1095,6 +1098,8 @@ router.get("/shift", requireCookViewAccess, async (req, res) => {
          COALESCE(snapshot.payment_method, o.payment_method, payment.Payment_Type) AS paymentMethod,
          o.Status AS status,
          COALESCE(o.payment_status, payment.Payment_Status) AS paymentStatus,
+         refund_request.refund_request_id AS refundRequestId,
+         refund_request.status AS refundRequestStatus,
          COALESCE(snapshot_item.receipt_item_id, order_item.Order_Item_ID) AS itemId,
          COALESCE(
            NULLIF(TRIM(snapshot_item.product_name), ''),
@@ -1127,6 +1132,8 @@ router.get("/shift", requireCookViewAccess, async (req, res) => {
            GROUP BY Order_ID
          ) latest ON latest.maxPaymentId = p1.Payment_ID
        ) payment ON payment.Order_ID = o.Order_ID
+       LEFT JOIN refund_requests refund_request
+         ON refund_request.order_id = o.Order_ID
        WHERE o.Cashier_ID = ?
          AND (
            o.business_date = ?
@@ -1151,6 +1158,8 @@ router.get("/shift", requireCookViewAccess, async (req, res) => {
           paymentMethod: row.paymentMethod || null,
           status: normalizeKitchenStatus(row.status),
           paymentStatus: normalizePaymentStatus(row.paymentStatus),
+          refundRequestId: row.refundRequestId == null ? null : Number(row.refundRequestId),
+          refundRequestStatus: row.refundRequestStatus || null,
           items: [],
         });
       }
@@ -2082,6 +2091,7 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
       ? new Date(existingRows[0].dueAt)
       : null;
     let inventoryRestored = null;
+    let refundRequestResolved = false;
 
     if (hasStatusUpdate) {
       fields.push("Status = ?");
@@ -2136,6 +2146,7 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
         values.push(nextDueAt);
         responseDueAt = nextDueAt;
       }
+
     }
 
     if (hasStatusUpdate && nextStatus === "Preparing") {
@@ -2241,6 +2252,14 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
           conn,
         );
       }
+
+      const [resolvedRequest] = await conn.query(
+        `UPDATE refund_requests
+         SET status = 'Actioned', reviewed_by_user_id = ?, reviewed_at = CURRENT_TIMESTAMP
+         WHERE order_id = ? AND status = 'Pending'`,
+        [authenticatedActorId, id],
+      );
+      refundRequestResolved = Number(resolvedRequest?.affectedRows || 0) > 0;
     }
 
     if (
@@ -2284,6 +2303,9 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
         nextStatus === "Refunded",
       inventoryChanged: shouldDeductStockNow || inventoryRestored === true,
     });
+    if (refundRequestResolved) {
+      publishRefundRequestMutation?.({ reason: "refund_request.actioned" });
+    }
 
     res.json({
       message: "Order updated",

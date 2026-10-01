@@ -137,6 +137,10 @@ function orderUpdate() {
   return state.writes.find((write) => write.sql.startsWith("UPDATE orders SET"));
 }
 
+function refundRequestUpdate() {
+  return state.writes.find((write) => write.sql.startsWith("UPDATE refund_requests"));
+}
+
 (async () => {
   resetState({ paymentStatus: "Pending Payment", paymentRecordStatus: "Pending", stockDeducted: 0 });
   const cashierVoid = await invokePatch({
@@ -180,6 +184,7 @@ function orderUpdate() {
   assert.equal(stockManagerVoid.body.status, "Cancelled");
   assert.equal(orderUpdate().params.includes("Cancelled"), true);
   assert.equal(orderUpdate().sql.includes("Cashier_ID"), false);
+  assert.equal(refundRequestUpdate(), undefined);
 
   resetState();
   const stockManagerRefund = await invokePatch({
@@ -191,6 +196,7 @@ function orderUpdate() {
   assert.equal(stockManagerRefund.body.status, "Refunded");
   assert.deepEqual(state.restoreActors, [20]);
   assert.equal(orderUpdate().sql.includes("Cashier_ID"), false);
+  assert.deepEqual(refundRequestUpdate().params, [20, "55"]);
 
   resetState({ paymentStatus: "Pending Payment", paymentRecordStatus: "Pending", stockDeducted: 0 });
   const adminVoid = await invokePatch({
@@ -209,6 +215,7 @@ function orderUpdate() {
   });
   assert.equal(adminRefund.statusCode, 200);
   assert.deepEqual(state.restoreActors, [30]);
+  assert.deepEqual(refundRequestUpdate().params, [30, "55"]);
 
   resetState({
     status: "Completed",
@@ -252,6 +259,7 @@ function orderUpdate() {
   });
   assert.equal(kitchenTransition.statusCode, 200);
   assert.equal(kitchenTransition.body.status, "Preparing");
+  assert.equal(refundRequestUpdate(), undefined);
 
   console.log("Order settlement authorization tests passed");
 })().catch((error) => {

@@ -4,6 +4,7 @@ const jwt = require("jsonwebtoken");
 process.env.JWT_SECRET ||= "role-access-test-only-secret";
 const {
   isSuperuserRole,
+  normalizeRole,
   canAccessRoles,
   canSettlePersistedOrders,
 } = require("./roleAccess");
@@ -38,6 +39,19 @@ test("administrator is the superuser without changing its role", () => {
   assert.equal(isSuperuserRole("cashier"), false);
   assert.equal(canAccessRoles("administrator", ["inventory_manager"]), true);
   assert.equal(canAccessRoles("administrator", ["cashier"]), true);
+});
+
+test("legacy Inventory Manager labels normalize to the canonical role", () => {
+  for (const role of [
+    "Inventory Manager",
+    "InventoryManager",
+    "stock_manager",
+    "Stock Manager",
+    "StockManager",
+  ]) {
+    assert.equal(normalizeRole(role), "inventory_manager");
+    assert.equal(canAccessRoles(role, ["inventory_manager"]), true);
+  }
 });
 
 test("non-admin roles retain their own allowed-role boundaries", () => {

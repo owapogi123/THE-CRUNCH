@@ -105,6 +105,7 @@ function createEventRouter({ heartbeatMs = DEFAULT_HEARTBEAT_MS } = {}) {
     unsubscribe = subscribe({
       audience,
       userId,
+      role,
       onEvent(event) {
         write(formatEvent("invalidation", event));
       },

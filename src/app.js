@@ -95,6 +95,10 @@ app.use("/api/paymongo", paymongoRoutes);
 const eventRoutes = require("./routes/eventRoutes");
 app.use("/api/events", eventRoutes);
 
+// Persistent cashier-to-administrator refund escalation requests.
+const refundRequestRoutes = require("./routes/refundRequestRoutes");
+app.use("/api/refund-requests", refundRequestRoutes);
+
 // order endpoints (used by POS & dashboard)
 const orderRoutes = require("./routes/orderRoutes");
 app.use("/api/orders", orderRoutes);

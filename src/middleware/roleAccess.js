@@ -5,7 +5,21 @@ const PERSISTED_ORDER_SETTLEMENT_ROLES = Object.freeze([
 ]);
 
 function normalizeRole(value) {
-  return String(value ?? "").trim().toLowerCase();
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, "_");
+  if (
+    normalized === "inventorymanager" ||
+    normalized === "inventory manager" ||
+    normalized === "stock_manager" ||
+    normalized === "stockmanager" ||
+    normalized === "stock manager"
+  ) {
+    return "inventory_manager";
+  }
+  if (normalized === "user") return "customer";
+  return normalized;
 }
 
 function isSuperuserRole(value) {

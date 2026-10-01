@@ -4,6 +4,7 @@ const EVENT_TOPICS = Object.freeze({
   INVENTORY_CHANGED: "inventory.changed",
   PRODUCTS_CHANGED: "products.changed",
   PURCHASE_ORDERS_CHANGED: "purchaseOrders.changed",
+  REFUND_REQUESTS_CHANGED: "refundRequests.changed",
 });
 
 const supportedTopics = new Set(Object.values(EVENT_TOPICS));
@@ -18,8 +19,10 @@ function normalizeCustomerIds(values) {
   );
 }
 
-function canReceive(subscriber, topic, customerUserIds) {
-  if (subscriber.audience === "staff") return true;
+function canReceive(subscriber, topic, customerUserIds, targetRoles) {
+  if (subscriber.audience === "staff") {
+    return targetRoles.size === 0 || targetRoles.has(subscriber.role);
+  }
   return (
     subscriber.audience === "customer" &&
     topic === EVENT_TOPICS.ORDERS_CHANGED &&
@@ -27,7 +30,7 @@ function canReceive(subscriber, topic, customerUserIds) {
   );
 }
 
-function subscribe({ audience, userId = null, onEvent }) {
+function subscribe({ audience, userId = null, role = null, onEvent }) {
   if (audience !== "staff" && audience !== "customer") {
     throw new Error("Invalid event subscriber audience");
   }
@@ -39,6 +42,7 @@ function subscribe({ audience, userId = null, onEvent }) {
     id: nextSubscriberId++,
     audience,
     userId: Number(userId) || null,
+    role: String(role || "").trim().toLowerCase() || null,
     onEvent,
   };
   subscribers.add(subscriber);
@@ -51,12 +55,17 @@ function subscribe({ audience, userId = null, onEvent }) {
   };
 }
 
-function publish(topic, { reason = "data.changed", customerUserIds = [] } = {}) {
+function publish(topic, { reason = "data.changed", customerUserIds = [], targetRoles = [] } = {}) {
   if (!supportedTopics.has(topic)) {
     throw new Error(`Unsupported application event topic: ${topic}`);
   }
 
   const targetedCustomerIds = normalizeCustomerIds(customerUserIds);
+  const targetedRoles = new Set(
+    (Array.isArray(targetRoles) ? targetRoles : [targetRoles])
+      .map((role) => String(role || "").trim().toLowerCase())
+      .filter(Boolean),
+  );
   const event = Object.freeze({
     topic,
     timestamp: new Date().toISOString(),
@@ -65,7 +74,7 @@ function publish(topic, { reason = "data.changed", customerUserIds = [] } = {}) 
   let delivered = 0;
 
   for (const subscriber of [...subscribers]) {
-    if (!canReceive(subscriber, topic, targetedCustomerIds)) continue;
+    if (!canReceive(subscriber, topic, targetedCustomerIds, targetedRoles)) continue;
     try {
       subscriber.onEvent(event);
       delivered += 1;
@@ -75,6 +84,13 @@ function publish(topic, { reason = "data.changed", customerUserIds = [] } = {}) 
   }
 
   return delivered;
+}
+
+function publishRefundRequestMutation({ reason = "refund_request.changed" } = {}) {
+  return publish(EVENT_TOPICS.REFUND_REQUESTS_CHANGED, {
+    reason,
+    targetRoles: ["administrator"],
+  });
 }
 
 function publishOrderMutation({
@@ -108,5 +124,6 @@ module.exports = {
   getSubscriberCount,
   publish,
   publishOrderMutation,
+  publishRefundRequestMutation,
   subscribe,
 };
