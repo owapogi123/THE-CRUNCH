@@ -1,23 +1,26 @@
-require('dotenv').config();
 const mysql = require('mysql2/promise');
 const fs = require('fs');
 const path = require('path');
+const {
+  getDatabaseConfig,
+  getSafeDatabaseErrorDetails,
+  logDatabaseDiagnostics,
+  validateDatabaseConfig,
+} = require('../config/databaseEnvironment');
 
 (async function verify(){
-  const DB_HOST = process.env.DB_HOST || 'localhost';
-  const DB_USER = process.env.DB_USER || 'root';
-  const DB_PASSWORD = process.env.DB_PASSWORD || '';
-  const DB_NAME = process.env.DB_NAME || 'pos_system';
-  const DB_PORT = process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306;
-
+  const dbConfig = getDatabaseConfig();
   let conn;
   try {
+    logDatabaseDiagnostics(console, dbConfig);
+    validateDatabaseConfig(dbConfig);
+
     conn = await mysql.createConnection({
-      host: DB_HOST,
-      user: DB_USER,
-      password: DB_PASSWORD,
-      database: DB_NAME,
-      port: DB_PORT,
+      host: dbConfig.host,
+      user: dbConfig.user,
+      password: dbConfig.password,
+      database: dbConfig.database,
+      port: dbConfig.port,
       ...(process.env.DB_SSL_CA_PATH
         ? {
             ssl: {
@@ -30,7 +33,7 @@ const path = require('path');
           }
         : {}),
     });
-    console.log(`Connected to ${DB_HOST}:${DB_PORT} database ${DB_NAME}`);
+    console.log('Connected to the configured MySQL database.');
 
     const [tables] = await conn.query("SHOW TABLES");
     if (!tables.length) {
@@ -50,7 +53,10 @@ const path = require('path');
       }
     }
   } catch (err) {
-    console.error('Verify failed:', err.message);
+    console.error(
+      'Verify failed:',
+      getSafeDatabaseErrorDetails(err, dbConfig),
+    );
     process.exitCode = 1;
   } finally {
     if (conn) await conn.end();

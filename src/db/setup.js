@@ -1,17 +1,16 @@
-require("dotenv").config();
 const mysql = require("mysql2/promise");
 const fs = require("fs");
 const path = require("path");
+const {
+  getDatabaseConfig,
+  getSafeDatabaseErrorDetails,
+  logDatabaseDiagnostics,
+  validateDatabaseConfig,
+} = require("../config/databaseEnvironment");
 const { ensureProductsItemTypeSchema } = require("../utils/productItemType");
 const {
   initializeStockManagerSchema,
 } = require("../services/stockManagerSchemaService");
-
-const DB_HOST = process.env.DB_HOST || "localhost";
-const DB_USER = process.env.DB_USER || "root";
-const DB_PASSWORD = process.env.DB_PASSWORD || "";
-const DB_NAME = process.env.DB_NAME || "pos_system";
-const DB_PORT = process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306;
 
 async function ensureColumn(connection, tableName, columnName, definitionSql) {
   const [rows] = await connection.query(
@@ -74,12 +73,16 @@ async function setup(options = {}) {
     log = console,
   } = options;
   let connection;
+  const dbConfig = getDatabaseConfig();
   try {
+    logDatabaseDiagnostics(log, dbConfig);
+    validateDatabaseConfig(dbConfig);
+
     connection = await mysql.createConnection({
-      host: DB_HOST,
-      user: DB_USER,
-      password: DB_PASSWORD,
-      port: DB_PORT,
+      host: dbConfig.host,
+      user: dbConfig.user,
+      password: dbConfig.password,
+      port: dbConfig.port,
       ...(process.env.DB_SSL_CA_PATH
         ? {
             ssl: {
@@ -94,16 +97,16 @@ async function setup(options = {}) {
       multipleStatements: true,
     });
 
-    log.log(
-      `Connected to MySQL server ${DB_HOST}:${DB_PORT} as ${DB_USER}`,
-    );
+    log.log("Connected to the configured MySQL server.");
 
     // Create database if it doesn't exist
-    await connection.query(`CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\``);
-    log.log(`Database checked/created: ${DB_NAME}`);
+    await connection.query(
+      `CREATE DATABASE IF NOT EXISTS \`${dbConfig.database}\``,
+    );
+    log.log("Configured database checked/created.");
 
     // Use the database
-    await connection.query(`USE \`${DB_NAME}\``);
+    await connection.query(`USE \`${dbConfig.database}\``);
 
     // Drop tables if they exist (order chosen to satisfy foreign keys)
     const dropStatements = [
@@ -1202,7 +1205,10 @@ END
     log.log("Database setup completed successfully.");
     return true;
   } catch (err) {
-    log.error("Database setup failed:", err);
+    log.error(
+      "Database setup failed:",
+      getSafeDatabaseErrorDetails(err, dbConfig),
+    );
     if (exitOnError) {
       process.exitCode = 1;
     }
