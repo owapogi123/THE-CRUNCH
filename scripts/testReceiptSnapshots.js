@@ -1,10 +1,13 @@
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const jwt = require("jsonwebtoken");
 const mysql = require("mysql2/promise");
 require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
+const {
+  getDatabaseConfig,
+  getDatabaseSslOptions,
+} = require("../src/config/databaseEnvironment");
 
 process.env.NODE_ENV = "test";
 process.env.JWT_SECRET ||= "receipt-snapshot-test-only-secret";
@@ -12,15 +15,14 @@ const databaseName = `the_crunch_receipt_verify_${Date.now()}_${process.pid}`;
 process.env.DB_NAME = databaseName;
 
 function serverConfig() {
+  const dbConfig = getDatabaseConfig();
+  const sslOptions = getDatabaseSslOptions(dbConfig);
   return {
-    host: process.env.DB_HOST || "127.0.0.1",
-    user: process.env.DB_USER || "root",
-    password: process.env.DB_PASSWORD || "",
-    port: Number(process.env.DB_PORT || 3306),
-    ...(process.env.DB_SSL_CA_PATH ? { ssl: {
-      ca: fs.readFileSync(path.resolve(process.env.DB_SSL_CA_PATH), "utf8"),
-      rejectUnauthorized: true,
-    } } : {}),
+    host: dbConfig.host,
+    user: dbConfig.user,
+    password: dbConfig.password,
+    port: dbConfig.port,
+    ...(sslOptions ? { ssl: sslOptions } : {}),
   };
 }
 

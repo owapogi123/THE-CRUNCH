@@ -8,6 +8,7 @@
     "start": "node src/server.js",
     "db:setup": "node src/db/setup.js",
     "db:reset": "node src/db/setup.js --reset",
+    "test:db-config": "node src/config/databaseEnvironment.test.js",
     "test:order-identifiers": "node scripts/testOrderIdentifiers.js",
     "test:receipt-snapshots": "node scripts/testReceiptSnapshots.js",
     "test:sse": "node scripts/testSseEvents.js && node scripts/testStage3StaticAudit.js",

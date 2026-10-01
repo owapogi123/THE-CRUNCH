@@ -1,13 +1,15 @@
 const mysql = require("mysql2");
-const fs = require("fs");
-const path = require("path");
 const {
   timeDbQuery,
   wrapConnectionWithDbTiming,
 } = require("../services/requestTiming");
-const { getDatabaseConfig } = require("./databaseEnvironment");
+const {
+  getDatabaseConfig,
+  getDatabaseSslOptions,
+} = require("./databaseEnvironment");
 
 const dbConfig = getDatabaseConfig();
+const sslOptions = getDatabaseSslOptions(dbConfig);
 
 const pool = mysql.createPool({
   host: dbConfig.host,
@@ -15,17 +17,7 @@ const pool = mysql.createPool({
   password: dbConfig.password,
   database: dbConfig.database,
   port: dbConfig.port,
-  ...(process.env.DB_SSL_CA_PATH
-    ? {
-        ssl: {
-          ca: fs.readFileSync(
-            path.resolve(process.env.DB_SSL_CA_PATH),
-            "utf8",
-          ),
-          rejectUnauthorized: true,
-        },
-      }
-    : {}),
+  ...(sslOptions ? { ssl: sslOptions } : {}),
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,

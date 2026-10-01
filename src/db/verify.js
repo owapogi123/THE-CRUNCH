@@ -1,9 +1,9 @@
 const mysql = require('mysql2/promise');
-const fs = require('fs');
-const path = require('path');
 const {
   getDatabaseConfig,
+  getDatabaseSslOptions,
   getSafeDatabaseErrorDetails,
+  logDatabaseDnsDiagnostics,
   logDatabaseDiagnostics,
   validateDatabaseConfig,
 } = require('../config/databaseEnvironment');
@@ -14,6 +14,8 @@ const {
   try {
     logDatabaseDiagnostics(console, dbConfig);
     validateDatabaseConfig(dbConfig);
+    await logDatabaseDnsDiagnostics(console, dbConfig);
+    const sslOptions = getDatabaseSslOptions(dbConfig);
 
     conn = await mysql.createConnection({
       host: dbConfig.host,
@@ -21,17 +23,7 @@ const {
       password: dbConfig.password,
       database: dbConfig.database,
       port: dbConfig.port,
-      ...(process.env.DB_SSL_CA_PATH
-        ? {
-            ssl: {
-              ca: fs.readFileSync(
-                path.resolve(process.env.DB_SSL_CA_PATH),
-                'utf8',
-              ),
-              rejectUnauthorized: true,
-            },
-          }
-        : {}),
+      ...(sslOptions ? { ssl: sslOptions } : {}),
     });
     console.log('Connected to the configured MySQL database.');
 

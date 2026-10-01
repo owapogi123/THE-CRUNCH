@@ -1,8 +1,11 @@
 const { performance } = require("node:perf_hooks");
-const fs = require("node:fs");
 const path = require("node:path");
 const mysql = require("mysql2/promise");
 require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
+const {
+  getDatabaseConfig,
+  getDatabaseSslOptions,
+} = require("../src/config/databaseEnvironment");
 
 process.env.ORDER_TIMING_ENABLED = "1";
 const benchmarkDatabase = `the_crunch_cashier_benchmark_${Date.now()}_${process.pid}`;
@@ -232,19 +235,14 @@ async function dropBenchmarkDatabase() {
   if (!/^the_crunch_cashier_benchmark_\d+_\d+$/.test(benchmarkDatabase)) {
     throw new Error(`Refusing to drop unexpected database name: ${benchmarkDatabase}`);
   }
+  const dbConfig = getDatabaseConfig();
+  const sslOptions = getDatabaseSslOptions(dbConfig);
   const connection = await mysql.createConnection({
-    host: process.env.DB_HOST || "127.0.0.1",
-    user: process.env.DB_USER || "root",
-    password: process.env.DB_PASSWORD || "",
-    port: Number(process.env.DB_PORT || 3306),
-    ...(process.env.DB_SSL_CA_PATH
-      ? {
-          ssl: {
-            ca: fs.readFileSync(path.resolve(process.env.DB_SSL_CA_PATH), "utf8"),
-            rejectUnauthorized: true,
-          },
-        }
-      : {}),
+    host: dbConfig.host,
+    user: dbConfig.user,
+    password: dbConfig.password,
+    port: dbConfig.port,
+    ...(sslOptions ? { ssl: sslOptions } : {}),
   });
   try {
     const [rows] = await connection.query("SHOW DATABASES LIKE ?", [benchmarkDatabase]);

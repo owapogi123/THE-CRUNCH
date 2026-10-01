@@ -1,9 +1,9 @@
 const mysql = require("mysql2/promise");
-const fs = require("fs");
-const path = require("path");
 const {
   getDatabaseConfig,
+  getDatabaseSslOptions,
   getSafeDatabaseErrorDetails,
+  logDatabaseDnsDiagnostics,
   logDatabaseDiagnostics,
   validateDatabaseConfig,
 } = require("../config/databaseEnvironment");
@@ -77,23 +77,15 @@ async function setup(options = {}) {
   try {
     logDatabaseDiagnostics(log, dbConfig);
     validateDatabaseConfig(dbConfig);
+    await logDatabaseDnsDiagnostics(log, dbConfig);
+    const sslOptions = getDatabaseSslOptions(dbConfig);
 
     connection = await mysql.createConnection({
       host: dbConfig.host,
       user: dbConfig.user,
       password: dbConfig.password,
       port: dbConfig.port,
-      ...(process.env.DB_SSL_CA_PATH
-        ? {
-            ssl: {
-              ca: fs.readFileSync(
-                path.resolve(process.env.DB_SSL_CA_PATH),
-                "utf8",
-              ),
-              rejectUnauthorized: true,
-            },
-          }
-        : {}),
+      ...(sslOptions ? { ssl: sslOptions } : {}),
       multipleStatements: true,
     });
 

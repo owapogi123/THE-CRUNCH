@@ -2,9 +2,11 @@
 
 require("dotenv").config();
 
-const fs = require("fs");
-const path = require("path");
 const mysql = require("mysql2/promise");
+const {
+  getDatabaseConfig,
+  getDatabaseSslOptions,
+} = require("../src/config/databaseEnvironment");
 
 const temporaryDatabase = `the_crunch_stockmanager_verify_${Date.now()}`;
 process.env.DB_NAME = temporaryDatabase;
@@ -17,22 +19,14 @@ const {
 } = require("../src/services/stockManagerSchemaService");
 
 function connectionOptions() {
+  const dbConfig = getDatabaseConfig();
+  const sslOptions = getDatabaseSslOptions(dbConfig);
   return {
-    host: process.env.DB_HOST || "localhost",
-    user: process.env.DB_USER || "root",
-    password: process.env.DB_PASSWORD || "",
-    port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306,
-    ...(process.env.DB_SSL_CA_PATH
-      ? {
-          ssl: {
-            ca: fs.readFileSync(
-              path.resolve(process.env.DB_SSL_CA_PATH),
-              "utf8",
-            ),
-            rejectUnauthorized: true,
-          },
-        }
-      : {}),
+    host: dbConfig.host,
+    user: dbConfig.user,
+    password: dbConfig.password,
+    port: dbConfig.port,
+    ...(sslOptions ? { ssl: sslOptions } : {}),
   };
 }
 
