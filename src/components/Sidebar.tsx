@@ -28,7 +28,10 @@ import {
   type PermissionKey,
   type PermissionsMap,
 } from "@/lib/permissions";
-import { fetchGeneralSettings, GENERAL_SETTINGS_EVENT } from "@/lib/restaurantSettings";
+import {
+  fetchGeneralSettings,
+  GENERAL_SETTINGS_EVENT,
+} from "@/lib/restaurantSettings";
 import { InventoryNotificationCenter } from "@/components/InventoryNotificationCenter";
 
 /*
@@ -63,14 +66,54 @@ const ROLE_LABELS: Record<Role, string> = {
 
 // Every link the sidebar can show, in display order.
 const SIDEBAR_ITEMS: SidebarItem[] = [
-  { label: "Overview", path: "/dashboard", permissionKey: "overview", icon: LayoutDashboard },
-  { label: "Orders View", path: "/orders", permissionKey: "orders", icon: ShoppingCart },
-  { label: "Menu View", path: "/menu", permissionKey: "menus", icon: BookOpen },
-  { label: "Menu Management", path: "/inventory", permissionKey: "menuManagement", icon: UtensilsCrossed },
-  { label: "Stock Manager", path: "/stockmanager", permissionKey: "stockManager", icon: Package },
-  { label: "Sales & Reports", path: "/sales-reports", permissionKey: "salesReports", icon: BarChart2 },
-  { label: "User Accounts", path: "/users", permissionKey: "userAccounts", icon: Users },
-  { label: "Settings", path: "/settings", permissionKey: "settings", icon: Settings },
+  {
+    label: "Overview",
+    path: "/dashboard",
+    permissionKey: "overview",
+    icon: LayoutDashboard,
+  },
+  {
+    label: "Cook View",
+    path: "/orders",
+    permissionKey: "orders",
+    icon: ShoppingCart,
+  },
+  {
+    label: "Cashier View",
+    path: "/menu",
+    permissionKey: "menus",
+    icon: BookOpen,
+  },
+  {
+    label: "Menu Management",
+    path: "/inventory",
+    permissionKey: "menuManagement",
+    icon: UtensilsCrossed,
+  },
+  {
+    label: "Inventory Management",
+    path: "/stockmanager",
+    permissionKey: "stockManager",
+    icon: Package,
+  },
+  {
+    label: "Sales & Reports",
+    path: "/sales-reports",
+    permissionKey: "salesReports",
+    icon: BarChart2,
+  },
+  {
+    label: "User Accounts",
+    path: "/users",
+    permissionKey: "userAccounts",
+    icon: Users,
+  },
+  {
+    label: "Settings",
+    path: "/settings",
+    permissionKey: "settings",
+    icon: Settings,
+  },
 ];
 
 /* -------------------------------------------------------------------------- */
@@ -80,7 +123,9 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
 // Role permissions. Starts from the last loaded copy (kept in memory) or the defaults,
 // so the menu shows right away, then updates when the API responds.
 function usePermissions(enabled: boolean) {
-  const [permissions, setPermissions] = useState<PermissionsMap>(readCachedPermissions);
+  const [permissions, setPermissions] = useState<PermissionsMap>(
+    readCachedPermissions,
+  );
 
   useEffect(() => {
     if (!enabled) return;
@@ -160,7 +205,11 @@ export function Sidebar() {
   const byScreen = <T,>(mobile: T, tablet: T, desktop: T) =>
     isMobile ? mobile : isTablet ? tablet : desktop;
 
-  const role = normalizeRole(String(user?.role || "").trim().toLowerCase());
+  const role = normalizeRole(
+    String(user?.role || "")
+      .trim()
+      .toLowerCase(),
+  );
   const staffRole = role && role !== "customer" ? role : null;
 
   const permissions = usePermissions(staffRole !== null);
@@ -207,9 +256,13 @@ export function Sidebar() {
             transition={{ duration: 0.2 }}
           >
             {isOpen ? (
-              <X className={cn(isMobile ? "w-5 h-5" : "w-6 h-6", "text-black")} />
+              <X
+                className={cn(isMobile ? "w-5 h-5" : "w-6 h-6", "text-black")}
+              />
             ) : (
-              <Menu className={cn(isMobile ? "w-5 h-5" : "w-6 h-6", "text-black")} />
+              <Menu
+                className={cn(isMobile ? "w-5 h-5" : "w-6 h-6", "text-black")}
+              />
             )}
           </motion.div>
         </AnimatePresence>
@@ -250,7 +303,12 @@ export function Sidebar() {
               animate={{ y: 0, opacity: 1 }}
               transition={{ delay: 0.1 }}
             >
-              <span className={cn("font-bold text-black", isMobile ? "text-xl" : "text-2xl")}>
+              <span
+                className={cn(
+                  "font-bold text-black",
+                  isMobile ? "text-xl" : "text-2xl",
+                )}
+              >
                 {restaurantName}
               </span>
             </motion.div>
@@ -342,7 +400,10 @@ export function Sidebar() {
                 )}
                 onClick={handleLogout}
               >
-                <LogOut className={cn("flex-shrink-0 text-gray-400", iconSize)} strokeWidth={1.8} />
+                <LogOut
+                  className={cn("flex-shrink-0 text-gray-400", iconSize)}
+                  strokeWidth={1.8}
+                />
                 <span>Log Out</span>
               </Button>
             </motion.div>
