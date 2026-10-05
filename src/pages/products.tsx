@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import { Search, Flame, Clock, ChevronDown, MapPin, Star, X, MessageSquare, Send, CheckCircle, Menu, User } from 'lucide-react'
+import { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react'
+import { motion, AnimatePresence, MotionConfig, useReducedMotion, type Variants } from 'framer-motion'
+import { Search, Flame, Clock, ChevronDown, ChevronLeft, ChevronRight, MapPin, Star, X, MessageSquare, Send, CheckCircle, Menu, User } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useViewport } from '@/hooks/use-tablet'
 import { api, resolveAssetUrl } from '@/lib/api'
@@ -10,6 +10,8 @@ import { useAuth } from '@/context/authcontext'
 // ── Types & helpers ────────────────────────────────────────────────────────
 const NAV_H = 64
 const MAX_FB = 200
+const SLIDE_MS = 1500 // time each hero slide stays on screen
+const MAX_SLIDES = 8
 const CATEGORIES = ['All', 'Chicken', 'Sides', 'Drinks', 'Combos'] as const
 type Category = (typeof CATEGORIES)[number]
 
@@ -54,13 +56,32 @@ const timeLeft = (d?: string) => {
   return days > 0 ? `${days}d left` : `${Math.floor(diff / 3600000)}h left`
 }
 
+// ── Motion presets ─────────────────────────────────────────────────────────
+const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1]
+const VP = { once: true, margin: '-60px' } as const
+const fadeUp: Variants = {
+  hidden: { opacity: 0, y: 24 },
+  show: (i: number = 0) => ({ opacity: 1, y: 0, transition: { duration: 0.5, ease: EASE, delay: (i % 4) * 0.07 } }),
+  exit: { opacity: 0, scale: 0.96, transition: { duration: 0.2 } },
+}
+const reveal = { variants: fadeUp, initial: 'hidden', whileInView: 'show', viewport: VP } as const
+const heroIn = (delay: number) => ({ initial: { opacity: 0, y: 24 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.6, ease: EASE, delay } })
+
+function Reveal({ children }: { children: ReactNode }) {
+  return (
+    <motion.div initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={VP} transition={{ duration: 0.5, ease: EASE }}>
+      {children}
+    </motion.div>
+  )
+}
+
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html{scroll-behavior:smooth}
 :root{--gold:#f5c842;--bg:#0b0a08;--card:#131110;--line:rgba(255,255,255,.08);--text:#f4f1ec;--muted:rgba(244,241,236,.58);--pad:clamp(16px,4vw,48px)}
 body{background:var(--bg)}
-.pc{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+.pc{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
 .pc button{font-family:inherit}
 .pc :focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .wrap{max-width:1240px;margin:0 auto;padding:0 var(--pad);width:100%}
@@ -80,10 +101,12 @@ body{background:var(--bg)}
 .dot{width:7px;height:7px;border-radius:50%}
 .burger{display:none;background:none;border:0;color:var(--text);cursor:pointer;padding:8px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:20px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:16px;overflow:hidden;transition:border-color .2s,transform .2s;display:flex;flex-direction:column}
-.card:hover{border-color:rgba(245,200,66,.35);transform:translateY(-2px)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;overflow:hidden;transition:border-color .2s,box-shadow .2s;display:flex;flex-direction:column}
+.card:hover{border-color:rgba(245,200,66,.35);box-shadow:0 14px 34px rgba(0,0,0,.35)}
+.card:hover .thumb img.ld{transform:scale(1.05)}
 .thumb{position:relative;aspect-ratio:4/3;background:#1a1712;overflow:hidden}
-.thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.thumb img{width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity .5s ease,transform .6s cubic-bezier(.22,1,.36,1)}
+.thumb img.ld{opacity:1}
 .chip{font-size:11px;font-weight:600;padding:3px 10px;border-radius:999px;background:rgba(255,255,255,.06);color:var(--muted)}
 .chip-gold{background:var(--gold);color:#15120a}
 .tabs{position:sticky;top:${NAV_H}px;z-index:50;background:rgba(11,10,8,.94);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
@@ -91,7 +114,6 @@ body{background:var(--bg)}
 .tabs-in::-webkit-scrollbar{display:none}
 .tab{position:relative;background:none;border:0;padding:16px 14px;font-size:14px;font-weight:500;color:var(--muted);cursor:pointer;white-space:nowrap}
 .tab.on{color:var(--gold);font-weight:600}
-.tab.on::after{content:'';position:absolute;left:10px;right:10px;bottom:0;height:2px;background:var(--gold);border-radius:2px}
 .h2{font-size:clamp(26px,3.6vw,38px);font-weight:800;letter-spacing:-.025em;line-height:1.1}
 .sub{color:var(--muted);font-size:14px;line-height:1.6}
 .section{margin-top:80px}
@@ -100,8 +122,49 @@ body{background:var(--bg)}
 .input{width:100%;font:inherit;font-size:14px;color:var(--text);background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:10px;padding:11px 14px;outline:none;transition:border-color .15s}
 .input:focus{border-color:rgba(245,200,66,.5)}
 .input option{color:#111}
+
+/* Hero */
+.hero{padding-top:calc(${NAV_H}px + clamp(28px,6vw,72px));padding-bottom:clamp(36px,6vw,56px);background:radial-gradient(ellipse at 20% 0%,rgba(245,200,66,.10),transparent 55%)}
+.hero-grid{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr);gap:clamp(28px,5vw,64px);align-items:center}
+.hero-grid.solo{grid-template-columns:minmax(0,1fr)}
+.hero-title{font-size:clamp(42px,7.5vw,84px);font-weight:800;letter-spacing:-.035em;line-height:1}
+.show-wrap{position:relative;width:100%}
+.show-wrap::before{content:'';position:absolute;inset:6% -4% -6% 4%;border-radius:32px;background:radial-gradient(circle at 50% 50%,rgba(245,200,66,.18),transparent 70%);filter:blur(30px);z-index:0;pointer-events:none}
+.show{position:relative;z-index:1;aspect-ratio:5/4;width:100%;border-radius:24px;overflow:hidden;background:#1a1712;border:1px solid rgba(255,255,255,.1);box-shadow:0 30px 70px -20px rgba(0,0,0,.75)}
+.show-shade{position:absolute;inset:0;background:linear-gradient(to top,rgba(11,10,8,.94) 0%,rgba(11,10,8,.4) 38%,transparent 64%);pointer-events:none}
+.show-cap{position:absolute;left:0;right:0;bottom:0;padding:clamp(14px,2.4vw,24px);display:flex;align-items:flex-end;justify-content:space-between;gap:12px}
+.show-meta{min-width:0}
+.show-name{font-size:clamp(17px,2.4vw,24px);font-weight:700;letter-spacing:-.01em;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.show-price{font-size:clamp(15px,2vw,18px);font-weight:800;color:var(--gold);margin-top:2px}
+.show-count{position:absolute;top:14px;right:14px;z-index:2;font-size:12px;font-weight:600;letter-spacing:.04em;padding:5px 11px;border-radius:999px;background:rgba(11,10,8,.55);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.12);font-variant-numeric:tabular-nums}
+.show-tag{position:absolute;top:14px;left:14px;z-index:2}
+.show-arrow{position:absolute;top:50%;transform:translateY(-50%);z-index:2;width:38px;height:38px;border-radius:50%;border:1px solid rgba(255,255,255,.18);background:rgba(11,10,8,.55);backdrop-filter:blur(8px);color:var(--text);display:grid;place-items:center;cursor:pointer;opacity:0;transition:opacity .2s,background .2s}
+.show-arrow:hover{background:rgba(11,10,8,.8)}
+.show-arrow.l{left:12px}
+.show-arrow.r{right:12px}
+.show:hover .show-arrow,.show-arrow:focus-visible{opacity:1}
+.show-dots{display:flex;gap:6px;margin-top:10px}
+.show-dot{height:6px;width:6px;border-radius:999px;border:0;padding:0;background:rgba(255,255,255,.35);cursor:pointer;transition:width .3s,background .3s}
+.show-dot.on{width:22px;background:var(--gold)}
+.show-skel{aspect-ratio:5/4;width:100%;border-radius:24px}
+
+.dot.live{animation:pulse 2s infinite}
 @keyframes sh{to{background-position:-200% 0}}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.55)}70%,100%{box-shadow:0 0 0 7px rgba(34,197,94,0)}}
+
+@media(hover:none){.show-arrow{opacity:.85;width:32px;height:32px}}
+@media(max-width:900px){
+  .hero-grid{grid-template-columns:minmax(0,1fr)}
+  .show,.show-skel{aspect-ratio:16/10}
+  .show-wrap{max-width:640px}
+}
 @media(max-width:768px){.links,.status.hide-m{display:none}.burger{display:flex}}
+@media(max-width:560px){
+  .show,.show-skel{aspect-ratio:4/3;border-radius:18px}
+  .show-wrap::before{filter:blur(22px)}
+  .show-cap .btn{padding:8px 14px}
+  .section{margin-top:64px}
+}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 `
 
@@ -109,14 +172,96 @@ const Skel = ({ h }: { h: number }) => <div className="skel" style={{ height: h 
 
 function Photo({ src, alt }: { src?: string; alt: string }) {
   const [bad, setBad] = useState(false)
+  const [loaded, setLoaded] = useState(false)
   if (!src || bad) return <div style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center', color: 'var(--muted)', fontSize: 12 }}>No image</div>
-  return <img src={src} alt={alt} loading="lazy" onError={() => setBad(true)} />
+  return <img ref={el => { if (el?.complete && el.naturalWidth > 0 && !loaded) setLoaded(true) }} className={loaded ? 'ld' : undefined} src={src} alt={alt} loading="lazy" onLoad={() => setLoaded(true)} onError={() => setBad(true)} />
+}
+
+// ── Hero slideshow ─────────────────────────────────────────────────────────
+function HeroSlideshow({ slides, onOrder }: { slides: Product[]; onOrder: () => void }) {
+  const [index, setIndex] = useState(0)
+  const [paused, setPaused] = useState(false)
+  const reduceMotion = useReducedMotion()
+  const count = slides.length
+  const current = slides[Math.min(index, count - 1)]
+
+  // Warm the browser cache so slides don't flash blank at 1.5s speed
+  useEffect(() => {
+    slides.forEach(s => { const im = new Image(); im.src = s.img })
+  }, [slides])
+
+  // Autoplay: pauses on hover/focus, and is off for people who prefer reduced motion
+  useEffect(() => {
+    if (count < 2 || paused || reduceMotion) return
+    const id = setInterval(() => setIndex(i => (i + 1) % count), SLIDE_MS)
+    return () => clearInterval(id)
+  }, [count, paused, reduceMotion])
+
+  // Keep the index valid if the product list changes
+  useEffect(() => { if (index >= count) setIndex(0) }, [count, index])
+
+  const go = (dir: 1 | -1) => setIndex(i => (i + dir + count) % count)
+
+  return (
+    <motion.div className="show-wrap" initial={{ opacity: 0, y: 28, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.7, ease: EASE, delay: 0.2 }}>
+      <div
+        className="show"
+        role="region"
+        aria-roledescription="carousel"
+        aria-label="Featured menu items"
+        onMouseEnter={() => setPaused(true)}
+        onMouseLeave={() => setPaused(false)}
+        onFocus={() => setPaused(true)}
+        onBlur={() => setPaused(false)}
+      >
+        <AnimatePresence initial={false}>
+          <motion.div
+            key={current.id}
+            className="thumb"
+            style={{ position: 'absolute', inset: 0, aspectRatio: 'auto' }}
+            initial={{ opacity: 0, scale: 1.08 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.6, ease: EASE }}
+          >
+            <Photo src={current.img} alt={current.name} />
+          </motion.div>
+        </AnimatePresence>
+
+        <div className="show-shade" />
+        {current.badge && <span className="chip chip-gold show-tag">{current.badge}</span>}
+        <span className="show-count" aria-hidden="true">{String(index + 1).padStart(2, '0')} / {String(count).padStart(2, '0')}</span>
+
+        {count > 1 && (
+          <>
+            <button className="show-arrow l" onClick={() => go(-1)} aria-label="Previous item"><ChevronLeft size={18} /></button>
+            <button className="show-arrow r" onClick={() => go(1)} aria-label="Next item"><ChevronRight size={18} /></button>
+          </>
+        )}
+
+        <div className="show-cap" aria-live="off">
+          <motion.div key={current.id} className="show-meta" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, ease: EASE }}>
+            <p className="show-name">{current.name}</p>
+            <p className="show-price">{fmt(current.price)}</p>
+            {count > 1 && (
+              <div className="show-dots">
+                {slides.map((s, n) => (
+                  <button key={s.id} className={`show-dot${n === index ? ' on' : ''}`} onClick={() => setIndex(n)} aria-label={`Show ${s.name}`} aria-current={n === index} />
+                ))}
+              </div>
+            )}
+          </motion.div>
+          <button className="btn btn-gold" style={{ flexShrink: 0 }} onClick={onOrder}>Order now</button>
+        </div>
+      </div>
+    </motion.div>
+  )
 }
 
 // ── Cards ──────────────────────────────────────────────────────────────────
-function ProductCard({ p, onOrder }: { p: Product; onOrder: () => void }) {
+function ProductCard({ p, onOrder, i }: { p: Product; onOrder: () => void; i: number }) {
   return (
-    <article className="card">
+    <motion.article className="card" {...reveal} custom={i} exit="exit" layout="position" whileHover={{ y: -4 }}>
       <div className="thumb">
         <Photo src={p.img} alt={p.name} />
         {p.badge && <span className="chip chip-gold" style={{ position: 'absolute', top: 12, left: 12 }}>{p.badge}</span>}
@@ -133,14 +278,14 @@ function ProductCard({ p, onOrder }: { p: Product; onOrder: () => void }) {
           <button className="btn btn-gold" onClick={onOrder}>Order</button>
         </div>
       </div>
-    </article>
+    </motion.article>
   )
 }
 
-function PromoCard({ p }: { p: Promo }) {
+function PromoCard({ p, i }: { p: Promo; i: number }) {
   const left = timeLeft(p.validUntil)
   return (
-    <article className="card">
+    <motion.article className="card" {...reveal} custom={i} whileHover={{ y: -4 }}>
       <div className="thumb" style={{ aspectRatio: '16/9' }}>
         <Photo src={p.img ? resolveAssetUrl(p.img) : ''} alt={p.title} />
         {p.badge && <span className="chip chip-gold" style={{ position: 'absolute', top: 12, left: 12 }}>{p.badge}</span>}
@@ -152,30 +297,59 @@ function PromoCard({ p }: { p: Promo }) {
         <p className="sub" style={{ fontSize: 13 }}>{p.description}</p>
         {left && <span className="chip" style={{ alignSelf: 'flex-start', marginTop: 4, color: '#f87171' }}>{left}</span>}
       </div>
-    </article>
+    </motion.article>
   )
 }
 
-function FlavorCard({ f, open, onToggle }: { f: Flavor; open: boolean; onToggle: () => void }) {
+function FlavorCard({ f, open, onToggle, i }: { f: Flavor; open: boolean; onToggle: () => void; i: number }) {
   return (
-    <div style={{ gridColumn: open ? 'span 2' : 'span 1' }}>
-      <button onClick={onToggle} aria-expanded={open} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', background: 'var(--card)', color: 'var(--text)', border: `1px solid ${open ? f.accent || 'var(--gold)' : 'var(--line)'}`, borderRadius: open ? '12px 12px 0 0' : 12, cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
+    <motion.div
+      {...reveal}
+      custom={i}
+      layout="position"
+      whileHover={open ? undefined : { y: -2 }}
+      style={{
+        gridColumn: open ? 'span 2' : 'span 1',
+        border: `1px solid ${open ? 'rgba(255,255,255,.18)' : 'var(--line)'}`,
+        borderRadius: 12,
+        background: 'var(--card)',
+        overflow: 'hidden',
+        boxShadow: open ? '0 10px 30px rgba(0,0,0,.35)' : 'none',
+        transition: 'border-color .2s, box-shadow .2s',
+      }}
+    >
+      <button
+        onClick={onToggle}
+        aria-expanded={open}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', background: open ? 'rgba(255,255,255,.03)' : 'transparent', color: 'var(--text)', border: 0, cursor: 'pointer', fontSize: 14, fontWeight: 600 }}
+      >
         {f.name}
-        <ChevronDown size={15} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
+        <motion.span animate={{ rotate: open ? 180 : 0 }} transition={{ duration: 0.25, ease: EASE }} style={{ display: 'flex', color: 'var(--muted)' }}>
+          <ChevronDown size={15} />
+        </motion.span>
       </button>
-      {open && (
-        <div style={{ border: `1px solid ${f.accent || 'var(--gold)'}`, borderTop: 0, borderRadius: '0 0 12px 12px', overflow: 'hidden', background: 'var(--card)' }}>
-          <div className="thumb" style={{ aspectRatio: '16/9' }}><Photo src={f.img ? resolveAssetUrl(f.img) : ''} alt={f.name} /></div>
-          {f.desc && <p className="sub" style={{ padding: 14, fontSize: 13 }}>{f.desc}</p>}
-        </div>
-      )}
-    </div>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            key="body"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.3, ease: EASE }}
+            style={{ overflow: 'hidden', borderTop: '1px solid var(--line)' }}
+          >
+            <div className="thumb" style={{ aspectRatio: '16/9' }}><Photo src={f.img ? resolveAssetUrl(f.img) : ''} alt={f.name} /></div>
+            {f.desc && <p className="sub" style={{ padding: 14, fontSize: 13 }}>{f.desc}</p>}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
   )
 }
 
-function MenuCard({ s }: { s: MenuSection }) {
+function MenuCard({ s, i }: { s: MenuSection; i: number }) {
   return (
-    <div className="card" style={{ padding: 22 }}>
+    <motion.div className="card" style={{ padding: 22 }} {...reveal} custom={i} whileHover={{ y: -3 }}>
       <h3 style={{ fontSize: 18, fontWeight: 700 }}>{s.title}</h3>
       {s.subtext && <p className="sub" style={{ fontSize: 12.5, marginTop: 4 }}>{s.subtext}</p>}
       <div style={{ marginTop: 12 }}>
@@ -187,7 +361,7 @@ function MenuCard({ s }: { s: MenuSection }) {
           </div>
         ))}
       </div>
-    </div>
+    </motion.div>
   )
 }
 
@@ -216,8 +390,8 @@ function FeedbackModal({ onClose, options, userId }: { onClose: () => void; opti
 
   return (
     <>
-      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.65)', zIndex: 900 }} />
-      <motion.div role="dialog" aria-label="Send feedback" initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 12 }}
+      <motion.div onClick={onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: .2 }} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.65)', zIndex: 900 }} />
+      <motion.div role="dialog" aria-label="Send feedback" initial={{ opacity: 0, y: 24, scale: .96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 12, scale: .98 }} transition={{ duration: .25, ease: EASE }}
         style={{ position: 'fixed', zIndex: 901, right: 16, bottom: 80, width: 'min(400px,calc(100vw - 32px))', maxHeight: 'calc(100vh - 110px)', overflowY: 'auto', background: '#15130f', border: '1px solid var(--line)', borderRadius: 16, padding: 22 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
           <div><p style={{ fontSize: 17, fontWeight: 700 }}>Send feedback</p><p className="sub" style={{ fontSize: 12.5 }}>Tell us how we did.</p></div>
@@ -225,7 +399,7 @@ function FeedbackModal({ onClose, options, userId }: { onClose: () => void; opti
         </div>
         {status === 'done' ? (
           <div style={{ textAlign: 'center', padding: '20px 0', display: 'grid', gap: 10, justifyItems: 'center' }}>
-            <CheckCircle size={38} color="#22c55e" />
+            <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring', stiffness: 260, damping: 16 }} style={{ display: 'flex' }}><CheckCircle size={38} color="#22c55e" /></motion.div>
             <p style={{ fontWeight: 700 }}>Feedback sent</p>
             <button className="btn btn-ghost" onClick={onClose}>Close</button>
           </div>
@@ -235,9 +409,9 @@ function FeedbackModal({ onClose, options, userId }: { onClose: () => void; opti
               <p className="sub" style={{ fontSize: 12, marginBottom: 6 }}>Rating</p>
               <div style={{ display: 'flex', gap: 4 }} onMouseLeave={() => setHover(0)}>
                 {[1, 2, 3, 4, 5].map(n => (
-                  <button key={n} aria-label={`${n} star${n > 1 ? 's' : ''}`} onMouseEnter={() => setHover(n)} onClick={() => setRating(n)} style={{ background: 'none', border: 0, cursor: 'pointer', lineHeight: 0 }}>
+                  <motion.button key={n} whileHover={{ scale: 1.15 }} whileTap={{ scale: .9 }} aria-label={`${n} star${n > 1 ? 's' : ''}`} onMouseEnter={() => setHover(n)} onClick={() => setRating(n)} style={{ background: 'none', border: 0, cursor: 'pointer', lineHeight: 0 }}>
                     <Star size={26} color={n <= (hover || rating) ? '#f5c842' : 'rgba(255,255,255,.25)'} fill={n <= (hover || rating) ? '#f5c842' : 'none'} />
-                  </button>
+                  </motion.button>
                 ))}
               </div>
             </div>
@@ -332,11 +506,25 @@ export default function Products({ isAuthenticated = false, onLogout }: Products
     [products, category, search]
   )
   const feedbackOptions = useMemo(() => products.map(p => ({ id: p.id, name: p.name })), [products])
+  // Hero slides: menu items that have a photo
+  const slides = useMemo(() => products.filter(p => p.img).slice(0, MAX_SLIDES), [products])
+  const showHeroSlides = loading.p || slides.length > 0
 
   const goOrder = useCallback(() => navigate('/usersmenu?showOrderModal=true'), [navigate])
   const logout = useCallback(() => { onLogout?.(); navigate('/products') }, [onLogout, navigate])
+
+  // Home: go to /products, or scroll back to the top if we're already here
+  const goHome = useCallback(() => {
+    setMenuOpen(false)
+    if (window.location.pathname === '/products') {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    } else {
+      navigate('/products')
+    }
+  }, [navigate])
+
   const navLinks = [
-    { label: 'Home', action: () => navigate('/') },
+    { label: 'Home', action: goHome },
     { label: 'Menu', action: goOrder },
     { label: 'About', action: () => navigate('/aboutthecrunch') },
   ]
@@ -344,9 +532,10 @@ export default function Products({ isAuthenticated = false, onLogout }: Products
   const regular = promos.filter(p => !p.highlight)
 
   return (
+    <MotionConfig reducedMotion="user">
     <div className="pc">
       {/* NAVBAR — fixed, always visible while scrolling */}
-      <header className={`nav ${scrolled || menuOpen ? 'on' : ''}`}>
+      <motion.header initial={{ y: -NAV_H, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ duration: .5, ease: EASE }} className={`nav ${scrolled || menuOpen ? 'on' : ''}`}>
         <div className="wrap nav-in">
           <button className="brand" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} aria-label="Back to top">
             <img src="/img/logo24.png" alt="" width={32} height={32} style={{ objectFit: 'contain' }} />
@@ -355,7 +544,7 @@ export default function Products({ isAuthenticated = false, onLogout }: Products
 
           <nav className="links" aria-label="Main">
             <span className="status" title="Store hours: Mon–Fri 10 AM–10 PM, Sat–Sun 11 AM–8:30 PM">
-              <span className="dot" style={{ background: isOpen ? '#22c55e' : '#ef4444' }} />
+              <span className={`dot${isOpen ? ' live' : ''}`} style={{ background: isOpen ? '#22c55e' : '#ef4444' }} />
               {isOpen ? 'Open now' : 'Closed'}
             </span>
             {navLinks.map(l => <button key={l.label} className="link" onClick={l.action}>{l.label}</button>)}
@@ -396,19 +585,23 @@ export default function Products({ isAuthenticated = false, onLogout }: Products
             </motion.div>
           )}
         </AnimatePresence>
-      </header>
+      </motion.header>
 
-      {/* HERO */}
-      <section style={{ paddingTop: NAV_H + 72, paddingBottom: 56, background: 'radial-gradient(ellipse at 20% 0%,rgba(245,200,66,.10),transparent 55%)' }}>
-        <div className="wrap">
-          <p style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--muted)', marginBottom: 14 }}><MapPin size={14} color="var(--gold)" />The Crunch, Fairview</p>
-          <h1 style={{ fontSize: 'clamp(44px,8vw,88px)', fontWeight: 800, letterSpacing: '-.035em', lineHeight: 1 }}>Our menu</h1>
-          <p className="sub" style={{ marginTop: 14, maxWidth: 440, fontSize: 15 }}>Fresh, hot, and made to order. Browse the full menu and order when you're ready.</p>
-          <div style={{ position: 'relative', marginTop: 28, maxWidth: 380 }}>
-            <Search size={16} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
-            <input className="input" style={{ paddingLeft: 40, paddingRight: 38 }} value={search} onChange={e => setSearch(e.target.value)} placeholder="Search the menu" aria-label="Search the menu" />
-            {search && <button onClick={() => setSearch('')} aria-label="Clear search" style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 0, color: 'var(--muted)', cursor: 'pointer', display: 'flex' }}><X size={16} /></button>}
+      {/* HERO — text on the left, product slideshow on the right (stacked on tablet and mobile) */}
+      <section className="hero">
+        <div className={`wrap hero-grid${showHeroSlides ? '' : ' solo'}`}>
+          <div>
+            <motion.p {...heroIn(0.05)} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--muted)', marginBottom: 14 }}><MapPin size={14} color="var(--gold)" />The Crunch, Fairview</motion.p>
+            <motion.h1 {...heroIn(0.12)} className="hero-title">Our menu</motion.h1>
+            <motion.p {...heroIn(0.2)} className="sub" style={{ marginTop: 14, maxWidth: 440, fontSize: 15 }}>Fresh, hot, and made to order. Browse the full menu and order when you're ready.</motion.p>
+            <motion.div {...heroIn(0.28)} style={{ position: 'relative', marginTop: 28, maxWidth: 'min(100%, 420px)' }}>
+              <Search size={16} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
+              <input className="input" style={{ paddingLeft: 40, paddingRight: 38 }} value={search} onChange={e => setSearch(e.target.value)} placeholder="Search the menu" aria-label="Search the menu" />
+              {search && <button onClick={() => setSearch('')} aria-label="Clear search" style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 0, color: 'var(--muted)', cursor: 'pointer', display: 'flex' }}><X size={16} /></button>}
+            </motion.div>
           </div>
+
+          {showHeroSlides && (loading.p ? <div className="skel show-skel" /> : <HeroSlideshow slides={slides} onOrder={goOrder} />)}
         </div>
       </section>
 
@@ -416,7 +609,10 @@ export default function Products({ isAuthenticated = false, onLogout }: Products
       <div className="tabs">
         <div className="wrap tabs-in" role="tablist">
           {CATEGORIES.map(c => (
-            <button key={c} role="tab" aria-selected={category === c} className={`tab ${category === c ? 'on' : ''}`} onClick={() => setCategory(c)}>{c}</button>
+            <button key={c} role="tab" aria-selected={category === c} className={`tab ${category === c ? 'on' : ''}`} onClick={() => setCategory(c)}>
+              {c}
+              {category === c && <motion.span layoutId="tab-underline" transition={{ type: 'spring', stiffness: 400, damping: 34 }} style={{ position: 'absolute', left: 10, right: 10, bottom: 0, height: 2, background: 'var(--gold)', borderRadius: 2 }} />}
+            </button>
           ))}
         </div>
       </div>
@@ -434,20 +630,22 @@ export default function Products({ isAuthenticated = false, onLogout }: Products
         ) : (
           <>
             <p className="sub" style={{ fontSize: 13, marginBottom: 16 }}>{filtered.length} item{filtered.length !== 1 ? 's' : ''}</p>
-            <div className="grid">{filtered.map(p => <ProductCard key={p.id} p={p} onOrder={goOrder} />)}</div>
+            <div className="grid"><AnimatePresence>{filtered.map((p, i) => <ProductCard key={p.id} p={p} onOrder={goOrder} i={i} />)}</AnimatePresence></div>
           </>
         )}
 
         {/* Promos */}
         {(loading.r || promos.length > 0) && (
           <section className="section">
-            <h2 className="h2">Deals and promos</h2>
-            <p className="sub" style={{ marginTop: 8, marginBottom: 28 }}>Current offers and limited-time specials.</p>
+            <Reveal>
+              <h2 className="h2">Deals and promos</h2>
+              <p className="sub" style={{ marginTop: 8, marginBottom: 28 }}>Current offers and limited-time specials.</p>
+            </Reveal>
             {loading.r ? (
               <div className="grid">{Array.from({ length: 3 }).map((_, i) => <Skel key={i} h={280} />)}</div>
             ) : (
               <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(min(100%,320px),1fr))' }}>
-                {[...featured, ...regular].map(p => <PromoCard key={p.id} p={p} />)}
+                {[...featured, ...regular].map((p, i) => <PromoCard key={p.id} p={p} i={i} />)}
               </div>
             )}
           </section>
@@ -456,12 +654,14 @@ export default function Products({ isAuthenticated = false, onLogout }: Products
         {/* Flavors */}
         {(loading.f || flavors.length > 0) && (
           <section className="section">
-            <h2 className="h2">Signature flavors</h2>
-            <p className="sub" style={{ marginTop: 8, marginBottom: 28 }}>Available on every chicken order. Tap a flavor to preview it.</p>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))', gap: 10 }}>
+            <Reveal>
+              <h2 className="h2">Signature flavors</h2>
+              <p className="sub" style={{ marginTop: 8, marginBottom: 28 }}>Available on every chicken order. Tap a flavor to preview it.</p>
+            </Reveal>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))', gap: 10, alignItems: 'start' }}>
               {loading.f
                 ? Array.from({ length: 6 }).map((_, i) => <Skel key={i} h={46} />)
-                : flavors.map(f => <FlavorCard key={f.name} f={f} open={expanded === f.name} onToggle={() => setExpanded(expanded === f.name ? null : f.name)} />)}
+                : flavors.map((f, i) => <FlavorCard key={f.name} i={i} f={f} open={expanded === f.name} onToggle={() => setExpanded(expanded === f.name ? null : f.name)} />)}
             </div>
           </section>
         )}
@@ -469,17 +669,19 @@ export default function Products({ isAuthenticated = false, onLogout }: Products
         {/* Full menu */}
         {(loading.m || sections.length > 0) && (
           <section className="section">
-            <h2 className="h2">Full menu</h2>
-            <p className="sub" style={{ marginTop: 8, marginBottom: 28 }}>Everything we serve, by section.</p>
+            <Reveal>
+              <h2 className="h2">Full menu</h2>
+              <p className="sub" style={{ marginTop: 8, marginBottom: 28 }}>Everything we serve, by section.</p>
+            </Reveal>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(min(100%,420px),1fr))', gap: 20 }}>
-              {loading.m ? Array.from({ length: 4 }).map((_, i) => <Skel key={i} h={300} />) : sections.map(s => <MenuCard key={s.id} s={s} />)}
+              {loading.m ? Array.from({ length: 4 }).map((_, i) => <Skel key={i} h={300} />) : sections.map((s, i) => <MenuCard key={s.id} s={s} i={i} />)}
             </div>
           </section>
         )}
       </main>
 
       {/* FOOTER */}
-      <footer style={{ borderTop: '1px solid var(--line)', padding: '40px 0 28px' }}>
+      <motion.footer initial={{ opacity: 0 }} whileInView={{ opacity: 1 }} viewport={{ once: true }} transition={{ duration: .6 }} style={{ borderTop: '1px solid var(--line)', padding: '40px 0 28px' }}>
         <div className="wrap">
           <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: 28 }}>
             <div>
@@ -501,13 +703,14 @@ export default function Products({ isAuthenticated = false, onLogout }: Products
           </div>
           <p className="sub" style={{ marginTop: 32, paddingTop: 18, borderTop: '1px solid var(--line)', fontSize: 12, textAlign: 'center' }}>© {new Date().getFullYear()} The Crunch Fairview. All rights reserved.</p>
         </div>
-      </footer>
+      </motion.footer>
 
       {/* FEEDBACK */}
       <AnimatePresence>{feedbackOpen && <FeedbackModal onClose={() => setFeedbackOpen(false)} options={feedbackOptions} userId={userId} />}</AnimatePresence>
-      <button className="btn btn-gold fixed-btn" style={{ display: 'flex', alignItems: 'center', gap: 7, borderRadius: 999, padding: '11px 18px', boxShadow: '0 6px 24px rgba(0,0,0,.4)' }} onClick={() => setFeedbackOpen(v => !v)}>
+      <motion.button className="btn btn-gold fixed-btn" initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ delay: 1, type: 'spring', stiffness: 260, damping: 20 }} whileHover={{ scale: 1.05 }} whileTap={{ scale: .95 }} style={{ display: 'flex', alignItems: 'center', gap: 7, borderRadius: 999, padding: '11px 18px', boxShadow: '0 6px 24px rgba(0,0,0,.4)' }} onClick={() => setFeedbackOpen(v => !v)}>
         <MessageSquare size={15} />{feedbackOpen ? 'Close' : 'Feedback'}
-      </button>
+      </motion.button>
     </div>
+    </MotionConfig>
   )
 }

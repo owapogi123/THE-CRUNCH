@@ -2480,8 +2480,9 @@ export default function CashierView() {
           className={`flex shrink-0 flex-col bg-white ${compact ? "w-full border-t" : "w-[400px] border-l"} border-neutral-100`}
         >
           <div className="flex items-center justify-between border-b border-neutral-100 px-4 py-5 sm:px-6 sm:py-6">
-            <div>
-              <h2 className="text-lg font-semibold">Current order</h2>
+            
+           <div>
+    <h2 className="text-lg font-semibold">Current order</h2>
               <p className="text-sm text-neutral-400">
                 {totalQty
                   ? `${totalQty} item${totalQty > 1 ? "s" : ""}`
@@ -2489,11 +2490,12 @@ export default function CashierView() {
               </p>
             </div>
             {cart.length > 0 && (
-              <button
-                onClick={() => setShowVoidConfirm(true)}
-                title="Void current order"
-                className="flex h-10 items-center gap-2 rounded-lg border border-red-300 bg-red-50 px-3 text-sm font-semibold text-red-700"
-              >
+             <button
+                  onClick={() => setShowVoidConfirm(true)}
+                  title="Void current order"
+                  style={{ marginRight: compact ? 0 : 80 }}
+                  className="flex h-10 items-center gap-2 rounded-lg border border-red-300 bg-red-50 px-3 text-sm font-semibold text-red-700"
+>
                 <Ban className="h-4 w-4" />
                 Void
               </button>

@@ -19,11 +19,11 @@ import {
 /**
  * BACKEND NOTES
  * - Everything on this page comes from the API:
- *     GET  /products?item_type=menu_item        menu items
- *     GET  /inventory                           stock items (used as ingredient choices)
+ *     GET  /products?item_type=menu_item            menu items
+ *     GET  /inventory                               stock items (used as ingredient choices)
  *     GET  /settings/menu-categories?activeOnly=1   category list
  *     POST /products, PUT /products/:id, DELETE /products/:id (falls back to /inventory/:id)
- *     POST /upload-product-image                item photo
+ *     POST /upload-product-image                    item photo
  * - Nothing is stored in localStorage or sessionStorage.
  * - Poppins is loaded globally by the app. This file only references it.
  */
@@ -36,18 +36,19 @@ const FONT = "'Poppins', sans-serif";
 const PLACEHOLDER_IMG = "/img/placeholder.jpg";
 const DEFAULT_UNIT = "piece"; // unit sent when creating a menu item (the form has no unit field)
 
-// Colors (the page's existing palette, unchanged)
 const T = {
-  page: "#F6F4EE",
+  page: "#F5F3EC",
   surface: "#FFFFFF",
-  surfaceMuted: "#FBFAF5",
+  surfaceMuted: "#FAF9F4",
   ink: "#1C1B17",
   muted: "#8C877C",
   faint: "#D6D1C4",
-  line: "#EDE8DB",
+  line: "#ECE7DA",
   accent: "#D44D14",
+  accentDeep: "#B93E0C",
   accentSoft: "#FBEAE0",
   deep: "#1A3A2A",
+  deepAlt: "#244B37",
   deepSoft: "#E7EFE9",
   good: "#2F8F5B",
   goodSoft: "#EAF5EF",
@@ -55,6 +56,12 @@ const T = {
   warnSoft: "#FAF1DE",
   bad: "#C23B2E",
   badSoft: "#FBEAE8",
+};
+
+const SHADOW = {
+  card: "0 1px 2px rgba(28,27,23,0.04), 0 10px 28px -14px rgba(28,27,23,0.10)",
+  raised: "0 1px 2px rgba(28,27,23,0.06), 0 6px 16px -6px rgba(28,27,23,0.14)",
+  modal: "0 40px 90px -20px rgba(28,27,23,0.35), 0 8px 24px -8px rgba(28,27,23,0.12)",
 };
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -68,7 +75,11 @@ type Toast = (label: string, type?: ToastType) => void;
 const OVERRIDE_MODES: ManualOverrideMode[] = ["Auto", "Force Available", "Force Out of Stock"];
 
 interface IngredientRow {
-  product_id?: number; product_name?: string; quantity_required?: number | string; unit?: string; stock?: number | string;
+  product_id?: number;
+  product_name?: string;
+  quantity_required?: number | string;
+  unit?: string;
+  stock?: number | string;
 }
 
 // One row from /products or /inventory
@@ -148,7 +159,10 @@ async function tryEndpoints(endpoints: string[], method: "PUT" | "DELETE", body?
 }
 
 function toOverrideMode(manualOverride: unknown, manualStatus: unknown): ManualOverrideMode {
-  const isManual = manualOverride === true || manualOverride === 1 || String(manualOverride ?? "").trim().toLowerCase() === "true";
+  const isManual =
+    manualOverride === true ||
+    manualOverride === 1 ||
+    String(manualOverride ?? "").trim().toLowerCase() === "true";
   if (!isManual) return "Auto";
   return String(manualStatus ?? "").trim().toLowerCase() === "out of stock" ? "Force Out of Stock" : "Force Available";
 }
@@ -188,6 +202,7 @@ function latestPerName(rows: ApiRow[]) {
 function toMenuItem(item: ApiRow): MenuItem {
   const id = Number(item.product_id ?? item.inventory_id ?? item.id ?? 0);
   const servings = item.available_servings;
+  const promo = item.promo_price;
   return {
     id,
     rawProductId: item.product_id ? Number(item.product_id) : undefined,
@@ -205,7 +220,7 @@ function toMenuItem(item: ApiRow): MenuItem {
     hasRecipe: Number(item.ingredient_count ?? 0) > 0,
     availableServings: servings === null || servings === undefined || String(servings) === "" ? null : Number(servings),
     isPromotional: Boolean(Number(item.is_promotional ?? 0)),
-    promoPrice: item.promo_price !== null && item.promo_price !== undefined && String(item.promo_price) !== "" ? String(item.promo_price) : "",
+    promoPrice: promo !== null && promo !== undefined && String(promo) !== "" ? String(promo) : "",
     promoLabel: String(item.promo_label ?? ""),
     ingredients: (item.ingredients ?? []).map((ingredient) => ({
       productId: String(ingredient.product_id ?? ""),
@@ -286,18 +301,18 @@ function useMenuAdmin(onError: (message: string) => void) {
 type Variant = "solid" | "outline" | "ghost" | "danger" | "dangerSolid";
 
 const buttonStyles: Record<Variant, CSSProperties> = {
-  solid: { color: "#fff", background: T.accent, border: `1px solid ${T.accent}` },
-  outline: { color: T.ink, background: T.surface, border: `1px solid ${T.line}` },
-  ghost: { color: T.muted, background: T.surfaceMuted, border: "1px solid transparent" },
+  solid: { color: "#fff", background: `linear-gradient(180deg, ${T.accent} 0%, ${T.accentDeep} 100%)`, border: `1px solid ${T.accentDeep}`, boxShadow: "0 1px 2px rgba(185,62,12,0.35), inset 0 1px 0 rgba(255,255,255,0.18)" },
+  outline: { color: T.ink, background: T.surface, border: `1px solid ${T.line}`, boxShadow: "0 1px 2px rgba(28,27,23,0.04)" },
+  ghost: { color: T.muted, background: T.surfaceMuted, border: `1px solid ${T.line}` },
   danger: { color: T.bad, background: "transparent", border: "1px solid transparent" },
-  dangerSolid: { color: "#fff", background: T.bad, border: `1px solid ${T.bad}` },
+  dangerSolid: { color: "#fff", background: T.bad, border: `1px solid ${T.bad}`, boxShadow: "0 1px 2px rgba(194,59,46,0.35)" },
 };
 
 function Button({ variant = "outline", small, style, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; small?: boolean }) {
   return (
     <button
       {...props}
-      className={`rounded-xl font-semibold transition-opacity hover:opacity-85 ${small ? "px-2.5 py-1.5 text-[11.5px]" : "px-4 py-2.5 text-[12.5px]"}`}
+      className={`rounded-xl font-semibold transition-all duration-150 hover:-translate-y-px hover:opacity-90 active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D44D14]/40 ${small ? "px-2.5 py-1.5 text-[11.5px]" : "px-4 py-2.5 text-[12.5px]"}`}
       style={{ fontFamily: FONT, cursor: props.disabled ? "not-allowed" : "pointer", opacity: props.disabled ? 0.6 : 1, ...buttonStyles[variant], ...style }}
     />
   );
@@ -344,7 +359,14 @@ function cleanNumber(raw: string, decimal: boolean) {
 
 function NumberInput({ label, value, onChange, placeholder, decimal = true }: { label?: string; value: string; onChange: (value: string) => void; placeholder?: string; decimal?: boolean }) {
   const input = (
-    <input {...inputProps} type="text" inputMode={decimal ? "decimal" : "numeric"} value={value} placeholder={placeholder} onChange={(e) => onChange(cleanNumber(e.target.value, decimal))} />
+    <input
+      {...inputProps}
+      type="text"
+      inputMode={decimal ? "decimal" : "numeric"}
+      value={value}
+      placeholder={placeholder}
+      onChange={(e) => onChange(cleanNumber(e.target.value, decimal))}
+    />
   );
   return label ? <Field label={label}>{input}</Field> : input;
 }
@@ -360,26 +382,34 @@ function Modal({ title, eyebrow, onClose, footer, children }: { title: string; e
   return (
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} onClick={onClose}
-      className="fixed inset-0 z-[400] flex items-center justify-center p-5 backdrop-blur-sm"
-      style={{ background: "rgba(28,27,23,0.38)", fontFamily: FONT }}
+      className="fixed inset-0 z-[400] flex items-center justify-center p-5 backdrop-blur-md"
+      style={{ background: "rgba(20,28,23,0.45)", fontFamily: FONT }}
     >
       <motion.div
-        initial={{ opacity: 0, y: 12, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.2 }}
+        initial={{ opacity: 0, y: 14, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.22, ease: "easeOut" }}
         onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title}
         className="flex max-h-[90vh] w-full max-w-[640px] flex-col overflow-hidden rounded-3xl"
-        style={{ background: T.surface, boxShadow: "0 30px 80px rgba(28,27,23,0.2)" }}
+        style={{ background: T.surface, boxShadow: SHADOW.modal, border: `1px solid ${T.line}` }}
       >
-        <div className="flex items-start justify-between px-7 py-5" style={{ borderBottom: `1px solid ${T.line}` }}>
+        <div className="flex items-start justify-between px-7 py-5" style={{ borderBottom: `1px solid ${T.line}`, background: `linear-gradient(180deg, ${T.surface} 0%, ${T.surfaceMuted} 100%)` }}>
           <div>
             {eyebrow && <p className="mb-0.5 text-[11px] font-semibold" style={{ color: T.accent }}>{eyebrow}</p>}
-            <h3 className="text-[17px] font-semibold" style={{ color: T.ink }}>{title}</h3>
+            <h3 className="text-[18px] font-semibold tracking-tight" style={{ color: T.ink }}>{title}</h3>
           </div>
-          <button onClick={onClose} aria-label="Close" className="grid h-8 w-8 place-items-center rounded-full text-[18px] leading-none" style={{ color: T.muted, background: T.surfaceMuted, border: "none", cursor: "pointer" }}>
+          <button
+            onClick={onClose} aria-label="Close"
+            className="grid h-8 w-8 place-items-center rounded-full text-[18px] leading-none transition-colors hover:brightness-95"
+            style={{ color: T.muted, background: T.surface, border: `1px solid ${T.line}`, cursor: "pointer" }}
+          >
             {"\u00D7"}
           </button>
         </div>
         <div className="flex-1 overflow-y-auto px-7 py-6">{children}</div>
-        {footer && <div className="flex justify-end gap-2 px-7 py-4" style={{ borderTop: `1px solid ${T.line}`, background: T.surfaceMuted }}>{footer}</div>}
+        {footer && (
+          <div className="flex justify-end gap-2 px-7 py-4" style={{ borderTop: `1px solid ${T.line}`, background: T.surfaceMuted }}>
+            {footer}
+          </div>
+        )}
       </motion.div>
     </motion.div>
   );
@@ -390,15 +420,18 @@ const sectionTitle = "mb-3 mt-6 text-[12px] font-semibold first:mt-0";
 function StatusBadge({ unavailable }: { unavailable: boolean }) {
   const color = unavailable ? T.bad : T.good;
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold" style={{ color, background: unavailable ? T.badSoft : T.goodSoft }}>
-      <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
+    <span
+      className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold"
+      style={{ color, background: unavailable ? T.badSoft : T.goodSoft, boxShadow: `inset 0 0 0 1px ${color}22` }}
+    >
+      <span className="h-1.5 w-1.5 rounded-full" style={{ background: color, boxShadow: `0 0 0 3px ${color}22` }} />
       {unavailable ? "Unavailable" : "Available"}
     </span>
   );
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
-   Summary cards and side panels
+   Summary cards and side panel
    ──────────────────────────────────────────────────────────────────────── */
 
 const svgProps = { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none" } as const;
@@ -418,69 +451,34 @@ const TONES: Record<Tone, { color: string; soft: string }> = {
   bad: { color: T.bad, soft: T.badSoft },
 };
 
-function StatCard({ label, value, meta, tone, icon }: { label: string; value: number | string; meta: string; tone: Tone; icon: keyof typeof STAT_ICONS }) {
+const cardStyle: CSSProperties = { background: T.surface, border: `1px solid ${T.line}`, boxShadow: SHADOW.card };
+
+// `featured` renders the one hero card in deep green; the rest stay quiet
+function StatCard({ label, value, meta, tone, icon, featured }: { label: string; value: number | string; meta: string; tone: Tone; icon: keyof typeof STAT_ICONS; featured?: boolean }) {
   const { color, soft } = TONES[tone];
   return (
-    <div className="rounded-2xl p-5" style={{ background: T.surface, border: `1px solid ${T.line}` }}>
+    <div
+      className="rounded-2xl p-5"
+      style={featured
+        ? { background: `linear-gradient(145deg, ${T.deepAlt} 0%, ${T.deep} 100%)`, border: `1px solid ${T.deep}`, boxShadow: "0 14px 30px -14px rgba(26,58,42,0.6)" }
+        : cardStyle}
+    >
       <div className="mb-4 flex items-center justify-between">
-        <span className="text-[12px] font-medium" style={{ color: T.muted }}>{label}</span>
-        <span className="grid h-9 w-9 place-items-center rounded-xl" style={{ background: soft }}>{STAT_ICONS[icon](color)}</span>
+        <span className="text-[12px] font-medium" style={{ color: featured ? "rgba(255,255,255,0.7)" : T.muted }}>{label}</span>
+        <span className="grid h-9 w-9 place-items-center rounded-xl" style={{ background: featured ? "rgba(255,255,255,0.12)" : soft }}>
+          {STAT_ICONS[icon](featured ? "#fff" : color)}
+        </span>
       </div>
-      <div className="text-[26px] font-semibold leading-none tabular-nums" style={{ color }}>{value}</div>
-      <div className="mt-2.5 text-[11.5px]" style={{ color: T.muted }}>{meta}</div>
-    </div>
-  );
-}
-
-function CategoryBreakdown({ items }: { items: MenuItem[] }) {
-  // One strong color, lighter tints for extra categories (simple, not colorful)
-  const palette = [T.deep, "#3F6B54", "#6F9683", "#9DB8A8", "#C3D6CB", "#DDE8E1"];
-  const counts = new Map<string, number>();
-  items.forEach((item) => counts.set(item.category, (counts.get(item.category) ?? 0) + 1));
-  const entries = [...counts.entries()].sort((a, b) => b[1] - a[1]);
-
-  // Builds the pie: each category gets a slice of the 360 degree circle
-  let running = 0;
-  const slices = entries.map(([, count], i) => {
-    const start = (running / items.length) * 360;
-    running += count;
-    return `${palette[i % palette.length]} ${start}deg ${(running / items.length) * 360}deg`;
-  });
-
-  return (
-    <div className="rounded-2xl p-5" style={{ background: T.surface, border: `1px solid ${T.line}` }}>
-      <div className="mb-4 text-[14px] font-semibold" style={{ color: T.ink }}>By category</div>
-      {entries.length === 0 ? (
-        <p className="rounded-xl px-3 py-6 text-center text-[12px]" style={{ color: T.muted, background: T.surfaceMuted }}>No menu items yet.</p>
-      ) : (
-        <div className="flex items-center gap-4">
-          <div className="relative h-[96px] w-[96px] flex-shrink-0 rounded-full" style={{ background: `conic-gradient(${slices.join(", ")})` }}>
-            <div className="absolute inset-[15px] grid place-items-center rounded-full" style={{ background: T.surface }}>
-              <div className="text-center">
-                <div className="text-[17px] font-semibold leading-none tabular-nums" style={{ color: T.ink }}>{items.length}</div>
-                <div className="mt-1 text-[10px]" style={{ color: T.muted }}>items</div>
-              </div>
-            </div>
-          </div>
-          <div className="flex min-w-0 flex-1 flex-col gap-2">
-            {entries.slice(0, 5).map(([name, count], i) => (
-              <div key={name} className="flex items-center gap-2">
-                <span className="h-2.5 w-2.5 flex-shrink-0 rounded-full" style={{ background: palette[i % palette.length] }} />
-                <span className="min-w-0 flex-1 truncate text-[12px]" style={{ color: T.muted }}>{name}</span>
-                <span className="text-[12px] font-semibold tabular-nums" style={{ color: T.ink }}>{count}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <div className="text-[26px] font-semibold leading-none tracking-tight tabular-nums" style={{ color: featured ? "#fff" : color }}>{value}</div>
+      <div className="mt-2.5 text-[11.5px]" style={{ color: featured ? "rgba(255,255,255,0.65)" : T.muted }}>{meta}</div>
     </div>
   );
 }
 
 function AttentionList({ items }: { items: MenuItem[] }) {
   return (
-    <div className="rounded-2xl p-5" style={{ background: T.surface, border: `1px solid ${T.line}` }}>
-      <div className="text-[14px] font-semibold" style={{ color: T.ink }}>Needs attention</div>
+    <div className="rounded-2xl p-5" style={cardStyle}>
+      <div className="text-[14px] font-semibold tracking-tight" style={{ color: T.ink }}>Needs attention</div>
       <div className="mb-4 mt-0.5 text-[12px]" style={{ color: T.muted }}>
         {items.length > 0 ? "Items customers can't order right now" : "Everything is available"}
       </div>
@@ -489,7 +487,7 @@ function AttentionList({ items }: { items: MenuItem[] }) {
       ) : (
         <div className="flex flex-col gap-2">
           {items.slice(0, 5).map((item) => (
-            <div key={item.id} className="rounded-xl px-3 py-2.5" style={{ background: T.surfaceMuted }}>
+            <div key={item.id} className="rounded-xl px-3 py-2.5" style={{ background: T.surfaceMuted, border: `1px solid ${T.line}`, borderLeft: `3px solid ${T.bad}` }}>
               <div className="truncate text-[12.5px] font-semibold" style={{ color: T.ink }}>{item.name}</div>
               <div className="mt-0.5 text-[11.5px]" style={{ color: T.muted }}>
                 {item.hasRecipe ? `${sellableQuantity(item)} servings available` : `${item.stock} ${item.unit} in stock`}
@@ -525,7 +523,11 @@ const formFromItem = (item: MenuItem): FormValues => ({
 
 function MenuFormModal({ item, categories, ingredientOptions, toast, onClose, onSaved }: {
   item: MenuItem | null; // null means "add a new item"
-  categories: string[]; ingredientOptions: IngredientOption[]; toast: Toast; onClose: () => void; onSaved: () => void;
+  categories: string[];
+  ingredientOptions: IngredientOption[];
+  toast: Toast;
+  onClose: () => void;
+  onSaved: () => void;
 }) {
   const isEdit = item !== null;
   const [values, setValues] = useState<FormValues>(item ? formFromItem(item) : EMPTY_FORM);
@@ -606,7 +608,9 @@ function MenuFormModal({ item, categories, ingredientOptions, toast, onClose, on
       onClose={onClose}
       footer={<>
         <Button variant="ghost" onClick={onClose} disabled={saving}>Discard</Button>
-        <Button variant="solid" onClick={() => void submit()} disabled={saving}>{saving ? "Saving..." : isEdit ? "Save changes" : "Add menu item"}</Button>
+        <Button variant="solid" onClick={() => void submit()} disabled={saving}>
+          {saving ? "Saving..." : isEdit ? "Save changes" : "Add menu item"}
+        </Button>
       </>}
     >
       <p className={sectionTitle} style={{ color: T.ink }}>Details</p>
@@ -618,19 +622,26 @@ function MenuFormModal({ item, categories, ingredientOptions, toast, onClose, on
             {categoryOptions.map((category) => <option key={category} value={category}>{category}</option>)}
           </select>
         </Field>
-        <NumberInput label="Price (\u20B1) *" placeholder="0.00" value={values.price} onChange={(price) => set({ price })} />
+        <NumberInput label={"Price (\u20B1) *"} placeholder="0.00" value={values.price} onChange={(price) => set({ price })} />
       </div>
       {isEdit && (
         item.hasRecipe ? (
           <Field label="Available servings (from ingredients)">
-            <div {...{ className: inputClass, style: inputStyle }} aria-readonly="true">{Number(item.availableServings ?? 0)}</div>
+            <div className={inputClass} style={inputStyle} aria-readonly="true">{Number(item.availableServings ?? 0)}</div>
           </Field>
         ) : (
           <NumberInput label="Stock quantity" placeholder="0" value={values.stock} onChange={(stock) => set({ stock })} />
         )
       )}
       <Field label="Description (optional)">
-        <textarea {...inputProps} className={`${inputClass} resize-none`} rows={2} placeholder="Brief description..." value={values.description} onChange={(e) => set({ description: e.target.value })} />
+        <textarea
+          {...inputProps}
+          className={`${inputClass} resize-none`}
+          rows={2}
+          placeholder="Brief description..."
+          value={values.description}
+          onChange={(e) => set({ description: e.target.value })}
+        />
       </Field>
 
       <p className={sectionTitle} style={{ color: T.ink }}>Availability</p>
@@ -640,8 +651,14 @@ function MenuFormModal({ item, categories, ingredientOptions, toast, onClose, on
           return (
             <button
               key={mode} type="button" onClick={() => set({ overrideMode: mode })}
-              className="rounded-xl px-3 py-2 text-[11.5px] font-semibold transition-colors"
-              style={{ fontFamily: FONT, cursor: "pointer", border: "1px solid", background: active ? T.deep : T.surfaceMuted, borderColor: active ? T.deep : T.line, color: active ? "#fff" : T.muted }}
+              className="rounded-xl px-3 py-2 text-[11.5px] font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1A3A2A]/40"
+              style={{
+                fontFamily: FONT, cursor: "pointer", border: "1px solid",
+                background: active ? T.deep : T.surfaceMuted,
+                borderColor: active ? T.deep : T.line,
+                color: active ? "#fff" : T.muted,
+                boxShadow: active ? "0 6px 14px -8px rgba(26,58,42,0.7)" : "none",
+              }}
             >
               {mode}
             </button>
@@ -653,7 +670,7 @@ function MenuFormModal({ item, categories, ingredientOptions, toast, onClose, on
       <p className={sectionTitle} style={{ color: T.ink }}>Ingredients</p>
       <div className="space-y-2">
         {values.ingredients.length === 0 && (
-          <p className="rounded-xl px-3 py-2.5 text-[11.5px]" style={{ color: T.muted, background: T.surfaceMuted }}>
+          <p className="rounded-xl px-3 py-2.5 text-[11.5px]" style={{ color: T.muted, background: T.surfaceMuted, border: `1px dashed ${T.faint}` }}>
             No ingredients assigned. In Auto mode, this item is unavailable until at least one ingredient is configured.
           </p>
         )}
@@ -667,7 +684,9 @@ function MenuFormModal({ item, categories, ingredientOptions, toast, onClose, on
             <Button variant="danger" small type="button" onClick={() => set({ ingredients: values.ingredients.filter((_, i) => i !== index) })}>Remove</Button>
           </div>
         ))}
-        <Button variant="ghost" small type="button" onClick={() => set({ ingredients: [...values.ingredients, { productId: "", quantityRequired: "" }] })}>+ Add ingredient</Button>
+        <Button variant="ghost" small type="button" onClick={() => set({ ingredients: [...values.ingredients, { productId: "", quantityRequired: "" }] })}>
+          + Add ingredient
+        </Button>
       </div>
 
       <p className={sectionTitle} style={{ color: T.ink }}>Promotion</p>
@@ -684,7 +703,7 @@ function MenuFormModal({ item, categories, ingredientOptions, toast, onClose, on
 
       <p className={sectionTitle} style={{ color: T.ink }}>Photo</p>
       <label
-        className="flex w-full cursor-pointer flex-col items-center justify-center overflow-hidden rounded-xl transition-colors"
+        className="flex w-full cursor-pointer flex-col items-center justify-center overflow-hidden rounded-xl transition-colors hover:brightness-[0.98]"
         style={{ border: `1.5px dashed ${T.faint}`, background: T.surfaceMuted, minHeight: imagePreview ? "auto" : 88 }}
       >
         {imagePreview ? (
@@ -708,6 +727,14 @@ const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
   { value: "available", label: "Available" },
   { value: "unavailable", label: "Unavailable" },
 ];
+
+const TABLE_COLUMNS = ["Item", "Category", "Price", "Availability", ""];
+const controlStyle: CSSProperties = { color: T.ink, background: T.surface, border: `1px solid ${T.line}`, boxShadow: "0 1px 2px rgba(28,27,23,0.04)", fontFamily: FONT };
+
+const rowHover = {
+  onMouseEnter: (e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.background = T.surfaceMuted; },
+  onMouseLeave: (e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.background = "transparent"; },
+};
 
 function MenuAdminTab() {
   const { addNotification } = useNotifications();
@@ -767,27 +794,24 @@ function MenuAdminTab() {
     }
   }
 
-  const rowHover = {
-    onMouseEnter: (e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.background = T.surfaceMuted; },
-    onMouseLeave: (e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.background = "transparent"; },
-  };
-  const columns = ["Item", "Category", "Price", "Availability", ""];
-
   return (
     <div style={{ fontFamily: FONT }}>
       {/* Summary */}
       <div className="mb-6 grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-        <StatCard label="Menu items" value={items.length} meta="Currently in the system" icon="grid" tone="deep" />
+        <StatCard featured label="Menu items" value={items.length} meta="Currently in the system" icon="grid" tone="deep" />
         <StatCard label="Promotional" value={promoCount} meta="Active special menus" icon="tag" tone={promoCount > 0 ? "accent" : "neutral"} />
         <StatCard label="Unavailable" value={markedOutCount} meta="Marked out of stock" icon="alert" tone={markedOutCount > 0 ? "warn" : "deep"} />
-        <StatCard label="Menu value" value={formatPeso(menuValue)} meta={`${zeroStockCount} item${zeroStockCount === 1 ? "" : "s"} with zero stock`} icon="wallet" tone={zeroStockCount > 0 ? "bad" : "deep"} />
+        <StatCard
+          label="Menu value" value={formatPeso(menuValue)} icon="wallet" tone={zeroStockCount > 0 ? "bad" : "deep"}
+          meta={`${zeroStockCount} item${zeroStockCount === 1 ? "" : "s"} with zero stock`}
+        />
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_300px]">
         <section>
           {/* Toolbar */}
           <div className="mb-4 flex flex-wrap items-center gap-2.5">
-            <div className="flex min-w-[220px] flex-1 items-center gap-2 rounded-xl px-3.5" style={{ background: T.surface, border: `1px solid ${T.line}` }}>
+            <div className="flex min-w-[220px] flex-1 items-center gap-2 rounded-xl px-3.5 transition-shadow focus-within:shadow-[0_0_0_4px_#FBEAE0]" style={controlStyle}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
                 <circle cx="11" cy="11" r="7" stroke={T.muted} strokeWidth="2" />
                 <path d="M20 20L16.65 16.65" stroke={T.muted} strokeWidth="2" strokeLinecap="round" />
@@ -800,19 +824,24 @@ function MenuAdminTab() {
             </div>
             <select
               value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} aria-label="Filter by category"
-              className="rounded-xl px-3 py-2.5 text-[12.5px] outline-none" style={{ color: T.ink, background: T.surface, border: `1px solid ${T.line}`, fontFamily: FONT }}
+              className="rounded-xl px-3 py-2.5 text-[12.5px] outline-none" style={controlStyle}
             >
               <option value="all">All categories</option>
               {categories.map((category) => <option key={category} value={category}>{category}</option>)}
             </select>
-            <div className="flex rounded-xl p-1" style={{ background: T.surface, border: `1px solid ${T.line}` }}>
+            <div className="flex rounded-xl p-1" style={controlStyle}>
               {STATUS_FILTERS.map(({ value, label }) => {
                 const active = statusFilter === value;
                 return (
                   <button
                     key={value} onClick={() => setStatusFilter(value)}
-                    className="rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-colors"
-                    style={{ fontFamily: FONT, cursor: "pointer", border: "none", background: active ? T.deep : "transparent", color: active ? "#fff" : T.muted }}
+                    className="rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-all"
+                    style={{
+                      fontFamily: FONT, cursor: "pointer", border: "none",
+                      background: active ? T.deep : "transparent",
+                      color: active ? "#fff" : T.muted,
+                      boxShadow: active ? "0 4px 10px -4px rgba(26,58,42,0.6)" : "none",
+                    }}
                   >
                     {label}
                   </button>
@@ -824,13 +853,13 @@ function MenuAdminTab() {
           </div>
 
           {/* Table */}
-          <div className="overflow-hidden rounded-2xl" style={{ background: T.surface, border: `1px solid ${T.line}` }}>
+          <div className="overflow-hidden rounded-2xl" style={cardStyle}>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[720px] border-collapse">
                 <thead>
-                  <tr style={{ background: T.surfaceMuted, borderBottom: `1px solid ${T.line}` }}>
-                    {columns.map((column, i) => (
-                      <th key={i} className="px-4 py-3 text-left text-[11.5px] font-semibold" style={{ color: T.muted }}>{column}</th>
+                  <tr style={{ background: `linear-gradient(180deg, ${T.surfaceMuted} 0%, #F6F4EC 100%)`, borderBottom: `1px solid ${T.line}` }}>
+                    {TABLE_COLUMNS.map((column, i) => (
+                      <th key={i} className="px-4 py-3.5 text-left text-[11.5px] font-semibold" style={{ color: T.muted }}>{column}</th>
                     ))}
                   </tr>
                 </thead>
@@ -838,77 +867,89 @@ function MenuAdminTab() {
                   {loading ? (
                     [0, 1, 2, 3].map((row) => (
                       <tr key={row} style={{ borderBottom: `1px solid ${T.line}` }}>
-                        <td colSpan={columns.length} className="px-4 py-4">
+                        <td colSpan={TABLE_COLUMNS.length} className="px-4 py-4">
                           <div className="h-12 animate-pulse rounded-xl" style={{ background: T.surfaceMuted }} />
                         </td>
                       </tr>
                     ))
                   ) : visible.length === 0 ? (
                     <tr>
-                      <td colSpan={columns.length} className="px-4 py-16 text-center">
-                        <div className="text-[13.5px] font-semibold" style={{ color: T.ink }}>{items.length === 0 ? "No menu items yet" : "No items match your filters"}</div>
+                      <td colSpan={TABLE_COLUMNS.length} className="px-4 py-16 text-center">
+                        <div className="text-[13.5px] font-semibold" style={{ color: T.ink }}>
+                          {items.length === 0 ? "No menu items yet" : "No items match your filters"}
+                        </div>
                         <div className="mt-1 text-[12px]" style={{ color: T.muted }}>
                           {items.length === 0 ? "Add your first menu item to get started." : "Try a different search, category or status."}
                         </div>
                       </td>
                     </tr>
-                  ) : visible.map((item) => {
-                    const unavailable = isUnavailable(item);
-                    return (
-                      <tr key={item.id} style={{ borderBottom: `1px solid ${T.line}` }} {...rowHover}>
-                        <td className="px-4 py-3.5">
-                          <div className="flex items-center gap-3">
-                            <div className="grid h-12 w-12 flex-shrink-0 place-items-center overflow-hidden rounded-xl" style={{ background: T.surfaceMuted, border: `1px solid ${T.line}` }}>
-                              {item.image !== PLACEHOLDER_IMG
-                                ? <img src={resolveAssetUrl(item.image)} alt={item.name} className="h-full w-full object-cover" />
-                                : <span className="text-[13px] font-semibold" style={{ color: T.muted }}>{item.name.charAt(0).toUpperCase()}</span>}
-                            </div>
-                            <div className="min-w-0">
-                              <div className="truncate text-[13px] font-semibold" style={{ color: T.ink }}>{item.name}</div>
-                              <div className="text-[11.5px]" style={{ color: T.muted }}>
-                                <span className="font-medium tabular-nums" style={{ color: T.accent }}>{item.menuCode}</span>
-                                {item.description && <span className="ml-2 inline-block max-w-[160px] truncate align-bottom">{item.description}</span>}
-                              </div>
+                  ) : visible.map((item) => (
+                    <tr key={item.id} className="transition-colors" style={{ borderBottom: `1px solid ${T.line}` }} {...rowHover}>
+                      <td className="px-4 py-3.5">
+                        <div className="flex items-center gap-3">
+                          <div
+                            className="grid h-12 w-12 flex-shrink-0 place-items-center overflow-hidden rounded-xl"
+                            style={{ background: T.surfaceMuted, border: `1px solid ${T.line}`, boxShadow: SHADOW.raised }}
+                          >
+                            {item.image !== PLACEHOLDER_IMG
+                              ? <img src={resolveAssetUrl(item.image)} alt={item.name} className="h-full w-full object-cover" />
+                              : <span className="text-[13px] font-semibold" style={{ color: T.muted }}>{item.name.charAt(0).toUpperCase()}</span>}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="truncate text-[13px] font-semibold" style={{ color: T.ink }}>{item.name}</div>
+                            <div className="text-[11.5px]" style={{ color: T.muted }}>
+                              <span className="font-medium tabular-nums" style={{ color: T.accent }}>{item.menuCode}</span>
+                              {item.description && <span className="ml-2 inline-block max-w-[160px] truncate align-bottom">{item.description}</span>}
                             </div>
                           </div>
-                        </td>
-                        <td className="px-4 py-3.5">
-                          <span className="inline-block rounded-full px-2.5 py-1 text-[11.5px] font-medium" style={{ background: T.deepSoft, color: T.deep }}>{item.category}</span>
-                        </td>
-                        <td className="px-4 py-3.5">
-                          <div className="text-[13px] font-semibold tabular-nums" style={{ color: T.ink }}>{formatPeso(priceNumber(item.price))}</div>
-                          {item.isPromotional && (
-                            <div className="mt-1 flex items-center gap-1.5">
-                              <span className="rounded-full px-2 py-0.5 text-[10.5px] font-semibold" style={{ background: T.accentSoft, color: T.accent }}>{item.promoLabel || "Promo"}</span>
-                              {item.promoPrice && <span className="text-[11.5px] font-semibold tabular-nums" style={{ color: T.accent }}>{formatPeso(priceNumber(item.promoPrice))}</span>}
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-4 py-3.5">
-                          <StatusBadge unavailable={unavailable} />
-                          <div className="mt-1.5 text-[11.5px]" style={{ color: T.muted }}>
-                            {item.hasRecipe ? `${sellableQuantity(item)} servings` : `${item.stock} ${item.unit}`}
-                            {item.overrideMode !== "Auto" && ` · ${item.overrideMode}`}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <span
+                          className="inline-block rounded-full px-2.5 py-1 text-[11.5px] font-medium"
+                          style={{ background: T.deepSoft, color: T.deep, boxShadow: `inset 0 0 0 1px ${T.deep}14` }}
+                        >
+                          {item.category}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <div className="text-[13px] font-semibold tabular-nums" style={{ color: T.ink }}>{formatPeso(priceNumber(item.price))}</div>
+                        {item.isPromotional && (
+                          <div className="mt-1 flex items-center gap-1.5">
+                            <span className="rounded-full px-2 py-0.5 text-[10.5px] font-semibold" style={{ background: T.accentSoft, color: T.accent }}>
+                              {item.promoLabel || "Promo"}
+                            </span>
+                            {item.promoPrice && (
+                              <span className="text-[11.5px] font-semibold tabular-nums" style={{ color: T.accent }}>{formatPeso(priceNumber(item.promoPrice))}</span>
+                            )}
                           </div>
-                        </td>
-                        <td className="px-4 py-3.5">
-                          <div className="flex justify-end gap-1">
-                            <Button variant="ghost" small onClick={() => setFormTarget(item)}>Edit</Button>
-                            <Button variant="ghost" small onClick={() => void toggleAvailability(item)}>{item.overrideMode === "Auto" ? "Force out" : "Set auto"}</Button>
-                            <Button variant="danger" small onClick={() => setDeleteTarget(item)}>Delete</Button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                        )}
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <StatusBadge unavailable={isUnavailable(item)} />
+                        <div className="mt-1.5 text-[11.5px]" style={{ color: T.muted }}>
+                          {item.hasRecipe ? `${sellableQuantity(item)} servings` : `${item.stock} ${item.unit}`}
+                          {item.overrideMode !== "Auto" && ` \u00B7 ${item.overrideMode}`}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <div className="flex justify-end gap-1">
+                          <Button variant="ghost" small onClick={() => setFormTarget(item)}>Edit</Button>
+                          <Button variant="ghost" small onClick={() => void toggleAvailability(item)}>
+                            {item.overrideMode === "Auto" ? "Force out" : "Set auto"}
+                          </Button>
+                          <Button variant="danger" small onClick={() => setDeleteTarget(item)}>Delete</Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
           </div>
         </section>
 
-        <aside className="flex flex-col gap-5" style={{ height: "fit-content" }}>
-          <CategoryBreakdown items={items} />
+        <aside style={{ height: "fit-content" }}>
           <AttentionList items={unavailableItems} />
         </aside>
       </div>
@@ -927,7 +968,9 @@ function MenuAdminTab() {
           eyebrow="Confirm deletion" title="Delete menu item" onClose={() => setDeleteTarget(null)}
           footer={<>
             <Button variant="ghost" onClick={() => setDeleteTarget(null)} disabled={deleting}>Cancel</Button>
-            <Button variant="dangerSolid" onClick={() => void deleteItem(deleteTarget)} disabled={deleting}>{deleting ? "Deleting..." : "Yes, delete"}</Button>
+            <Button variant="dangerSolid" onClick={() => void deleteItem(deleteTarget)} disabled={deleting}>
+              {deleting ? "Deleting..." : "Yes, delete"}
+            </Button>
           </>}
         >
           <p className="text-[13px] leading-relaxed" style={{ color: T.muted }}>
@@ -954,7 +997,10 @@ export default function Inventory() {
   }, []);
 
   return (
-    <div className="flex min-h-screen" style={{ background: T.page, fontFamily: FONT }}>
+    <div
+      className="flex min-h-screen"
+      style={{ background: `radial-gradient(1200px 400px at 85% -10%, #FBEAE0 0%, transparent 60%), ${T.page}`, fontFamily: FONT }}
+    >
       <Sidebar />
       <main className="tablet-shell flex-1">
         <motion.header
@@ -963,13 +1009,13 @@ export default function Inventory() {
         >
           <div>
             <p className="mb-1 text-[12px] font-semibold" style={{ color: T.accent }}>Menu administration</p>
-            <h1 className="text-[30px] font-semibold tracking-tight" style={{ color: T.ink }}>Menu Management</h1>
+            <h1 className="text-[30px] font-semibold tracking-tight" style={{ color: T.ink, letterSpacing: "-0.02em" }}>Menu Management</h1>
             <p className="mt-1 max-w-[560px] text-[13px]" style={{ color: T.muted }}>
               Manage menu items, prices, categories, ingredients, promotions and availability.
             </p>
           </div>
           <UserIdentityBanner className="order-3 w-full sm:order-2 sm:w-auto" />
-          <div className="flex select-none items-center gap-3 rounded-2xl px-4 py-2.5" style={{ background: T.surface, border: `1px solid ${T.line}` }}>
+          <div className="flex select-none items-center gap-3 rounded-2xl px-4 py-2.5" style={cardStyle}>
             <div className="grid h-9 w-9 place-items-center rounded-xl" style={{ background: T.deepSoft }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
                 <circle cx="12" cy="12" r="9" stroke={T.deep} strokeWidth="2" />

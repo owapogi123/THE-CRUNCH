@@ -150,7 +150,8 @@ function StatBadge({value,label,style={}}:{value:string;label:string;style?:CSSP
 }
 
 // ── Nav ────────────────────────────────────────────────────────────────────
-const NAV = [{l:'Home',p:'/'},{l:'About',p:'/aboutthecrunch'},{l:'Menu',p:'/usersmenu'}];
+// "Home" goes to the customer storefront (/products). "/" only redirects back to this About page.
+const NAV = [{l:'Home',p:'/products'},{l:'About',p:'/aboutthecrunch'},{l:'Menu',p:'/usersmenu'}];
 const PERKS = [
   {num:'01',title:'Fresh Daily',     desc:'Ingredients sourced and prepped every morning — no shortcuts, ever.'},
   {num:'02',title:'Fast Service',    desc:'Hot and crispy, from our fryer to your hands in minutes.'},
@@ -184,8 +185,17 @@ export default function AboutTheCrunch() {
   const imgScale = useTransform(scrollYProgress,[0,1],[1,1.08]);
 
   const goMenu = () => navigate('/usersmenu?showOrderModal=true');
-  const goNav  = (p:string) => p==='/usersmenu'?goMenu():navigate(p);
-  const handleLogout = () => { logout(); setMenuOpen(false); navigate('/products'); };
+
+  // Go to the Products page and start at the top (not at the old scroll position).
+  // 'instant' avoids a slow smooth-scroll animation if the page has scroll-behavior: smooth.
+  const goProducts = () => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
+    navigate('/products');
+  };
+
+  const goNav = (p:string) => p==='/usersmenu' ? goMenu() : p==='/products' ? goProducts() : navigate(p);
+
+  const handleLogout = () => { logout(); setMenuOpen(false); goProducts(); };
 
   const navBg = scrolled||menuOpen ? 'rgba(10,8,6,.96)' : 'transparent';
   const navBd = scrolled||menuOpen ? 'blur(20px)' : 'none';
@@ -202,7 +212,7 @@ export default function AboutTheCrunch() {
           justifyContent:'space-between',padding:isMobile?'0 20px':'0 40px',
           background:navBg,backdropFilter:navBd,
           borderBottom:scrolled?'1px solid rgba(245,200,66,.1)':'none',transition:'all .35s ease'}}>
-        <button onClick={()=>navigate('/products')} style={{background:'none',border:'none',cursor:'pointer',padding:0,display:'flex',alignItems:'center',gap:10}}>
+        <button onClick={goProducts} style={{background:'none',border:'none',cursor:'pointer',padding:0,display:'flex',alignItems:'center',gap:10}}>
           <img src="/img/logo24.png" alt="The Crunch" style={{width:32,height:32,borderRadius:8,objectFit:'contain'}} />
           {!isMobile && <span style={{fontFamily:PP,fontSize:15,fontWeight:800,color:CR,letterSpacing:'-.02em'}}>The <span style={{color:Y}}>Crunch</span></span>}
         </button>
@@ -454,7 +464,7 @@ export default function AboutTheCrunch() {
             </p>
             <div style={{display:'flex',gap:12,justifyContent:'center',flexWrap:'wrap'}}>
               <BtnY onClick={goMenu} style={{padding:isMobile?'13px 36px':'15px 44px',fontSize:isMobile?13:14}}>Order Now</BtnY>
-              <motion.button whileHover={{scale:1.04,y:-2}} whileTap={{scale:.97}} onClick={()=>navigate('/products')}
+              <motion.button whileHover={{scale:1.04,y:-2}} whileTap={{scale:.97}} onClick={goProducts}
                 style={{background:'rgba(255,255,255,.07)',backdropFilter:'blur(12px)',color:CR,border:'1px solid rgba(255,255,255,.15)',borderRadius:10,padding:isMobile?'13px 36px':'15px 44px',fontSize:isMobile?13:14,fontWeight:500,cursor:'pointer',fontFamily:PP}}>
                 Back to Home
               </motion.button>

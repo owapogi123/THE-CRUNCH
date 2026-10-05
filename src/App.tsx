@@ -40,12 +40,18 @@ type Role =
   | "customer"
   | null;
 
+// Main landing page of the site. "/" and any unknown URL redirect here.
+const LANDING_PATH = "/aboutthecrunch";
+
+// Where the "Home" destination goes for customers / the public storefront.
+const HOME_PATH = "/products";
+
 const ROLE_MAP: Record<string, string> = {
   administrator: "/dashboard",
   cashier: "/orders",
   cook: "/orders",
   inventory_manager: "/inventory",
-  customer: "/products",
+  customer: HOME_PATH,
 };
 
 const PERMISSION_ROUTE_MAP: Partial<Record<PermissionKey, string>> = {
@@ -64,7 +70,7 @@ function getHomePathForRole(
   permissions: PermissionsMap,
 ): string {
   if (!role) return "/login";
-  if (role === "customer") return ROLE_MAP.customer;
+  if (role === "customer") return HOME_PATH;
 
   const fallback = ROLE_MAP[role] ?? "/unauthorized";
   const rolePermissions = role === "cook" ? undefined : permissions[role];
@@ -239,7 +245,9 @@ export default function App() {
   return (
     <Routes>
       {/* ── Public ───────────────────────────────────────────── */}
-      <Route path="/" element={<Navigate to="/products" replace />} />
+      {/* Main landing page: the site root opens About The Crunch */}
+      <Route path="/" element={<Navigate to={LANDING_PATH} replace />} />
+      <Route path={LANDING_PATH} element={<AboutTheCrunch />} />
 
       {/* /login is only for guests — logged-in users are redirected to their home */}
       <Route
@@ -250,11 +258,9 @@ export default function App() {
       {/* /forgot-password is public — no redirect needed for logged-in users */}
       <Route path="/forgot-password" element={<ForgotPassword />} />
 
-      <Route path="/aboutthecrunch" element={<AboutTheCrunch />} />
-
-      {/* ── Customer landing (public, but passes auth state for nav) ── */}
+      {/* ── Customer landing / "Home" (public, but passes auth state for nav) ── */}
       <Route
-        path="/products"
+        path={HOME_PATH}
         element={
           <Products
             isAuthenticated={isAuth}
@@ -308,12 +314,13 @@ export default function App() {
         path="/stockmanager"
         element={protect(<StockManager />, "stockManager")}
       />
-      {/* ── Fallbacks ────────────────────────────────────────── */}
-      <Route path="/unauthorized" element={<Unauthorized />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
 
       {/* ── Settings ────────────────────────────────────────── */}
       <Route path="/settings" element={protect(<Settings />, "settings")} />
+
+      {/* ── Fallbacks ────────────────────────────────────────── */}
+      <Route path="/unauthorized" element={<Unauthorized />} />
+      <Route path="*" element={<Navigate to={LANDING_PATH} replace />} />
     </Routes>
   );
 }

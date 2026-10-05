@@ -1470,10 +1470,16 @@ function RevenueDropdown({
         )}
       </AnimatePresence>
 
-      <div
-        ref={ref}
-        style={{ position: "relative", minWidth: 300, zIndex: 100 }}
-      >
+     <div
+  ref={ref}
+  style={{
+    position: "relative",
+    minWidth: 300,
+    // Only rise above other UI while the period menu is open.
+    // When closed, stay low so the notification popup is never covered.
+    zIndex: open ? 40 : 1,
+  }}
+>
         <motion.div
           whileHover={{ boxShadow: "0 4px 20px rgba(0,0,0,0.08)" }}
           onClick={() => setOpen(!open)}

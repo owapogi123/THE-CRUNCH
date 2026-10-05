@@ -60,7 +60,10 @@ const LOW_STOCK_THRESHOLD = 5;
 const PLACEHOLDER_IMG = "/img/placeholder.jpg";
 const DEFAULT_BILLING: BillingSettings = { taxRate: 0, serviceCharge: 0 };
 const DEFAULT_STORE: StoreStatusSettings = { weekdayOpenTime: "10:00", weekdayCloseTime: "22:00", weekendOpenTime: "11:00", weekendCloseTime: "20:30", storeStatusMode: "auto", timezone: "Asia/Manila" };
-const NAV_LINKS = [{ label: "Home", path: "/" }, { label: "About", path: "/aboutthecrunch" }, { label: "Menu", path: "/usersmenu" }];
+
+// "Home" goes to the customer storefront (/products), not "/" (which redirects to the About page).
+const HOME_PATH = "/products";
+const NAV_LINKS = [{ label: "Home", path: HOME_PATH }, { label: "About", path: "/aboutthecrunch" }, { label: "Menu", path: "/usersmenu" }];
 const DELIVERY_LINKS = [
   { label: "Foodpanda", href: "https://foodpanda.go.link/9O718" },
   { label: "Grab", href: "https://r.grab.com/g/6-20260421_220129_6e23187a089147b69736d4cacea38146_MEXMPS-2-C4A3RBCER7NFUE" },
@@ -1021,7 +1024,7 @@ export default function Delicacy() {
         <motion.header ref={navRef} initial={{ y: -24, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ duration: 0.5, ease: EASE }}
           style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 100, boxSizing: "border-box", background: scrolled ? "rgba(10,8,8,0.97)" : "rgba(10,8,8,0.85)", backdropFilter: "blur(16px)", borderBottom: `1px solid ${C.border}`, transition: "background .3s" }}>
           <div style={{ maxWidth: 1200, margin: "0 auto", padding: isNarrowPhone ? "10px 14px" : "0 clamp(16px,4vw,40px)", minHeight: 64, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-            <button type="button" onClick={() => navigate("/")} aria-label={`${restaurantSettings.restaurantName} home`}
+            <button type="button" onClick={() => navigate(HOME_PATH)} aria-label={`${restaurantSettings.restaurantName} home`}
               style={{ display: "flex", alignItems: "center", gap: 10, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: FONT, color: C.text, minWidth: 0 }}>
               <img src="/img/logo24.png" alt="" style={{ width: 32, height: 32, objectFit: "contain" }} />
               {!isNarrowPhone && <BrandName name={restaurantSettings.restaurantName} />}
