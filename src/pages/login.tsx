@@ -1,22 +1,25 @@
-﻿import {
-  useCallback, useEffect, useRef, useState,
-  type ChangeEvent, type CSSProperties, type FormEvent, type InputHTMLAttributes, type ReactNode,
-} from "react";
+﻿import { useState, useEffect, type FormEvent, type ChangeEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Eye, EyeOff, Mail, Lock, User, type LucideIcon } from "lucide-react";
-import { AnimatePresence, motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { authApi } from "../lib/api";
 import { useAuth } from "../context/authcontext";
 import crunchImg from "../assets/img/crunch22.png";
 import crunchLogo from "../assets/img/crunchlogo.png";
 
-/* ─── Constants ─────────────────────────────────────────────────────────── */
+// Load Google Font 'Poppins' directly from CDN if not already in document
+if (typeof document !== "undefined" && !document.getElementById("crunch-poppins-font")) {
+  const fontLink = document.createElement("link");
+  fontLink.id = "crunch-poppins-font";
+  fontLink.rel = "stylesheet";
+  fontLink.href =
+    "https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800;900&display=swap";
+  document.head.appendChild(fontLink);
+}
 
-// Where the logo takes the user. Change this if your landing page lives elsewhere.
-const LANDING_PATH = "/";
+// ── Application Navigation Paths ───────────────────────────────────────────
+const HOME_PAGE_PATH = "/";
 
-// Where each role goes after signing in
-const ROLE_HOME_PATH: Record<string, string> = {
+const ROLE_REDIRECT_PATHS: Record<string, string> = {
   administrator: "/dashboard",
   cashier: "/orders",
   cook: "/orders",
@@ -24,795 +27,904 @@ const ROLE_HOME_PATH: Record<string, string> = {
   customer: "/products",
 };
 
-// Form rules
-const MAX_LEN = 50;
-const MIN_PASSWORD = 8;
-const CODE_LEN = 6;
+// ── Design Tokens ──────────────────────────────────────────────────────────
+const FONT_FAMILY = "'Poppins', sans-serif";
 
-// Design tokens
-const Y = "#F5C518";
-const PANEL = "rgba(22,14,5,0.90)";
-const BORDER = "rgba(245,197,24,0.12)";
-const MUTED = "rgba(255,255,255,0.45)";
+const COLORS = {
+  gold: "#f5c842",
+  goldHover: "#ffd966",
+  pageBackground: "#090807",
+  cardBackground: "#12100d",
+  inputBackground: "rgba(255, 255, 255, 0.04)",
+  borderLine: "rgba(255, 255, 255, 0.08)",
+  textMain: "#f6f4ee",
+  textMuted: "rgba(246, 244, 238, 0.5)",
+  errorRed: "#f87171",
+  successGreen: "#4ade80",
+};
 
-// Text shown on the left panel for each mode
-const BRAND_COPY = {
-  signin: {
-    eyebrow: "Welcome Back",
-    heading: "Sign in to\ncontinue your order",
-    sub: "Customer accounts must verify their email first before sign-in is allowed.",
-  },
-  signup: {
-    eyebrow: "New Here?",
-    heading: "Create your\naccount today",
-    sub: "We'll send a 6-digit code via email. Your account stays inactive until verified.",
-  },
-} as const;
-
-const HERO_TAGS = ["Boneless", "Crunchy", "Savory"];
-
-// Background glow circles
-const ORBS = [
-  { x: "10%", y: "15%", size: 420, opacity: 0.05, delay: 0 },
-  { x: "75%", y: "60%", size: 320, opacity: 0.04, delay: 1.2 },
-  { x: "50%", y: "85%", size: 260, opacity: 0.03, delay: 2.4 },
-];
-
-/* ─── Types and helpers ─────────────────────────────────────────────────── */
-
-type AuthMode = "signin" | "signup";
-type Tone = "error" | "success";
-type FormState = { name: string; email: string; password: string; confirmPassword: string };
-type InputProps = { label: string; Icon?: LucideIcon; rightSlot?: ReactNode } & Omit<InputHTMLAttributes<HTMLInputElement>, "style">;
-
-// Shape of errors thrown by authApi
-interface ApiErrorLike {
-  message?: string;
-  status?: number;
-  data?: { requiresEmailVerification?: boolean; email?: string };
-}
-
-const INITIAL_FORM: FormState = { name: "", email: "", password: "", confirmPassword: "" };
-const normalizeEmail = (v: string) => v.trim().toLowerCase();
-const sanitizeCode = (v: string) => v.replace(/\D/g, "").slice(0, CODE_LEN); // digits only
-const errorText = (err: unknown, fallback: string) => (err as ApiErrorLike | null)?.message || fallback;
-
-// Returns an error message if the sign up data is invalid, otherwise null
-function validateSignUp({ name, email, password, confirmPassword }: FormState): string | null {
-  if (!name.trim()) return "Please enter your full name.";
-  if (name.trim().length > MAX_LEN) return `Full name must not exceed ${MAX_LEN} characters.`;
-  if (email.trim().length > MAX_LEN) return `Email must not exceed ${MAX_LEN} characters.`;
-  if (password.length > MAX_LEN) return `Password must not exceed ${MAX_LEN} characters.`;
-  if (password.length < MIN_PASSWORD) return `Password must be at least ${MIN_PASSWORD} characters.`;
-  if (password !== confirmPassword) return "Passwords don't match.";
-  return null;
-}
-
-// Shared styles
-const stack: CSSProperties = { display: "flex", flexDirection: "column", gap: 14 };
-const description: CSSProperties = { margin: 0, color: MUTED, fontSize: 13, lineHeight: 1.7 };
-const textButton: CSSProperties = { border: "none", background: "none", color: MUTED, cursor: "pointer", fontSize: 12, padding: 0 };
-
-/* ─── UI building blocks ────────────────────────────────────────────────── */
-
-/* Floating background glow */
-function Orbs() {
-  return (
-    <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0, overflow: "hidden" }}>
-      {ORBS.map((o, i) => (
-        <motion.div
-          key={i}
-          animate={{ scale: [1, 1.12, 1], opacity: [o.opacity, o.opacity * 1.4, o.opacity] }}
-          transition={{ duration: 7 + i * 1.5, repeat: Infinity, delay: o.delay, ease: "easeInOut" }}
-          style={{
-            position: "absolute", left: o.x, top: o.y, width: o.size, height: o.size, borderRadius: "50%",
-            background: `radial-gradient(circle, ${Y}, transparent 70%)`, transform: "translate(-50%, -50%)", filter: "blur(2px)",
-          }}
-        />
-      ))}
-    </div>
+// ── Simple Responsive Screen Hook ──────────────────────────────────────────
+function useWindowWidth() {
+  const [windowWidth, setWindowWidth] = useState(
+    typeof window !== "undefined" ? window.innerWidth : 1200
   );
-}
 
-/* Small uppercase label above an input */
-function Field({ label, Icon, children }: { label: string; Icon?: LucideIcon; children: ReactNode }) {
-  return (
-    <motion.label initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <span style={{ fontSize: 10, letterSpacing: "0.18em", textTransform: "uppercase", color: MUTED, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}>
-        {Icon && <Icon size={11} style={{ opacity: 0.6 }} />}
-        {label}
-      </span>
-      {children}
-    </motion.label>
-  );
-}
-
-/* Label + input with a left icon and an optional right slot */
-function InputField({ label, Icon, rightSlot, ...input }: InputProps) {
-  const [focused, setFocused] = useState(false);
-  return (
-    <Field label={label} Icon={Icon}>
-      <motion.div
-        animate={{ boxShadow: focused ? `0 0 0 2px ${Y}55` : "0 0 0 1px rgba(255,255,255,0.08)" }}
-        style={{ position: "relative", borderRadius: 14, background: "rgba(255,255,255,0.05)", overflow: "hidden" }}
-      >
-        {Icon && (
-          <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", display: "flex", color: focused ? Y : MUTED, transition: "color 0.2s", pointerEvents: "none" }}>
-            <Icon size={15} />
-          </span>
-        )}
-        <input
-          {...input}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
-          style={{ width: "100%", border: "none", background: "transparent", color: "#fff", fontSize: 14, outline: "none", padding: `13px ${rightSlot ? 42 : 14}px 13px ${Icon ? 42 : 14}px` }}
-        />
-        {rightSlot && <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)" }}>{rightSlot}</span>}
-      </motion.div>
-    </Field>
-  );
-}
-
-/* Password input with a show / hide toggle */
-function PasswordField(props: Omit<InputProps, "Icon" | "type" | "rightSlot">) {
-  const [visible, setVisible] = useState(false);
-  return (
-    <InputField
-      {...props}
-      Icon={Lock}
-      type={visible ? "text" : "password"}
-      required
-      rightSlot={
-        <button
-          type="button"
-          onClick={() => setVisible((v) => !v)}
-          aria-label={visible ? "Hide password" : "Show password"}
-          aria-pressed={visible}
-          style={{ ...textButton, display: "flex" }}
-        >
-          {visible ? <EyeOff size={15} /> : <Eye size={15} />}
-        </button>
-      }
-    />
-  );
-}
-
-/* Main yellow button. Pass `style` to override layout (e.g. inside a row). */
-function PrimaryButton({ children, disabled, style }: { children: ReactNode; disabled?: boolean; style?: CSSProperties }) {
-  return (
-    <motion.button
-      type="submit"
-      disabled={disabled}
-      whileHover={disabled ? {} : { scale: 1.015, boxShadow: `0 8px 32px ${Y}55` }}
-      whileTap={disabled ? {} : { scale: 0.985 }}
-      style={{
-        marginTop: 6, border: "none", borderRadius: 14, width: "100%", padding: "14px 16px", color: "#111",
-        background: disabled ? "rgba(245,197,24,0.4)" : `linear-gradient(135deg, ${Y} 0%, #e6b800 100%)`,
-        fontWeight: 700, fontSize: 14, letterSpacing: "0.03em", cursor: disabled ? "not-allowed" : "pointer", ...style,
-      }}
-    >
-      {children}
-    </motion.button>
-  );
-}
-
-/* Animated error / success message. Renders nothing when empty. */
-function StatusMessage({ tone, message }: { tone: Tone; message: string }) {
-  return (
-    <AnimatePresence>
-      {message && (
-        <motion.p
-          key={message}
-          role={tone === "error" ? "alert" : "status"}
-          initial={{ opacity: 0, y: -6, height: 0 }}
-          animate={{ opacity: 1, y: 0, height: "auto" }}
-          exit={{ opacity: 0, y: -4, height: 0 }}
-          style={{ margin: 0, color: tone === "error" ? "#fca5a5" : "#86efac", fontSize: 12, textAlign: "center" }}
-        >
-          {message}
-        </motion.p>
-      )}
-    </AnimatePresence>
-  );
-}
-
-/* Sign In / Sign Up pill switcher */
-function TabSwitcher({ mode, onSwitch }: { mode: AuthMode; onSwitch: (m: AuthMode) => void }) {
-  return (
-    <div style={{ display: "inline-flex", gap: 6, padding: 5, borderRadius: 999, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
-      {(["signin", "signup"] as const).map((tab) => (
-        <motion.button
-          key={tab}
-          type="button"
-          onClick={() => onSwitch(tab)}
-          aria-pressed={mode === tab}
-          animate={{ background: mode === tab ? Y : "transparent", color: mode === tab ? "#111" : "rgba(255,255,255,0.5)" }}
-          transition={{ duration: 0.22 }}
-          style={{ border: "none", borderRadius: 999, padding: "9px 20px", fontWeight: 700, cursor: "pointer", fontSize: 13 }}
-        >
-          {tab === "signin" ? "Sign In" : "Sign Up"}
-        </motion.button>
-      ))}
-    </div>
-  );
-}
-
-/* ─── Left brand panel ──────────────────────────────────────────────────── */
-
-function BrandPanel({ mode }: { mode: AuthMode }) {
-  const copy = BRAND_COPY[mode];
-  return (
-    // Size and layout come from the .auth-brand class so they can change per screen size
-    <div className="auth-brand" style={{ position: "relative", overflow: "hidden", background: "#0a0600", display: "flex", flexDirection: "column" }}>
-      {/* Top bar: clickable logo (goes to the landing page) + eyebrow */}
-      <div style={{ position: "relative", zIndex: 4, padding: "24px 24px 0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <Link to={LANDING_PATH} className="auth-brand-link" title="Back to home" aria-label="The Crunch – back to home">
-          <motion.div whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.95 }} style={{ width: "100%", height: "100%" }}>
-            <img src={crunchLogo} alt="" draggable={false} style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
-          </motion.div>
-        </Link>
-        <AnimatePresence mode="wait">
-          <motion.span
-            key={mode}
-            initial={{ opacity: 0, y: -5 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 5 }}
-            transition={{ duration: 0.3 }}
-            style={{ color: Y, fontSize: 9, fontWeight: 800, letterSpacing: "0.22em", textTransform: "uppercase" }}
-          >
-            {copy.eyebrow}
-          </motion.span>
-        </AnimatePresence>
-      </div>
-
-      {/* Hero image with a dark fade at the bottom so the text stays readable.
-          Its height comes from .auth-hero (fills the panel on desktop/tablet, fixed on phones). */}
-      <motion.div
-        className="auth-hero"
-        initial={{ opacity: 0, scale: 1.04 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1], delay: 0.1 }}
-        style={{ position: "relative", zIndex: 2, margin: "16px 16px 0", borderRadius: 18, overflow: "hidden" }}
-      >
-        <img src={crunchImg} alt="Boneless Crunchy Savory" style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "center top", display: "block" }} />
-        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to bottom, transparent 55%, rgba(8,5,1,0.85) 100%)", pointerEvents: "none" }} />
-      </motion.div>
-
-      {/* Heading, description and tags */}
-      <div style={{ position: "relative", zIndex: 4, padding: "14px 24px 24px" }}>
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={mode}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.38, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <h1 style={{ margin: "0 0 6px", color: "#fff", fontSize: "clamp(20px, 2.2vw, 28px)", lineHeight: 1.15, fontWeight: 800, whiteSpace: "pre-line" }}>
-              {copy.heading}
-            </h1>
-            <p style={{ margin: 0, color: "rgba(255,255,255,0.5)", fontSize: 12, lineHeight: 1.75 }}>{copy.sub}</p>
-          </motion.div>
-        </AnimatePresence>
-        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 14 }}>
-          {HERO_TAGS.map((tag, i) => (
-            <motion.span
-              key={tag}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.4 + i * 0.08, duration: 0.35 }}
-              style={{ padding: "5px 13px", borderRadius: 999, background: "rgba(245,197,24,0.08)", border: "1px solid rgba(245,197,24,0.18)", color: "rgba(255,255,255,0.7)", fontSize: 11, fontWeight: 600 }}
-            >
-              {tag}
-            </motion.span>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ─── Modal shell (shared by both modals) ───────────────────────────────── */
-
-function ModalShell({ open, zIndex, Icon, eyebrow, title, onClose, children }: {
-  open: boolean; zIndex: number; Icon: LucideIcon; eyebrow: string; title: string; onClose: () => void; children: ReactNode;
-}) {
-  // Close when the user presses Escape
   useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
-  return (
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          // overflowY lets tall modals scroll on small screens instead of getting cut off
-          style={{ position: "fixed", inset: 0, zIndex, background: "rgba(0,0,0,0.82)", backdropFilter: "blur(14px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, overflowY: "auto" }}
-        >
-          <motion.div
-            role="dialog"
-            aria-modal="true"
-            aria-label={title}
-            initial={{ opacity: 0, y: 24, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 12, scale: 0.97 }}
-            transition={{ type: "spring", stiffness: 320, damping: 28 }}
-            style={{ width: "min(460px, 100%)", margin: "auto", background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 22, boxShadow: `0 30px 80px rgba(0,0,0,0.6), 0 0 60px ${Y}18`, padding: "28px 28px 24px" }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
-              <div style={{ width: 38, height: 38, borderRadius: 10, background: "rgba(245,197,24,0.15)", border: `1px solid ${Y}30`, display: "grid", placeItems: "center" }}>
-                <Icon size={17} color={Y} />
-              </div>
-              <div>
-                <p style={{ margin: 0, fontSize: 10, fontWeight: 800, letterSpacing: "0.18em", textTransform: "uppercase", color: Y }}>{eyebrow}</p>
-                <h2 style={{ margin: 0, color: "#fff", fontSize: 20, fontWeight: 700 }}>{title}</h2>
-              </div>
-            </div>
-            {children}
-            <button type="button" onClick={onClose} style={{ ...textButton, marginTop: 14, width: "100%" }}>Close</button>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
-  );
-}
-
-/* ─── Hook: email verification ──────────────────────────────────────────── */
-
-function useEmailVerification(onVerified: (email: string) => void) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [v, setV] = useState({ email: "", code: "", error: "", success: "" });
-  const [busy, setBusy] = useState<"verify" | "resend" | null>(null);
-
-  // Delayed close after success (cancelled if the page unmounts)
-  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(closeTimer.current), []);
-
-  const update = (patch: Partial<typeof v>) => setV((c) => ({ ...c, ...patch }));
-
-  // Opens the modal for an email, with an optional starting message
-  const open = useCallback((email: string, msg?: { error?: string; success?: string }) => {
-    clearTimeout(closeTimer.current);
-    setV({ email: normalizeEmail(email), code: "", error: msg?.error ?? "", success: msg?.success ?? "" });
-    setIsOpen(true);
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  const close = useCallback(() => {
-    setIsOpen(false);
-    setV((c) => ({ ...c, code: "", error: "", success: "" }));
-  }, []);
-
-  const changeCode = (value: string) => update({ code: sanitizeCode(value), error: "" });
-
-  const verify = async () => {
-    const email = normalizeEmail(v.email);
-    if (!email || v.code.length !== CODE_LEN) return update({ error: `Enter the ${CODE_LEN}-digit code.` });
-    setBusy("verify");
-    update({ error: "", success: "" });
-    try {
-      await authApi.verifyEmail(email, v.code);
-      update({ success: "Email verified! Your account has been created." });
-      onVerified(email);
-      closeTimer.current = setTimeout(close, 1200); // let the user read the message first
-    } catch (err) {
-      update({ error: errorText(err, "Could not verify.") });
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const resend = async () => {
-    const email = normalizeEmail(v.email);
-    if (!email) return update({ error: "Enter your email first." });
-    setBusy("resend");
-    update({ error: "", success: "" });
-    try {
-      await authApi.resendVerification(email);
-      update({ success: "New code sent." });
-    } catch (err) {
-      update({ error: errorText(err, "Could not resend.") });
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  return { ...v, isOpen, busy, open, close, changeCode, verify, resend };
+  return windowWidth;
 }
 
-/* ─── Hook: forgot password ─────────────────────────────────────────────── */
-
-interface ForgotForm {
-  step: 1 | 2; // 1 = ask for email, 2 = enter code + new password
-  email: string; code: string; newPassword: string; confirmPassword: string; message: string; error: string;
-}
-const EMPTY_FORGOT: ForgotForm = { step: 1, email: "", code: "", newPassword: "", confirmPassword: "", message: "", error: "" };
-
-function useForgotPassword(onResetComplete: (email: string) => void) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [f, setF] = useState<ForgotForm>(EMPTY_FORGOT);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  // Updates fields and clears the current error
-  const update = (patch: Partial<ForgotForm>) => setF((c) => ({ ...c, error: "", ...patch }));
-
-  const open = useCallback((email: string) => {
-    setF({ ...EMPTY_FORGOT, email: normalizeEmail(email) });
-    setIsSubmitting(false);
-    setIsOpen(true);
-  }, []);
-
-  const close = useCallback(() => {
-    setIsOpen(false);
-    setF(EMPTY_FORGOT);
-    setIsSubmitting(false);
-  }, []);
-
-  const sendCode = async () => {
-    const email = normalizeEmail(f.email);
-    if (!email) return update({ error: "Enter your email first." });
-    setIsSubmitting(true);
-    update({ message: "" });
-    try {
-      const data = await authApi.forgotPassword(email);
-      update({ message: data.message || "If that email is registered, a reset code has been sent.", step: 2 });
-    } catch (err) {
-      update({ error: errorText(err, "Could not send reset code.") });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const resetPassword = async () => {
-    const email = normalizeEmail(f.email);
-    if (!email || !f.code || !f.newPassword || !f.confirmPassword) return update({ error: "Complete all fields first." });
-    if (f.newPassword.length < MIN_PASSWORD) return update({ error: `Password must be at least ${MIN_PASSWORD} characters.` });
-    if (f.newPassword !== f.confirmPassword) return update({ error: "Passwords don't match." });
-    setIsSubmitting(true);
-    update({ message: "" });
-    try {
-      await authApi.resetPassword(email, f.code, f.newPassword);
-      close();
-      onResetComplete(email);
-    } catch (err) {
-      update({ error: errorText(err, "Could not reset password.") });
-      setIsSubmitting(false);
-    }
-  };
-
-  return { ...f, isOpen, isSubmitting, open, close, update, sendCode, resetPassword };
-}
-
-/* ─── Modals ────────────────────────────────────────────────────────────── */
-
-function VerifyEmailModal({ v }: { v: ReturnType<typeof useEmailVerification> }) {
-  const onSubmit = (e: FormEvent) => { e.preventDefault(); void v.verify(); }; // Enter key verifies
-  return (
-    <ModalShell open={v.isOpen} zIndex={50} Icon={Mail} eyebrow="Verify Email" title={`Enter your ${CODE_LEN}-digit code`} onClose={v.close}>
-      <form onSubmit={onSubmit} style={stack}>
-        <p style={description}>
-          We sent a code to <strong style={{ color: "#fff" }}>{v.email || "your email"}</strong>. Expires in 10 minutes.
-        </p>
-        <StatusMessage tone="error" message={v.error} />
-        <StatusMessage tone="success" message={v.success} />
-
-        <Field label="Verification Code">
-          <motion.input
-            value={v.code}
-            onChange={(e) => v.changeCode(e.target.value)}
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            maxLength={CODE_LEN}
-            placeholder="• • • • • •"
-            autoFocus
-            whileFocus={{ boxShadow: `0 0 0 2px ${Y}55` }}
-            style={{
-              width: "100%", borderRadius: 14, border: "none", background: "rgba(255,255,255,0.05)", color: Y,
-              padding: "16px 14px", fontSize: 24, fontWeight: 700, textAlign: "center", letterSpacing: "0.5em",
-              outline: "none", boxShadow: "0 0 0 1px rgba(255,255,255,0.08)",
-            }}
-          />
-        </Field>
-
-        <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
-          <PrimaryButton disabled={v.busy === "verify" || v.code.length !== CODE_LEN} style={{ flex: 2, width: "auto", marginTop: 0 }}>
-            {v.busy === "verify" ? "Verifying…" : "Verify"}
-          </PrimaryButton>
-          <motion.button
-            type="button"
-            onClick={() => void v.resend()}
-            disabled={v.busy === "resend" || !v.email}
-            whileHover={{ borderColor: `${Y}55` }}
-            style={{ flex: 1, borderRadius: 14, border: "1px solid rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.04)", color: "#fff", padding: 14, fontWeight: 700, fontSize: 14, cursor: "pointer" }}
-          >
-            {v.busy === "resend" ? "Sending…" : "Resend"}
-          </motion.button>
-        </div>
-      </form>
-    </ModalShell>
-  );
-}
-
-function ForgotPasswordModal({ f }: { f: ReturnType<typeof useForgotPassword> }) {
-  const stepOne = f.step === 1;
-
-  // Button stays disabled until the needed fields are filled in
-  const canSubmit = stepOne ? !!f.email.trim() : !!(f.email.trim() && f.code && f.newPassword && f.confirmPassword);
-
-  const onSubmit = (e: FormEvent) => {
-    e.preventDefault(); // Enter key continues
-    if (canSubmit && !f.isSubmitting) void (stepOne ? f.sendCode() : f.resetPassword());
-  };
-
-  return (
-    <ModalShell open={f.isOpen} zIndex={60} Icon={Lock} eyebrow="Forgot Password" title={stepOne ? "Send reset code" : "Reset your password"} onClose={f.close}>
-      <form onSubmit={onSubmit} style={stack}>
-        <p style={description}>
-          {stepOne
-            ? `Enter your email and we’ll send a ${CODE_LEN}-digit reset code if the account exists.`
-            : "Enter the reset code from your email and choose a new password."}
-        </p>
-        <StatusMessage tone="error" message={f.error} />
-        <StatusMessage tone="success" message={f.message} />
-
-        <InputField
-          label="Email Address" Icon={Mail} name="forgotEmail" type="email" placeholder="you@example.com"
-          autoComplete="email" required value={f.email} onChange={(e) => f.update({ email: e.target.value })}
-        />
-        {!stepOne && (
-          <>
-            <InputField
-              label="Reset Code" Icon={Mail} name="resetCode" placeholder={`${CODE_LEN}-digit code`} autoComplete="one-time-code"
-              inputMode="numeric" maxLength={CODE_LEN} required value={f.code} onChange={(e) => f.update({ code: sanitizeCode(e.target.value) })}
-            />
-            <PasswordField
-              label="New Password" name="newPassword" placeholder={`Minimum ${MIN_PASSWORD} characters`} autoComplete="new-password"
-              maxLength={MAX_LEN} value={f.newPassword} onChange={(e) => f.update({ newPassword: e.target.value })}
-            />
-            <PasswordField
-              label="Confirm Password" name="confirmNewPassword" placeholder="Re-enter your new password" autoComplete="new-password"
-              maxLength={MAX_LEN} value={f.confirmPassword} onChange={(e) => f.update({ confirmPassword: e.target.value })}
-            />
-          </>
-        )}
-        <PrimaryButton disabled={f.isSubmitting || !canSubmit}>
-          {f.isSubmitting ? (stepOne ? "Sending…" : "Resetting…") : stepOne ? "Send reset code" : "Reset password"}
-        </PrimaryButton>
-      </form>
-    </ModalShell>
-  );
-}
-
-/* ─── Main component ────────────────────────────────────────────────────── */
-
+// ── Main Authentication Component ──────────────────────────────────────────
 export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login } = useAuth();
+  const { login: authenticateUserInContext } = useAuth();
+  const screenWidth = useWindowWidth();
 
-  const [mode, setMode] = useState<AuthMode>("signin");
-  const [isLoading, setIsLoading] = useState(false);
-  const [status, setStatus] = useState<{ tone: Tone; text: string } | null>(null);
-  const [formData, setFormData] = useState<FormState>(INITIAL_FORM);
+  const isMobileScreen = screenWidth <= 640;
+  const isTabletScreen = screenWidth > 640 && screenWidth <= 1024;
 
-  const isSignUp = mode === "signup";
-  const direction = isSignUp ? 1 : -1; // which way the "book page" flips
+  // ── Form State ───────────────────────────────────────────────────────────
+  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
+  const [fullName, setFullName] = useState("");
+  const [emailAddress, setEmailAddress] = useState("");
+  const [accountPassword, setAccountPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
 
-  // Switches tabs and clears passwords + old messages
-  const switchMode = useCallback((next: AuthMode) => {
-    setMode(next);
-    setStatus(null);
-    setFormData((c) => ({ ...c, password: "", confirmPassword: "" }));
-  }, []);
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+  const [isConfirmPasswordVisible, setIsConfirmPasswordVisible] = useState(false);
 
-  // Fills in the email and goes back to the sign in tab
-  const goToSignIn = (email: string) => {
-    switchMode("signin");
-    setFormData((c) => ({ ...c, email, password: "", confirmPassword: "" }));
-  };
+  const [isFormSubmitting, setIsFormSubmitting] = useState(false);
+  const [formErrorMessage, setFormErrorMessage] = useState("");
+  const [formSuccessMessage, setFormSuccessMessage] = useState("");
 
-  const verification = useEmailVerification(goToSignIn);
-  const forgot = useForgotPassword((email) => {
-    goToSignIn(email);
-    setStatus({ tone: "success", text: "Password reset successfully. You can sign in now." });
-  });
+  // ── Email Verification Modal State ───────────────────────────────────────
+  const [isVerifyModalOpen, setIsVerifyModalOpen] = useState(false);
+  const [verificationEmail, setVerificationEmail] = useState("");
+  const [verificationCode, setVerificationCode] = useState("");
+  const [verificationError, setVerificationError] = useState("");
+  const [verificationSuccess, setVerificationSuccess] = useState("");
+  const [isVerifyingCode, setIsVerifyingCode] = useState(false);
+  const [isResendingCode, setIsResendingCode] = useState(false);
 
-  // Supports links like /login?tab=signup and /login?verifyEmail=you@example.com
-  const openVerification = verification.open;
+  // ── Forgot Password Modal State ──────────────────────────────────────────
+  const [isForgotModalOpen, setIsForgotModalOpen] = useState(false);
+  const [forgotPasswordStep, setForgotPasswordStep] = useState<1 | 2>(1); // 1 = Request code, 2 = Reset
+  const [forgotPasswordEmail, setForgotPasswordEmail] = useState("");
+  const [forgotPasswordCode, setForgotPasswordCode] = useState("");
+  const [newPasswordValue, setNewPasswordValue] = useState("");
+  const [confirmNewPasswordValue, setConfirmNewPasswordValue] = useState("");
+  const [forgotModalError, setForgotModalError] = useState("");
+  const [forgotModalSuccess, setForgotModalSuccess] = useState("");
+  const [isSubmittingForgotPassword, setIsSubmittingForgotPassword] = useState(false);
+
+  // Read URL query parameters (?tab=signup or ?verifyEmail=...)
   useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    if (params.get("tab") === "signup") switchMode("signup");
-    const pendingEmail = params.get("verifyEmail");
-    if (pendingEmail) openVerification(pendingEmail);
-  }, [location.search, switchMode, openVerification]);
+    const urlParameters = new URLSearchParams(location.search);
+    if (urlParameters.get("tab") === "signup") {
+      setAuthMode("signup");
+    }
+    const emailToVerify = urlParameters.get("verifyEmail");
+    if (emailToVerify) {
+      setVerificationEmail(emailToVerify.trim().toLowerCase());
+      setIsVerifyModalOpen(true);
+    }
+  }, [location.search]);
 
-  const handleChange = (e: ChangeEvent<HTMLInputElement>) =>
-    setFormData((c) => ({ ...c, [e.target.name]: e.target.value }));
-
-  const handleSignIn = async () => {
-    const data = await authApi.login(normalizeEmail(formData.email), formData.password);
-    login({
-      token: data.token, username: data.username, email: data.email, role: data.role,
-      userId: String(data.userId), email_verified: data.email_verified,
-    });
-    navigate(ROLE_HOME_PATH[data.role] ?? LANDING_PATH, { replace: true });
+  // Switch between Sign In and Sign Up tabs
+  const switchAuthenticationMode = (newMode: "signin" | "signup") => {
+    setAuthMode(newMode);
+    setFormErrorMessage("");
+    setFormSuccessMessage("");
+    setAccountPassword("");
+    setConfirmPassword("");
   };
 
-  const handleSignUp = async () => {
-    const problem = validateSignUp(formData);
-    if (problem) throw new Error(problem);
+  // ── Form Submit: Sign In & Sign Up ───────────────────────────────────────
+  const handleMainFormSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (isFormSubmitting) return;
 
-    const name = formData.name.trim();
-    const email = normalizeEmail(formData.email);
-    const result = await authApi.register(name, email, formData.password);
-    setFormData({ name, email, password: "", confirmPassword: "" });
+    setFormErrorMessage("");
+    setFormSuccessMessage("");
+    setIsFormSubmitting(true);
 
-    if (result.requiresEmailVerification) {
-      verification.open(email, { success: "Code sent. Enter it to activate your account." });
-    } else {
-      // No verification needed, so the account is ready to use
-      switchMode("signin");
-      setStatus({ tone: "success", text: "Account created. You can sign in now." });
+    const cleanedEmail = emailAddress.trim().toLowerCase();
+
+    try {
+      if (authMode === "signin") {
+        const loginResponse = await authApi.login(cleanedEmail, accountPassword);
+        authenticateUserInContext({
+          token: loginResponse.token,
+          username: loginResponse.username,
+          email: loginResponse.email,
+          role: loginResponse.role,
+          userId: String(loginResponse.userId),
+          email_verified: loginResponse.email_verified,
+        });
+
+        const targetRedirectPath = ROLE_REDIRECT_PATHS[loginResponse.role] || HOME_PAGE_PATH;
+        navigate(targetRedirectPath, { replace: true });
+      } else {
+        if (!fullName.trim()) throw new Error("Please enter your full name.");
+        if (accountPassword.length < 8) throw new Error("Password must be at least 8 characters long.");
+        if (accountPassword !== confirmPassword) throw new Error("Passwords do not match.");
+
+        const registerResponse = await authApi.register(fullName.trim(), cleanedEmail, accountPassword);
+
+        if (registerResponse.requiresEmailVerification) {
+          setVerificationEmail(cleanedEmail);
+          setVerificationSuccess("Account created! A 6-digit verification code was sent to your email.");
+          setIsVerifyModalOpen(true);
+        } else {
+          switchAuthenticationMode("signin");
+          setFormSuccessMessage("Account created successfully. You can now sign in.");
+        }
+      }
+    } catch (networkError: any) {
+      if (networkError?.status === 403 && networkError?.data?.requiresEmailVerification) {
+        setVerificationEmail(networkError?.data?.email || cleanedEmail);
+        setVerificationError(networkError.message || "Please verify your email first.");
+        setIsVerifyModalOpen(true);
+        return;
+      }
+      setFormErrorMessage(networkError?.message || "Authentication failed. Please check your credentials.");
+    } finally {
+      setIsFormSubmitting(false);
     }
   };
 
-  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (isLoading) return;
-    setStatus(null);
-    setIsLoading(true);
+  // ── Verification Modal Submit ────────────────────────────────────────────
+  const handleVerifyEmailSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    const cleanedCode = verificationCode.trim();
+    if (cleanedCode.length !== 6) {
+      setVerificationError("Please enter the complete 6-digit verification code.");
+      return;
+    }
+
+    setIsVerifyingCode(true);
+    setVerificationError("");
+    setVerificationSuccess("");
+
     try {
-      await (isSignUp ? handleSignUp() : handleSignIn());
-    } catch (err) {
-      const apiError = err as ApiErrorLike;
-      // Sign in was blocked because the email isn't verified yet, so open the verify modal
-      if (!isSignUp && apiError?.status === 403 && apiError.data?.requiresEmailVerification) {
-        verification.open(apiError.data.email || formData.email, { error: apiError.message || "Please verify your email first." });
-        return;
-      }
-      setStatus({ tone: "error", text: errorText(err, "Authentication failed.") });
+      await authApi.verifyEmail(verificationEmail, cleanedCode);
+      setVerificationSuccess("Email verified successfully! You may now sign in.");
+      setTimeout(() => {
+        setIsVerifyModalOpen(false);
+        switchAuthenticationMode("signin");
+        setEmailAddress(verificationEmail);
+      }, 1200);
+    } catch (networkError: any) {
+      setVerificationError(networkError?.message || "Could not verify code. Please try again.");
     } finally {
-      setIsLoading(false);
+      setIsVerifyingCode(false);
+    }
+  };
+
+  const handleResendVerificationCode = async () => {
+    if (!verificationEmail) return;
+    setIsResendingCode(true);
+    setVerificationError("");
+    setVerificationSuccess("");
+
+    try {
+      await authApi.resendVerification(verificationEmail);
+      setVerificationSuccess("A fresh 6-digit code has been sent to your email.");
+    } catch (networkError: any) {
+      setVerificationError(networkError?.message || "Could not resend code. Please try again later.");
+    } finally {
+      setIsResendingCode(false);
+    }
+  };
+
+  // ── Forgot Password Logic ────────────────────────────────────────────────
+  const handleSendResetPasswordCode = async (event: FormEvent) => {
+    event.preventDefault();
+    const cleanedEmail = forgotPasswordEmail.trim().toLowerCase();
+    if (!cleanedEmail) {
+      setForgotModalError("Please enter your registered email address.");
+      return;
+    }
+
+    setIsSubmittingForgotPassword(true);
+    setForgotModalError("");
+    setForgotModalSuccess("");
+
+    try {
+      const response = await authApi.forgotPassword(cleanedEmail);
+      setForgotModalSuccess(response.message || "A reset code has been sent if that email exists.");
+      setForgotPasswordStep(2);
+    } catch (networkError: any) {
+      setForgotModalError(networkError?.message || "Failed to send reset code.");
+    } finally {
+      setIsSubmittingForgotPassword(false);
+    }
+  };
+
+  const handleResetPasswordSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    const cleanedEmail = forgotPasswordEmail.trim().toLowerCase();
+    const cleanedCode = forgotPasswordCode.trim();
+
+    if (!cleanedCode || !newPasswordValue || !confirmNewPasswordValue) {
+      setForgotModalError("Please complete all fields.");
+      return;
+    }
+    if (newPasswordValue.length < 8) {
+      setForgotModalError("New password must be at least 8 characters long.");
+      return;
+    }
+    if (newPasswordValue !== confirmNewPasswordValue) {
+      setForgotModalError("Passwords do not match.");
+      return;
+    }
+
+    setIsSubmittingForgotPassword(true);
+    setForgotModalError("");
+    setForgotModalSuccess("");
+
+    try {
+      await authApi.resetPassword(cleanedEmail, cleanedCode, newPasswordValue);
+      setIsForgotModalOpen(false);
+      switchAuthenticationMode("signin");
+      setEmailAddress(cleanedEmail);
+      setFormSuccessMessage("Password reset successfully. You can now sign in.");
+    } catch (networkError: any) {
+      setForgotModalError(networkError?.message || "Could not reset password. Please check your code.");
+    } finally {
+      setIsSubmittingForgotPassword(false);
     }
   };
 
   return (
     <div
-      className="auth-root"
       style={{
-        minHeight: "100vh", display: "grid", placeItems: "center", position: "relative",
-        fontFamily: "'Poppins', sans-serif",
-        background: "radial-gradient(ellipse at 20% 10%, rgba(245,197,24,0.05), transparent 40%), radial-gradient(ellipse at 80% 90%, rgba(245,197,24,0.03), transparent 40%), linear-gradient(135deg, #0a0600 0%, #060402 55%, #0c0802 100%)",
+        minHeight: "100vh",
+        backgroundColor: COLORS.pageBackground,
+        color: COLORS.textMain,
+        display: "grid",
+        placeItems: "center",
+        padding: isMobileScreen ? "20px 14px" : "32px 20px",
+        fontFamily: FONT_FAMILY,
       }}
     >
-      {/* Page styles (scoped to this page where possible) */}
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800;900&display=swap');
-        .auth-root, .auth-root * { box-sizing: border-box; }
-        .auth-root { padding: 24px 16px; }
-        .auth-root button, .auth-root input { font-family: inherit; }
-        .auth-root input::placeholder { color: rgba(255,255,255,0.25); }
-        .auth-brand-link { display: block; width: 44px; height: 44px; border-radius: 12px; outline: none; cursor: pointer; }
-        .auth-brand-link:focus-visible { box-shadow: 0 0 0 2px ${Y}; }
-        ::-webkit-scrollbar { display: none; }
-
-        /* ── Desktop (over 1024px): two columns side by side ── */
-        .auth-card { width: min(1000px, 100%); grid-template-columns: minmax(280px, 0.9fr) minmax(340px, 1fr); }
-        .auth-card > * { min-width: 0; }            /* lets grid children shrink instead of overflowing */
-        .auth-brand { min-height: 580px; }
-        .auth-hero { flex: 1; min-height: 0; }      /* image fills the leftover space in the panel */
-        .auth-form-pane { padding: 36px 32px; }
-
-        /* ── Tablet (641px to 1024px): still two columns, just a bit tighter ── */
-        @media (max-width: 1024px) {
-          .auth-card { width: min(900px, 100%); grid-template-columns: minmax(240px, 0.9fr) minmax(300px, 1fr); }
-          .auth-brand { min-height: 520px; }
-          .auth-form-pane { padding: 32px 24px; }
-        }
-
-        /* ── Phone (640px and below): stack the panels in one column ── */
-        @media (max-width: 640px) {
-          .auth-card { width: min(520px, 100%); grid-template-columns: minmax(0, 1fr); }
-          .auth-brand { min-height: 0; }
-          .auth-hero { flex: none; height: 220px; }  /* fixed height since the panel no longer stretches */
-          .auth-form-pane { padding: 28px 22px; }
-        }
-
-        /* ── Small phones (480px and below): tighten spacing further ── */
-        @media (max-width: 480px) {
-          .auth-root { padding: 12px 10px; }
-          .auth-hero { height: 170px; }
-          .auth-form-pane { padding: 24px 16px; }
-        }
-      `}</style>
-
-      <Orbs />
-
+      {/* ── Main Auth Card with Subtle Entrance Animation ────────────────── */}
       <motion.div
-        className="auth-card"
-        initial={{ opacity: 0, y: 30, scale: 0.97 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
         style={{
-          position: "relative", zIndex: 1, display: "grid",
-          background: "rgba(16,10,3,0.82)",
-          border: `1px solid ${BORDER}`, borderRadius: 28, overflow: "hidden", backdropFilter: "blur(24px)", perspective: 1200,
-          boxShadow: "0 40px 100px rgba(0,0,0,0.55), 0 0 0 1px rgba(245,197,24,0.06), inset 0 1px 0 rgba(255,255,255,0.06)",
+          width: "100%",
+          maxWidth: isTabletScreen ? 860 : 960,
+          backgroundColor: COLORS.cardBackground,
+          border: `1px solid ${COLORS.borderLine}`,
+          borderRadius: 24,
+          overflow: "hidden",
+          display: "grid",
+          gridTemplateColumns: isMobileScreen ? "1fr" : "0.9fr 1.1fr",
+          boxShadow: "0 24px 60px rgba(0,0,0,0.6)",
         }}
       >
-        <BrandPanel mode={mode} />
+        {/* ── Left Side: Brand Panel ───────────────────────────────────────── */}
+        <div
+          style={{
+            backgroundColor: "#0d0b09",
+            borderRight: isMobileScreen ? "none" : `1px solid ${COLORS.borderLine}`,
+            borderBottom: isMobileScreen ? `1px solid ${COLORS.borderLine}` : "none",
+            padding: isMobileScreen ? "24px 20px 20px" : "32px 28px",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "space-between",
+          }}
+        >
+          {/* Top Bar: Clickable Logo */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+            <Link to={HOME_PAGE_PATH} style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none" }}>
+              <img src={crunchLogo} alt="The Crunch Logo" style={{ width: 34, height: 34, objectFit: "contain" }} />
+              <span style={{ fontSize: 16, fontWeight: 800, color: COLORS.textMain }}>
+                The <span style={{ color: COLORS.gold }}>Crunch</span>
+              </span>
+            </Link>
 
-        {/* Right panel: book-page flip between sign in and sign up */}
-        <div style={{ background: PANEL, position: "relative", overflow: "hidden" }}>
-          <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 12, background: "linear-gradient(to right, rgba(0,0,0,0.3), transparent)", pointerEvents: "none", zIndex: 2 }} />
-
-          <AnimatePresence mode="wait" custom={direction}>
-            <motion.div
-              key={mode}
-              className="auth-form-pane"
-              custom={direction}
-              initial={{ rotateY: direction * -90, opacity: 0 }}
-              animate={{ rotateY: 0, opacity: 1 }}
-              exit={{ rotateY: direction * 90, opacity: 0 }}
-              transition={{ type: "spring", stiffness: 220, damping: 26 }}
-              style={{ transformStyle: "preserve-3d", perspective: 1000 }}
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 800,
+                letterSpacing: "0.14em",
+                textTransform: "uppercase",
+                color: COLORS.gold,
+              }}
             >
-              <TabSwitcher mode={mode} onSwitch={switchMode} />
+              {authMode === "signin" ? "WELCOME BACK" : "JOIN THE CRUNCH"}
+            </span>
+          </div>
 
-              <form onSubmit={handleSubmit} style={{ ...stack, marginTop: 24 }}>
-                <StatusMessage tone={status?.tone ?? "error"} message={status?.text ?? ""} />
+          {/* Hero Banner Image */}
+          <div
+            style={{
+              position: "relative",
+              borderRadius: 16,
+              overflow: "hidden",
+              aspectRatio: isMobileScreen ? "16/9" : "4/3",
+              backgroundColor: "#161310",
+              margin: "12px 0 20px",
+            }}
+          >
+            <img
+              src={crunchImg}
+              alt="Crispy Fried Chicken"
+              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+            />
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                background: "linear-gradient(to top, rgba(13,11,9,0.85) 0%, transparent 60%)",
+              }}
+            />
+          </div>
 
-                {/* Full name is only needed when creating an account */}
-                {isSignUp && (
-                  <InputField
-                    label="Full Name" Icon={User} name="name" placeholder="Your full name" autoComplete="name"
-                    required maxLength={MAX_LEN} value={formData.name} onChange={handleChange}
-                  />
-                )}
-                <InputField
-                  label="Email Address" Icon={Mail} name="email" type="email" placeholder="you@example.com" autoComplete="email"
-                  required maxLength={isSignUp ? MAX_LEN : undefined} value={formData.email} onChange={handleChange}
-                />
-                <PasswordField
-                  label="Password" name="password" value={formData.password} onChange={handleChange}
-                  placeholder={isSignUp ? `Minimum ${MIN_PASSWORD} characters` : "Enter your password"}
-                  autoComplete={isSignUp ? "new-password" : "current-password"} maxLength={isSignUp ? MAX_LEN : undefined}
-                />
-                {isSignUp ? (
-                  <PasswordField
-                    label="Confirm Password" name="confirmPassword" value={formData.confirmPassword} onChange={handleChange}
-                    placeholder="Re-enter your password" autoComplete="new-password" maxLength={MAX_LEN}
-                  />
-                ) : (
-                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                    <button type="button" onClick={() => forgot.open(formData.email)} style={textButton}>Forgot password?</button>
-                  </div>
-                )}
+          {/* Bottom Headline & Tagline */}
+          <div>
+            <h1 style={{ fontSize: isMobileScreen ? 22 : 26, fontWeight: 800, lineHeight: 1.2, margin: "0 0 8px" }}>
+              {authMode === "signin" ? "Sign in to order hot & crispy." : "Create your account today."}
+            </h1>
+            <p style={{ fontSize: 13, color: COLORS.textMuted, lineHeight: 1.6, margin: 0 }}>
+              {authMode === "signin"
+                ? "Sign in with your verified email to access your rewards and takeout orders."
+                : "Enter your details to receive your 6-digit verification code and start ordering."}
+            </p>
+          </div>
+        </div>
 
-                <PrimaryButton disabled={isLoading}>
-                  {isLoading ? (isSignUp ? "Sending code…" : "Signing in…") : isSignUp ? "Send Verification Code" : "Sign In"}
-                </PrimaryButton>
-              </form>
+        {/* ── Right Side: Form Panel ──────────────────────────────────────── */}
+        <div style={{ padding: isMobileScreen ? "28px 20px" : "36px 32px" }}>
+          {/* Pill Switcher between Sign In and Sign Up */}
+          <div
+            style={{
+              display: "inline-flex",
+              gap: 4,
+              padding: 4,
+              borderRadius: 10,
+              backgroundColor: "rgba(255, 255, 255, 0.05)",
+              border: `1px solid ${COLORS.borderLine}`,
+              marginBottom: 24,
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => switchAuthenticationMode("signin")}
+              style={{
+                border: 0,
+                borderRadius: 8,
+                padding: "8px 18px",
+                fontSize: 13,
+                fontWeight: 700,
+                fontFamily: FONT_FAMILY,
+                cursor: "pointer",
+                backgroundColor: authMode === "signin" ? COLORS.gold : "transparent",
+                color: authMode === "signin" ? "#120d04" : COLORS.textMuted,
+                transition: "all 0.15s",
+              }}
+            >
+              SIGN IN
+            </button>
+            <button
+              type="button"
+              onClick={() => switchAuthenticationMode("signup")}
+              style={{
+                border: 0,
+                borderRadius: 8,
+                padding: "8px 18px",
+                fontSize: 13,
+                fontWeight: 700,
+                fontFamily: FONT_FAMILY,
+                cursor: "pointer",
+                backgroundColor: authMode === "signup" ? COLORS.gold : "transparent",
+                color: authMode === "signup" ? "#120d04" : COLORS.textMuted,
+                transition: "all 0.15s",
+              }}
+            >
+              CREATE ACCOUNT
+            </button>
+          </div>
 
-              {/* "Need an account? Sign up" line */}
-              <p style={{ margin: "20px 0 0", color: MUTED, fontSize: 12 }}>
-                {isSignUp ? "Have an account? " : "Need an account? "}
-                <button type="button" onClick={() => switchMode(isSignUp ? "signin" : "signup")} style={{ ...textButton, color: Y, fontWeight: 700 }}>
-                  {isSignUp ? "Sign in" : "Sign up"}
-                </button>
-              </p>
-            </motion.div>
+          {/* Feedback Alerts */}
+          <AnimatePresence>
+            {formErrorMessage && (
+              <motion.div
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                style={{
+                  backgroundColor: "rgba(239, 68, 68, 0.12)",
+                  border: "1px solid rgba(239, 68, 68, 0.3)",
+                  color: COLORS.errorRed,
+                  padding: "10px 14px",
+                  borderRadius: 10,
+                  fontSize: 12.5,
+                  marginBottom: 16,
+                }}
+              >
+                {formErrorMessage}
+              </motion.div>
+            )}
           </AnimatePresence>
+
+          <AnimatePresence>
+            {formSuccessMessage && (
+              <motion.div
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                style={{
+                  backgroundColor: "rgba(34, 197, 94, 0.12)",
+                  border: "1px solid rgba(34, 197, 94, 0.3)",
+                  color: COLORS.successGreen,
+                  padding: "10px 14px",
+                  borderRadius: 10,
+                  fontSize: 12.5,
+                  marginBottom: 16,
+                }}
+              >
+                {formSuccessMessage}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Authentication Form with Smooth Tab Cross-fade */}
+          <AnimatePresence mode="wait">
+            <motion.form
+              key={authMode}
+              onSubmit={handleMainFormSubmit}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.2 }}
+              style={{ display: "grid", gap: 16 }}
+            >
+              {/* Full Name (Sign Up only) */}
+              {authMode === "signup" && (
+                <div>
+                  <label style={labelStyle}>Full Name</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Juan Dela Cruz"
+                    value={fullName}
+                    onChange={(event: ChangeEvent<HTMLInputElement>) => setFullName(event.target.value)}
+                    style={textInputStyle}
+                  />
+                </div>
+              )}
+
+              {/* Email Address */}
+              <div>
+                <label style={labelStyle}>Email Address</label>
+                <input
+                  type="email"
+                  required
+                  placeholder="juan@example.com"
+                  value={emailAddress}
+                  onChange={(event: ChangeEvent<HTMLInputElement>) => setEmailAddress(event.target.value)}
+                  style={textInputStyle}
+                />
+              </div>
+
+              {/* Password */}
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                  <label style={{ ...labelStyle, marginBottom: 0 }}>Password</label>
+                  <button
+                    type="button"
+                    onClick={() => setIsPasswordVisible(previous => !previous)}
+                    style={{ background: "none", border: 0, color: COLORS.gold, fontSize: 11, fontWeight: 700, cursor: "pointer", padding: 0, fontFamily: FONT_FAMILY }}
+                  >
+                    {isPasswordVisible ? "HIDE" : "SHOW"}
+                  </button>
+                </div>
+                <input
+                  type={isPasswordVisible ? "text" : "password"}
+                  required
+                  placeholder={authMode === "signup" ? "Minimum 8 characters" : "Enter your password"}
+                  value={accountPassword}
+                  onChange={(event: ChangeEvent<HTMLInputElement>) => setAccountPassword(event.target.value)}
+                  style={textInputStyle}
+                />
+              </div>
+
+              {/* Confirm Password (Sign Up only) */}
+              {authMode === "signup" && (
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <label style={{ ...labelStyle, marginBottom: 0 }}>Confirm Password</label>
+                    <button
+                      type="button"
+                      onClick={() => setIsConfirmPasswordVisible(previous => !previous)}
+                      style={{ background: "none", border: 0, color: COLORS.gold, fontSize: 11, fontWeight: 700, cursor: "pointer", padding: 0, fontFamily: FONT_FAMILY }}
+                    >
+                      {isConfirmPasswordVisible ? "HIDE" : "SHOW"}
+                    </button>
+                  </div>
+                  <input
+                    type={isConfirmPasswordVisible ? "text" : "password"}
+                    required
+                    placeholder="Re-enter your password"
+                    value={confirmPassword}
+                    onChange={(event: ChangeEvent<HTMLInputElement>) => setConfirmPassword(event.target.value)}
+                    style={textInputStyle}
+                  />
+                </div>
+              )}
+
+              {/* Forgot Password Link (Sign In only) */}
+              {authMode === "signin" && (
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForgotPasswordEmail(emailAddress);
+                      setForgotPasswordStep(1);
+                      setForgotModalError("");
+                      setForgotModalSuccess("");
+                      setIsForgotModalOpen(true);
+                    }}
+                    style={{ background: "none", border: 0, color: COLORS.textMuted, fontSize: 12, cursor: "pointer", padding: 0, fontFamily: FONT_FAMILY }}
+                  >
+                    Forgot password?
+                  </button>
+                </div>
+              )}
+
+              {/* Submit Action Button with Minimal Micro-Interaction */}
+              <motion.button
+                type="submit"
+                disabled={isFormSubmitting}
+                whileHover={isFormSubmitting ? {} : { scale: 1.012 }}
+                whileTap={isFormSubmitting ? {} : { scale: 0.988 }}
+                style={{
+                  backgroundColor: COLORS.gold,
+                  color: "#120d04",
+                  border: 0,
+                  borderRadius: 10,
+                  padding: "13px 18px",
+                  fontSize: 13.5,
+                  fontWeight: 800,
+                  cursor: isFormSubmitting ? "not-allowed" : "pointer",
+                  letterSpacing: "0.04em",
+                  fontFamily: FONT_FAMILY,
+                  opacity: isFormSubmitting ? 0.6 : 1,
+                  marginTop: 6,
+                }}
+              >
+                {isFormSubmitting
+                  ? authMode === "signin"
+                    ? "SIGNING IN…"
+                    : "CREATING ACCOUNT…"
+                  : authMode === "signin"
+                  ? "SIGN IN"
+                  : "REGISTER & VERIFY"}
+              </motion.button>
+            </motion.form>
+          </AnimatePresence>
+
+          {/* Toggle bottom link */}
+          <p style={{ marginTop: 24, fontSize: 13, color: COLORS.textMuted, textAlign: "center" }}>
+            {authMode === "signin" ? "Don't have an account yet? " : "Already have an account? "}
+            <button
+              type="button"
+              onClick={() => switchAuthenticationMode(authMode === "signin" ? "signup" : "signin")}
+              style={{ background: "none", border: 0, color: COLORS.gold, fontWeight: 700, cursor: "pointer", padding: 0, fontFamily: FONT_FAMILY }}
+            >
+              {authMode === "signin" ? "Sign up" : "Sign in"}
+            </button>
+          </p>
         </div>
       </motion.div>
 
-      <VerifyEmailModal v={verification} />
-      <ForgotPasswordModal f={forgot} />
+      {/* ── Modal: 6-Digit Email Verification ─────────────────────────────── */}
+      <AnimatePresence>
+        {isVerifyModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            style={{
+              position: "fixed",
+              inset: 0,
+              backgroundColor: "rgba(0, 0, 0, 0.78)",
+              backdropFilter: "blur(8px)",
+              zIndex: 1000,
+              display: "grid",
+              placeItems: "center",
+              padding: 16,
+            }}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              transition={{ duration: 0.25 }}
+              style={{
+                width: "min(420px, 100%)",
+                backgroundColor: COLORS.cardBackground,
+                border: `1px solid ${COLORS.borderLine}`,
+                borderRadius: 20,
+                padding: 24,
+                boxShadow: "0 20px 50px rgba(0,0,0,0.8)",
+                fontFamily: FONT_FAMILY,
+              }}
+            >
+              <h2 style={{ fontSize: 18, fontWeight: 800, margin: "0 0 6px" }}>Verify Your Email</h2>
+              <p style={{ fontSize: 13, color: COLORS.textMuted, lineHeight: 1.5, margin: "0 0 16px" }}>
+                Enter the 6-digit code sent to <strong style={{ color: COLORS.textMain }}>{verificationEmail}</strong>.
+              </p>
+
+              {verificationError && (
+                <p style={{ color: COLORS.errorRed, fontSize: 12.5, marginBottom: 12 }}>{verificationError}</p>
+              )}
+              {verificationSuccess && (
+                <p style={{ color: COLORS.successGreen, fontSize: 12.5, marginBottom: 12 }}>{verificationSuccess}</p>
+              )}
+
+              <form onSubmit={handleVerifyEmailSubmit} style={{ display: "grid", gap: 14 }}>
+                <input
+                  type="text"
+                  maxLength={6}
+                  inputMode="numeric"
+                  placeholder="000000"
+                  value={verificationCode}
+                  onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                    setVerificationCode(event.target.value.replace(/\D/g, "").slice(0, 6))
+                  }
+                  style={{
+                    ...textInputStyle,
+                    fontSize: 22,
+                    fontWeight: 800,
+                    letterSpacing: "0.4em",
+                    textAlign: "center",
+                  }}
+                />
+
+                <div style={{ display: "flex", gap: 8 }}>
+                  <motion.button
+                    type="submit"
+                    disabled={isVerifyingCode || verificationCode.length !== 6}
+                    whileHover={{ scale: 1.015 }}
+                    whileTap={{ scale: 0.985 }}
+                    style={{
+                      flex: 2,
+                      backgroundColor: COLORS.gold,
+                      color: "#120d04",
+                      border: 0,
+                      borderRadius: 10,
+                      padding: "11px",
+                      fontSize: 13,
+                      fontWeight: 800,
+                      cursor: "pointer",
+                      fontFamily: FONT_FAMILY,
+                      opacity: isVerifyingCode || verificationCode.length !== 6 ? 0.5 : 1,
+                    }}
+                  >
+                    {isVerifyingCode ? "VERIFYING…" : "VERIFY CODE"}
+                  </motion.button>
+
+                  <button
+                    type="button"
+                    onClick={handleResendVerificationCode}
+                    disabled={isResendingCode}
+                    style={{
+                      flex: 1,
+                      backgroundColor: "rgba(255,255,255,0.06)",
+                      color: COLORS.textMain,
+                      border: `1px solid ${COLORS.borderLine}`,
+                      borderRadius: 10,
+                      padding: "11px",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      fontFamily: FONT_FAMILY,
+                    }}
+                  >
+                    {isResendingCode ? "SENDING…" : "RESEND"}
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setIsVerifyModalOpen(false)}
+                  style={{ background: "none", border: 0, color: COLORS.textMuted, fontSize: 12, cursor: "pointer", marginTop: 4, fontFamily: FONT_FAMILY }}
+                >
+                  Close
+                </button>
+              </form>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Modal: Forgot Password ────────────────────────────────────────── */}
+      <AnimatePresence>
+        {isForgotModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            style={{
+              position: "fixed",
+              inset: 0,
+              backgroundColor: "rgba(0, 0, 0, 0.78)",
+              backdropFilter: "blur(8px)",
+              zIndex: 1000,
+              display: "grid",
+              placeItems: "center",
+              padding: 16,
+            }}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              transition={{ duration: 0.25 }}
+              style={{
+                width: "min(420px, 100%)",
+                backgroundColor: COLORS.cardBackground,
+                border: `1px solid ${COLORS.borderLine}`,
+                borderRadius: 20,
+                padding: 24,
+                boxShadow: "0 20px 50px rgba(0,0,0,0.8)",
+                fontFamily: FONT_FAMILY,
+              }}
+            >
+              <h2 style={{ fontSize: 18, fontWeight: 800, margin: "0 0 6px" }}>
+                {forgotPasswordStep === 1 ? "Forgot Password" : "Reset Your Password"}
+              </h2>
+              <p style={{ fontSize: 13, color: COLORS.textMuted, lineHeight: 1.5, margin: "0 0 16px" }}>
+                {forgotPasswordStep === 1
+                  ? "Enter your account email to receive a password reset code."
+                  : `Enter the code sent to ${forgotPasswordEmail} and your new password.`}
+              </p>
+
+              {forgotModalError && (
+                <p style={{ color: COLORS.errorRed, fontSize: 12.5, marginBottom: 12 }}>{forgotModalError}</p>
+              )}
+              {forgotModalSuccess && (
+                <p style={{ color: COLORS.successGreen, fontSize: 12.5, marginBottom: 12 }}>{forgotModalSuccess}</p>
+              )}
+
+              {forgotPasswordStep === 1 ? (
+                <form onSubmit={handleSendResetPasswordCode} style={{ display: "grid", gap: 14 }}>
+                  <input
+                    type="email"
+                    required
+                    placeholder="Enter your registered email"
+                    value={forgotPasswordEmail}
+                    onChange={(event: ChangeEvent<HTMLInputElement>) => setForgotPasswordEmail(event.target.value)}
+                    style={textInputStyle}
+                  />
+                  <motion.button
+                    type="submit"
+                    disabled={isSubmittingForgotPassword}
+                    whileHover={{ scale: 1.015 }}
+                    whileTap={{ scale: 0.985 }}
+                    style={{
+                      backgroundColor: COLORS.gold,
+                      color: "#120d04",
+                      border: 0,
+                      borderRadius: 10,
+                      padding: "11px",
+                      fontSize: 13,
+                      fontWeight: 800,
+                      cursor: "pointer",
+                      fontFamily: FONT_FAMILY,
+                      opacity: isSubmittingForgotPassword ? 0.5 : 1,
+                    }}
+                  >
+                    {isSubmittingForgotPassword ? "SENDING CODE…" : "SEND RESET CODE"}
+                  </motion.button>
+                </form>
+              ) : (
+                <form onSubmit={handleResetPasswordSubmit} style={{ display: "grid", gap: 14 }}>
+                  <input
+                    type="text"
+                    maxLength={6}
+                    required
+                    placeholder="6-digit reset code"
+                    value={forgotPasswordCode}
+                    onChange={(event: ChangeEvent<HTMLInputElement>) => setForgotPasswordCode(event.target.value)}
+                    style={textInputStyle}
+                  />
+                  <input
+                    type="password"
+                    required
+                    placeholder="New password (min. 8 characters)"
+                    value={newPasswordValue}
+                    onChange={(event: ChangeEvent<HTMLInputElement>) => setNewPasswordValue(event.target.value)}
+                    style={textInputStyle}
+                  />
+                  <input
+                    type="password"
+                    required
+                    placeholder="Confirm new password"
+                    value={confirmNewPasswordValue}
+                    onChange={(event: ChangeEvent<HTMLInputElement>) => setConfirmNewPasswordValue(event.target.value)}
+                    style={textInputStyle}
+                  />
+                  <motion.button
+                    type="submit"
+                    disabled={isSubmittingForgotPassword}
+                    whileHover={{ scale: 1.015 }}
+                    whileTap={{ scale: 0.985 }}
+                    style={{
+                      backgroundColor: COLORS.gold,
+                      color: "#120d04",
+                      border: 0,
+                      borderRadius: 10,
+                      padding: "11px",
+                      fontSize: 13,
+                      fontWeight: 800,
+                      cursor: "pointer",
+                      fontFamily: FONT_FAMILY,
+                      opacity: isSubmittingForgotPassword ? 0.5 : 1,
+                    }}
+                  >
+                    {isSubmittingForgotPassword ? "UPDATING PASSWORD…" : "RESET PASSWORD"}
+                  </motion.button>
+                </form>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setIsForgotModalOpen(false)}
+                style={{
+                  background: "none",
+                  border: 0,
+                  color: COLORS.textMuted,
+                  fontSize: 12,
+                  cursor: "pointer",
+                  marginTop: 12,
+                  width: "100%",
+                  textAlign: "center",
+                  fontFamily: FONT_FAMILY,
+                }}
+              >
+                Cancel
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
+
+// ── Shared Standard Input Style ────────────────────────────────────────────
+const labelStyle = {
+  display: "block",
+  fontSize: 11,
+  fontWeight: 700,
+  letterSpacing: "0.08em",
+  textTransform: "uppercase" as const,
+  color: COLORS.textMuted,
+  marginBottom: 6,
+  fontFamily: FONT_FAMILY,
+};
+
+const textInputStyle = {
+  width: "100%",
+  boxSizing: "border-box" as const,
+  font: "inherit",
+  fontFamily: FONT_FAMILY,
+  fontSize: 13.5,
+  color: COLORS.textMain,
+  backgroundColor: COLORS.inputBackground,
+  border: `1px solid ${COLORS.borderLine}`,
+  borderRadius: 10,
+  padding: "11px 14px",
+  outline: "none",
+};

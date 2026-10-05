@@ -1,521 +1,930 @@
-import { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react'
-import { motion, AnimatePresence, MotionConfig, useReducedMotion, type Variants } from 'framer-motion'
-import { Search, Flame, Clock, ChevronDown, ChevronLeft, ChevronRight, MapPin, Star, X, MessageSquare, Send, CheckCircle, Menu, User } from 'lucide-react'
+import { useState, useEffect, useCallback, useMemo, type CSSProperties } from 'react'
+import { motion, AnimatePresence, MotionConfig, useReducedMotion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
-import { useViewport } from '@/hooks/use-tablet'
 import { api, resolveAssetUrl } from '@/lib/api'
 import { fetchGeneralSettings, formatCurrencyAmount } from '@/lib/restaurantSettings'
 import { useAuth } from '@/context/authcontext'
 
-// ── Types & helpers ────────────────────────────────────────────────────────
-const NAV_H = 64
-const MAX_FB = 200
-const SLIDE_MS = 1500 // time each hero slide stays on screen
-const MAX_SLIDES = 8
-const CATEGORIES = ['All', 'Chicken', 'Sides', 'Drinks', 'Combos'] as const
-type Category = (typeof CATEGORIES)[number]
+// ── Design Tokens & Colors ─────────────────────────────────────────────────
+const THEME = {
+  gold: '#f5c842',
+  goldHover: '#ffd966',
+  background: '#090807',
+  cardBackground: '#13110e',
+  textLight: '#f6f4ee',
+  textMuted: 'rgba(246, 244, 238, 0.52)',
+  borderLine: 'rgba(255, 255, 255, 0.08)',
+  spicyRed: '#ef4444',
+  successGreen: '#22c55e',
+}
 
-interface Product { id: number; name: string; category: Category; rating: number; badge: string; description: string; price: number; spicy: boolean; img: string }
-interface Flavor { name: string; accent: string; desc: string; img: string }
-interface MenuItem { name: string; price: number; tag?: string; img?: string }
-interface MenuSection { id: string; title: string; subtext?: string; items: MenuItem[] }
-interface Promo { id: string; title: string; subtitle?: string; description: string; img: string; badge?: string; validUntil?: string; discount?: string; highlight?: boolean }
+const NAVBAR_HEIGHT = 68
+const SLIDESHOW_INTERVAL_MS = 4000
+const MAXIMUM_HERO_SLIDES = 8
+const MAXIMUM_FEEDBACK_CHARACTERS = 200
 
-const fmt = (v: number) => formatCurrencyAmount(v)
+const MENU_CATEGORIES = ['All', 'Chicken', 'Sides', 'Drinks', 'Combos'] as const
+type Category = (typeof MENU_CATEGORIES)[number]
+type SortOption = 'featured' | 'rating' | 'price-asc' | 'price-desc'
 
-const normCat = (v: unknown): Category => {
-  const r = String(v ?? '').toLowerCase()
-  if (r.includes('drink') || r.includes('beverage') || r.includes('soda')) return 'Drinks'
-  if (r.includes('side')) return 'Sides'
-  if (r.includes('combo')) return 'Combos'
-  if (r.includes('chicken') || r.includes('rice meal') || r.includes('menu food')) return 'Chicken'
+// ── Data Interfaces ────────────────────────────────────────────────────────
+interface Product {
+  id: number
+  name: string
+  category: Category
+  rating: number
+  badge: string
+  description: string
+  price: number
+  spicy: boolean
+  img: string
+}
+
+interface Flavor {
+  name: string
+  accent?: string
+  desc: string
+  img: string
+}
+
+interface MenuItem {
+  name: string
+  price: number
+  tag?: string
+  img?: string
+}
+
+interface MenuSection {
+  id: string
+  title: string
+  subtext?: string
+  items: MenuItem[]
+}
+
+interface PromoOffer {
+  id: string
+  title: string
+  subtitle?: string
+  description: string
+  img: string
+  badge?: string
+  validUntil?: string
+  discount?: string
+  highlight?: boolean
+}
+
+interface ProductsPageProps {
+  isAuthenticated?: boolean
+  onLogout?: () => void
+}
+
+// ── Screen Size & Responsive Hook ──────────────────────────────────────────
+function useScreenBreakpoints() {
+  const [windowWidth, setWindowWidth] = useState(
+    typeof window !== 'undefined' ? window.innerWidth : 1200
+  )
+
+  useEffect(() => {
+    const handleWindowResize = () => setWindowWidth(window.innerWidth)
+    window.addEventListener('resize', handleWindowResize)
+    return () => window.removeEventListener('resize', handleWindowResize)
+  }, [])
+
+  return {
+    isMobile: windowWidth < 680,
+    isTablet: windowWidth < 1024,
+    isDesktop: windowWidth >= 1024,
+  }
+}
+
+// ── Clean Helper Functions ─────────────────────────────────────────────────
+const formatPrice = (amountInPesos: number): string => formatCurrencyAmount(amountInPesos)
+
+const normalizeCategoryName = (rawCategoryName: unknown): Category => {
+  const categoryString = String(rawCategoryName ?? '').toLowerCase()
+  if (categoryString.includes('drink') || categoryString.includes('beverage') || categoryString.includes('soda')) return 'Drinks'
+  if (categoryString.includes('side')) return 'Sides'
+  if (categoryString.includes('combo')) return 'Combos'
+  if (categoryString.includes('chicken') || categoryString.includes('rice meal') || categoryString.includes('menu food') || categoryString.includes('wing')) return 'Chicken'
   return 'All'
 }
 
-const mapProducts = (data: unknown[]): Product[] =>
-  data
-    .map((r: any) => ({
-      id: Number(r?.id ?? r?.product_id ?? 0),
-      name: String(r?.name ?? r?.product_name ?? '').trim(),
-      category: normCat(r?.category),
-      rating: Number(r?.rating ?? 0),
-      badge: String(r?.badge ?? '').trim(),
-      description: String(r?.description ?? '').trim(),
-      price: Number(r?.price ?? 0),
-      spicy: Boolean(r?.spicy),
-      img: typeof (r?.image ?? r?.img) === 'string' && String(r?.image ?? r?.img).trim() ? resolveAssetUrl(String(r?.image ?? r?.img).trim()) : '',
+const mapApiProductsToApp = (apiDataList: unknown[]): Product[] => {
+  if (!Array.isArray(apiDataList)) return []
+  return apiDataList
+    .map((rawItem: any) => ({
+      id: Number(rawItem?.id ?? rawItem?.product_id ?? 0),
+      name: String(rawItem?.name ?? rawItem?.product_name ?? '').trim(),
+      category: normalizeCategoryName(rawItem?.category),
+      rating: Number(rawItem?.rating ?? 0),
+      badge: String(rawItem?.badge ?? '').trim(),
+      description: String(rawItem?.description ?? '').trim(),
+      price: Number(rawItem?.price ?? 0),
+      spicy: Boolean(rawItem?.spicy),
+      img: typeof (rawItem?.image ?? rawItem?.img) === 'string' && String(rawItem?.image ?? rawItem?.img).trim()
+        ? resolveAssetUrl(String(rawItem?.image ?? rawItem?.img).trim())
+        : '',
     }))
-    .filter(p => p.id > 0 && p.name)
-
-const timeLeft = (d?: string) => {
-  if (!d) return null
-  const diff = new Date(d).getTime() - Date.now()
-  if (diff <= 0) return null
-  const days = Math.floor(diff / 86400000)
-  if (days > 30) return null
-  return days > 0 ? `${days}d left` : `${Math.floor(diff / 3600000)}h left`
+    .filter(product => product.id > 0 && product.name.length > 0)
 }
 
-// ── Motion presets ─────────────────────────────────────────────────────────
-const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1]
-const VP = { once: true, margin: '-60px' } as const
-const fadeUp: Variants = {
-  hidden: { opacity: 0, y: 24 },
-  show: (i: number = 0) => ({ opacity: 1, y: 0, transition: { duration: 0.5, ease: EASE, delay: (i % 4) * 0.07 } }),
-  exit: { opacity: 0, scale: 0.96, transition: { duration: 0.2 } },
-}
-const reveal = { variants: fadeUp, initial: 'hidden', whileInView: 'show', viewport: VP } as const
-const heroIn = (delay: number) => ({ initial: { opacity: 0, y: 24 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.6, ease: EASE, delay } })
+const calculateTimeRemaining = (expirationDateString?: string): string | null => {
+  if (!expirationDateString) return null
+  const differenceMilliseconds = new Date(expirationDateString).getTime() - Date.now()
+  if (differenceMilliseconds <= 0) return null
 
-function Reveal({ children }: { children: ReactNode }) {
+  const daysRemaining = Math.floor(differenceMilliseconds / (1000 * 60 * 60 * 24))
+  if (daysRemaining > 30) return null
+  if (daysRemaining > 0) return `${daysRemaining} DAYS LEFT`
+
+  const hoursRemaining = Math.floor(differenceMilliseconds / (1000 * 60 * 60))
+  return `${hoursRemaining} HOURS LEFT`
+}
+
+// ── Reusable Safe Image Component ──────────────────────────────────────────
+function SafeImage({ src, alt }: { src?: string; alt: string }) {
+  const [isLoaded, setIsLoaded] = useState(false)
+  const [hasError, setHasError] = useState(false)
+
+  if (!src || hasError) {
+    return (
+      <div
+        style={{
+          width: '100%',
+          height: '100%',
+          display: 'grid',
+          placeItems: 'center',
+          backgroundColor: '#161411',
+          color: THEME.textMuted,
+          fontSize: 11,
+          letterSpacing: '0.08em',
+          fontWeight: 700,
+          textTransform: 'uppercase',
+        }}
+      >
+        The Crunch
+      </div>
+    )
+  }
+
   return (
-    <motion.div initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={VP} transition={{ duration: 0.5, ease: EASE }}>
-      {children}
-    </motion.div>
+    <img
+      src={src}
+      alt={alt}
+      loading="lazy"
+      onLoad={() => setIsLoaded(true)}
+      onError={() => setHasError(true)}
+      style={{
+        width: '100%',
+        height: '100%',
+        objectFit: 'cover',
+        display: 'block',
+        opacity: isLoaded ? 1 : 0,
+        transition: 'opacity 0.4s ease',
+      }}
+    />
   )
 }
 
-const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-html{scroll-behavior:smooth}
-:root{--gold:#f5c842;--bg:#0b0a08;--card:#131110;--line:rgba(255,255,255,.08);--text:#f4f1ec;--muted:rgba(244,241,236,.58);--pad:clamp(16px,4vw,48px)}
-body{background:var(--bg)}
-.pc{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
-.pc button{font-family:inherit}
-.pc :focus-visible{outline:2px solid var(--gold);outline-offset:2px}
-.wrap{max-width:1240px;margin:0 auto;padding:0 var(--pad);width:100%}
-.nav{position:fixed;top:0;left:0;right:0;z-index:100;height:${NAV_H}px;display:flex;align-items:center;transition:background .25s,border-color .25s,box-shadow .25s;border-bottom:1px solid transparent}
-.nav.on{background:rgba(11,10,8,.92);backdrop-filter:blur(16px);border-bottom-color:var(--line);box-shadow:0 8px 30px rgba(0,0,0,.35)}
-.nav-in{display:flex;align-items:center;justify-content:space-between;gap:16px}
-.brand{display:flex;align-items:center;gap:10px;background:none;border:0;cursor:pointer;color:var(--text);font-weight:800;font-size:18px;letter-spacing:-.02em}
-.links{display:flex;align-items:center;gap:4px}
-.link{background:none;border:0;color:var(--muted);font-size:14px;font-weight:500;padding:8px 14px;border-radius:8px;cursor:pointer;transition:color .15s,background .15s}
-.link:hover{color:var(--text);background:rgba(255,255,255,.05)}
-.btn{border:0;border-radius:10px;padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;transition:transform .15s,opacity .15s}
-.btn:active{transform:scale(.97)}
-.btn-gold{background:var(--gold);color:#15120a}
-.btn-ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
-.btn-ghost:hover{background:rgba(255,255,255,.05)}
-.status{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;color:var(--muted);padding:0 4px}
-.dot{width:7px;height:7px;border-radius:50%}
-.burger{display:none;background:none;border:0;color:var(--text);cursor:pointer;padding:8px}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:20px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:16px;overflow:hidden;transition:border-color .2s,box-shadow .2s;display:flex;flex-direction:column}
-.card:hover{border-color:rgba(245,200,66,.35);box-shadow:0 14px 34px rgba(0,0,0,.35)}
-.card:hover .thumb img.ld{transform:scale(1.05)}
-.thumb{position:relative;aspect-ratio:4/3;background:#1a1712;overflow:hidden}
-.thumb img{width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity .5s ease,transform .6s cubic-bezier(.22,1,.36,1)}
-.thumb img.ld{opacity:1}
-.chip{font-size:11px;font-weight:600;padding:3px 10px;border-radius:999px;background:rgba(255,255,255,.06);color:var(--muted)}
-.chip-gold{background:var(--gold);color:#15120a}
-.tabs{position:sticky;top:${NAV_H}px;z-index:50;background:rgba(11,10,8,.94);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
-.tabs-in{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none}
-.tabs-in::-webkit-scrollbar{display:none}
-.tab{position:relative;background:none;border:0;padding:16px 14px;font-size:14px;font-weight:500;color:var(--muted);cursor:pointer;white-space:nowrap}
-.tab.on{color:var(--gold);font-weight:600}
-.h2{font-size:clamp(26px,3.6vw,38px);font-weight:800;letter-spacing:-.025em;line-height:1.1}
-.sub{color:var(--muted);font-size:14px;line-height:1.6}
-.section{margin-top:80px}
-.skel{border-radius:16px;background:linear-gradient(90deg,#141210,#1c1915,#141210);background-size:200% 100%;animation:sh 1.4s infinite}
-.fixed-btn{position:fixed;bottom:22px;right:22px;z-index:90}
-.input{width:100%;font:inherit;font-size:14px;color:var(--text);background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:10px;padding:11px 14px;outline:none;transition:border-color .15s}
-.input:focus{border-color:rgba(245,200,66,.5)}
-.input option{color:#111}
+// ── Hero Slideshow Component ───────────────────────────────────────────────
+function HeroSlideshow({
+  slides,
+  onOrderClick,
+}: {
+  slides: Product[]
+  onOrderClick: () => void
+}) {
+  const [activeSlideIndex, setActiveSlideIndex] = useState(0)
+  const [isPaused, setIsPaused] = useState(false)
+  const userPrefersReducedMotion = useReducedMotion()
 
-/* Hero */
-.hero{padding-top:calc(${NAV_H}px + clamp(28px,6vw,72px));padding-bottom:clamp(36px,6vw,56px);background:radial-gradient(ellipse at 20% 0%,rgba(245,200,66,.10),transparent 55%)}
-.hero-grid{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr);gap:clamp(28px,5vw,64px);align-items:center}
-.hero-grid.solo{grid-template-columns:minmax(0,1fr)}
-.hero-title{font-size:clamp(42px,7.5vw,84px);font-weight:800;letter-spacing:-.035em;line-height:1}
-.show-wrap{position:relative;width:100%}
-.show-wrap::before{content:'';position:absolute;inset:6% -4% -6% 4%;border-radius:32px;background:radial-gradient(circle at 50% 50%,rgba(245,200,66,.18),transparent 70%);filter:blur(30px);z-index:0;pointer-events:none}
-.show{position:relative;z-index:1;aspect-ratio:5/4;width:100%;border-radius:24px;overflow:hidden;background:#1a1712;border:1px solid rgba(255,255,255,.1);box-shadow:0 30px 70px -20px rgba(0,0,0,.75)}
-.show-shade{position:absolute;inset:0;background:linear-gradient(to top,rgba(11,10,8,.94) 0%,rgba(11,10,8,.4) 38%,transparent 64%);pointer-events:none}
-.show-cap{position:absolute;left:0;right:0;bottom:0;padding:clamp(14px,2.4vw,24px);display:flex;align-items:flex-end;justify-content:space-between;gap:12px}
-.show-meta{min-width:0}
-.show-name{font-size:clamp(17px,2.4vw,24px);font-weight:700;letter-spacing:-.01em;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.show-price{font-size:clamp(15px,2vw,18px);font-weight:800;color:var(--gold);margin-top:2px}
-.show-count{position:absolute;top:14px;right:14px;z-index:2;font-size:12px;font-weight:600;letter-spacing:.04em;padding:5px 11px;border-radius:999px;background:rgba(11,10,8,.55);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.12);font-variant-numeric:tabular-nums}
-.show-tag{position:absolute;top:14px;left:14px;z-index:2}
-.show-arrow{position:absolute;top:50%;transform:translateY(-50%);z-index:2;width:38px;height:38px;border-radius:50%;border:1px solid rgba(255,255,255,.18);background:rgba(11,10,8,.55);backdrop-filter:blur(8px);color:var(--text);display:grid;place-items:center;cursor:pointer;opacity:0;transition:opacity .2s,background .2s}
-.show-arrow:hover{background:rgba(11,10,8,.8)}
-.show-arrow.l{left:12px}
-.show-arrow.r{right:12px}
-.show:hover .show-arrow,.show-arrow:focus-visible{opacity:1}
-.show-dots{display:flex;gap:6px;margin-top:10px}
-.show-dot{height:6px;width:6px;border-radius:999px;border:0;padding:0;background:rgba(255,255,255,.35);cursor:pointer;transition:width .3s,background .3s}
-.show-dot.on{width:22px;background:var(--gold)}
-.show-skel{aspect-ratio:5/4;width:100%;border-radius:24px}
+  const totalSlidesCount = slides.length
+  const currentSlide = slides[Math.min(activeSlideIndex, totalSlidesCount - 1)]
 
-.dot.live{animation:pulse 2s infinite}
-@keyframes sh{to{background-position:-200% 0}}
-@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.55)}70%,100%{box-shadow:0 0 0 7px rgba(34,197,94,0)}}
-
-@media(hover:none){.show-arrow{opacity:.85;width:32px;height:32px}}
-@media(max-width:900px){
-  .hero-grid{grid-template-columns:minmax(0,1fr)}
-  .show,.show-skel{aspect-ratio:16/10}
-  .show-wrap{max-width:640px}
-}
-@media(max-width:768px){.links,.status.hide-m{display:none}.burger{display:flex}}
-@media(max-width:560px){
-  .show,.show-skel{aspect-ratio:4/3;border-radius:18px}
-  .show-wrap::before{filter:blur(22px)}
-  .show-cap .btn{padding:8px 14px}
-  .section{margin-top:64px}
-}
-@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
-`
-
-const Skel = ({ h }: { h: number }) => <div className="skel" style={{ height: h }} />
-
-function Photo({ src, alt }: { src?: string; alt: string }) {
-  const [bad, setBad] = useState(false)
-  const [loaded, setLoaded] = useState(false)
-  if (!src || bad) return <div style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center', color: 'var(--muted)', fontSize: 12 }}>No image</div>
-  return <img ref={el => { if (el?.complete && el.naturalWidth > 0 && !loaded) setLoaded(true) }} className={loaded ? 'ld' : undefined} src={src} alt={alt} loading="lazy" onLoad={() => setLoaded(true)} onError={() => setBad(true)} />
-}
-
-// ── Hero slideshow ─────────────────────────────────────────────────────────
-function HeroSlideshow({ slides, onOrder }: { slides: Product[]; onOrder: () => void }) {
-  const [index, setIndex] = useState(0)
-  const [paused, setPaused] = useState(false)
-  const reduceMotion = useReducedMotion()
-  const count = slides.length
-  const current = slides[Math.min(index, count - 1)]
-
-  // Warm the browser cache so slides don't flash blank at 1.5s speed
   useEffect(() => {
-    slides.forEach(s => { const im = new Image(); im.src = s.img })
+    slides.forEach(slide => {
+      if (slide.img) {
+        const imagePreloader = new Image()
+        imagePreloader.src = slide.img
+      }
+    })
   }, [slides])
 
-  // Autoplay: pauses on hover/focus, and is off for people who prefer reduced motion
   useEffect(() => {
-    if (count < 2 || paused || reduceMotion) return
-    const id = setInterval(() => setIndex(i => (i + 1) % count), SLIDE_MS)
-    return () => clearInterval(id)
-  }, [count, paused, reduceMotion])
+    if (totalSlidesCount < 2 || isPaused || userPrefersReducedMotion) return
+    const timerId = setInterval(() => {
+      setActiveSlideIndex(previousIndex => (previousIndex + 1) % totalSlidesCount)
+    }, SLIDESHOW_INTERVAL_MS)
+    return () => clearInterval(timerId)
+  }, [totalSlidesCount, isPaused, userPrefersReducedMotion])
 
-  // Keep the index valid if the product list changes
-  useEffect(() => { if (index >= count) setIndex(0) }, [count, index])
+  const navigateSlide = (direction: 1 | -1) => {
+    setActiveSlideIndex(previousIndex => (previousIndex + direction + totalSlidesCount) % totalSlidesCount)
+  }
 
-  const go = (dir: 1 | -1) => setIndex(i => (i + dir + count) % count)
+  if (!currentSlide) return null
 
   return (
-    <motion.div className="show-wrap" initial={{ opacity: 0, y: 28, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.7, ease: EASE, delay: 0.2 }}>
-      <div
-        className="show"
-        role="region"
-        aria-roledescription="carousel"
-        aria-label="Featured menu items"
-        onMouseEnter={() => setPaused(true)}
-        onMouseLeave={() => setPaused(false)}
-        onFocus={() => setPaused(true)}
-        onBlur={() => setPaused(false)}
-      >
-        <AnimatePresence initial={false}>
-          <motion.div
-            key={current.id}
-            className="thumb"
-            style={{ position: 'absolute', inset: 0, aspectRatio: 'auto' }}
-            initial={{ opacity: 0, scale: 1.08 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.6, ease: EASE }}
-          >
-            <Photo src={current.img} alt={current.name} />
-          </motion.div>
-        </AnimatePresence>
-
-        <div className="show-shade" />
-        {current.badge && <span className="chip chip-gold show-tag">{current.badge}</span>}
-        <span className="show-count" aria-hidden="true">{String(index + 1).padStart(2, '0')} / {String(count).padStart(2, '0')}</span>
-
-        {count > 1 && (
-          <>
-            <button className="show-arrow l" onClick={() => go(-1)} aria-label="Previous item"><ChevronLeft size={18} /></button>
-            <button className="show-arrow r" onClick={() => go(1)} aria-label="Next item"><ChevronRight size={18} /></button>
-          </>
-        )}
-
-        <div className="show-cap" aria-live="off">
-          <motion.div key={current.id} className="show-meta" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, ease: EASE }}>
-            <p className="show-name">{current.name}</p>
-            <p className="show-price">{fmt(current.price)}</p>
-            {count > 1 && (
-              <div className="show-dots">
-                {slides.map((s, n) => (
-                  <button key={s.id} className={`show-dot${n === index ? ' on' : ''}`} onClick={() => setIndex(n)} aria-label={`Show ${s.name}`} aria-current={n === index} />
-                ))}
-              </div>
-            )}
-          </motion.div>
-          <button className="btn btn-gold" style={{ flexShrink: 0 }} onClick={onOrder}>Order now</button>
-        </div>
-      </div>
-    </motion.div>
-  )
-}
-
-// ── Cards ──────────────────────────────────────────────────────────────────
-function ProductCard({ p, onOrder, i }: { p: Product; onOrder: () => void; i: number }) {
-  return (
-    <motion.article className="card" {...reveal} custom={i} exit="exit" layout="position" whileHover={{ y: -4 }}>
-      <div className="thumb">
-        <Photo src={p.img} alt={p.name} />
-        {p.badge && <span className="chip chip-gold" style={{ position: 'absolute', top: 12, left: 12 }}>{p.badge}</span>}
-        {p.spicy && <span style={{ position: 'absolute', top: 12, right: 12, background: 'rgba(0,0,0,.6)', borderRadius: '50%', width: 28, height: 28, display: 'grid', placeItems: 'center' }} aria-label="Spicy"><Flame size={14} color="#ef4444" /></span>}
-      </div>
-      <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 8, flex: 1 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
-          <h3 style={{ fontSize: 17, fontWeight: 700, lineHeight: 1.25 }}>{p.name}</h3>
-          {p.rating > 0 && <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, color: 'var(--gold)' }}><Star size={12} fill="currentColor" />{p.rating.toFixed(1)}</span>}
-        </div>
-        {p.description && <p className="sub" style={{ fontSize: 13, flex: 1 }}>{p.description}</p>}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 }}>
-          <span style={{ fontSize: 20, fontWeight: 800 }}>{fmt(p.price)}</span>
-          <button className="btn btn-gold" onClick={onOrder}>Order</button>
-        </div>
-      </div>
-    </motion.article>
-  )
-}
-
-function PromoCard({ p, i }: { p: Promo; i: number }) {
-  const left = timeLeft(p.validUntil)
-  return (
-    <motion.article className="card" {...reveal} custom={i} whileHover={{ y: -4 }}>
-      <div className="thumb" style={{ aspectRatio: '16/9' }}>
-        <Photo src={p.img ? resolveAssetUrl(p.img) : ''} alt={p.title} />
-        {p.badge && <span className="chip chip-gold" style={{ position: 'absolute', top: 12, left: 12 }}>{p.badge}</span>}
-        {p.discount && <span className="chip chip-gold" style={{ position: 'absolute', bottom: 12, right: 12, fontSize: 13 }}>{p.discount}</span>}
-      </div>
-      <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <h3 style={{ fontSize: 17, fontWeight: 700 }}>{p.title}</h3>
-        {p.subtitle && <p style={{ fontSize: 13, fontWeight: 500, color: 'var(--gold)' }}>{p.subtitle}</p>}
-        <p className="sub" style={{ fontSize: 13 }}>{p.description}</p>
-        {left && <span className="chip" style={{ alignSelf: 'flex-start', marginTop: 4, color: '#f87171' }}>{left}</span>}
-      </div>
-    </motion.article>
-  )
-}
-
-function FlavorCard({ f, open, onToggle, i }: { f: Flavor; open: boolean; onToggle: () => void; i: number }) {
-  return (
-    <motion.div
-      {...reveal}
-      custom={i}
-      layout="position"
-      whileHover={open ? undefined : { y: -2 }}
+    <div
+      onMouseEnter={() => setIsPaused(true)}
+      onMouseLeave={() => setIsPaused(false)}
       style={{
-        gridColumn: open ? 'span 2' : 'span 1',
-        border: `1px solid ${open ? 'rgba(255,255,255,.18)' : 'var(--line)'}`,
-        borderRadius: 12,
-        background: 'var(--card)',
+        position: 'relative',
+        aspectRatio: '4/3',
+        width: '100%',
+        borderRadius: 22,
         overflow: 'hidden',
-        boxShadow: open ? '0 10px 30px rgba(0,0,0,.35)' : 'none',
-        transition: 'border-color .2s, box-shadow .2s',
+        backgroundColor: THEME.cardBackground,
+        border: `1px solid ${THEME.borderLine}`,
+        boxShadow: '0 24px 50px -15px rgba(0,0,0,0.85)',
       }}
     >
-      <button
-        onClick={onToggle}
-        aria-expanded={open}
-        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', background: open ? 'rgba(255,255,255,.03)' : 'transparent', color: 'var(--text)', border: 0, cursor: 'pointer', fontSize: 14, fontWeight: 600 }}
-      >
-        {f.name}
-        <motion.span animate={{ rotate: open ? 180 : 0 }} transition={{ duration: 0.25, ease: EASE }} style={{ display: 'flex', color: 'var(--muted)' }}>
-          <ChevronDown size={15} />
-        </motion.span>
-      </button>
       <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            key="body"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.3, ease: EASE }}
-            style={{ overflow: 'hidden', borderTop: '1px solid var(--line)' }}
-          >
-            <div className="thumb" style={{ aspectRatio: '16/9' }}><Photo src={f.img ? resolveAssetUrl(f.img) : ''} alt={f.name} /></div>
-            {f.desc && <p className="sub" style={{ padding: 14, fontSize: 13 }}>{f.desc}</p>}
-          </motion.div>
-        )}
+        <motion.div
+          key={currentSlide.id}
+          initial={{ opacity: 0, scale: 1.05 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.5 }}
+          style={{ position: 'absolute', inset: 0 }}
+        >
+          <SafeImage src={currentSlide.img} alt={currentSlide.name} />
+        </motion.div>
       </AnimatePresence>
-    </motion.div>
+
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          background: 'linear-gradient(to top, rgba(9,8,7,0.95) 0%, rgba(9,8,7,0.3) 45%, transparent 70%)',
+          pointerEvents: 'none',
+        }}
+      />
+
+      <div style={{ position: 'absolute', top: 16, left: 16, zIndex: 3, display: 'flex', gap: 6 }}>
+        {currentSlide.badge ? (
+          <span style={pillBadgeStyle(THEME.gold, '#120d04')}>{currentSlide.badge}</span>
+        ) : (
+          <span style={pillBadgeStyle('rgba(255,255,255,0.08)', THEME.textLight)}>FEATURED</span>
+        )}
+        {currentSlide.spicy && (
+          <span style={pillBadgeStyle('rgba(239,68,68,0.2)', '#f87171', 'rgba(239,68,68,0.4)')}>SPICY</span>
+        )}
+      </div>
+
+      <span
+        style={{
+          position: 'absolute',
+          top: 16,
+          right: 16,
+          zIndex: 3,
+          fontSize: 11,
+          fontWeight: 700,
+          color: THEME.textMuted,
+          backgroundColor: 'rgba(9, 8, 7, 0.65)',
+          padding: '4px 8px',
+          borderRadius: 6,
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        {String(activeSlideIndex + 1).padStart(2, '0')} / {String(totalSlidesCount).padStart(2, '0')}
+      </span>
+
+      {totalSlidesCount > 1 && (
+        <>
+          <button onClick={() => navigateSlide(-1)} aria-label="Previous Slide" style={slideArrowButtonStyle('left')}>
+            ‹
+          </button>
+          <button onClick={() => navigateSlide(1)} aria-label="Next Slide" style={slideArrowButtonStyle('right')}>
+            ›
+          </button>
+        </>
+      )}
+
+      <div
+        style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 3,
+          padding: 22,
+          display: 'flex',
+          alignItems: 'flex-end',
+          justifyContent: 'space-between',
+          gap: 14,
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <h3
+            style={{
+              fontSize: 20,
+              fontWeight: 800,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              color: THEME.textLight,
+            }}
+          >
+            {currentSlide.name}
+          </h3>
+          <p style={{ fontSize: 17, fontWeight: 800, color: THEME.gold, marginTop: 2 }}>
+            {formatPrice(currentSlide.price)}
+          </p>
+
+          {totalSlidesCount > 1 && (
+            <div style={{ display: 'flex', gap: 5, marginTop: 10 }}>
+              {slides.map((slide, slideIndex) => (
+                <button
+                  key={slide.id}
+                  onClick={() => setActiveSlideIndex(slideIndex)}
+                  style={{
+                    height: 4,
+                    width: slideIndex === activeSlideIndex ? 22 : 5,
+                    borderRadius: 2,
+                    border: 0,
+                    padding: 0,
+                    backgroundColor: slideIndex === activeSlideIndex ? THEME.gold : 'rgba(255,255,255,0.25)',
+                    cursor: 'pointer',
+                    transition: 'all 0.25s',
+                  }}
+                  aria-label={`Slide ${slideIndex + 1}`}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <button
+          onClick={onOrderClick}
+          style={{ ...solidGoldButtonStyle, flexShrink: 0, padding: '10px 20px', fontSize: 13 }}
+        >
+          ORDER NOW
+        </button>
+      </div>
+    </div>
   )
 }
 
-function MenuCard({ s, i }: { s: MenuSection; i: number }) {
+// ── Product Card Component ─────────────────────────────────────────────────
+function ProductCard({
+  product,
+  onOrderClick,
+}: {
+  product: Product
+  onOrderClick: () => void
+}) {
   return (
-    <motion.div className="card" style={{ padding: 22 }} {...reveal} custom={i} whileHover={{ y: -3 }}>
-      <h3 style={{ fontSize: 18, fontWeight: 700 }}>{s.title}</h3>
-      {s.subtext && <p className="sub" style={{ fontSize: 12.5, marginTop: 4 }}>{s.subtext}</p>}
-      <div style={{ marginTop: 12 }}>
-        {s.items.map(it => (
-          <div key={`${s.id}-${it.name}-${it.price}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderTop: '1px solid var(--line)' }}>
-            {it.img && <div className="thumb" style={{ width: 40, height: 40, aspectRatio: '1', borderRadius: 8, flexShrink: 0 }}><Photo src={resolveAssetUrl(it.img)} alt={it.name} /></div>}
-            <span style={{ flex: 1, fontSize: 14 }}>{it.name} {it.tag && <span className="chip chip-gold" style={{ marginLeft: 6 }}>{it.tag}</span>}</span>
-            <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--gold)' }}>{fmt(it.price)}</span>
+    <article
+      style={{
+        backgroundColor: THEME.cardBackground,
+        border: `1px solid ${THEME.borderLine}`,
+        borderRadius: 18,
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
+      <div style={{ position: 'relative', aspectRatio: '4/3', backgroundColor: '#151310', overflow: 'hidden' }}>
+        <SafeImage src={product.img} alt={product.name} />
+
+        {product.badge && (
+          <span style={{ ...pillBadgeStyle(THEME.gold, '#120d04'), position: 'absolute', top: 12, left: 12 }}>
+            {product.badge}
+          </span>
+        )}
+        {product.spicy && (
+          <span
+            style={{
+              ...pillBadgeStyle('rgba(239,68,68,0.2)', '#f87171', 'rgba(239,68,68,0.4)'),
+              position: 'absolute',
+              top: 12,
+              right: 12,
+            }}
+          >
+            SPICY
+          </span>
+        )}
+      </div>
+
+      <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 8, flex: 1 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+          <h3 style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.3, color: THEME.textLight }}>
+            {product.name}
+          </h3>
+          {product.rating > 0 && (
+            <span style={{ fontSize: 12, fontWeight: 700, color: THEME.gold }}>
+              ★ {product.rating.toFixed(1)}
+            </span>
+          )}
+        </div>
+
+        {product.description && (
+          <p
+            style={{
+              fontSize: 12.5,
+              color: THEME.textMuted,
+              lineHeight: 1.55,
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+              flex: 1,
+            }}
+          >
+            {product.description}
+          </p>
+        )}
+
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginTop: 10,
+            paddingTop: 10,
+            borderTop: `1px solid ${THEME.borderLine}`,
+          }}
+        >
+          <span style={{ fontSize: 18, fontWeight: 800, color: THEME.textLight }}>
+            {formatPrice(product.price)}
+          </span>
+          <button onClick={onOrderClick} style={{ ...solidGoldButtonStyle, padding: '7px 15px', fontSize: 12 }}>
+            ORDER
+          </button>
+        </div>
+      </div>
+    </article>
+  )
+}
+
+// ── Promo Card Component ───────────────────────────────────────────────────
+function PromoCard({ promo }: { promo: PromoOffer }) {
+  const timeRemainingText = calculateTimeRemaining(promo.validUntil)
+
+  return (
+    <article
+      style={{
+        backgroundColor: THEME.cardBackground,
+        border: `1px solid ${promo.highlight ? 'rgba(245,200,66,0.4)' : THEME.borderLine}`,
+        borderRadius: 18,
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
+      <div style={{ position: 'relative', aspectRatio: '16/9', backgroundColor: '#151310', overflow: 'hidden' }}>
+        <SafeImage src={promo.img ? resolveAssetUrl(promo.img) : ''} alt={promo.title} />
+
+        {promo.badge && (
+          <span style={{ ...pillBadgeStyle(THEME.gold, '#120d04'), position: 'absolute', top: 12, left: 12 }}>
+            {promo.badge}
+          </span>
+        )}
+        {promo.discount && (
+          <span style={{ ...pillBadgeStyle(THEME.gold, '#120d04'), position: 'absolute', bottom: 12, right: 12 }}>
+            {promo.discount}
+          </span>
+        )}
+      </div>
+
+      <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, color: THEME.textLight }}>{promo.title}</h3>
+        {promo.subtitle && (
+          <p style={{ fontSize: 12.5, fontWeight: 600, color: THEME.gold }}>{promo.subtitle}</p>
+        )}
+        <p style={{ fontSize: 12.5, color: THEME.textMuted, lineHeight: 1.5 }}>{promo.description}</p>
+        {timeRemainingText && (
+          <span
+            style={{
+              ...pillBadgeStyle('rgba(239,68,68,0.15)', '#f87171', 'rgba(239,68,68,0.3)'),
+              alignSelf: 'flex-start',
+              marginTop: 6,
+            }}
+          >
+            {timeRemainingText}
+          </span>
+        )}
+      </div>
+    </article>
+  )
+}
+
+// ── Menu Board Section ─────────────────────────────────────────────────────
+function MenuBoardSection({ section }: { section: MenuSection }) {
+  return (
+    <div
+      style={{
+        backgroundColor: THEME.cardBackground,
+        border: `1px solid ${THEME.borderLine}`,
+        borderRadius: 18,
+        padding: 22,
+      }}
+    >
+      <h3 style={{ fontSize: 18, fontWeight: 800, color: THEME.textLight }}>{section.title}</h3>
+      {section.subtext && (
+        <p style={{ fontSize: 12.5, color: THEME.textMuted, marginTop: 2 }}>{section.subtext}</p>
+      )}
+
+      <div style={{ marginTop: 14 }}>
+        {section.items.map(item => (
+          <div
+            key={`${section.id}-${item.name}-${item.price}`}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '10px 0',
+              borderTop: `1px solid ${THEME.borderLine}`,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {item.img && (
+                <div style={{ width: 38, height: 38, borderRadius: 8, overflow: 'hidden', flexShrink: 0 }}>
+                  <SafeImage src={resolveAssetUrl(item.img)} alt={item.name} />
+                </div>
+              )}
+              <span style={{ fontSize: 13.5, fontWeight: 600, color: THEME.textLight }}>
+                {item.name}
+                {item.tag && (
+                  <span style={{ ...pillBadgeStyle(THEME.gold, '#120d04'), marginLeft: 6, fontSize: 9 }}>
+                    {item.tag}
+                  </span>
+                )}
+              </span>
+            </div>
+            <span style={{ fontWeight: 800, fontSize: 14, color: THEME.gold }}>
+              {formatPrice(item.price)}
+            </span>
           </div>
         ))}
       </div>
-    </motion.div>
+    </div>
   )
 }
 
-// ── Feedback ───────────────────────────────────────────────────────────────
-function FeedbackModal({ onClose, options, userId }: { onClose: () => void; options: { id: number; name: string }[]; userId: number | null }) {
-  const [rating, setRating] = useState(0)
-  const [hover, setHover] = useState(0)
-  const [message, setMessage] = useState('')
-  const [productId, setProductId] = useState<number | null>(options[0]?.id ?? null)
-  const [status, setStatus] = useState<'idle' | 'sending' | 'done' | 'error'>('idle')
-  const [err, setErr] = useState('')
-  const text = message.trim()
-  const can = productId !== null && rating > 0 && text.length > 0 && text.length <= MAX_FB
+// ── Customer Feedback Modal Dialog ─────────────────────────────────────────
+function FeedbackModalDialog({
+  onClose,
+  productOptions,
+  currentUserId,
+}: {
+  onClose: () => void
+  productOptions: { id: number; name: string }[]
+  currentUserId: number | null
+}) {
+  const [selectedStarRating, setSelectedStarRating] = useState(0)
+  const [feedbackComment, setFeedbackComment] = useState('')
+  const [selectedProductId, setSelectedProductId] = useState<number | null>(
+    productOptions[0]?.id ?? null
+  )
+  const [submitStatus, setSubmitStatus] = useState<'idle' | 'sending' | 'done' | 'error'>('idle')
+  const [errorMessage, setErrorMessage] = useState('')
 
-  const submit = async () => {
-    if (!can) return
-    setStatus('sending'); setErr('')
+  const cleanedMessageText = feedbackComment.trim()
+  const canSubmitFeedback =
+    selectedProductId !== null &&
+    selectedStarRating > 0 &&
+    cleanedMessageText.length > 0 &&
+    cleanedMessageText.length <= MAXIMUM_FEEDBACK_CHARACTERS
+
+  const handleFeedbackSubmit = async () => {
+    if (!canSubmitFeedback) return
+    setSubmitStatus('sending')
+    setErrorMessage('')
+
     try {
-      await api.post('/feedback', { product_id: productId, customer_user_id: userId, rating, comment: text })
-      setStatus('done')
-    } catch (e: any) {
-      setErr(e?.message || 'Could not send your feedback. Try again.')
-      setStatus('error')
+      await api.post('/feedback', {
+        product_id: selectedProductId,
+        customer_user_id: currentUserId,
+        rating: selectedStarRating,
+        comment: cleanedMessageText,
+      })
+      setSubmitStatus('done')
+    } catch (networkError: any) {
+      setErrorMessage(networkError?.message || 'Could not send feedback. Please try again.')
+      setSubmitStatus('error')
     }
   }
 
   return (
     <>
-      <motion.div onClick={onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: .2 }} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.65)', zIndex: 900 }} />
-      <motion.div role="dialog" aria-label="Send feedback" initial={{ opacity: 0, y: 24, scale: .96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 12, scale: .98 }} transition={{ duration: .25, ease: EASE }}
-        style={{ position: 'fixed', zIndex: 901, right: 16, bottom: 80, width: 'min(400px,calc(100vw - 32px))', maxHeight: 'calc(100vh - 110px)', overflowY: 'auto', background: '#15130f', border: '1px solid var(--line)', borderRadius: 16, padding: 22 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-          <div><p style={{ fontSize: 17, fontWeight: 700 }}>Send feedback</p><p className="sub" style={{ fontSize: 12.5 }}>Tell us how we did.</p></div>
-          <button onClick={onClose} aria-label="Close" style={{ background: 'none', border: 0, color: 'var(--muted)', cursor: 'pointer', height: 28 }}><X size={18} /></button>
+      <div
+        onClick={onClose}
+        style={{
+          position: 'fixed',
+          inset: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.75)',
+          backdropFilter: 'blur(8px)',
+          zIndex: 900,
+        }}
+      />
+      <div
+        role="dialog"
+        aria-label="Feedback Modal"
+        style={{
+          position: 'fixed',
+          zIndex: 901,
+          right: 20,
+          bottom: 84,
+          width: 'min(400px, calc(100vw - 36px))',
+          backgroundColor: '#13110e',
+          border: `1px solid ${THEME.borderLine}`,
+          borderRadius: 18,
+          padding: 22,
+          boxShadow: '0 20px 50px rgba(0,0,0,0.8)',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <div>
+            <p style={{ fontSize: 16, fontWeight: 800, color: THEME.textLight }}>Order Feedback</p>
+            <p style={{ fontSize: 12, color: THEME.textMuted }}>Tell us how your food was.</p>
+          </div>
+          <button
+            onClick={onClose}
+            style={{ background: 'none', border: 0, color: THEME.textMuted, cursor: 'pointer', fontSize: 20 }}
+          >
+            ×
+          </button>
         </div>
-        {status === 'done' ? (
-          <div style={{ textAlign: 'center', padding: '20px 0', display: 'grid', gap: 10, justifyItems: 'center' }}>
-            <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring', stiffness: 260, damping: 16 }} style={{ display: 'flex' }}><CheckCircle size={38} color="#22c55e" /></motion.div>
-            <p style={{ fontWeight: 700 }}>Feedback sent</p>
-            <button className="btn btn-ghost" onClick={onClose}>Close</button>
+
+        {submitStatus === 'done' ? (
+          <div style={{ textAlign: 'center', padding: '24px 0' }}>
+            <p style={{ fontWeight: 800, fontSize: 16, color: THEME.gold }}>Thank you!</p>
+            <p style={{ fontSize: 13, color: THEME.textMuted, marginTop: 4 }}>
+              Your review helps us keep serving the crunchiest chicken.
+            </p>
+            <button onClick={onClose} style={{ ...ghostButtonStyle, marginTop: 16, width: '100%' }}>
+              Close
+            </button>
           </div>
         ) : (
           <div style={{ display: 'grid', gap: 14 }}>
             <div>
-              <p className="sub" style={{ fontSize: 12, marginBottom: 6 }}>Rating</p>
-              <div style={{ display: 'flex', gap: 4 }} onMouseLeave={() => setHover(0)}>
-                {[1, 2, 3, 4, 5].map(n => (
-                  <motion.button key={n} whileHover={{ scale: 1.15 }} whileTap={{ scale: .9 }} aria-label={`${n} star${n > 1 ? 's' : ''}`} onMouseEnter={() => setHover(n)} onClick={() => setRating(n)} style={{ background: 'none', border: 0, cursor: 'pointer', lineHeight: 0 }}>
-                    <Star size={26} color={n <= (hover || rating) ? '#f5c842' : 'rgba(255,255,255,.25)'} fill={n <= (hover || rating) ? '#f5c842' : 'none'} />
-                  </motion.button>
+              <p style={{ fontSize: 12, color: THEME.textMuted, marginBottom: 6 }}>Rating</p>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {[1, 2, 3, 4, 5].map(starNumber => (
+                  <button
+                    key={starNumber}
+                    type="button"
+                    onClick={() => setSelectedStarRating(starNumber)}
+                    style={{
+                      flex: 1,
+                      padding: '7px 0',
+                      borderRadius: 6,
+                      border: `1px solid ${starNumber <= selectedStarRating ? THEME.gold : THEME.borderLine}`,
+                      backgroundColor: starNumber <= selectedStarRating ? THEME.gold : 'transparent',
+                      color: starNumber <= selectedStarRating ? '#120d04' : THEME.textLight,
+                      fontWeight: 800,
+                      cursor: 'pointer',
+                      fontSize: 13,
+                    }}
+                  >
+                    {starNumber} ★
+                  </button>
                 ))}
               </div>
             </div>
+
             <div>
-              <p className="sub" style={{ fontSize: 12, marginBottom: 6 }}>Product</p>
-              <select className="input" value={productId ?? ''} onChange={e => setProductId(+e.target.value || null)} disabled={!options.length || status === 'sending'}>
-                {options.length === 0 ? <option value="">No products available</option> : options.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+              <p style={{ fontSize: 12, color: THEME.textMuted, marginBottom: 6 }}>Select Item</p>
+              <select
+                value={selectedProductId ?? ''}
+                onChange={event => setSelectedProductId(Number(event.target.value) || null)}
+                style={{
+                  width: '100%',
+                  font: 'inherit',
+                  fontSize: 12.5,
+                  color: THEME.textLight,
+                  backgroundColor: 'rgba(255,255,255,0.04)',
+                  border: `1px solid ${THEME.borderLine}`,
+                  borderRadius: 8,
+                  padding: '8px 12px',
+                  outline: 'none',
+                }}
+              >
+                {productOptions.map(option => (
+                  <option key={option.id} value={option.id} style={{ background: '#110f0d', color: '#fff' }}>
+                    {option.name}
+                  </option>
+                ))}
               </select>
             </div>
+
             <div>
-              <p className="sub" style={{ fontSize: 12, marginBottom: 6 }}>Comment</p>
-              <textarea className="input" rows={4} maxLength={MAX_FB} value={message} onChange={e => setMessage(e.target.value)} placeholder="What did you like or dislike?" style={{ resize: 'none' }} />
-              <p className="sub" style={{ fontSize: 11, textAlign: 'right', marginTop: 2 }}>{message.length}/{MAX_FB}</p>
+              <p style={{ fontSize: 12, color: THEME.textMuted, marginBottom: 6 }}>Your Thoughts</p>
+              <textarea
+                rows={3}
+                maxLength={MAXIMUM_FEEDBACK_CHARACTERS}
+                value={feedbackComment}
+                onChange={event => setFeedbackComment(event.target.value)}
+                placeholder="What did you like or what can we improve?"
+                style={{
+                  width: '100%',
+                  font: 'inherit',
+                  fontSize: 13,
+                  color: THEME.textLight,
+                  backgroundColor: 'rgba(255,255,255,0.04)',
+                  border: `1px solid ${THEME.borderLine}`,
+                  borderRadius: 8,
+                  padding: 10,
+                  outline: 'none',
+                  resize: 'none',
+                  boxSizing: 'border-box',
+                }}
+              />
+              <p style={{ fontSize: 11, textAlign: 'right', marginTop: 4, color: THEME.textMuted }}>
+                {feedbackComment.length}/{MAXIMUM_FEEDBACK_CHARACTERS}
+              </p>
             </div>
-            {status === 'error' && <p role="alert" style={{ fontSize: 12.5, color: '#f87171' }}>{err}</p>}
-            <button className="btn btn-gold" onClick={submit} disabled={!can || status === 'sending'} style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, padding: 12, opacity: can ? 1 : .45, cursor: can ? 'pointer' : 'not-allowed' }}>
-              <Send size={14} />{status === 'sending' ? 'Sending…' : 'Send feedback'}
+
+            {submitStatus === 'error' && (
+              <p style={{ fontSize: 12, color: THEME.spicyRed }}>{errorMessage}</p>
+            )}
+
+            <button
+              onClick={handleFeedbackSubmit}
+              disabled={!canSubmitFeedback || submitStatus === 'sending'}
+              style={{
+                ...solidGoldButtonStyle,
+                opacity: canSubmitFeedback ? 1 : 0.45,
+                cursor: canSubmitFeedback ? 'pointer' : 'not-allowed',
+                padding: '10px',
+              }}
+            >
+              {submitStatus === 'sending' ? 'SUBMITTING…' : 'SUBMIT FEEDBACK'}
             </button>
           </div>
         )}
-      </motion.div>
+      </div>
     </>
   )
 }
 
-// ── Page ───────────────────────────────────────────────────────────────────
-interface ProductsProps { isAuthenticated?: boolean; onLogout?: () => void }
-
-export default function Products({ isAuthenticated = false, onLogout }: ProductsProps) {
+// ── Main Products Page Component ───────────────────────────────────────────
+export default function Products({ isAuthenticated = false, onLogout }: ProductsPageProps) {
   const navigate = useNavigate()
-  const { isPhone } = useViewport()
+  const { isMobile, isTablet } = useScreenBreakpoints()
   const { user } = useAuth()
 
-  const [products, setProducts] = useState<Product[]>([])
-  const [flavors, setFlavors] = useState<Flavor[]>([])
-  const [sections, setSections] = useState<MenuSection[]>([])
-  const [promos, setPromos] = useState<Promo[]>([])
-  const [loading, setLoading] = useState({ p: true, f: true, m: true, r: true })
-  const [category, setCategory] = useState<Category>('All')
-  const [search, setSearch] = useState('')
-  const [expanded, setExpanded] = useState<string | null>(null)
-  const [menuOpen, setMenuOpen] = useState(false)
-  const [feedbackOpen, setFeedbackOpen] = useState(false)
-  const [scrolled, setScrolled] = useState(false)
-  const [isOpen, setIsOpen] = useState(false)
+  // Real backend API states
+  const [productsList, setProductsList] = useState<Product[]>([])
+  const [flavorsList, setFlavorsList] = useState<Flavor[]>([])
+  const [menuSectionsList, setMenuSectionsList] = useState<MenuSection[]>([])
+  const [promosList, setPromosList] = useState<PromoOffer[]>([])
 
-  const userId = isAuthenticated && user && Number(user.userId) > 0 ? Number(user.userId) : null
+  const [isLoadingProducts, setIsLoadingProducts] = useState(true)
+  const [isLoadingFlavors, setIsLoadingFlavors] = useState(true)
+  const [isLoadingMenuSections, setIsLoadingMenuSections] = useState(true)
+  const [isLoadingPromos, setIsLoadingPromos] = useState(true)
 
-  useEffect(() => { void fetchGeneralSettings() }, [])
+  // Filter & Search states
+  const [activeCategory, setActiveCategory] = useState<Category>('All')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [isSpicyOnlyFilter, setIsSpicyOnlyFilter] = useState(false)
+  const [activeSortOption, setActiveSortOption] = useState<SortOption>('featured')
 
+  // Selected individual flavor index for the Flavor Spotlight
+  const [selectedFlavorIndex, setSelectedFlavorIndex] = useState(0)
+
+  // UI Interactive states
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
+  const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false)
+  const [hasScrolledDown, setHasScrolledDown] = useState(false)
+  const [isRestaurantOpen, setIsRestaurantOpen] = useState(false)
+
+  const currentUserId = isAuthenticated && user && Number(user.userId) > 0 ? Number(user.userId) : null
+
+  // Fetch restaurant general settings
   useEffect(() => {
-    const el = document.createElement('style')
-    el.id = 'products-css'
-    el.innerHTML = CSS
-    document.head.appendChild(el)
-    return () => el.remove()
+    void fetchGeneralSettings()
   }, [])
 
+  // Track window scroll for sticky navbar blur
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 8)
-    onScroll()
-    window.addEventListener('scroll', onScroll, { passive: true })
-    return () => window.removeEventListener('scroll', onScroll)
+    const handleScroll = () => setHasScrolledDown(window.scrollY > 12)
+    handleScroll()
+    window.addEventListener('scroll', handleScroll, { passive: true })
+    return () => window.removeEventListener('scroll', handleScroll)
   }, [])
 
+  // Operating hours check
   useEffect(() => {
-    const check = () => {
-      const n = new Date(), d = n.getDay(), t = n.getHours() + n.getMinutes() / 60
-      setIsOpen((d >= 1 && d <= 5 && t >= 10 && t < 22) || ((d === 0 || d === 6) && t >= 11 && t < 20.5))
+    const checkOperatingHours = () => {
+      const now = new Date()
+      const currentDay = now.getDay()
+      const currentHourDecimal = now.getHours() + now.getMinutes() / 60
+      const isOpenWeekday = currentDay >= 1 && currentDay <= 5 && currentHourDecimal >= 10 && currentHourDecimal < 22
+      const isOpenWeekend = (currentDay === 0 || currentDay === 6) && currentHourDecimal >= 11 && currentHourDecimal < 20.5
+      setIsRestaurantOpen(isOpenWeekday || isOpenWeekend)
     }
-    check()
-    const id = setInterval(check, 60000)
-    return () => clearInterval(id)
+
+    checkOperatingHours()
+    const timerInterval = setInterval(checkOperatingHours, 60000)
+    return () => clearInterval(timerInterval)
   }, [])
 
+  // Fetch real data from backend endpoints
   useEffect(() => {
-    let cancelled = false
-    const load = <T,>(url: string, key: 'p' | 'f' | 'm' | 'r', set: (d: T[]) => void, map?: (d: unknown[]) => T[]) =>
-      api.get<unknown[]>(url)
-        .then((d: unknown) => { if (!cancelled) { const r = Array.isArray(d) ? d : []; set(map ? map(r) : (r as T[])) } })
-        .catch(() => {})
-        .finally(() => { if (!cancelled) setLoading(s => ({ ...s, [key]: false })) })
-    load<Product>('/api/products?item_type=menu_item', 'p', setProducts, mapProducts)
-    load<Flavor>('/api/flavors', 'f', setFlavors)
-    load<MenuSection>('/api/menu-sections', 'm', setSections)
-    load<Promo>('/api/promos', 'r', setPromos)
-    return () => { cancelled = true }
+    let isRequestCancelled = false
+
+    api
+      .get<unknown[]>('/api/products?item_type=menu_item')
+      .then(response => {
+        if (!isRequestCancelled) {
+          const validArray = Array.isArray(response) ? response : []
+          setProductsList(mapApiProductsToApp(validArray))
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!isRequestCancelled) setIsLoadingProducts(false)
+      })
+
+    api
+      .get<Flavor[]>('/api/flavors')
+      .then(response => {
+        if (!isRequestCancelled) {
+          setFlavorsList(Array.isArray(response) ? response : [])
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!isRequestCancelled) setIsLoadingFlavors(false)
+      })
+
+    api
+      .get<MenuSection[]>('/api/menu-sections')
+      .then(response => {
+        if (!isRequestCancelled) {
+          setMenuSectionsList(Array.isArray(response) ? response : [])
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!isRequestCancelled) setIsLoadingMenuSections(false)
+      })
+
+    api
+      .get<PromoOffer[]>('/api/promos')
+      .then(response => {
+        if (!isRequestCancelled) {
+          setPromosList(Array.isArray(response) ? response : [])
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!isRequestCancelled) setIsLoadingPromos(false)
+      })
+
+    return () => {
+      isRequestCancelled = true
+    }
   }, [])
 
-  const filtered = useMemo(
-    () => products.filter(p => (category === 'All' || p.category === category) && p.name.toLowerCase().includes(search.toLowerCase())),
-    [products, category, search]
+  // Filtered & Sorted products catalog
+  const filteredProducts = useMemo(() => {
+    let result = productsList.filter(product => {
+      const matchCategory = activeCategory === 'All' || product.category === activeCategory
+      const matchSearch =
+        product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        product.description.toLowerCase().includes(searchQuery.toLowerCase())
+      const matchSpicy = !isSpicyOnlyFilter || product.spicy
+      return matchCategory && matchSearch && matchSpicy
+    })
+
+    if (activeSortOption === 'rating') result.sort((a, b) => b.rating - a.rating)
+    else if (activeSortOption === 'price-asc') result.sort((a, b) => a.price - b.price)
+    else if (activeSortOption === 'price-desc') result.sort((a, b) => b.price - a.price)
+
+    return result
+  }, [productsList, activeCategory, searchQuery, isSpicyOnlyFilter, activeSortOption])
+
+  const feedbackProductOptions = useMemo(
+    () => productsList.map(product => ({ id: product.id, name: product.name })),
+    [productsList]
   )
-  const feedbackOptions = useMemo(() => products.map(p => ({ id: p.id, name: p.name })), [products])
-  // Hero slides: menu items that have a photo
-  const slides = useMemo(() => products.filter(p => p.img).slice(0, MAX_SLIDES), [products])
-  const showHeroSlides = loading.p || slides.length > 0
 
-  const goOrder = useCallback(() => navigate('/usersmenu?showOrderModal=true'), [navigate])
-  const logout = useCallback(() => { onLogout?.(); navigate('/products') }, [onLogout, navigate])
+  const heroSlidesList = useMemo(
+    () => productsList.filter(product => product.img).slice(0, MAXIMUM_HERO_SLIDES),
+    [productsList]
+  )
 
-  // Home: go to /products, or scroll back to the top if we're already here
-  const goHome = useCallback(() => {
-    setMenuOpen(false)
+  // Current selected individual flavor for the showcase
+  const activeSpotlightFlavor = flavorsList[selectedFlavorIndex] ?? flavorsList[0]
+
+  // Navigation handlers
+  const handleOrderNavigate = useCallback(() => {
+    navigate('/usersmenu?showOrderModal=true')
+  }, [navigate])
+
+  const handleLogoutAction = useCallback(() => {
+    onLogout?.()
+    navigate('/products')
+  }, [onLogout, navigate])
+
+  const handleHomeNavigate = useCallback(() => {
+    setIsMobileMenuOpen(false)
     if (window.location.pathname === '/products') {
       window.scrollTo({ top: 0, behavior: 'smooth' })
     } else {
@@ -523,194 +932,798 @@ export default function Products({ isAuthenticated = false, onLogout }: Products
     }
   }, [navigate])
 
-  const navLinks = [
-    { label: 'Home', action: goHome },
-    { label: 'Menu', action: goOrder },
+  const navigationLinks = [
+    { label: 'Home', action: handleHomeNavigate },
+    { label: 'Menu', action: handleOrderNavigate },
     { label: 'About', action: () => navigate('/aboutthecrunch') },
   ]
-  const featured = promos.filter(p => p.highlight)
-  const regular = promos.filter(p => !p.highlight)
+
+  const pageContainerPadding = isMobile ? '0 16px' : isTablet ? '0 28px' : '0 40px'
 
   return (
     <MotionConfig reducedMotion="user">
-    <div className="pc">
-      {/* NAVBAR — fixed, always visible while scrolling */}
-      <motion.header initial={{ y: -NAV_H, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ duration: .5, ease: EASE }} className={`nav ${scrolled || menuOpen ? 'on' : ''}`}>
-        <div className="wrap nav-in">
-          <button className="brand" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} aria-label="Back to top">
-            <img src="/img/logo24.png" alt="" width={32} height={32} style={{ objectFit: 'contain' }} />
-            {!isPhone && <span>The <span style={{ color: 'var(--gold)' }}>Crunch</span></span>}
-          </button>
+      <div style={{ minHeight: '100vh', backgroundColor: THEME.background, color: THEME.textLight, position: 'relative' }}>
+        
+        {/* Soft Ambient Glow */}
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            width: '100vw',
+            height: 520,
+            background: 'radial-gradient(circle at 50% 0%, rgba(245,200,66,0.08), transparent 65%)',
+            pointerEvents: 'none',
+            zIndex: 0,
+          }}
+        />
 
-          <nav className="links" aria-label="Main">
-            <span className="status" title="Store hours: Mon–Fri 10 AM–10 PM, Sat–Sun 11 AM–8:30 PM">
-              <span className={`dot${isOpen ? ' live' : ''}`} style={{ background: isOpen ? '#22c55e' : '#ef4444' }} />
-              {isOpen ? 'Open now' : 'Closed'}
-            </span>
-            {navLinks.map(l => <button key={l.label} className="link" onClick={l.action}>{l.label}</button>)}
-            <span style={{ width: 1, height: 18, background: 'var(--line)', margin: '0 8px' }} />
-            {isAuthenticated ? (
-              <>
-                {user?.username && <span className="status"><User size={14} />{user.username}</span>}
-                <button className="btn btn-gold" onClick={logout}>Log out</button>
-              </>
-            ) : (
-              <>
-                <button className="btn btn-ghost" onClick={() => navigate('/login')}>Log in</button>
-                <button className="btn btn-gold" style={{ marginLeft: 8 }} onClick={() => navigate('/login?tab=signup')}>Sign up</button>
-              </>
-            )}
-          </nav>
+        {/* ── Fixed Navbar ────────────────────────────────────────────────── */}
+        <header
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 100,
+            height: NAVBAR_HEIGHT,
+            display: 'flex',
+            alignItems: 'center',
+            backgroundColor: hasScrolledDown || isMobileMenuOpen ? 'rgba(9,8,7,0.94)' : 'transparent',
+            backdropFilter: hasScrolledDown || isMobileMenuOpen ? 'blur(20px)' : 'none',
+            borderBottom: hasScrolledDown ? `1px solid ${THEME.borderLine}` : '1px solid transparent',
+            transition: 'background-color 0.25s, border-color 0.25s',
+          }}
+        >
+          <div
+            style={{
+              maxWidth: 1240,
+              margin: '0 auto',
+              padding: pageContainerPadding,
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 16,
+            }}
+          >
+            <button
+              onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                background: 'none',
+                border: 0,
+                cursor: 'pointer',
+                color: THEME.textLight,
+                fontWeight: 800,
+                fontSize: 18,
+                letterSpacing: '-0.02em',
+              }}
+            >
+              <img src="/img/logo24.png" alt="" width={32} height={32} style={{ objectFit: 'contain' }} />
+              {!isMobile && (
+                <span>
+                  The <span style={{ color: THEME.gold }}>Crunch</span>
+                </span>
+              )}
+            </button>
 
-          <button className="burger" onClick={() => setMenuOpen(v => !v)} aria-label="Toggle menu" aria-expanded={menuOpen}>
-            {menuOpen ? <X size={22} /> : <Menu size={22} />}
-          </button>
-        </div>
+            {!isMobile && (
+              <nav style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span
+                  style={pillBadgeStyle(
+                    isRestaurantOpen ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+                    isRestaurantOpen ? THEME.successGreen : THEME.spicyRed,
+                    isRestaurantOpen ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)'
+                  )}
+                >
+                  {isRestaurantOpen ? '● OPEN NOW' : '○ CLOSED'}
+                </span>
 
-        <AnimatePresence>
-          {menuOpen && (
-            <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: .2 }}
-              style={{ position: 'absolute', top: NAV_H, left: 0, right: 0, background: 'rgba(11,10,8,.98)', borderBottom: '1px solid var(--line)', padding: '8px var(--pad) 18px', display: 'grid', gap: 4 }}>
-              {navLinks.map(l => <button key={l.label} className="link" style={{ textAlign: 'left', fontSize: 15 }} onClick={() => { l.action(); setMenuOpen(false) }}>{l.label}</button>)}
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                {navigationLinks.map(link => (
+                  <button
+                    key={link.label}
+                    onClick={link.action}
+                    style={{
+                      background: 'none',
+                      border: 0,
+                      color: THEME.textMuted,
+                      fontSize: 13.5,
+                      fontWeight: 600,
+                      padding: '8px 14px',
+                      borderRadius: 8,
+                      cursor: 'pointer',
+                      transition: 'color 0.15s',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.color = THEME.textLight }}
+                    onMouseLeave={e => { e.currentTarget.style.color = THEME.textMuted }}
+                  >
+                    {link.label}
+                  </button>
+                ))}
+
+                <span style={{ width: 1, height: 16, backgroundColor: THEME.borderLine, margin: '0 4px' }} />
+
                 {isAuthenticated ? (
-                  <button className="btn btn-gold" style={{ flex: 1 }} onClick={() => { logout(); setMenuOpen(false) }}>Log out</button>
+                  <>
+                    {user?.username && (
+                      <span style={pillBadgeStyle('rgba(255,255,255,0.05)', THEME.textLight)}>
+                        {user.username}
+                      </span>
+                    )}
+                    <button onClick={handleLogoutAction} style={solidGoldButtonStyle}>
+                      LOG OUT
+                    </button>
+                  </>
                 ) : (
                   <>
-                    <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => { navigate('/login'); setMenuOpen(false) }}>Log in</button>
-                    <button className="btn btn-gold" style={{ flex: 1 }} onClick={() => { navigate('/login?tab=signup'); setMenuOpen(false) }}>Sign up</button>
+                    <button onClick={() => navigate('/login')} style={ghostButtonStyle}>
+                      LOG IN
+                    </button>
+                    <button onClick={() => navigate('/login?tab=signup')} style={solidGoldButtonStyle}>
+                      SIGN UP
+                    </button>
                   </>
                 )}
+              </nav>
+            )}
+
+            {isMobile && (
+              <button
+                onClick={() => setIsMobileMenuOpen(previous => !previous)}
+                style={{ ...ghostButtonStyle, padding: '6px 12px', fontSize: 11 }}
+              >
+                {isMobileMenuOpen ? 'CLOSE' : 'MENU'}
+              </button>
+            )}
+          </div>
+
+          {/* Mobile Drawer Menu */}
+          <AnimatePresence>
+            {isMobile && isMobileMenuOpen && (
+              <motion.div
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                style={{
+                  position: 'absolute',
+                  top: NAVBAR_HEIGHT,
+                  left: 0,
+                  right: 0,
+                  backgroundColor: 'rgba(9,8,7,0.98)',
+                  borderBottom: `1px solid ${THEME.borderLine}`,
+                  padding: '16px 20px 24px',
+                  display: 'grid',
+                  gap: 8,
+                }}
+              >
+                <span
+                  style={{
+                    ...pillBadgeStyle(
+                      isRestaurantOpen ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+                      isRestaurantOpen ? THEME.successGreen : THEME.spicyRed
+                    ),
+                    justifySelf: 'flex-start',
+                    marginBottom: 6,
+                  }}
+                >
+                  {isRestaurantOpen ? '● OPEN NOW' : '○ CLOSED'}
+                </span>
+
+                {navigationLinks.map(link => (
+                  <button
+                    key={link.label}
+                    onClick={() => {
+                      link.action()
+                      setIsMobileMenuOpen(false)
+                    }}
+                    style={{
+                      textAlign: 'left',
+                      background: 'none',
+                      border: 0,
+                      color: THEME.textLight,
+                      fontSize: 16,
+                      fontWeight: 700,
+                      padding: '10px 0',
+                      borderBottom: `1px solid ${THEME.borderLine}`,
+                    }}
+                  >
+                    {link.label}
+                  </button>
+                ))}
+
+                <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                  {isAuthenticated ? (
+                    <button
+                      onClick={() => {
+                        handleLogoutAction()
+                        setIsMobileMenuOpen(false)
+                      }}
+                      style={{ ...solidGoldButtonStyle, flex: 1 }}
+                    >
+                      LOG OUT
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => {
+                          navigate('/login')
+                          setIsMobileMenuOpen(false)
+                        }}
+                        style={{ ...ghostButtonStyle, flex: 1 }}
+                      >
+                        LOG IN
+                      </button>
+                      <button
+                        onClick={() => {
+                          navigate('/login?tab=signup')
+                          setIsMobileMenuOpen(false)
+                        }}
+                        style={{ ...solidGoldButtonStyle, flex: 1 }}
+                      >
+                        SIGN UP
+                      </button>
+                    </>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </header>
+
+        {/* ── Hero Section ────────────────────────────────────────────────── */}
+        <section
+          style={{
+            paddingTop: `calc(${NAVBAR_HEIGHT}px + ${isMobile ? '24px' : '48px'})`,
+            paddingBottom: isMobile ? 32 : 56,
+            position: 'relative',
+            zIndex: 1,
+          }}
+        >
+          <div
+            style={{
+              maxWidth: 1240,
+              margin: '0 auto',
+              padding: pageContainerPadding,
+              display: 'grid',
+              gridTemplateColumns: isTablet ? '1fr' : '1.05fr 0.95fr',
+              gap: isMobile ? 28 : 50,
+              alignItems: 'center',
+            }}
+          >
+            <div>
+              <span style={{ ...pillBadgeStyle('rgba(255,255,255,0.05)', THEME.textMuted), marginBottom: 14 }}>
+                Fairview Flagship • Hot & Crispy
+              </span>
+              <h1
+                style={{
+                  fontSize: isMobile ? 40 : 64,
+                  fontWeight: 800,
+                  letterSpacing: '-0.035em',
+                  lineHeight: 1.02,
+                  margin: '12px 0',
+                  color: THEME.textLight,
+                }}
+              >
+                Signature Chicken, <br />
+                <span style={{ color: THEME.gold, fontStyle: 'italic' }}>Fried to Gold.</span>
+              </h1>
+              <p
+                style={{
+                  color: THEME.textMuted,
+                  fontSize: 15,
+                  lineHeight: 1.6,
+                  maxWidth: 440,
+                  marginTop: 14,
+                }}
+              >
+                Fresh, premium boneless chicken hand-tossed in signature house glazes. Cooked to order for dine-in, takeout, or delivery.
+              </p>
+
+              <div style={{ marginTop: 24, maxWidth: 420 }}>
+                <input
+                  value={searchQuery}
+                  onChange={event => setSearchQuery(event.target.value)}
+                  placeholder="Search chicken, rice bowls, combos…"
+                  style={{
+                    width: '100%',
+                    font: 'inherit',
+                    fontSize: 13.5,
+                    color: THEME.textLight,
+                    backgroundColor: 'rgba(255,255,255,0.04)',
+                    border: `1px solid ${THEME.borderLine}`,
+                    borderRadius: 10,
+                    padding: '12px 16px',
+                    outline: 'none',
+                    boxSizing: 'border-box',
+                  }}
+                />
               </div>
-            </motion.div>
+            </div>
+
+            <div>
+              {isLoadingProducts ? (
+                <div style={{ aspectRatio: '4/3', width: '100%', borderRadius: 22, backgroundColor: '#161310' }} />
+              ) : (
+                <HeroSlideshow slides={heroSlidesList} onOrderClick={handleOrderNavigate} />
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* ── Sticky Category & Filter Toolbar ────────────────────────────── */}
+        <div
+          style={{
+            position: 'sticky',
+            top: NAVBAR_HEIGHT,
+            zIndex: 40,
+            backgroundColor: 'rgba(9,8,7,0.92)',
+            backdropFilter: 'blur(18px)',
+            borderBottom: `1px solid ${THEME.borderLine}`,
+            padding: '12px 0',
+          }}
+        >
+          <div
+            style={{
+              maxWidth: 1240,
+              margin: '0 auto',
+              padding: pageContainerPadding,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 14,
+              flexWrap: 'wrap',
+            }}
+          >
+            <div style={{ display: 'flex', gap: 4, overflowX: 'auto' }}>
+              {MENU_CATEGORIES.map(categoryItem => {
+                const isActive = activeCategory === categoryItem
+                const itemsCount =
+                  categoryItem === 'All'
+                    ? productsList.length
+                    : productsList.filter(p => p.category === categoryItem).length
+
+                return (
+                  <button
+                    key={categoryItem}
+                    onClick={() => setActiveCategory(categoryItem)}
+                    style={{
+                      background: isActive ? 'rgba(255,255,255,0.08)' : 'none',
+                      border: 0,
+                      padding: '8px 14px',
+                      borderRadius: 8,
+                      fontSize: 13.5,
+                      fontWeight: 600,
+                      color: isActive ? THEME.textLight : THEME.textMuted,
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                      transition: 'all 0.15s',
+                    }}
+                  >
+                    {categoryItem} ({itemsCount})
+                  </button>
+                )
+              })}
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button
+                onClick={() => setIsSpicyOnlyFilter(previous => !previous)}
+                style={{
+                  ...(isSpicyOnlyFilter ? solidGoldButtonStyle : ghostButtonStyle),
+                  padding: '6px 12px',
+                  fontSize: 11,
+                }}
+              >
+                {isSpicyOnlyFilter ? 'SPICY: ON' : 'SPICY ONLY'}
+              </button>
+
+              <select
+                value={activeSortOption}
+                onChange={event => setActiveSortOption(event.target.value as SortOption)}
+                style={{
+                  font: 'inherit',
+                  fontSize: 12.5,
+                  color: THEME.textMuted,
+                  backgroundColor: 'rgba(255,255,255,0.04)',
+                  border: `1px solid ${THEME.borderLine}`,
+                  borderRadius: 8,
+                  padding: '7px 10px',
+                  outline: 'none',
+                  cursor: 'pointer',
+                }}
+              >
+                <option value="featured" style={{ background: '#110f0d', color: '#fff' }}>Featured</option>
+                <option value="rating" style={{ background: '#110f0d', color: '#fff' }}>Top Rated</option>
+                <option value="price-asc" style={{ background: '#110f0d', color: '#fff' }}>Price: Low to High</option>
+                <option value="price-desc" style={{ background: '#110f0d', color: '#fff' }}>Price: High to Low</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Main Products Grid ──────────────────────────────────────────── */}
+        <main style={{ maxWidth: 1240, margin: '0 auto', padding: `${isMobile ? '28px' : '40px'} ${isMobile ? '16px' : isTablet ? '28px' : '40px'} 90px` }}>
+          {isLoadingProducts ? (
+            <div style={responsiveGridStyle(isMobile)}>
+              {Array.from({ length: 6 }).map((_, placeholderIndex) => (
+                <div key={placeholderIndex} style={{ height: 340, borderRadius: 18, backgroundColor: '#15120e' }} />
+              ))}
+            </div>
+          ) : filteredProducts.length === 0 ? (
+            <div
+              style={{
+                textAlign: 'center',
+                padding: '70px 20px',
+                backgroundColor: THEME.cardBackground,
+                borderRadius: 20,
+                border: `1px solid ${THEME.borderLine}`,
+              }}
+            >
+              <p style={{ fontSize: 18, fontWeight: 800 }}>No items match your criteria</p>
+              <p style={{ color: THEME.textMuted, fontSize: 13.5, marginTop: 4 }}>
+                Try clearing your search or switching categories.
+              </p>
+              {(searchQuery || isSpicyOnlyFilter || activeCategory !== 'All') && (
+                <button
+                  onClick={() => {
+                    setSearchQuery('')
+                    setIsSpicyOnlyFilter(false)
+                    setActiveCategory('All')
+                  }}
+                  style={{ ...ghostButtonStyle, marginTop: 16 }}
+                >
+                  RESET FILTERS
+                </button>
+              )}
+            </div>
+          ) : (
+            <>
+              <p
+                style={{
+                  fontSize: 12.5,
+                  color: THEME.textMuted,
+                  marginBottom: 16,
+                  letterSpacing: '0.04em',
+                  textTransform: 'uppercase',
+                }}
+              >
+                Showing {filteredProducts.length} {filteredProducts.length === 1 ? 'item' : 'items'}
+              </p>
+              <div style={responsiveGridStyle(isMobile)}>
+                {filteredProducts.map(product => (
+                  <ProductCard
+                    key={product.id}
+                    product={product}
+                    onOrderClick={handleOrderNavigate}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* ── Deals and Promos Section ─────────────────────────────────── */}
+          {(isLoadingPromos || promosList.length > 0) && (
+            <section style={{ marginTop: 80 }}>
+              <h2 style={{ fontSize: 26, fontWeight: 800, letterSpacing: '-0.02em', marginBottom: 6 }}>
+                Current Offers
+              </h2>
+              <p style={{ color: THEME.textMuted, fontSize: 13.5, marginBottom: 24 }}>
+                Limited-time combos and seasonal discounts.
+              </p>
+
+              {isLoadingPromos ? (
+                <div style={responsiveGridStyle(isMobile)}>
+                  {Array.from({ length: 3 }).map((_, placeholderIndex) => (
+                    <div key={placeholderIndex} style={{ height: 260, borderRadius: 18, backgroundColor: '#15120e' }} />
+                  ))}
+                </div>
+              ) : (
+                <div style={responsiveGridStyle(isMobile)}>
+                  {promosList.map(promo => (
+                    <PromoCard key={promo.id} promo={promo} />
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* ── Individual Signature Flavor Spotlight ────────────────────── */}
+          {(isLoadingFlavors || flavorsList.length > 0) && (
+            <section style={{ marginTop: 80 }}>
+              <h2 style={{ fontSize: 26, fontWeight: 800, letterSpacing: '-0.02em', marginBottom: 6 }}>
+                Signature Flavors
+              </h2>
+              <p style={{ color: THEME.textMuted, fontSize: 13.5, marginBottom: 20 }}>
+                Available on every wing, strip, and boneless chicken order. Select a flavor to preview.
+              </p>
+
+              {/* Individual Flavor Selector Tabs */}
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
+                {flavorsList.map((flavor, index) => {
+                  const isSelected = selectedFlavorIndex === index
+                  return (
+                    <button
+                      key={flavor.name}
+                      onClick={() => setSelectedFlavorIndex(index)}
+                      style={{
+                        background: isSelected ? THEME.gold : 'rgba(255, 255, 255, 0.05)',
+                        color: isSelected ? '#120d04' : THEME.textLight,
+                        border: `1px solid ${isSelected ? THEME.gold : THEME.borderLine}`,
+                        borderRadius: 8,
+                        padding: '8px 16px',
+                        fontSize: 13.5,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        transition: 'all 0.15s',
+                      }}
+                    >
+                      {flavor.name}
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* Individual Selected Flavor Preview Card */}
+              {activeSpotlightFlavor && (
+                <div
+                  style={{
+                    backgroundColor: THEME.cardBackground,
+                    border: `1px solid ${THEME.borderLine}`,
+                    borderRadius: 20,
+                    overflow: 'hidden',
+                    display: 'grid',
+                    gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr',
+                    gap: isMobile ? 16 : 28,
+                    alignItems: 'center',
+                    boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
+                  }}
+                >
+                  <div style={{ position: 'relative', aspectRatio: isMobile ? '16/10' : '4/3', backgroundColor: '#151310' }}>
+                    <SafeImage
+                      src={activeSpotlightFlavor.img ? resolveAssetUrl(activeSpotlightFlavor.img) : ''}
+                      alt={activeSpotlightFlavor.name}
+                    />
+                  </div>
+                  <div style={{ padding: isMobile ? '0 20px 20px' : '24px 28px 24px 0' }}>
+                    <span style={{ ...pillBadgeStyle(THEME.gold, '#120d04'), marginBottom: 10 }}>
+                      HOUSE FLAVOR
+                    </span>
+                    <h3 style={{ fontSize: 24, fontWeight: 800, color: THEME.textLight, marginTop: 8, marginBottom: 10 }}>
+                      {activeSpotlightFlavor.name}
+                    </h3>
+                    <p style={{ fontSize: 14, color: THEME.textMuted, lineHeight: 1.6, marginBottom: 20 }}>
+                      {activeSpotlightFlavor.desc || 'Hand-tossed with our signature glaze, cooked fresh to order.'}
+                    </p>
+                    <button onClick={handleOrderNavigate} style={solidGoldButtonStyle}>
+                      ORDER WITH THIS FLAVOR
+                    </button>
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* ── Full Menu Board Section ───────────────────────────────────── */}
+          {(isLoadingMenuSections || menuSectionsList.length > 0) && (
+            <section style={{ marginTop: 80 }}>
+              <h2 style={{ fontSize: 26, fontWeight: 800, letterSpacing: '-0.02em', marginBottom: 6 }}>
+                Full Store Menu
+              </h2>
+              <p style={{ color: THEME.textMuted, fontSize: 13.5, marginBottom: 24 }}>
+                Complete catalog categorized by section.
+              </p>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(min(100%, 460px), 1fr))',
+                  gap: 20,
+                }}
+              >
+                {isLoadingMenuSections
+                  ? Array.from({ length: 4 }).map((_, placeholderIndex) => (
+                      <div key={placeholderIndex} style={{ height: 240, borderRadius: 18, backgroundColor: '#15120e' }} />
+                    ))
+                  : menuSectionsList.map(section => (
+                      <MenuBoardSection key={section.id} section={section} />
+                    ))}
+              </div>
+            </section>
+          )}
+        </main>
+
+        {/* ── Footer ──────────────────────────────────────────────────────── */}
+        <footer style={{ borderTop: `1px solid ${THEME.borderLine}`, backgroundColor: '#060504', padding: '50px 0 28px' }}>
+          <div style={{ maxWidth: 1240, margin: '0 auto', padding: pageContainerPadding }}>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: isMobile ? '1fr' : isTablet ? '1fr 1fr' : 'repeat(auto-fit, minmax(220px, 1fr))',
+                gap: 36,
+              }}
+            >
+              <div>
+                <p style={{ fontWeight: 800, fontSize: 17, color: THEME.textLight }}>
+                  The <span style={{ color: THEME.gold }}>Crunch</span>
+                </p>
+                <p style={{ marginTop: 6, fontSize: 13, color: THEME.textMuted, lineHeight: 1.6 }}>
+                  6 Falcon St., cor Dahlia Fairview,<br />Quezon City, Philippines
+                </p>
+                <a
+                  href="https://www.google.com/maps/place/The+Crunch+-+Fairview+Branch/@14.7002687,121.0662915,21z"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ ...ghostButtonStyle, marginTop: 12, fontSize: 11, padding: '6px 12px' }}
+                >
+                  GOOGLE MAPS
+                </a>
+              </div>
+
+              <div>
+                <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: THEME.textMuted }}>
+                  Store Hours
+                </p>
+                <div style={{ marginTop: 8, fontSize: 13, color: THEME.textMuted, lineHeight: 1.6 }}>
+                  <p>Mon–Fri: 10:00 AM – 10:00 PM</p>
+                  <p>Sat–Sun: 11:00 AM – 8:30 PM</p>
+                </div>
+              </div>
+
+              <div>
+                <p style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: THEME.textMuted }}>
+                  Social
+                </p>
+                <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
+                  <a
+                    href="https://www.instagram.com/thecrunchfairview"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: THEME.textMuted, textDecoration: 'none', fontSize: 13 }}
+                  >
+                    Instagram
+                  </a>
+                  <a
+                    href="https://www.facebook.com/thecrunchfairview"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: THEME.textMuted, textDecoration: 'none', fontSize: 13 }}
+                  >
+                    Facebook
+                  </a>
+                </div>
+              </div>
+            </div>
+
+            <p
+              style={{
+                marginTop: 40,
+                paddingTop: 20,
+                borderTop: `1px solid ${THEME.borderLine}`,
+                fontSize: 11.5,
+                color: THEME.textMuted,
+                textAlign: 'center',
+              }}
+            >
+              © {new Date().getFullYear()} The Crunch Fairview. All rights reserved.
+            </p>
+          </div>
+        </footer>
+
+        {/* ── Feedback Modal Dialog ────────────────────────────────────────── */}
+        <AnimatePresence>
+          {isFeedbackModalOpen && (
+            <FeedbackModalDialog
+              onClose={() => setIsFeedbackModalOpen(false)}
+              productOptions={feedbackProductOptions}
+              currentUserId={currentUserId}
+            />
           )}
         </AnimatePresence>
-      </motion.header>
 
-      {/* HERO — text on the left, product slideshow on the right (stacked on tablet and mobile) */}
-      <section className="hero">
-        <div className={`wrap hero-grid${showHeroSlides ? '' : ' solo'}`}>
-          <div>
-            <motion.p {...heroIn(0.05)} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--muted)', marginBottom: 14 }}><MapPin size={14} color="var(--gold)" />The Crunch, Fairview</motion.p>
-            <motion.h1 {...heroIn(0.12)} className="hero-title">Our menu</motion.h1>
-            <motion.p {...heroIn(0.2)} className="sub" style={{ marginTop: 14, maxWidth: 440, fontSize: 15 }}>Fresh, hot, and made to order. Browse the full menu and order when you're ready.</motion.p>
-            <motion.div {...heroIn(0.28)} style={{ position: 'relative', marginTop: 28, maxWidth: 'min(100%, 420px)' }}>
-              <Search size={16} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
-              <input className="input" style={{ paddingLeft: 40, paddingRight: 38 }} value={search} onChange={e => setSearch(e.target.value)} placeholder="Search the menu" aria-label="Search the menu" />
-              {search && <button onClick={() => setSearch('')} aria-label="Clear search" style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 0, color: 'var(--muted)', cursor: 'pointer', display: 'flex' }}><X size={16} /></button>}
-            </motion.div>
-          </div>
-
-          {showHeroSlides && (loading.p ? <div className="skel show-skel" /> : <HeroSlideshow slides={slides} onOrder={goOrder} />)}
-        </div>
-      </section>
-
-      {/* CATEGORY TABS */}
-      <div className="tabs">
-        <div className="wrap tabs-in" role="tablist">
-          {CATEGORIES.map(c => (
-            <button key={c} role="tab" aria-selected={category === c} className={`tab ${category === c ? 'on' : ''}`} onClick={() => setCategory(c)}>
-              {c}
-              {category === c && <motion.span layoutId="tab-underline" transition={{ type: 'spring', stiffness: 400, damping: 34 }} style={{ position: 'absolute', left: 10, right: 10, bottom: 0, height: 2, background: 'var(--gold)', borderRadius: 2 }} />}
-            </button>
-          ))}
-        </div>
+        {/* ── Floating Action Feedback Button ──────────────────────────────── */}
+        <button
+          onClick={() => setIsFeedbackModalOpen(previous => !previous)}
+          style={{
+            ...solidGoldButtonStyle,
+            position: 'fixed',
+            bottom: 20,
+            right: 20,
+            zIndex: 80,
+            borderRadius: 999,
+            padding: '11px 20px',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+          }}
+        >
+          {isFeedbackModalOpen ? 'CLOSE' : 'FEEDBACK'}
+        </button>
       </div>
-
-      <main className="wrap" style={{ paddingTop: 40, paddingBottom: 100 }}>
-        {/* Products */}
-        {loading.p ? (
-          <div className="grid">{Array.from({ length: 6 }).map((_, i) => <Skel key={i} h={380} />)}</div>
-        ) : filtered.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '60px 0' }}>
-            <p style={{ fontSize: 18, fontWeight: 700 }}>No items found</p>
-            <p className="sub" style={{ marginTop: 4 }}>Try a different search or category.</p>
-            {search && <button className="btn btn-ghost" style={{ marginTop: 16 }} onClick={() => setSearch('')}>Clear search</button>}
-          </div>
-        ) : (
-          <>
-            <p className="sub" style={{ fontSize: 13, marginBottom: 16 }}>{filtered.length} item{filtered.length !== 1 ? 's' : ''}</p>
-            <div className="grid"><AnimatePresence>{filtered.map((p, i) => <ProductCard key={p.id} p={p} onOrder={goOrder} i={i} />)}</AnimatePresence></div>
-          </>
-        )}
-
-        {/* Promos */}
-        {(loading.r || promos.length > 0) && (
-          <section className="section">
-            <Reveal>
-              <h2 className="h2">Deals and promos</h2>
-              <p className="sub" style={{ marginTop: 8, marginBottom: 28 }}>Current offers and limited-time specials.</p>
-            </Reveal>
-            {loading.r ? (
-              <div className="grid">{Array.from({ length: 3 }).map((_, i) => <Skel key={i} h={280} />)}</div>
-            ) : (
-              <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(min(100%,320px),1fr))' }}>
-                {[...featured, ...regular].map((p, i) => <PromoCard key={p.id} p={p} i={i} />)}
-              </div>
-            )}
-          </section>
-        )}
-
-        {/* Flavors */}
-        {(loading.f || flavors.length > 0) && (
-          <section className="section">
-            <Reveal>
-              <h2 className="h2">Signature flavors</h2>
-              <p className="sub" style={{ marginTop: 8, marginBottom: 28 }}>Available on every chicken order. Tap a flavor to preview it.</p>
-            </Reveal>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))', gap: 10, alignItems: 'start' }}>
-              {loading.f
-                ? Array.from({ length: 6 }).map((_, i) => <Skel key={i} h={46} />)
-                : flavors.map((f, i) => <FlavorCard key={f.name} i={i} f={f} open={expanded === f.name} onToggle={() => setExpanded(expanded === f.name ? null : f.name)} />)}
-            </div>
-          </section>
-        )}
-
-        {/* Full menu */}
-        {(loading.m || sections.length > 0) && (
-          <section className="section">
-            <Reveal>
-              <h2 className="h2">Full menu</h2>
-              <p className="sub" style={{ marginTop: 8, marginBottom: 28 }}>Everything we serve, by section.</p>
-            </Reveal>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(min(100%,420px),1fr))', gap: 20 }}>
-              {loading.m ? Array.from({ length: 4 }).map((_, i) => <Skel key={i} h={300} />) : sections.map((s, i) => <MenuCard key={s.id} s={s} i={i} />)}
-            </div>
-          </section>
-        )}
-      </main>
-
-      {/* FOOTER */}
-      <motion.footer initial={{ opacity: 0 }} whileInView={{ opacity: 1 }} viewport={{ once: true }} transition={{ duration: .6 }} style={{ borderTop: '1px solid var(--line)', padding: '40px 0 28px' }}>
-        <div className="wrap">
-          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: 28 }}>
-            <div>
-              <p style={{ fontWeight: 800, fontSize: 17 }}>The <span style={{ color: 'var(--gold)' }}>Crunch</span></p>
-              <p className="sub" style={{ marginTop: 6, fontSize: 13 }}>6 Falcon St., cor Dahlia Fairview,<br />Quezon City, Philippines</p>
-              <a href="https://www.google.com/maps/place/The+Crunch+-+Fairview+Branch/@14.7002687,121.0662915,21z" target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 12, fontSize: 13, fontWeight: 600, color: 'var(--gold)', textDecoration: 'none' }}>
-                <MapPin size={14} />View on Google Maps
-              </a>
-            </div>
-            <div style={{ display: 'grid', gap: 8, alignContent: 'start' }}>
-              <p className="sub" style={{ fontSize: 12 }}>Follow us</p>
-              <a className="link" style={{ padding: 0, textDecoration: 'none' }} href="https://www.instagram.com/thecrunchfairview" target="_blank" rel="noopener noreferrer">Instagram</a>
-              <a className="link" style={{ padding: 0, textDecoration: 'none' }} href="https://www.facebook.com/thecrunchfairview" target="_blank" rel="noopener noreferrer">Facebook</a>
-            </div>
-            <div>
-              <p className="sub" style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}><Clock size={13} />Hours</p>
-              <p className="sub" style={{ marginTop: 6, fontSize: 13 }}>Mon–Fri: 10 AM – 10 PM<br />Sat–Sun: 11 AM – 8:30 PM</p>
-            </div>
-          </div>
-          <p className="sub" style={{ marginTop: 32, paddingTop: 18, borderTop: '1px solid var(--line)', fontSize: 12, textAlign: 'center' }}>© {new Date().getFullYear()} The Crunch Fairview. All rights reserved.</p>
-        </div>
-      </motion.footer>
-
-      {/* FEEDBACK */}
-      <AnimatePresence>{feedbackOpen && <FeedbackModal onClose={() => setFeedbackOpen(false)} options={feedbackOptions} userId={userId} />}</AnimatePresence>
-      <motion.button className="btn btn-gold fixed-btn" initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ delay: 1, type: 'spring', stiffness: 260, damping: 20 }} whileHover={{ scale: 1.05 }} whileTap={{ scale: .95 }} style={{ display: 'flex', alignItems: 'center', gap: 7, borderRadius: 999, padding: '11px 18px', boxShadow: '0 6px 24px rgba(0,0,0,.4)' }} onClick={() => setFeedbackOpen(v => !v)}>
-        <MessageSquare size={15} />{feedbackOpen ? 'Close' : 'Feedback'}
-      </motion.button>
-    </div>
     </MotionConfig>
   )
+}
+
+// ── Shared Inline Style Generators ─────────────────────────────────────────
+function pillBadgeStyle(
+  backgroundColor: string,
+  textColor: string,
+  borderColor: string = 'transparent'
+): CSSProperties {
+  return {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    padding: '4px 10px',
+    borderRadius: 6,
+    backgroundColor,
+    color: textColor,
+    border: `1px solid ${borderColor}`,
+  }
+}
+
+function slideArrowButtonStyle(position: 'left' | 'right'): CSSProperties {
+  return {
+    position: 'absolute',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    [position]: 14,
+    zIndex: 3,
+    width: 38,
+    height: 38,
+    borderRadius: '50%',
+    border: '1px solid rgba(255, 255, 255, 0.15)',
+    backgroundColor: 'rgba(9, 8, 7, 0.6)',
+    color: '#fff',
+    display: 'grid',
+    placeItems: 'center',
+    cursor: 'pointer',
+    fontSize: 20,
+    lineHeight: 1,
+  }
+}
+
+function responsiveGridStyle(isMobile: boolean): CSSProperties {
+  return {
+    display: 'grid',
+    gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(280px, 1fr))',
+    gap: 20,
+  }
+}
+
+const solidGoldButtonStyle: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  border: 0,
+  borderRadius: 10,
+  padding: '9px 18px',
+  fontSize: 13,
+  fontWeight: 700,
+  letterSpacing: '0.02em',
+  backgroundColor: THEME.gold,
+  color: '#120d04',
+  cursor: 'pointer',
+  textDecoration: 'none',
+}
+
+const ghostButtonStyle: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  border: `1px solid ${THEME.borderLine}`,
+  borderRadius: 10,
+  padding: '9px 18px',
+  fontSize: 13,
+  fontWeight: 700,
+  letterSpacing: '0.02em',
+  backgroundColor: 'rgba(255, 255, 255, 0.04)',
+  color: THEME.textLight,
+  cursor: 'pointer',
+  textDecoration: 'none',
 }
