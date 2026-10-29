@@ -10,6 +10,14 @@ const {
 
 const setupSource = fs.readFileSync(path.join(__dirname, "setup.js"), "utf8");
 const migrationSource = fs.readFileSync(path.join(__dirname, "migrate.js"), "utf8");
+const environmentExample = fs.readFileSync(
+  path.resolve(__dirname, "../../.env.example"),
+  "utf8",
+);
+const databaseEnvironmentSource = fs.readFileSync(
+  path.resolve(__dirname, "../config/databaseEnvironment.js"),
+  "utf8",
+);
 const schemaSources = `${setupSource}\n${migrationSource}`;
 
 for (const table of EXPECTED_TABLES) {
@@ -25,8 +33,11 @@ for (const trigger of Object.keys(EXPECTED_TRIGGERS)) {
 
 assert.match(setupSource, /if \(shouldReset\) \{\s*await connection\.query\(dropStatements\)/);
 assert.match(setupSource, /seedInitialSystemSettings\(connection\)/);
-assert.match(setupSource, /ensureInitialAdministrator\(connection/);
 assert.match(setupSource, /applyMigrations\(connection/);
+assert.doesNotMatch(setupSource, /INITIAL_ADMIN|initialAdmin|ensureInitialAdministrator/);
+assert.doesNotMatch(setupSource, /INSERT\s+INTO\s+users/i);
+assert.doesNotMatch(environmentExample, /INITIAL_ADMIN/);
+assert.doesNotMatch(databaseEnvironmentSource, /INITIAL_ADMIN_CONFIG_ERROR/);
 assert.doesNotMatch(
   setupSource,
   /knownOrderItemOrphans|approvedLegacyOrderItemCounts|\b17 inherited\b/i,

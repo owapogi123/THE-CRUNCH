@@ -228,7 +228,6 @@ function getSafeDatabaseErrorDetails(error, config = getDatabaseConfig()) {
     "DB_MIGRATION_LOCK_TIMEOUT",
     "DB_MIGRATION_REVIEW_REQUIRED",
     "DB_SCHEMA_INCOMPATIBLE",
-    "INITIAL_ADMIN_CONFIG_ERROR",
     "UNSAFE_STARTUP_OPTION",
   ];
 

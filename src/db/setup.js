@@ -14,9 +14,6 @@ const {
   initializeStockManagerSchema,
 } = require("../services/stockManagerSchemaService");
 const {
-  ensureInitialAdministrator,
-} = require("../services/initialAdminService");
-const {
   seedInitialSystemSettings,
 } = require("../services/initialDataService");
 const { applyMigrations } = require("./migrate");
@@ -1304,7 +1301,6 @@ END
     await initializeStockManagerSchema(connection);
     await applyMigrations(connection, { log });
     await seedInitialSystemSettings(connection);
-    await ensureInitialAdministrator(connection, { log });
     log.log("Database setup completed successfully.");
     return true;
   } catch (err) {
