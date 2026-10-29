@@ -24,9 +24,7 @@ const ALTERNATE_DATABASE_VARIABLES = [
 ];
 
 function isConfigured(key) {
-  return (
-    typeof process.env[key] === "string" && process.env[key].trim() !== ""
-  );
+  return typeof process.env[key] === "string" && process.env[key].trim() !== "";
 }
 
 function readTrimmed(key, fallback) {
@@ -42,7 +40,9 @@ function isRailwayRuntime() {
 }
 
 function getDatabaseConnectionMode(host) {
-  const normalizedHost = String(host || "").trim().toLowerCase();
+  const normalizedHost = String(host || "")
+    .trim()
+    .toLowerCase();
 
   if (!normalizedHost) return "unknown";
   if (
@@ -124,17 +124,16 @@ function getDatabaseDiagnostics(config = getDatabaseConfig()) {
     passwordConfigured: isConfigured("DB_PASSWORD") ? "yes" : "no",
     port: Number.isInteger(config.port) ? config.port : "invalid",
     connectionMode: getDatabaseConnectionMode(config.host),
-    host: containsProtocol || containsCredentials
-      ? "<redacted: DB_HOST is not a plain hostname>"
-      : effectiveHost,
+    host:
+      containsProtocol || containsCredentials
+        ? "<redacted: DB_HOST is not a plain hostname>"
+        : effectiveHost,
     hostLength: effectiveHost.length,
     hostHasWhitespace: /\s/.test(effectiveHost) ? "yes" : "no",
     hostWasTrimmed: rawHost !== effectiveHost ? "yes" : "no",
     hostContainsProtocol: containsProtocol ? "yes" : "no",
     hostContainsPort: /:\d+$/.test(effectiveHost) ? "yes" : "no",
-    hostHasSurroundingQuotes: /^(["']).*\1$/.test(effectiveHost)
-      ? "yes"
-      : "no",
+    hostHasSurroundingQuotes: /^(["']).*\1$/.test(effectiveHost) ? "yes" : "no",
   };
 }
 
@@ -202,7 +201,11 @@ function validateDatabaseConfig(config = getDatabaseConfig(), options = {}) {
     throw error;
   }
 
-  if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65535) {
+  if (
+    !Number.isInteger(config.port) ||
+    config.port < 1 ||
+    config.port > 65535
+  ) {
     const error = new Error("DB_PORT must be an integer between 1 and 65535.");
     error.code = "DB_CONFIG_ERROR";
     throw error;
@@ -214,15 +217,21 @@ function validateDatabaseConfig(config = getDatabaseConfig(), options = {}) {
 function getSafeDatabaseErrorDetails(error, config = getDatabaseConfig()) {
   const diagnostics = getDatabaseDiagnostics(config);
   const sslDiagnostics = getDatabaseSslDiagnostics(config);
-  return {
-    code:
-      error && (error.code || error.name)
-        ? error.code || error.name
-        : "UNKNOWN_ERROR",
-    ...(error &&
-    ["DB_CONFIG_ERROR", "DB_SCHEMA_INCOMPATIBLE", "UNSAFE_STARTUP_OPTION"].includes(
-      error.code,
-    )
+
+  const code =
+    error && (error.code || error.name)
+      ? error.code || error.name
+      : "UNKNOWN_ERROR";
+
+  const safeErrorCodes = [
+    "DB_CONFIG_ERROR",
+    "DB_SCHEMA_INCOMPATIBLE",
+    "UNSAFE_STARTUP_OPTION",
+  ];
+
+  const result = {
+    code,
+    ...(error && safeErrorCodes.includes(code)
       ? { message: error.message }
       : {}),
     hostConfigured: diagnostics.hostConfigured,
@@ -232,8 +241,22 @@ function getSafeDatabaseErrorDetails(error, config = getDatabaseConfig()) {
     connectionMode: diagnostics.connectionMode,
     sslMode: sslDiagnostics.sslMode,
   };
-}
 
+  // Only expose column identifiers for schema compatibility errors.
+  // Never expose SQL statements, credentials, or raw error objects.
+  if (code === "DB_SCHEMA_INCOMPATIBLE") {
+    const details = error && error.details;
+
+    if (details && Array.isArray(details.columns)) {
+      result.columns = details.columns.filter(
+        (column) =>
+          typeof column === "string" && /^[a-zA-Z0-9_.]+$/.test(column),
+      );
+    }
+  }
+
+  return result;
+}
 module.exports = {
   getDatabaseConfig,
   getDatabaseSslOptions,
