@@ -53,18 +53,13 @@ async function ensureIndex(connection, tableName, indexName, definitionSql) {
     [indexName],
   );
   if (rows.length === 0) {
-    await connection.query(
-      `ALTER TABLE \`${tableName}\` ADD ${definitionSql}`,
-    );
+    await connection.query(`ALTER TABLE \`${tableName}\` ADD ${definitionSql}`);
     console.log(`Added index ${indexName} to ${tableName}`);
   }
 }
 
 async function tableExists(connection, tableName) {
-  const [rows] = await connection.query(
-    "SHOW TABLES LIKE ?",
-    [tableName],
-  );
+  const [rows] = await connection.query("SHOW TABLES LIKE ?", [tableName]);
   return rows.length > 0;
 }
 
@@ -247,8 +242,9 @@ CREATE TABLE IF NOT EXISTS menu_item_ingredients (
 CREATE TABLE IF NOT EXISTS Inventory (
     Inventory_ID INT AUTO_INCREMENT PRIMARY KEY,
     Product_ID INT,
-    Quantity DECIMAL(14,4) NOT NULL,
-    Stock DECIMAL(14,4),
+Quantity DECIMAL(14,4) NOT NULL,
+unit VARCHAR(30) NOT NULL DEFAULT 'piece',
+Stock DECIMAL(14,4),
     Reorder_Point DECIMAL(10,2) DEFAULT 20,
     Critical_Point DECIMAL(10,2) DEFAULT 5,
     use_default_thresholds TINYINT(1) NOT NULL DEFAULT 1,
@@ -331,7 +327,7 @@ CREATE TABLE IF NOT EXISTS staff_notification_reads (
 
 CREATE TABLE IF NOT EXISTS batches (
     batch_id INT PRIMARY KEY AUTO_INCREMENT,
-    product_id INT NOT NULL,
+    product_id INT NULL,
     delivery_batch_id VARCHAR(50),
     quantity DECIMAL(10,2) NOT NULL,
     remaining_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
@@ -727,6 +723,44 @@ CREATE TABLE IF NOT EXISTS role_permissions (
     await connection.query(createStatements);
     log.log("Tables created.");
 
+    // Fix existing Railway database columns without resetting data.
+    const [inventoryUnitColumns] = await connection.query(
+      "SHOW COLUMNS FROM `Inventory` LIKE 'unit'",
+    );
+
+    if (inventoryUnitColumns.length === 0) {
+      await connection.query(`
+        ALTER TABLE \`Inventory\`
+        ADD COLUMN \`unit\` VARCHAR(30) NOT NULL DEFAULT 'piece'
+      `);
+      log.log("Added Inventory.unit");
+    } else if (
+      String(inventoryUnitColumns[0].Type).toLowerCase() !== "varchar(30)" ||
+      String(inventoryUnitColumns[0].Null).toUpperCase() !== "NO"
+    ) {
+      await connection.query(`
+        ALTER TABLE \`Inventory\`
+        MODIFY COLUMN \`unit\` VARCHAR(30) NOT NULL DEFAULT 'piece'
+      `);
+      log.log("Updated Inventory.unit");
+    }
+
+    const [batchProductColumns] = await connection.query(
+      "SHOW COLUMNS FROM `batches` LIKE 'product_id'",
+    );
+
+    if (
+      batchProductColumns.length === 1 &&
+      String(batchProductColumns[0].Type).toLowerCase() === "int" &&
+      String(batchProductColumns[0].Null).toUpperCase() === "NO"
+    ) {
+      await connection.query(`
+        ALTER TABLE \`batches\`
+        MODIFY COLUMN \`product_id\` INT NULL
+      `);
+      log.log("Updated batches.product_id");
+    }
+
     await ensureColumn(
       connection,
       "purchase_order_items",
@@ -770,11 +804,11 @@ CREATE TABLE IF NOT EXISTS role_permissions (
 
     if (Number(inventoryCategoryCount?.totalCategories || 0) === 0) {
       for (const [name, type, dateTrackingType] of [
-      ["Raw Material", "raw_material", "shelf_life"],
-      ["Sauces", "ingredient", "expiry"],
-      ["Ingredients", "ingredient", "expiry"],
-      ["Aromatics", "ingredient", "expiry"],
-      ["Packaging", "finished", "none"],
+        ["Raw Material", "raw_material", "shelf_life"],
+        ["Sauces", "ingredient", "expiry"],
+        ["Ingredients", "ingredient", "expiry"],
+        ["Aromatics", "ingredient", "expiry"],
+        ["Packaging", "finished", "none"],
       ]) {
         await connection.query(
           `INSERT INTO inventory_categories (name, type, date_tracking_type, is_active)
@@ -850,19 +884,31 @@ CREATE TABLE IF NOT EXISTS role_permissions (
       "`password_reset_expires` DATETIME NULL",
     );
 
-    if (!(await tableExists(connection, "orders")) && (await tableExists(connection, "Orders"))) {
+    if (
+      !(await tableExists(connection, "orders")) &&
+      (await tableExists(connection, "Orders"))
+    ) {
       await connection.query("RENAME TABLE `Orders` TO `orders`");
       log.log("Renamed Orders to orders");
     }
-    if (!(await tableExists(connection, "order_item")) && (await tableExists(connection, "Order_Item"))) {
+    if (
+      !(await tableExists(connection, "order_item")) &&
+      (await tableExists(connection, "Order_Item"))
+    ) {
       await connection.query("RENAME TABLE `Order_Item` TO `order_item`");
       log.log("Renamed Order_Item to order_item");
     }
-    if (!(await tableExists(connection, "payments")) && (await tableExists(connection, "Payments"))) {
+    if (
+      !(await tableExists(connection, "payments")) &&
+      (await tableExists(connection, "Payments"))
+    ) {
       await connection.query("RENAME TABLE `Payments` TO `payments`");
       log.log("Renamed Payments to payments");
     }
-    if (!(await tableExists(connection, "batches")) && (await tableExists(connection, "Batches"))) {
+    if (
+      !(await tableExists(connection, "batches")) &&
+      (await tableExists(connection, "Batches"))
+    ) {
       await connection.query("RENAME TABLE `Batches` TO `batches`");
       log.log("Renamed Batches to batches");
     }
@@ -981,7 +1027,11 @@ END
         "`quantity_required` DECIMAL(14,4) NOT NULL DEFAULT 0",
       ],
     ];
-    for (const [tableName, columnName, definitionSql] of decimalQuantityColumns) {
+    for (const [
+      tableName,
+      columnName,
+      definitionSql,
+    ] of decimalQuantityColumns) {
       await ensureDecimalQuantityColumn(
         connection,
         tableName,
@@ -1206,12 +1256,7 @@ END
       "readyAt",
       "`readyAt` DATETIME NULL",
     );
-    await ensureColumn(
-      connection,
-      "orders",
-      "dueAt",
-      "`dueAt` DATETIME NULL",
-    );
+    await ensureColumn(connection, "orders", "dueAt", "`dueAt` DATETIME NULL");
     await ensureColumn(
       connection,
       "orders",
@@ -1276,12 +1321,7 @@ END
         "customer_user_id",
         "`customer_user_id` INT NULL",
       );
-      await ensureColumn(
-        connection,
-        "feedback",
-        "rating",
-        "`rating` INT NULL",
-      );
+      await ensureColumn(connection, "feedback", "rating", "`rating` INT NULL");
       await ensureColumn(
         connection,
         "feedback",
