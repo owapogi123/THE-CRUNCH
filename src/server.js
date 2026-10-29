@@ -8,7 +8,8 @@ const {
   verifySchemaCompatibility,
 } = require("./services/schemaCompatibilityService");
 
-const PORT = process.env.PORT || 5000;
+const PORT = Number(process.env.PORT || 5000);
+const HOST = process.env.HOST || "0.0.0.0";
 
 async function startServer() {
   const dbConfig = getDatabaseConfig();
@@ -23,6 +24,11 @@ async function startServer() {
 
     assertJwtSecretConfigured();
     validateDatabaseConfig(dbConfig, { requireExplicit: true });
+    if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
+      const error = new Error("PORT must be an integer between 1 and 65535.");
+      error.code = "DB_CONFIG_ERROR";
+      throw error;
+    }
 
     // Do not construct the pool or load routes until the explicit-config gate
     // passes. Normal startup never initializes, repairs, seeds, or migrates.
@@ -41,8 +47,8 @@ async function startServer() {
 
     // Loading app registers routes but does not perform schema work.
     const app = require("./app");
-    const server = app.listen(PORT, () => {
-      console.log(`Backend server running on port ${PORT}`);
+    const server = app.listen(PORT, HOST, () => {
+      console.log(`Backend server listening on ${HOST}:${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
     });
 
@@ -52,10 +58,11 @@ async function startServer() {
         console.error(
           `A backend instance is already running at http://localhost:${PORT}. Stop it first or run with a different PORT.`,
         );
-        process.exit(0);
+        process.exit(1);
         return;
       }
-      throw err;
+      console.error("Backend server error:", err && err.message ? err.message : err);
+      process.exit(1);
     });
   } catch (err) {
     console.error(
@@ -78,4 +85,4 @@ process.on("uncaughtException", (err) => {
   console.error("Uncaught Exception:", err && err.stack ? err.stack : err);
 });
 
-module.exports = { startServer };
+module.exports = { HOST, PORT, startServer };

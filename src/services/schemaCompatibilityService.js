@@ -17,13 +17,14 @@ const EXPECTED_TABLES = [
   "products", "purchase_order_items", "purchase_orders", "receipt",
   "receipt_snapshot_items", "receipt_snapshots", "refund_requests", "reports",
   "role_permissions", "staff_notification_reads", "staff_notifications",
+  "schema_migrations",
   "stock_status", "supplier_history", "suppliers",
   "system_settings", "users",
 ];
 
 const EXPECTED_INDEXES = [
   "admin|primary|1|admin_id", "admin|email|1|email",
-  "batches|primary|1|batch_id", "batches|product_id|0|product_id",
+  "batches|primary|1|batch_id", "batches|idx_batches_product_id|0|product_id",
   "cashier|primary|1|cashier_id", "categories|primary|1|category_id",
   "cook|primary|1|cook_id", "customers|primary|1|customer_id",
   "daily_usage_report_items|primary|1|usage_item_id",
@@ -44,6 +45,8 @@ const EXPECTED_INDEXES = [
   "inventory_units|primary|1|unit_id", "inventory_units|name|1|name",
   "kitchen|primary|1|kitchen_id", "kitchen|order_id|0|order_id",
   "kitchen|updatedby|0|updatedby", "kitchen_batches|primary|1|kitchen_batch_id",
+  "kitchen_batches|idx_kitchen_batches_storage_batch_id|0|storage_batch_id",
+  "kitchen_batches|idx_kitchen_batches_product_id|0|product_id",
   "kitchen_usage_items|primary|1|usage_item_id",
   "kitchen_usage_items|fk_kitchen_usage_items_report|0|report_id",
   "kitchen_usage_reports|primary|1|report_id",
@@ -77,6 +80,7 @@ const EXPECTED_INDEXES = [
   "refund_requests|idx_refund_requests_status_requested|0|status,requested_at",
   "reports|primary|1|report_id", "role_permissions|primary|1|id",
   "role_permissions|unique_role_permission|1|role,permission_key",
+  "schema_migrations|primary|1|version",
   "staff_notification_reads|primary|1|notification_id,user_id",
   "staff_notification_reads|idx_staff_notification_reads_user|0|user_id,read_at",
   "staff_notifications|primary|1|notification_id",
@@ -91,7 +95,7 @@ const EXPECTED_INDEXES = [
 ];
 
 const EXPECTED_FOREIGN_KEYS = [
-  "batches|batches_ibfk_1|product_id|menu|product_id|no action|no action",
+  "batches|fk_batches_product|product_id|products|id|restrict|restrict",
   "daily_usage_report_items|fk_daily_usage_items_report|report_id|daily_usage_reports|report_id|no action|cascade",
   "feedback|fk_feedback_customer|customer_user_id|users|id|no action|set null",
   "feedback|fk_feedback_product|product_id|menu|product_id|no action|no action",
@@ -100,6 +104,8 @@ const EXPECTED_FOREIGN_KEYS = [
   "inventory_alert_reads|fk_inventory_alert_reads_user|user_id|users|id|no action|cascade",
   "kitchen|kitchen_ibfk_1|order_id|orders|order_id|no action|no action",
   "kitchen|kitchen_ibfk_2|updatedby|cook|cook_id|no action|no action",
+  "kitchen_batches|fk_kitchen_batches_storage_batch|storage_batch_id|batches|batch_id|restrict|restrict",
+  "kitchen_batches|fk_kitchen_batches_product|product_id|products|id|restrict|restrict",
   "kitchen_usage_items|fk_kitchen_usage_items_report|report_id|kitchen_usage_reports|report_id|no action|cascade",
   "menu|menu_ibfk_1|category_id|categories|category_id|no action|no action",
   "menu_item_ingredients|fk_menu_item_ingredients_menu|menu_product_id|menu|product_id|no action|cascade",
@@ -169,7 +175,7 @@ const CRITICAL_COLUMNS = {
     unit_cost: ["decimal(10,2)", false],
   },
   batches: {
-    batch_id: ["int", false], product_id: ["int", true],
+    batch_id: ["int", false], product_id: ["int", false],
     quantity: ["decimal(10,2)", false], remaining_qty: ["decimal(10,2)", false],
     unit: ["varchar(50)", true], shelf_life_days: ["int", true],
     shelf_life_hours: ["int", true], usable_until: ["datetime", true],
@@ -287,6 +293,28 @@ function foreignKeySignature(group) {
   ].join("|");
 }
 
+function foreignKeyShapeSignature(group) {
+  return [
+    normalizeIdentifier(group.table),
+    group.columns.map((column) => normalizeIdentifier(column.child)).join(","),
+    normalizeIdentifier(group.parentTable),
+    group.columns.map((column) => normalizeIdentifier(column.parent)).join(","),
+    group.updateRule,
+    group.deleteRule,
+  ].join("|");
+}
+
+function expectedForeignKeyShape(signature) {
+  const [table, _constraint, children, parentTable, parents, updateRule, deleteRule] =
+    signature.split("|");
+  return [table, children, parentTable, parents, updateRule, deleteRule].join("|");
+}
+
+function indexShape(signature) {
+  const [table, _indexName, unique, columns] = signature.split("|");
+  return [table, unique, columns].join("|");
+}
+
 async function validateOrphans(db, foreignKeys) {
   const results = [];
   for (const fk of foreignKeys) {
@@ -319,20 +347,11 @@ async function validateOrphans(db, foreignKeys) {
     });
   }
 
-  const known = results.find((result) =>
-    result.table === "order_item" && result.constraint === "order_item_ibfk_2",
-  );
-  const unexpected = results.filter((result) =>
-    !(result.table === "order_item" && result.constraint === "order_item_ibfk_2") &&
-    result.count !== 0,
-  );
-  if (!known || known.count !== 17 || unexpected.length > 0) {
+  const orphans = results.filter((result) => result.count !== 0);
+  if (orphans.length > 0) {
     throw createSchemaCompatibilityError(
-      "Foreign-key orphan counts do not match the approved Phase 3 baseline.",
-      {
-        knownOrderItemOrphans: known?.count ?? null,
-        unexpected,
-      },
+      "Foreign-key orphans are not permitted by the fresh-database schema contract.",
+      { orphans },
     );
   }
   return results;
@@ -430,7 +449,17 @@ async function verifySchemaCompatibility(db, expectedDatabaseName) {
       .map((row) => normalizeIdentifier(row.COLUMN_NAME)).join(",");
     return `${key}|${unique}|${columns}`;
   });
-  compareSets("Database indexes", EXPECTED_INDEXES, indexSignatures);
+  const expectedIndexShapes = new Set(EXPECTED_INDEXES.map(indexShape));
+  const actualIndexShapes = new Set(indexSignatures.map(indexShape));
+  const missingIndexShapes = [...expectedIndexShapes]
+    .filter((signature) => !actualIndexShapes.has(signature))
+    .sort();
+  if (missingIndexShapes.length > 0) {
+    throw createSchemaCompatibilityError(
+      "Database indexes do not satisfy the canonical schema contract.",
+      { missing: missingIndexShapes },
+    );
+  }
 
   const [foreignKeyRows] = await db.query(
     `SELECT kcu.TABLE_NAME, kcu.CONSTRAINT_NAME, kcu.COLUMN_NAME,
@@ -448,8 +477,8 @@ async function verifySchemaCompatibility(db, expectedDatabaseName) {
   const foreignKeys = groupForeignKeyRows(foreignKeyRows);
   compareSets(
     "Foreign-key definitions",
-    EXPECTED_FOREIGN_KEYS,
-    foreignKeys.map(foreignKeySignature),
+    EXPECTED_FOREIGN_KEYS.map(expectedForeignKeyShape),
+    foreignKeys.map(foreignKeyShapeSignature),
   );
 
   const [triggerRows] = await db.query(
@@ -487,11 +516,8 @@ async function verifySchemaCompatibility(db, expectedDatabaseName) {
     triggerCount: triggerRows.length,
     routineCount: 0,
     eventCount: 0,
-    knownOrderItemOrphans: 17,
-    warnings: [
-      "17 inherited order_item_ibfk_2 references are absent from Menu; no additional foreign-key orphans were found.",
-      "Batch schema migration is pending: batches.product_id is temporarily nullable and references Menu(Product_ID); kitchen_batches has no foreign keys yet.",
-    ],
+    orphanCount: 0,
+    warnings: [],
     orphanResults,
   };
 }
@@ -504,6 +530,7 @@ module.exports = {
   EXPECTED_TRIGGERS,
   compareSets,
   foreignKeySignature,
+  foreignKeyShapeSignature,
   groupForeignKeyRows,
   normalizeTriggerSql,
   verifySchemaCompatibility,

@@ -13,8 +13,8 @@ const {
 } = require("../middleware/staffAccess");
 const { assertTableColumns } = require("../services/schemaAssertions");
 
-// Phase 4A canonical contract (migration pending): products(id) is the
-// authority; batches.product_id will be NOT NULL; unit/status retain VARCHAR
+// Phase 4A canonical contract: products(id) is the authority;
+// batches.product_id is NOT NULL; unit/status retain VARCHAR
 // storage and all shelf-life fields; kitchen storage provenance stays nullable.
 const BATCH_SCHEMA_CONTRACT = {
   batches: [

@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
+const db = require("./config/db");
 
 const app = express();
 const allowedOrigins = [
@@ -121,10 +122,25 @@ app.get("/", (req, res) => {
   res.send("Backend is working ✅");
 });
 
-// Health check
-app.get("/health", (req, res) => {
-  res.json({ status: "OK", message: "Backend server is running" });
+// Liveness only confirms that the Node process can answer HTTP requests.
+app.get("/health/live", (_req, res) => {
+  res.json({ status: "ok", service: "the-crunch-backend" });
 });
+
+// Readiness confirms that the application can still reach its validated DB.
+const readinessHandler = async (_req, res) => {
+  try {
+    await db.query("SELECT 1 AS ready");
+    res.json({ status: "ready", database: "reachable" });
+  } catch (error) {
+    console.error("Database readiness check failed:", {
+      code: error && (error.code || error.name) ? error.code || error.name : "UNKNOWN_ERROR",
+    });
+    res.status(503).json({ status: "unavailable", database: "unreachable" });
+  }
+};
+app.get("/health", readinessHandler);
+app.get("/health/ready", readinessHandler);
 
 // Global error handler - ensures errors are returned as JSON and logged
 app.use((err, req, res, next) => {

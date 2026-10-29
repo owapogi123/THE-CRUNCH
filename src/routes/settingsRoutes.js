@@ -3,49 +3,11 @@ const db = require("../config/db");
 const { SUPERUSER_ROLE, normalizeRole } = require("../middleware/roleAccess");
 const { requireCookViewAccess } = require("../middleware/cookViewAccess");
 const { requireAdministratorAccess } = require("../middleware/staffAccess");
-
-const DEFAULT_ROLE_PERMISSIONS = {
-  administrator: {
-    overview: true,
-    orders: true,
-    menuManagement: true,
-    menus: true,
-    stockManager: true,
-    userAccounts: true,
-    salesReports: true,
-    settings: true,
-  },
-  cashier: {
-    overview: true,
-    orders: true,
-    menuManagement: false,
-    menus: true,
-    stockManager: false,
-    userAccounts: false,
-    salesReports: true,
-    settings: false,
-  },
-  cook: {
-    overview: false,
-    orders: true,
-    menuManagement: false,
-    menus: false,
-    stockManager: false,
-    userAccounts: false,
-    salesReports: false,
-    settings: false,
-  },
-  inventory_manager: {
-    overview: true,
-    orders: true,
-    menuManagement: true,
-    menus: false,
-    stockManager: true,
-    userAccounts: false,
-    salesReports: false,
-    settings: false,
-  },
-};
+const {
+  DEFAULT_PERMISSION_ROLE_LOCKS,
+  DEFAULT_RESTAURANT_SETTINGS,
+  DEFAULT_ROLE_PERMISSIONS,
+} = require("../services/settingsDefaults");
 
 const VALID_PERMISSION_ROLES = Object.keys(DEFAULT_ROLE_PERMISSIONS);
 const VALID_PERMISSION_KEYS = Object.keys(DEFAULT_ROLE_PERMISSIONS.administrator);
@@ -55,12 +17,6 @@ const COOK_VIEW_PERMISSION_ROLES = [
   "inventory_manager",
   "cook",
 ];
-const DEFAULT_PERMISSION_ROLE_LOCKS = {
-  administrator: false,
-  cashier: false,
-  cook: false,
-  inventory_manager: false,
-};
 
 function enforceSuperuserPermissions(permissions) {
   for (const permissionKey of VALID_PERMISSION_KEYS) {
@@ -290,8 +246,8 @@ function normalizeNonNegativeNumericString(value, fieldName, fallback = "") {
 function sanitizeSettingsPayload(payload) {
   const source = payload && typeof payload === "object" ? payload : {};
   return {
-    restaurantName: "The Crunch",
-    tagline: "",
+    restaurantName: DEFAULT_RESTAURANT_SETTINGS.restaurantName,
+    tagline: DEFAULT_RESTAURANT_SETTINGS.tagline,
     email: normalizeString(source.email),
     phone: normalizeString(source.phone),
     address: normalizeString(source.address),
@@ -1208,6 +1164,7 @@ router.delete("/inventory-units/:id", requireAdministratorAccess, async (req, re
 
 module.exports = router;
 module.exports.permissionPolicy = {
+  DEFAULT_RESTAURANT_SETTINGS,
   DEFAULT_ROLE_PERMISSIONS,
   VALID_PERMISSION_KEYS,
   VALID_PERMISSION_ROLES,
@@ -1215,4 +1172,5 @@ module.exports.permissionPolicy = {
   mergePermissionsPayload,
   normalizePermissionRoleLocks,
   normalizePermissionsPayload,
+  sanitizeSettingsPayload,
 };

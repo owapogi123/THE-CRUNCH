@@ -64,7 +64,7 @@ function triggerRows() {
   }));
 }
 
-function createReadOnlyFakeDb() {
+function createReadOnlyFakeDb({ orderItemOrphans = 0 } = {}) {
   const calls = [];
   return {
     calls,
@@ -95,7 +95,7 @@ function createReadOnlyFakeDb() {
           /FROM `order_item` c/i.test(normalized) &&
           /c\.`product_id` IS NOT NULL/i.test(normalized) &&
           /LEFT JOIN `menu` p/i.test(normalized);
-        return [[{ orphan_count: knownOrphanQuery ? 17 : 0 }]];
+        return [[{ orphan_count: knownOrphanQuery ? orderItemOrphans : 0 }]];
       }
       throw new Error(`Unexpected test query: ${normalized}`);
     },
@@ -103,9 +103,9 @@ function createReadOnlyFakeDb() {
 }
 
 (async () => {
-  assert.equal(EXPECTED_TABLES.length, 45);
-  assert.equal(EXPECTED_INDEXES.length, 95);
-  assert.equal(EXPECTED_FOREIGN_KEYS.length, 30);
+  assert.equal(EXPECTED_TABLES.length, 46);
+  assert.equal(EXPECTED_INDEXES.length, 98);
+  assert.equal(EXPECTED_FOREIGN_KEYS.length, 32);
   assert.equal(Object.keys(EXPECTED_TRIGGERS).length, 2);
 
   const formattedTrigger = "BEGIN\n  INSERT INTO t VALUES (1);\nEND";
@@ -116,12 +116,23 @@ function createReadOnlyFakeDb() {
 
   const db = createReadOnlyFakeDb();
   const result = await verifySchemaCompatibility(db, "thecrunch_updated_local");
-  assert.equal(result.tableCount, 45);
-  assert.equal(result.indexCount, 95);
-  assert.equal(result.foreignKeyCount, 30);
+  assert.equal(result.tableCount, 46);
+  assert.equal(result.indexCount, 98);
+  assert.equal(result.foreignKeyCount, 32);
   assert.equal(result.triggerCount, 2);
-  assert.equal(result.knownOrderItemOrphans, 17);
+  assert.equal(result.orphanCount, 0);
+  assert.deepEqual(result.warnings, []);
   assert.ok(db.calls.every((sql) => /^SELECT\b/i.test(sql)));
+
+  await assert.rejects(
+    verifySchemaCompatibility(
+      createReadOnlyFakeDb({ orderItemOrphans: 1 }),
+      "thecrunch_updated_local",
+    ),
+    (error) =>
+      error.code === "DB_SCHEMA_INCOMPATIBLE" &&
+      /orphans are not permitted/i.test(error.message),
+  );
 
   console.log("Read-only schema compatibility tests passed.");
 })().catch((error) => {

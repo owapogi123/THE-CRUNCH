@@ -13,6 +13,13 @@ const {
 const {
   initializeStockManagerSchema,
 } = require("../services/stockManagerSchemaService");
+const {
+  ensureInitialAdministrator,
+} = require("../services/initialAdminService");
+const {
+  seedInitialSystemSettings,
+} = require("../services/initialDataService");
+const { applyMigrations } = require("./migrate");
 
 async function ensureColumn(connection, tableName, columnName, definitionSql) {
   const [rows] = await connection.query(
@@ -242,9 +249,9 @@ CREATE TABLE IF NOT EXISTS menu_item_ingredients (
 CREATE TABLE IF NOT EXISTS Inventory (
     Inventory_ID INT AUTO_INCREMENT PRIMARY KEY,
     Product_ID INT,
-Quantity DECIMAL(14,4) NOT NULL,
-unit VARCHAR(30) NOT NULL DEFAULT 'piece',
-Stock DECIMAL(14,4),
+    Quantity DECIMAL(14,4) NOT NULL,
+    unit VARCHAR(30) NOT NULL DEFAULT 'piece',
+    Stock DECIMAL(14,4),
     Reorder_Point DECIMAL(10,2) DEFAULT 20,
     Critical_Point DECIMAL(10,2) DEFAULT 5,
     use_default_thresholds TINYINT(1) NOT NULL DEFAULT 1,
@@ -327,7 +334,7 @@ CREATE TABLE IF NOT EXISTS staff_notification_reads (
 
 CREATE TABLE IF NOT EXISTS batches (
     batch_id INT PRIMARY KEY AUTO_INCREMENT,
-    product_id INT NULL,
+    product_id INT NOT NULL,
     delivery_batch_id VARCHAR(50),
     quantity DECIMAL(10,2) NOT NULL,
     remaining_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
@@ -723,44 +730,6 @@ CREATE TABLE IF NOT EXISTS role_permissions (
     await connection.query(createStatements);
     log.log("Tables created.");
 
-    // Fix existing Railway database columns without resetting data.
-    const [inventoryUnitColumns] = await connection.query(
-      "SHOW COLUMNS FROM `Inventory` LIKE 'unit'",
-    );
-
-    if (inventoryUnitColumns.length === 0) {
-      await connection.query(`
-        ALTER TABLE \`Inventory\`
-        ADD COLUMN \`unit\` VARCHAR(30) NOT NULL DEFAULT 'piece'
-      `);
-      log.log("Added Inventory.unit");
-    } else if (
-      String(inventoryUnitColumns[0].Type).toLowerCase() !== "varchar(30)" ||
-      String(inventoryUnitColumns[0].Null).toUpperCase() !== "NO"
-    ) {
-      await connection.query(`
-        ALTER TABLE \`Inventory\`
-        MODIFY COLUMN \`unit\` VARCHAR(30) NOT NULL DEFAULT 'piece'
-      `);
-      log.log("Updated Inventory.unit");
-    }
-
-    const [batchProductColumns] = await connection.query(
-      "SHOW COLUMNS FROM `batches` LIKE 'product_id'",
-    );
-
-    if (
-      batchProductColumns.length === 1 &&
-      String(batchProductColumns[0].Type).toLowerCase() === "int" &&
-      String(batchProductColumns[0].Null).toUpperCase() === "NO"
-    ) {
-      await connection.query(`
-        ALTER TABLE \`batches\`
-        MODIFY COLUMN \`product_id\` INT NULL
-      `);
-      log.log("Updated batches.product_id");
-    }
-
     await ensureColumn(
       connection,
       "purchase_order_items",
@@ -797,25 +766,21 @@ CREATE TABLE IF NOT EXISTS role_permissions (
       `);
     }
 
-    const [[inventoryCategoryCount]] = await connection.query(`
-      SELECT COUNT(*) AS totalCategories
-      FROM inventory_categories
-    `);
-
-    if (Number(inventoryCategoryCount?.totalCategories || 0) === 0) {
-      for (const [name, type, dateTrackingType] of [
-        ["Raw Material", "raw_material", "shelf_life"],
-        ["Sauces", "ingredient", "expiry"],
-        ["Ingredients", "ingredient", "expiry"],
-        ["Aromatics", "ingredient", "expiry"],
-        ["Packaging", "finished", "none"],
-      ]) {
-        await connection.query(
-          `INSERT INTO inventory_categories (name, type, date_tracking_type, is_active)
-           VALUES (?, ?, ?, TRUE)`,
-          [name, type, dateTrackingType],
-        );
-      }
+    for (const [name, type, dateTrackingType] of [
+      ["Raw Material", "raw_material", "shelf_life"],
+      ["Sauces", "ingredient", "expiry"],
+      ["Ingredients", "ingredient", "expiry"],
+      ["Aromatics", "ingredient", "expiry"],
+      ["Packaging", "finished", "none"],
+    ]) {
+      await connection.query(
+        `INSERT INTO inventory_categories (name, type, date_tracking_type, is_active)
+         SELECT ?, ?, ?, TRUE
+         WHERE NOT EXISTS (
+           SELECT 1 FROM inventory_categories WHERE LOWER(name) = LOWER(?)
+         )`,
+        [name, type, dateTrackingType, name],
+      );
     }
 
     for (const unitName of [
@@ -1337,6 +1302,9 @@ END
     }
 
     await initializeStockManagerSchema(connection);
+    await applyMigrations(connection, { log });
+    await seedInitialSystemSettings(connection);
+    await ensureInitialAdministrator(connection, { log });
     log.log("Database setup completed successfully.");
     return true;
   } catch (err) {

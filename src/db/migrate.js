@@ -1,0 +1,98 @@
+"use strict";
+
+const mysql = require("mysql2/promise");
+const {
+  getDatabaseConfig,
+  getDatabaseSslOptions,
+  getSafeDatabaseErrorDetails,
+  validateDatabaseConfig,
+} = require("../config/databaseEnvironment");
+const deploymentSchemaAlignment = require("./migrations/2026-10-30_deployment-schema-alignment");
+
+const MIGRATIONS = [deploymentSchemaAlignment];
+const LOCK_NAME = "the_crunch_schema_migrations";
+
+async function ensureMigrationTable(connection) {
+  await connection.query(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version VARCHAR(100) NOT NULL PRIMARY KEY,
+      applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+  `);
+}
+
+async function applyMigrations(connection, { log = console } = {}) {
+  await ensureMigrationTable(connection);
+  const [rows] = await connection.query("SELECT version FROM schema_migrations");
+  const applied = new Set(rows.map((row) => String(row.version)));
+
+  for (const migration of MIGRATIONS) {
+    if (applied.has(migration.VERSION)) continue;
+    log.log(`Applying database migration ${migration.VERSION}...`);
+    await migration.up(connection, { log });
+    await connection.query(
+      "INSERT INTO schema_migrations (version) VALUES (?)",
+      [migration.VERSION],
+    );
+    log.log(`Applied database migration ${migration.VERSION}.`);
+  }
+}
+
+async function migrate(options = {}) {
+  const { log = console, connection: providedConnection = null } = options;
+  const dbConfig = getDatabaseConfig();
+  validateDatabaseConfig(dbConfig, { requireExplicit: true });
+
+  let connection = providedConnection;
+  let ownsConnection = false;
+  let lockAcquired = false;
+  try {
+    if (!connection) {
+      const sslOptions = getDatabaseSslOptions(dbConfig);
+      connection = await mysql.createConnection({
+        host: dbConfig.host,
+        port: dbConfig.port,
+        user: dbConfig.user,
+        password: dbConfig.password,
+        database: dbConfig.database,
+        ...(sslOptions ? { ssl: sslOptions } : {}),
+        multipleStatements: false,
+      });
+      ownsConnection = true;
+    }
+
+    const [[lockRow]] = await connection.query(
+      "SELECT GET_LOCK(?, 30) AS acquired",
+      [LOCK_NAME],
+    );
+    lockAcquired = Number(lockRow?.acquired) === 1;
+    if (!lockAcquired) {
+      const error = new Error("Could not acquire the database migration lock.");
+      error.code = "DB_MIGRATION_LOCK_TIMEOUT";
+      throw error;
+    }
+
+    await applyMigrations(connection, { log });
+    return true;
+  } catch (error) {
+    log.error("Database migration failed:", getSafeDatabaseErrorDetails(error, dbConfig));
+    throw error;
+  } finally {
+    if (connection && lockAcquired) {
+      await connection.query("SELECT RELEASE_LOCK(?)", [LOCK_NAME]).catch(() => undefined);
+    }
+    if (connection && ownsConnection) await connection.end();
+  }
+}
+
+module.exports = {
+  MIGRATIONS,
+  applyMigrations,
+  migrate,
+};
+
+if (require.main === module) {
+  migrate().catch(() => {
+    process.exitCode = 1;
+  });
+}

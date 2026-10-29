@@ -225,7 +225,10 @@ function getSafeDatabaseErrorDetails(error, config = getDatabaseConfig()) {
 
   const safeErrorCodes = [
     "DB_CONFIG_ERROR",
+    "DB_MIGRATION_LOCK_TIMEOUT",
+    "DB_MIGRATION_REVIEW_REQUIRED",
     "DB_SCHEMA_INCOMPATIBLE",
+    "INITIAL_ADMIN_CONFIG_ERROR",
     "UNSAFE_STARTUP_OPTION",
   ];
 
@@ -251,6 +254,18 @@ function getSafeDatabaseErrorDetails(error, config = getDatabaseConfig()) {
       result.columns = details.columns.filter(
         (column) =>
           typeof column === "string" && /^[a-zA-Z0-9_.]+$/.test(column),
+      );
+    }
+    if (details && Array.isArray(details.missing)) {
+      result.missing = details.missing.filter(
+        (value) =>
+          typeof value === "string" && /^[a-zA-Z0-9_.,| ()-]+$/.test(value),
+      );
+    }
+    if (details && Array.isArray(details.unexpected)) {
+      result.unexpected = details.unexpected.filter(
+        (value) =>
+          typeof value === "string" && /^[a-zA-Z0-9_.,| ()-]+$/.test(value),
       );
     }
   }
