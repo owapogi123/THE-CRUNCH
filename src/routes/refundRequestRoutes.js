@@ -13,6 +13,15 @@ const {
 const {
   publishRefundRequestMutation,
 } = require("../services/applicationEvents");
+const {
+  getRefundEligibility,
+  isRefundEligible,
+} = require("../services/refundEligibility");
+const {
+  STAFF_NOTIFICATION_AUDIENCES,
+  createStaffNotification,
+  updateStaffNotificationStatus,
+} = require("../services/staffNotificationService");
 
 const REQUEST_STATUSES = new Set(["Pending", "Ignored", "Actioned"]);
 
@@ -52,10 +61,7 @@ function normalizeOrderStatus(value) {
 }
 
 function isRequestEligible(order) {
-  const status = normalizeOrderStatus(order.status);
-  return normalizePaymentStatus(order.paymentStatus) === "Paid" &&
-    status !== "Refunded" &&
-    status !== "Cancelled";
+  return isRefundEligible(order);
 }
 
 function parsePositiveId(value, label) {
@@ -83,6 +89,7 @@ function mapRequestRows(rows) {
           role: row.requesterRole || "cashier",
         },
         requestedAt: row.requestedAt,
+        reason: row.reasonSnapshot || "Cashier requested a refund review.",
         status: row.requestStatus,
         reviewedAt: row.reviewedAt || null,
         order: {
@@ -91,6 +98,9 @@ function mapRequestRows(rows) {
           total: Number(row.total) || 0,
           status: normalizeOrderStatus(row.orderStatus),
           paymentStatus: normalizePaymentStatus(row.paymentStatus),
+          prepStartedAt: row.prepStartedAt || null,
+          startedAt: row.startedAt || null,
+          readyAt: row.readyAt || null,
           items: [],
         },
       });
@@ -126,6 +136,7 @@ async function loadRequests({ status = null, requestId = null } = {}) {
        rr.order_id AS orderId,
        rr.order_number_snapshot AS orderNumberSnapshot,
        rr.requester_user_id AS requesterUserId,
+       rr.reason_snapshot AS reasonSnapshot,
        rr.status AS requestStatus,
        rr.requested_at AS requestedAt,
        rr.reviewed_at AS reviewedAt,
@@ -135,6 +146,9 @@ async function loadRequests({ status = null, requestId = null } = {}) {
        o.Order_Type AS orderType,
        o.Total_Amount AS total,
        o.Status AS orderStatus,
+       o.prepStartedAt AS prepStartedAt,
+       o.startedAt AS startedAt,
+       o.readyAt AS readyAt,
        COALESCE(o.payment_status, payment.Payment_Status) AS paymentStatus,
        COALESCE(snapshot.payment_method, o.payment_method, payment.Payment_Type) AS paymentMethod,
        COALESCE(snapshot_item.receipt_item_id, order_item.Order_Item_ID) AS itemId,
@@ -183,6 +197,11 @@ router.post("/", requireCashier, async (req, res) => {
   try {
     const orderId = parsePositiveId(req.body?.orderId, "order id");
     const requesterUserId = parsePositiveId(req.user?.userId, "authenticated user");
+    const reason = String(req.body?.reason || "Cashier requested a refund review.").trim();
+    if (!reason) return res.status(400).json({ message: "Refund request reason is required" });
+    if (reason.length > 500) {
+      return res.status(400).json({ message: "Refund request reason must not exceed 500 characters" });
+    }
     connection = await db.getConnection();
     await connection.beginTransaction();
     transactionStarted = true;
@@ -192,6 +211,9 @@ router.post("/", requireCashier, async (req, res) => {
          o.Order_ID AS id,
          o.Cashier_ID AS cashierId,
          o.Status AS status,
+         o.prepStartedAt AS prepStartedAt,
+         o.startedAt AS startedAt,
+         o.readyAt AS readyAt,
          o.order_number AS orderNumberValue,
          requester.username AS requesterName,
          requester.role AS requesterRole,
@@ -216,8 +238,13 @@ router.post("/", requireCashier, async (req, res) => {
     if (Number(order.cashierId) !== requesterUserId) {
       return res.status(403).json({ message: "You can only request refunds for your own orders" });
     }
-    if (!isRequestEligible(order)) {
-      return res.status(409).json({ message: "This order is not eligible for a refund request" });
+    const eligibility = getRefundEligibility(order);
+    if (!eligibility.eligible) {
+      return res.status(409).json({
+        code: "REFUND_INELIGIBLE",
+        reason: eligibility.code,
+        message: eligibility.message,
+      });
     }
 
     const [existing] = await connection.query(
@@ -239,16 +266,35 @@ router.post("/", requireCashier, async (req, res) => {
     const [created] = await connection.query(
       `INSERT INTO refund_requests
          (order_id, order_number_snapshot, requester_user_id,
-          requester_name_snapshot, requester_role_snapshot, status)
-       VALUES (?, ?, ?, ?, ?, 'Pending')`,
+          requester_name_snapshot, requester_role_snapshot, reason_snapshot, status)
+       VALUES (?, ?, ?, ?, ?, ?, 'Pending')`,
       [
         orderId,
         orderNumber,
         requesterUserId,
         order.requesterName || `Cashier ${requesterUserId}`,
         normalizeRole(order.requesterRole) || "cashier",
+        reason,
       ],
     );
+    await createStaffNotification(connection, {
+      dedupeKey: `refund_request:order:${orderId}`,
+      category: "refund_request",
+      eventType: "refund_request.created",
+      entityId: orderId,
+      audience: STAFF_NOTIFICATION_AUDIENCES.ADMINISTRATOR,
+      actorUserId: requesterUserId,
+      title: `Refund request · ${orderNumber}`,
+      message: reason,
+      status: "Pending",
+      metadata: {
+        requestId: Number(created.insertId),
+        orderId,
+        orderNumber,
+        reason,
+        requestedBy: order.requesterName || `Cashier ${requesterUserId}`,
+      },
+    });
     await connection.commit();
     transactionStarted = false;
     publishRefundRequestMutation({ reason: "refund_request.created" });
@@ -259,6 +305,7 @@ router.post("/", requireCashier, async (req, res) => {
         type: "refund_request",
         orderId,
         orderNumber,
+        reason,
         status: "Pending",
       },
     });
@@ -315,7 +362,7 @@ router.patch("/:id/ignore", requireAdministrator, async (req, res) => {
     await connection.beginTransaction();
     transactionStarted = true;
     const [rows] = await connection.query(
-      `SELECT refund_request_id AS id, status
+      `SELECT refund_request_id AS id, order_id AS orderId, status
        FROM refund_requests
        WHERE refund_request_id = ?
        LIMIT 1
@@ -332,6 +379,13 @@ router.patch("/:id/ignore", requireAdministrator, async (req, res) => {
        WHERE refund_request_id = ?`,
       [reviewerUserId, requestId],
     );
+    await updateStaffNotificationStatus(connection, {
+      category: "refund_request",
+      entityId: rows[0].orderId,
+      status: "Ignored",
+      message: "Refund request was reviewed and ignored.",
+      resolved: true,
+    });
     await connection.commit();
     transactionStarted = false;
     publishRefundRequestMutation({ reason: "refund_request.ignored" });

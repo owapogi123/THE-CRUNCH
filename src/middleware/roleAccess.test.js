@@ -7,6 +7,7 @@ const {
   normalizeRole,
   canAccessRoles,
   canSettlePersistedOrders,
+  canUpdateOrderPaymentStatus,
 } = require("./roleAccess");
 const { requireCookViewAccess } = require("./cookViewAccess");
 
@@ -77,4 +78,12 @@ test("persisted order settlements are limited to stock manager and administrator
   assert.equal(canSettlePersistedOrders("inventory_manager"), true);
   assert.equal(canSettlePersistedOrders("cashier"), false);
   assert.equal(canSettlePersistedOrders("customer"), false);
+});
+
+test("payment status updates are limited to cashier and administrator", () => {
+  assert.equal(canUpdateOrderPaymentStatus("administrator"), true);
+  assert.equal(canUpdateOrderPaymentStatus("cashier"), true);
+  assert.equal(canUpdateOrderPaymentStatus("inventory_manager"), false);
+  assert.equal(canUpdateOrderPaymentStatus("cook"), false);
+  assert.equal(canUpdateOrderPaymentStatus("customer"), false);
 });

@@ -1,5 +1,6 @@
 const STOCK_ITEM = "stock_item";
 const MENU_ITEM = "menu_item";
+const { assertTableColumns } = require("../services/schemaAssertions");
 let schemaReady = false;
 let schemaReadyPromise = null;
 
@@ -80,7 +81,9 @@ async function backfillProductsItemType(connection) {
   );
 }
 
-async function ensureProductsItemTypeSchema(connection) {
+// Administrative setup only. Normal request paths must use the read-only
+// compatibility assertion below and never repair product data automatically.
+async function initializeProductsItemTypeSchema(connection) {
   if (schemaReady) return true;
   if (schemaReadyPromise) return schemaReadyPromise;
 
@@ -106,6 +109,15 @@ async function ensureProductsItemTypeSchema(connection) {
     schemaReadyPromise = null;
     throw error;
   }
+}
+
+async function ensureProductsItemTypeSchema(connection) {
+  await assertTableColumns(
+    connection,
+    { products: ["id", "item_type"] },
+    "Product item-type schema",
+  );
+  return true;
 }
 
 function getLegacyItemTypeCaseSql(productAlias = "p", menuAlias = "m") {
@@ -203,6 +215,7 @@ module.exports = {
   STOCK_ITEM,
   STOCK_CATEGORY_NAMES,
   ensureProductsItemTypeSchema,
+  initializeProductsItemTypeSchema,
   getProductItemTypeExpression,
   normalizeItemType,
   assertProductsMatchItemType,

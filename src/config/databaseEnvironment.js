@@ -182,11 +182,13 @@ async function logDatabaseDnsDiagnostics(
   }
 }
 
-function validateDatabaseConfig(config = getDatabaseConfig()) {
+function validateDatabaseConfig(config = getDatabaseConfig(), options = {}) {
+  const { requireExplicit = false } = options;
   const missing = REQUIRED_DB_VARIABLES.filter((key) => !isConfigured(key));
   const hasAlternateDatabaseVariables =
     ALTERNATE_DATABASE_VARIABLES.some(isConfigured);
   const requiresExplicitConfig =
+    requireExplicit ||
     process.env.NODE_ENV === "production" ||
     isRailwayRuntime() ||
     hasAlternateDatabaseVariables;
@@ -217,7 +219,10 @@ function getSafeDatabaseErrorDetails(error, config = getDatabaseConfig()) {
       error && (error.code || error.name)
         ? error.code || error.name
         : "UNKNOWN_ERROR",
-    ...(error && error.code === "DB_CONFIG_ERROR"
+    ...(error &&
+    ["DB_CONFIG_ERROR", "DB_SCHEMA_INCOMPATIBLE", "UNSAFE_STARTUP_OPTION"].includes(
+      error.code,
+    )
       ? { message: error.message }
       : {}),
     hostConfigured: diagnostics.hostConfigured,

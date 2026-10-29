@@ -99,6 +99,9 @@ app.use("/api/events", eventRoutes);
 const refundRequestRoutes = require("./routes/refundRequestRoutes");
 app.use("/api/refund-requests", refundRequestRoutes);
 
+const staffNotificationRoutes = require("./routes/staffNotificationRoutes");
+app.use("/api/staff-notifications", staffNotificationRoutes);
+
 // order endpoints (used by POS & dashboard)
 const orderRoutes = require("./routes/orderRoutes");
 app.use("/api/orders", orderRoutes);

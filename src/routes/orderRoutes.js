@@ -29,7 +29,9 @@ const {
   loadReceiptDto,
 } = require("../services/receiptSnapshotService");
 const {
-  canSettlePersistedOrders,
+  canCancelPersistedOrders,
+  canRefundPersistedOrders,
+  canUpdateOrderPaymentStatus,
   isSuperuserRole,
   normalizeRole,
 } = require("../middleware/roleAccess");
@@ -42,6 +44,8 @@ const {
   publishRefundRequestMutation,
 } = require("../services/applicationEvents");
 const { validateCashTender } = require("../services/cashValidationService");
+const { getSettlementEligibility } = require("../services/refundEligibility");
+const { updateStaffNotificationStatus } = require("../services/staffNotificationService");
 const {
   APPROVAL_TTL_SECONDS,
   claimDiscountApproval,
@@ -588,6 +592,9 @@ router.get("/", requireCookViewAccess, async (req, res) => {
          o.payment_reference AS paymentReference,
          o.payment_status  AS paymentStatus,
          o.payment_method  AS paymentMethod,
+         o.prepStartedAt   AS prepStartedAt,
+         o.startedAt       AS startedAt,
+         o.readyAt         AS readyAt,
          o.proof_image_url AS proofImageUrl,
          o.verified_by     AS verifiedBy,
          o.handoverTimestamp AS handoverTimestamp,
@@ -1098,6 +1105,9 @@ router.get("/shift", requireCookViewAccess, async (req, res) => {
          COALESCE(snapshot.payment_method, o.payment_method, payment.Payment_Type) AS paymentMethod,
          o.Status AS status,
          COALESCE(o.payment_status, payment.Payment_Status) AS paymentStatus,
+         o.prepStartedAt AS prepStartedAt,
+         o.startedAt AS startedAt,
+         o.readyAt AS readyAt,
          refund_request.refund_request_id AS refundRequestId,
          refund_request.status AS refundRequestStatus,
          COALESCE(snapshot_item.receipt_item_id, order_item.Order_Item_ID) AS itemId,
@@ -1158,6 +1168,9 @@ router.get("/shift", requireCookViewAccess, async (req, res) => {
           paymentMethod: row.paymentMethod || null,
           status: normalizeKitchenStatus(row.status),
           paymentStatus: normalizePaymentStatus(row.paymentStatus),
+          prepStartedAt: row.prepStartedAt || null,
+          startedAt: row.startedAt || null,
+          readyAt: row.readyAt || null,
           refundRequestId: row.refundRequestId == null ? null : Number(row.refundRequestId),
           refundRequestStatus: row.refundRequestStatus || null,
           items: [],
@@ -1415,12 +1428,30 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
     const normalizedPaymentMethod = normalizePaymentMethod(
       payment_method || paymentMethod || "cash"
     );
+    if (isOnlineCustomerActor && finalOrderType !== "take-out") {
+      return res.status(400).json({
+        message: "Online customer orders must use take-out",
+      });
+    }
+    if (
+      isOnlineCustomerActor &&
+      normalizedPaymentMethod !== "gcash" &&
+      normalizedPaymentMethod !== "cash" &&
+      normalizedPaymentMethod !== "cash_on_pickup"
+    ) {
+      return res.status(400).json({
+        message: "Online pickup orders must use GCash or cash payment",
+      });
+    }
     const submittedPaymentReference = String(payment_reference || paymentReference || "").trim() || null;
     const submittedCheckoutSessionId = String(
       checkout_session_id || checkoutSessionId || ""
     ).trim() || null;
     const submittedProofImageUrl =
       String(proof_image_url || proofImageUrl || "").trim() || null;
+    const effectiveProofImageUrl = isStaffOrderActor
+      ? submittedProofImageUrl
+      : null;
     const submittedCustomerName =
       String(customer_name || customerName || "").trim() || null;
     const submittedCustomerEmail =
@@ -1516,9 +1547,7 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
       effectivePaymentReference = null;
       initialStatus = "Awaiting Cashier Review";
     } else {
-      effectivePaymentStatus = normalizePaymentStatus(
-        payment_status || paymentStatus || (submittedPaymentReference ? "Paid" : "Pending")
-      );
+      return res.status(400).json({ message: "Unsupported customer payment flow" });
     }
 
     if (isOnlinePickupOrder) {
@@ -1692,7 +1721,7 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
           effectivePaymentReference,
           effectivePaymentStatus,
           storedPaymentMethod,
-          submittedProofImageUrl,
+          effectiveProofImageUrl,
           verifiedBy,
           verifiedAt,
           identifiers.transactionId,
@@ -1888,6 +1917,7 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
   let txStarted = false;
   try {
     const { id } = req.params;
+    const requestBody = req.body || {};
     const {
       status,
       startedAt,
@@ -1900,23 +1930,60 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
       paymentStatus,
       payment_status,
       completeFromPreparing,
-    } = req.body;
+    } = requestBody;
+    const paymentRelatedFields = Object.keys(requestBody).filter((field) => {
+      const normalizedField = String(field).replace(/[_-]/g, "").toLowerCase();
+      return (
+        normalizedField.startsWith("payment") ||
+        normalizedField.startsWith("proof") ||
+        normalizedField === "verifiedby" ||
+        normalizedField === "verifiedat"
+      );
+    });
+    const unsupportedPaymentField = paymentRelatedFields.find(
+      (field) => field !== "paymentStatus" && field !== "payment_status",
+    );
+    if (unsupportedPaymentField) {
+      return res.status(400).json({
+        message: `${unsupportedPaymentField} cannot be updated through the order status endpoint`,
+      });
+    }
+    const hasPaymentStatusField =
+      Object.prototype.hasOwnProperty.call(requestBody, "paymentStatus") ||
+      Object.prototype.hasOwnProperty.call(requestBody, "payment_status");
+    if (
+      hasPaymentStatusField &&
+      !canUpdateOrderPaymentStatus(req.user?.role)
+    ) {
+      return res.status(403).json({
+        message: "Payment status updates require Cashier or Administrator access",
+      });
+    }
+    const submittedPaymentStatus = payment_status ?? paymentStatus;
+    const hasPaymentStatusUpdate =
+      hasPaymentStatusField &&
+      submittedPaymentStatus !== undefined &&
+      submittedPaymentStatus !== null &&
+      String(submittedPaymentStatus).trim() !== "";
+    if (hasPaymentStatusField && !hasPaymentStatusUpdate) {
+      return res.status(400).json({ message: "Payment status is required" });
+    }
     const requestedStatus =
       status === undefined || status === null || String(status).trim() === ""
         ? null
         : normalizeKitchenStatus(status);
     const isPersistedSettlement =
       requestedStatus === "Cancelled" || requestedStatus === "Refunded";
-    if (
-      isPersistedSettlement &&
-      !canSettlePersistedOrders(req.user?.role)
-    ) {
-      return res.status(403).json({ message: "Order settlement is not authorized" });
+    if (requestedStatus === "Cancelled" && !canCancelPersistedOrders(req.user?.role)) {
+      return res.status(403).json({ message: "Order cancellation is not authorized" });
+    }
+    if (requestedStatus === "Refunded" && !canRefundPersistedOrders(req.user?.role)) {
+      return res.status(403).json({ message: "Financial refunds require Administrator access" });
     }
 
     const authenticatedActorId = Number(req.user?.userId);
     if (
-      isPersistedSettlement &&
+      (isPersistedSettlement || hasPaymentStatusUpdate) &&
       (!Number.isSafeInteger(authenticatedActorId) || authenticatedActorId <= 0)
     ) {
       return res.status(401).json({ message: "Invalid authenticated staff user" });
@@ -1924,12 +1991,17 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
 
     const resolvedCashierId = isPersistedSettlement
       ? null
-      : cashierId ?? cashier_id ?? null;
+      : hasPaymentStatusUpdate
+        ? authenticatedActorId
+        : cashierId ?? cashier_id ?? null;
 
     conn = await db.getConnection();
     const persistedCashierId = isPersistedSettlement
       ? null
       : await ensureLegacyCashierRow(conn, resolvedCashierId);
+
+    await conn.beginTransaction();
+    txStarted = true;
 
     const [existingRows] = await conn.query(
       `SELECT
@@ -1956,7 +2028,8 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
          COALESCE(stock_deducted, 0) AS stockDeducted
        FROM orders o
        WHERE o.Order_ID = ?
-       LIMIT 1`,
+       LIMIT 1
+       FOR UPDATE`,
       [id]
     );
 
@@ -1979,11 +2052,6 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
       currentOrderType === "take-out";
     const hasTimerUpdate = estimatedPrepMinutes !== undefined;
     const hasStatusUpdate = status !== undefined && status !== null && String(status).trim() !== "";
-    const submittedPaymentStatus = payment_status ?? paymentStatus;
-    const hasPaymentStatusUpdate =
-      submittedPaymentStatus !== undefined &&
-      submittedPaymentStatus !== null &&
-      String(submittedPaymentStatus).trim() !== "";
     const persistedOrderPaymentStatus = normalizePaymentStatus(
       existingRows[0].paymentStatus
     );
@@ -2028,33 +2096,36 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
       }
     }
 
+    if (
+      hasPaymentStatusUpdate &&
+      !(
+        isOnlinePickupCompletion &&
+        currentStatus === "Awaiting Cashier Review" &&
+        hasStatusUpdate &&
+        nextStatus === "Queued" &&
+        isPaidPaymentStatus(nextPaymentStatus)
+      )
+    ) {
+      return res.status(400).json({
+        message: "Payment status can only be confirmed as paid during online pickup review",
+      });
+    }
+
     if (hasStatusUpdate && (nextStatus === "Cancelled" || nextStatus === "Refunded")) {
-      if (currentStatus === "Refunded" || currentStatus === "Cancelled") {
-        return res.status(400).json({
-          message: `${currentStatus} orders cannot be cancelled or refunded again`,
-        });
-      }
-
-      if (nextStatus === "Cancelled") {
-        if (currentStatus === "Completed") {
-          console.warn(
-            `[orderRoutes] Blocked completed cancellation for order ${id}.`,
-          );
-          return res.status(400).json({
-            message: "Completed orders cannot be cancelled",
-          });
-        }
-
-        if (isPaidPaymentStatus(effectiveCurrentPaymentStatus)) {
-          return res.status(400).json({
-            message: "Paid orders must be refunded instead of cancelled",
-          });
-        }
-      }
-
-      if (nextStatus === "Refunded" && !isPaidPaymentStatus(effectiveCurrentPaymentStatus)) {
-        return res.status(400).json({
-          message: "Only paid orders can be refunded",
+      const settlementAction = nextStatus === "Cancelled" ? "cancel" : "refund";
+      const settlementEligibility = getSettlementEligibility(
+        {
+          ...existingRows[0],
+          status: currentStatus,
+          paymentStatus: effectiveCurrentPaymentStatus,
+        },
+        settlementAction,
+      );
+      if (!settlementEligibility.eligible) {
+        return res.status(409).json({
+          code: "SETTLEMENT_INELIGIBLE",
+          reason: settlementEligibility.code,
+          message: settlementEligibility.message,
         });
       }
     }
@@ -2104,13 +2175,6 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
     } else if (hasPaymentStatusUpdate) {
       fields.push("payment_status = ?");
       values.push(nextPaymentStatus);
-    } else if (
-      nextStatus === "Completed" &&
-      !isPaidPaymentStatus(existingRows[0].paymentStatus) &&
-      isPaidPaymentStatus(existingRows[0].paymentRecordStatus)
-    ) {
-      fields.push("payment_status = ?");
-      values.push("Paid");
     }
 
     if (
@@ -2211,9 +2275,6 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
       return res.status(400).json({ message: "No valid fields to update" });
     }
 
-    await conn.beginTransaction();
-    txStarted = true;
-
     values.push(id);
     await conn.query(
       `UPDATE orders SET ${fields.join(", ")} WHERE Order_ID = ?`,
@@ -2240,18 +2301,11 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
       console.info(
         `[orderRoutes] Recorded paid refund for order ${id}.`,
       );
-      if (preparationStartedBeforeUpdate) {
-        inventoryRestored = false;
-        console.info(
-          `[orderRoutes] Order ${id} inventory remains deducted because preparation had started.`,
-        );
-      } else {
-        inventoryRestored = await restoreStockForRefundedOrder(
-          id,
-          authenticatedActorId,
-          conn,
-        );
-      }
+      inventoryRestored = await restoreStockForRefundedOrder(
+        id,
+        authenticatedActorId,
+        conn,
+      );
 
       const [resolvedRequest] = await conn.query(
         `UPDATE refund_requests
@@ -2260,20 +2314,25 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
         [authenticatedActorId, id],
       );
       refundRequestResolved = Number(resolvedRequest?.affectedRows || 0) > 0;
+      if (refundRequestResolved) {
+        await updateStaffNotificationStatus(conn, {
+          category: "refund_request",
+          entityId: id,
+          status: "Actioned",
+          message: "Refund request was actioned through the authorized settlement workflow.",
+          resolved: true,
+        });
+      }
     }
 
     if (
       hasPaymentStatusUpdate ||
-      nextStatus === "Completed" ||
       nextStatus === "Refunded"
     ) {
       const paymentRecordStatus =
         nextStatus === "Refunded"
           ? "Refunded"
-          : (
-              isPaidPaymentStatus(nextPaymentStatus) ||
-              nextStatus === "Completed"
-            )
+          : isPaidPaymentStatus(nextPaymentStatus)
             ? "Completed"
             : "Pending";
       await conn.query(
@@ -2299,7 +2358,6 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
       customerUserId: existingRows[0].customerUserId,
       paymentChanged:
         hasPaymentStatusUpdate ||
-        nextStatus === "Completed" ||
         nextStatus === "Refunded",
       inventoryChanged: shouldDeductStockNow || inventoryRestored === true,
     });
@@ -2324,7 +2382,10 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
       inventoryRestored,
     });
   } catch (err) {
-    if (conn && txStarted) await conn.rollback();
+    if (conn && txStarted) {
+      await conn.rollback();
+      txStarted = false;
+    }
     console.error("PATCH /orders/:id error:", JSON.stringify({
       message: err.message,
       code: err.code,
@@ -2346,6 +2407,10 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
         error: errorMessage,
       });
   } finally {
+    if (conn && txStarted) {
+      await conn.rollback();
+      txStarted = false;
+    }
     if (conn) conn.release();
     logOrderTiming(
       req,

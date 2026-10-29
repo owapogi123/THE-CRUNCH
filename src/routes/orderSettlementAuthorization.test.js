@@ -11,6 +11,8 @@ const state = {
   rollbacks: 0,
   restoreActors: [],
   deductions: 0,
+  transactionEvents: [],
+  lockingReads: 0,
 };
 
 function resetState(order) {
@@ -38,6 +40,8 @@ function resetState(order) {
   state.rollbacks = 0;
   state.restoreActors = [];
   state.deductions = 0;
+  state.transactionEvents = [];
+  state.lockingReads = 0;
 }
 
 function mockModule(request, exports) {
@@ -46,17 +50,33 @@ function mockModule(request, exports) {
 }
 
 const connection = {
-  async beginTransaction() {},
-  async commit() { state.commits += 1; },
-  async rollback() { state.rollbacks += 1; },
+  async beginTransaction() { state.transactionEvents.push("begin"); },
+  async commit() { state.commits += 1; state.transactionEvents.push("commit"); },
+  async rollback() { state.rollbacks += 1; state.transactionEvents.push("rollback"); },
   release() {},
   async query(sql, params = []) {
     const normalizedSql = String(sql).replace(/\s+/g, " ").trim();
     if (normalizedSql.includes("SELECT Status AS status")) {
+      assert.match(normalizedSql, /FOR UPDATE$/i);
+      state.lockingReads += 1;
+      state.transactionEvents.push("locked-read");
       return [[state.existingOrder]];
+    }
+    if (normalizedSql.includes("FROM (SELECT ? AS requestedId) requested")) {
+      return [[{
+        cashierId: Number(params[0]),
+        recordedByAdminId: Number(params[0]),
+      }]];
     }
     if (/^(INSERT|UPDATE|DELETE)\b/i.test(normalizedSql)) {
       state.writes.push({ sql: normalizedSql, params });
+      if (normalizedSql.startsWith("UPDATE orders SET") && normalizedSql.includes("Status = ?")) {
+        state.existingOrder.status = params[0];
+        if (params[0] === "Preparing") {
+          state.existingOrder.prepStartedAt = new Date();
+          state.existingOrder.startedAt = state.existingOrder.prepStartedAt;
+        }
+      }
       return [{ affectedRows: 1 }];
     }
     return [[]];
@@ -141,7 +161,145 @@ function refundRequestUpdate() {
   return state.writes.find((write) => write.sql.startsWith("UPDATE refund_requests"));
 }
 
+function paymentUpdate() {
+  return state.writes.find((write) => write.sql.startsWith("UPDATE payments"));
+}
+
 (async () => {
+  for (const [role, field] of [
+    ["cook", "paymentStatus"],
+    ["inventory_manager", "payment_status"],
+  ]) {
+    resetState({
+      status: "Queued",
+      paymentStatus: "Pending Payment",
+      paymentRecordStatus: "Pending",
+      stockDeducted: 0,
+    });
+    const forgedPayment = await invokePatch({
+      role,
+      userId: role === "cook" ? 40 : 20,
+      body: { [field]: "Paid" },
+    });
+    assert.equal(forgedPayment.statusCode, 403, `${role} cannot forge Paid`);
+    assert.equal(state.connectionCount, 0);
+    assert.equal(state.writes.length, 0);
+    assert.equal(state.deductions, 0);
+
+    const mixedUpdate = await invokePatch({
+      role,
+      userId: role === "cook" ? 40 : 20,
+      body: { status: "Preparing", [field]: "Paid" },
+    });
+    assert.equal(mixedUpdate.statusCode, 403, `${role} mixed update must be rejected`);
+    assert.equal(state.connectionCount, 0);
+    assert.equal(state.writes.length, 0);
+  }
+
+  resetState({ paymentStatus: "Pending Payment", paymentRecordStatus: "Pending" });
+  const customerForge = await invokePatch({
+    role: "customer",
+    userId: 50,
+    body: { paymentStatus: "Paid" },
+  });
+  assert.equal(customerForge.statusCode, 403);
+  assert.equal(state.connectionCount, 0);
+  assert.equal(state.writes.length, 0);
+
+  resetState();
+  const alternativePaymentField = await invokePatch({
+    role: "cook",
+    userId: 40,
+    body: { status: "Preparing", payment_reference: "FORGED" },
+  });
+  assert.equal(alternativePaymentField.statusCode, 400);
+  assert.equal(state.connectionCount, 0);
+  assert.equal(state.writes.length, 0);
+
+  for (const [role, userId] of [
+    ["cashier", 10],
+    ["administrator", 30],
+  ]) {
+    resetState({
+      status: "Awaiting Cashier Review",
+      orderType: "take-out",
+      customerUserId: 77,
+      paymentStatus: "Pending Payment",
+      paymentRecordStatus: "Pending",
+      stockDeducted: 0,
+    });
+    const confirmedPayment = await invokePatch({
+      role,
+      userId,
+      body: {
+        status: "Queued",
+        paymentStatus: "Paid",
+        cashierId: 999,
+      },
+    });
+    assert.equal(confirmedPayment.statusCode, 200, `${role} can confirm online pickup payment`);
+    assert.equal(confirmedPayment.body.paymentStatus, "Paid");
+    assert.equal(orderUpdate().sql.includes("payment_status = ?"), true);
+    assert.equal(orderUpdate().params.includes(userId), true, "JWT actor must be persisted as cashier");
+    assert.equal(orderUpdate().params.includes(999), false, "body cashier ID must not be trusted");
+    assert.deepEqual(paymentUpdate().params, ["Completed", "55"]);
+    assert.equal(state.deductions, 1);
+  }
+
+  resetState({
+    status: "Queued",
+    paymentStatus: "Pending Payment",
+    paymentRecordStatus: "Pending",
+    stockDeducted: 0,
+  });
+  const invalidCashierPayment = await invokePatch({
+    role: "cashier",
+    userId: 10,
+    body: { status: "Preparing", paymentStatus: "Paid" },
+  });
+  assert.equal(invalidCashierPayment.statusCode, 400);
+  assert.equal(state.writes.length, 0);
+  assert.equal(state.deductions, 0);
+
+  resetState({
+    status: "Preparing",
+    paymentStatus: "Pending Payment",
+    paymentRecordStatus: "Pending",
+    stockDeducted: 0,
+  });
+  const cookCompletion = await invokePatch({
+    role: "cook",
+    userId: 40,
+    body: { status: "Completed", completeFromPreparing: true },
+  });
+  assert.equal(cookCompletion.statusCode, 200);
+  assert.equal(cookCompletion.body.status, "Completed");
+  assert.equal(orderUpdate().sql.includes("payment_status"), false);
+  assert.equal(paymentUpdate(), undefined, "kitchen completion must not mutate payment records");
+  assert.equal(state.deductions, 0);
+
+  resetState({
+    status: "Ready for Pickup",
+    orderType: "delivery",
+    paymentStatus: "Paid",
+    paymentRecordStatus: "Completed",
+  });
+  const deliveryHandover = await invokePatch({
+    role: "cashier",
+    userId: 10,
+    body: {
+      status: "Completed",
+      cashierId: 10,
+      handoverTimestamp: "2026-10-29T08:00:00.000Z",
+      riderName: "Test Rider",
+    },
+  });
+  assert.equal(deliveryHandover.statusCode, 200);
+  assert.equal(deliveryHandover.body.status, "Completed");
+  assert.equal(orderUpdate().sql.includes("handoverTimestamp = ?"), true);
+  assert.equal(orderUpdate().sql.includes("riderName = ?"), true);
+  assert.equal(paymentUpdate(), undefined, "delivery handover must not rewrite settled payment records");
+
   resetState({ paymentStatus: "Pending Payment", paymentRecordStatus: "Pending", stockDeducted: 0 });
   const cashierVoid = await invokePatch({
     role: "cashier",
@@ -192,11 +350,10 @@ function refundRequestUpdate() {
     userId: 20,
     body: { status: "Refunded", cashierId: 999 },
   });
-  assert.equal(stockManagerRefund.statusCode, 200);
-  assert.equal(stockManagerRefund.body.status, "Refunded");
-  assert.deepEqual(state.restoreActors, [20]);
-  assert.equal(orderUpdate().sql.includes("Cashier_ID"), false);
-  assert.deepEqual(refundRequestUpdate().params, [20, "55"]);
+  assert.equal(stockManagerRefund.statusCode, 403);
+  assert.equal(state.connectionCount, 0);
+  assert.equal(state.writes.length, 0);
+  assert.equal(state.restoreActors.length, 0);
 
   resetState({ paymentStatus: "Pending Payment", paymentRecordStatus: "Pending", stockDeducted: 0 });
   const adminVoid = await invokePatch({
@@ -228,28 +385,118 @@ function refundRequestUpdate() {
     userId: 30,
     body: { status: "Cancelled" },
   });
-  assert.equal(invalidVoid.statusCode, 400);
+  assert.equal(invalidVoid.statusCode, 409);
   assert.equal(state.writes.length, 0);
 
   resetState({ paymentStatus: "Pending Payment", paymentRecordStatus: "Pending", stockDeducted: 0 });
   const invalidRefund = await invokePatch({
-    role: "inventory_manager",
-    userId: 20,
+    role: "administrator",
+    userId: 30,
     body: { status: "Refunded" },
   });
-  assert.equal(invalidRefund.statusCode, 400);
+  assert.equal(invalidRefund.statusCode, 409);
   assert.equal(state.writes.length, 0);
   assert.equal(state.restoreActors.length, 0);
 
   resetState({ prepStartedAt: new Date("2026-10-01T00:05:00Z") });
   const preparedRefund = await invokePatch({
-    role: "inventory_manager",
-    userId: 20,
+    role: "administrator",
+    userId: 30,
     body: { status: "Refunded" },
   });
-  assert.equal(preparedRefund.statusCode, 200);
-  assert.equal(preparedRefund.body.inventoryRestored, false);
+  assert.equal(preparedRefund.statusCode, 409);
+  assert.match(preparedRefund.body.message, /preparation has already started/i);
   assert.equal(state.restoreActors.length, 0);
+
+  for (const status of ["Preparing", "Ready for Pickup", "Completed"]) {
+    resetState({ status });
+    const blocked = await invokePatch({
+      role: "administrator",
+      userId: 30,
+      body: { status: "Refunded" },
+    });
+    assert.equal(blocked.statusCode, 409, `${status} refund must be rejected`);
+    assert.equal(state.writes.length, 0);
+    assert.equal(state.restoreActors.length, 0);
+  }
+
+  for (const order of [
+    { status: "Preparing", prepStartedAt: new Date("2026-10-01T00:05:00Z") },
+    { status: "Ready for Pickup", readyAt: new Date("2026-10-01T00:15:00Z") },
+    { status: "Queued", prepStartedAt: new Date("2026-10-01T00:05:00Z") },
+  ]) {
+    resetState({
+      ...order,
+      paymentStatus: "Pending Payment",
+      paymentRecordStatus: "Pending",
+      stockDeducted: 0,
+    });
+    const blocked = await invokePatch({
+      role: "administrator",
+      userId: 30,
+      body: { status: "Cancelled" },
+    });
+    assert.equal(blocked.statusCode, 409, `${order.status} cancellation must be rejected`);
+    assert.equal(blocked.body.reason, "preparation_started");
+    assert.equal(state.writes.length, 0);
+  }
+
+  for (const status of ["Refunded", "Cancelled"]) {
+    resetState({ status });
+    const repeated = await invokePatch({
+      role: "administrator",
+      userId: 30,
+      body: { status: "Refunded" },
+    });
+    assert.equal(repeated.statusCode, 409, `${status} cannot be refunded again`);
+    assert.equal(state.writes.length, 0);
+    assert.equal(state.restoreActors.length, 0);
+  }
+
+  resetState();
+  const firstRefund = await invokePatch({
+    role: "administrator",
+    userId: 30,
+    body: { status: "Refunded" },
+  });
+  const duplicateRefund = await invokePatch({
+    role: "administrator",
+    userId: 30,
+    body: { status: "Refunded" },
+  });
+  assert.equal(firstRefund.statusCode, 200);
+  assert.equal(duplicateRefund.statusCode, 409);
+  assert.deepEqual(state.restoreActors, [30], "inventory restoration must run exactly once");
+
+  for (const [role, userId] of [
+    ["cashier", 10],
+    ["cook", 40],
+    ["customer", 50],
+  ]) {
+    resetState();
+    const blockedRefund = await invokePatch({
+      role,
+      userId,
+      body: { status: "Refunded" },
+    });
+    assert.equal(blockedRefund.statusCode, 403, `${role} cannot execute a refund`);
+    assert.equal(state.connectionCount, 0);
+    assert.equal(state.writes.length, 0);
+
+    resetState({
+      paymentStatus: "Pending Payment",
+      paymentRecordStatus: "Pending",
+      stockDeducted: 0,
+    });
+    const blockedCancellation = await invokePatch({
+      role,
+      userId,
+      body: { status: "Cancelled" },
+    });
+    assert.equal(blockedCancellation.statusCode, 403, `${role} cannot execute a cancellation`);
+    assert.equal(state.connectionCount, 0);
+    assert.equal(state.writes.length, 0);
+  }
 
   resetState();
   const kitchenTransition = await invokePatch({
@@ -260,6 +507,7 @@ function refundRequestUpdate() {
   assert.equal(kitchenTransition.statusCode, 200);
   assert.equal(kitchenTransition.body.status, "Preparing");
   assert.equal(refundRequestUpdate(), undefined);
+  assert.deepEqual(state.transactionEvents.slice(0, 2), ["begin", "locked-read"]);
 
   console.log("Order settlement authorization tests passed");
 })().catch((error) => {

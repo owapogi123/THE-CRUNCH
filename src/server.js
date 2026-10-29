@@ -1,44 +1,46 @@
-const app = require("./app");
-const db = require("./config/db");
-const { setup } = require("./db/setup");
-const { ensureProductSchema } = require("./services/productSchemaService");
-const {
-  initializeStockManagerSchema,
-} = require("./services/stockManagerSchemaService");
 const { assertJwtSecretConfigured } = require("./services/jwtConfig");
 const {
   getDatabaseConfig,
   getSafeDatabaseErrorDetails,
+  validateDatabaseConfig,
 } = require("./config/databaseEnvironment");
+const {
+  verifySchemaCompatibility,
+} = require("./services/schemaCompatibilityService");
 
-// default port 5000 to match frontend proxy, but allow override
 const PORT = process.env.PORT || 5000;
 
 async function startServer() {
+  const dbConfig = getDatabaseConfig();
   try {
+    if (process.argv.includes("--reset")) {
+      const error = new Error(
+        "--reset is an administrative database option and is forbidden during normal backend startup.",
+      );
+      error.code = "UNSAFE_STARTUP_OPTION";
+      throw error;
+    }
+
     assertJwtSecretConfigured();
-    await setup({
-      log: console,
-    });
-    const productSchemaStartedAt = process.hrtime.bigint();
-    await ensureProductSchema(db);
-    console.log(
-      `Product schema initialization completed in ${(
-        Number(process.hrtime.bigint() - productSchemaStartedAt) / 1e6
-      ).toFixed(1)}ms`,
-    );
+    validateDatabaseConfig(dbConfig, { requireExplicit: true });
 
-    const stockManagerSchemaStartedAt = process.hrtime.bigint();
-    await initializeStockManagerSchema(db);
-    console.log(
-      `Stock Manager schema initialization completed in ${(
-        Number(process.hrtime.bigint() - stockManagerSchemaStartedAt) / 1e6
-      ).toFixed(1)}ms`,
-    );
-
+    // Do not construct the pool or load routes until the explicit-config gate
+    // passes. Normal startup never initializes, repairs, seeds, or migrates.
+    const db = require("./config/db");
     await db.verifyConnection();
-    console.log("✅ MySQL connected successfully");
+    const compatibility = await verifySchemaCompatibility(db, dbConfig.database);
 
+    for (const warning of compatibility.warnings) {
+      console.warn(`Database compatibility warning: ${warning}`);
+    }
+    console.log(
+      `MySQL compatibility verified for ${compatibility.database}: ` +
+        `${compatibility.tableCount} tables, ${compatibility.indexCount} indexes, ` +
+        `${compatibility.foreignKeyCount} foreign keys, ${compatibility.triggerCount} triggers.`,
+    );
+
+    // Loading app registers routes but does not perform schema work.
+    const app = require("./app");
     const server = app.listen(PORT, () => {
       console.log(`Backend server running on port ${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
@@ -53,21 +55,21 @@ async function startServer() {
         process.exit(0);
         return;
       }
-
       throw err;
     });
   } catch (err) {
     console.error(
-      "❌ MySQL connection failed:",
-      getSafeDatabaseErrorDetails(err, getDatabaseConfig()),
+      "Backend startup safety check failed:",
+      getSafeDatabaseErrorDetails(err, dbConfig),
     );
     process.exit(1);
   }
 }
 
-startServer();
+if (require.main === module) {
+  startServer();
+}
 
-// Log unhandled promise rejections and uncaught exceptions to help debugging
 process.on("unhandledRejection", (reason, promise) => {
   console.error("Unhandled Rejection at:", promise, "reason:", reason);
 });
@@ -75,3 +77,5 @@ process.on("unhandledRejection", (reason, promise) => {
 process.on("uncaughtException", (err) => {
   console.error("Uncaught Exception:", err && err.stack ? err.stack : err);
 });
+
+module.exports = { startServer };

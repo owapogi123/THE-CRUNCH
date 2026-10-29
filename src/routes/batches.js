@@ -11,131 +11,41 @@ const {
   requireInventoryManagerAccess,
   requireKitchenInventoryAccess,
 } = require("../middleware/staffAccess");
+const { assertTableColumns } = require("../services/schemaAssertions");
+
+// Phase 4A canonical contract (migration pending): products(id) is the
+// authority; batches.product_id will be NOT NULL; unit/status retain VARCHAR
+// storage and all shelf-life fields; kitchen storage provenance stays nullable.
+const BATCH_SCHEMA_CONTRACT = {
+  batches: [
+    "batch_id", "product_id", "delivery_batch_id", "quantity",
+    "remaining_qty", "unit", "received_date", "expiry_date",
+    "shelf_life_days", "shelf_life_hours", "usable_until", "status",
+    "returned_qty", "notes", "created_at", "updated_at",
+  ],
+};
+
+const KITCHEN_BATCH_SCHEMA_CONTRACT = {
+  kitchen_batches: [
+    "kitchen_batch_id", "storage_batch_id", "product_id", "withdrawn_qty",
+    "used_qty", "returned_qty", "unit", "expiry_date", "withdrawn_at",
+    "status", "created_at", "updated_at",
+  ],
+};
 
 async function ensureBatchesTable() {
-  const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS batches (
-      batch_id INT PRIMARY KEY AUTO_INCREMENT,
-      product_id INT NOT NULL,
-      delivery_batch_id VARCHAR(50),
-      quantity DECIMAL(10,2) NOT NULL,
-      remaining_qty DECIMAL(10,2) NOT NULL,
-      unit VARCHAR(20) DEFAULT 'kg',
-      received_date DATE NOT NULL,
-      expiry_date DATE NULL,
-      status ENUM('active','withdrawn','returned','expired') DEFAULT 'active',
-      returned_qty DECIMAL(10,2) DEFAULT 0,
-      notes VARCHAR(255) NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      FOREIGN KEY (product_id) REFERENCES products(id)
-    )
-  `);
-
-  // Legacy compatibility: old schema uses id/productId/receivedAt/expiresAt and has no remaining_qty.
-  const [columns] = await db.query(`SHOW COLUMNS FROM batches`);
-  const fieldSet = new Set(columns.map((c) => c.Field));
-
-  if (!fieldSet.has("delivery_batch_id")) {
-    await db.query(
-      "ALTER TABLE batches ADD COLUMN delivery_batch_id VARCHAR(50)",
-    );
-  }
-
-  const isLegacySchema =
-    fieldSet.has("productId") ||
-    fieldSet.has("receivedAt") ||
-    !fieldSet.has("product_id");
-
-  if (!isLegacySchema) return;
-
-  const legacyBackupTable = `batches_legacy_${Date.now()}`;
-
-  // Prepare new-format table.
-  await db.query(`DROP TABLE IF EXISTS batches_new`);
-  await db.query(`
-    CREATE TABLE batches_new (
-      batch_id INT PRIMARY KEY AUTO_INCREMENT,
-      product_id INT NOT NULL,
-      delivery_batch_id VARCHAR(50),
-      quantity DECIMAL(10,2) NOT NULL,
-      remaining_qty DECIMAL(10,2) NOT NULL,
-      unit VARCHAR(20) DEFAULT 'kg',
-      received_date DATE NOT NULL,
-      expiry_date DATE NULL,
-      status ENUM('active','withdrawn','returned','expired') DEFAULT 'active',
-      returned_qty DECIMAL(10,2) DEFAULT 0,
-      notes VARCHAR(255) NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      FOREIGN KEY (product_id) REFERENCES products(id)
-    )
-  `);
-
-  // Ensure FK target rows exist in products before migrating.
-  const bootstrapProductInsertSql = hasItemTypeColumn
-    ? `
-    INSERT INTO products (id, name, price, quantity, description, item_type)
-    SELECT m.Product_ID, m.Product_Name, COALESCE(m.Price, 0), COALESCE(m.Stock, 0), NULL, 'stock_item'
-    FROM Menu m
-    WHERE NOT EXISTS (SELECT 1 FROM products p WHERE p.id = m.Product_ID)
-  `
-    : `
-    INSERT INTO products (id, name, price, quantity, description)
-    SELECT m.Product_ID, m.Product_Name, COALESCE(m.Price, 0), COALESCE(m.Stock, 0), NULL
-    FROM Menu m
-    WHERE NOT EXISTS (SELECT 1 FROM products p WHERE p.id = m.Product_ID)
-  `;
-  await db.query(bootstrapProductInsertSql);
-
-  // Migrate legacy rows to the new table shape.
-  await db.query(`
-    INSERT INTO batches_new
-      (product_id, quantity, remaining_qty, unit, received_date, expiry_date, status, returned_qty, notes)
-    SELECT
-      lb.productId,
-      COALESCE(lb.quantity, 0),
-      COALESCE(lb.quantity, 0),
-      COALESCE(lb.unit, 'kg'),
-      DATE(COALESCE(lb.receivedAt, NOW())),
-      CASE WHEN lb.expiresAt IS NULL THEN NULL ELSE DATE(lb.expiresAt) END,
-      CASE
-        WHEN LOWER(COALESCE(lb.status, 'active')) IN ('active', 'withdrawn', 'returned', 'expired')
-          THEN LOWER(lb.status)
-        ELSE 'active'
-      END,
-      0,
-      'migrated_from_legacy'
-    FROM batches lb
-    WHERE EXISTS (SELECT 1 FROM products p WHERE p.id = lb.productId)
-  `);
-
-  // Swap tables atomically: keep old table as backup.
-  await db.query(
-    `RENAME TABLE batches TO ${legacyBackupTable}, batches_new TO batches`,
-  );
+  await ensureProductsItemTypeSchema(db);
+  await assertTableColumns(db, BATCH_SCHEMA_CONTRACT, "Storage-batch schema");
+  return true;
 }
 
 async function ensureKitchenBatchesTable() {
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS kitchen_batches (
-      kitchen_batch_id INT PRIMARY KEY AUTO_INCREMENT,
-      storage_batch_id INT NULL,
-      product_id INT NOT NULL,
-      withdrawn_qty DECIMAL(10,2) NOT NULL,
-      used_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
-      returned_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
-      unit VARCHAR(20) DEFAULT 'kg',
-      expiry_date DATE NULL,
-      withdrawn_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      status ENUM('active','reconciled') DEFAULT 'active',
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      FOREIGN KEY (storage_batch_id) REFERENCES batches(batch_id) ON DELETE SET NULL,
-      FOREIGN KEY (product_id) REFERENCES products(id)
-    )
-  `);
+  await assertTableColumns(
+    db,
+    KITCHEN_BATCH_SCHEMA_CONTRACT,
+    "Kitchen-batch schema",
+  );
+  return true;
 }
 
 function toNumber(value, fallback = 0) {
@@ -295,6 +205,9 @@ router.post("/kitchen", requireKitchenInventoryAccess, async (req, res) => {
       .status(400)
       .json({ error: "product_id and quantity are required" });
   }
+  if (storage_batch_id != null && !storageBatchId) {
+    return res.status(400).json({ error: "Invalid storage_batch_id" });
+  }
 
   let conn;
   try {
@@ -303,6 +216,12 @@ router.post("/kitchen", requireKitchenInventoryAccess, async (req, res) => {
 
     conn = await db.getConnection();
     await conn.beginTransaction();
+    await assertProductsMatchItemType(
+      conn,
+      [productId],
+      STOCK_ITEM,
+      "Kitchen batch",
+    );
 
     let unit = "kg";
     let expiryDate = null;
@@ -310,18 +229,22 @@ router.post("/kitchen", requireKitchenInventoryAccess, async (req, res) => {
 
     if (resolvedStorageBatchId) {
       const [storageRows] = await conn.query(
-        `SELECT batch_id, unit, expiry_date
+        `SELECT batch_id, product_id, unit, expiry_date
          FROM batches
          WHERE batch_id = ?
+           AND product_id = ?
          LIMIT 1`,
-        [resolvedStorageBatchId],
+        [resolvedStorageBatchId, productId],
       );
 
       if (storageRows.length > 0) {
         unit = storageRows[0].unit || unit;
         expiryDate = storageRows[0].expiry_date || null;
       } else {
-        resolvedStorageBatchId = null;
+        await conn.rollback();
+        return res.status(409).json({
+          error: "storage_batch_id must reference a batch for the same product",
+        });
       }
     }
 
@@ -374,6 +297,9 @@ router.patch("/kitchen/:kitchen_batch_id/supplement", requireKitchenInventoryAcc
       .status(400)
       .json({ error: "kitchen_batch_id and qty are required" });
   }
+  if (req.body.storage_batch_id != null && !storageBatchId) {
+    return res.status(400).json({ error: "Invalid storage_batch_id" });
+  }
 
   let conn;
   try {
@@ -395,17 +321,23 @@ router.patch("/kitchen/:kitchen_batch_id/supplement", requireKitchenInventoryAcc
 
     if (storageBatchId) {
       const [storageRows] = await conn.query(
-        `SELECT batch_id, unit, expiry_date
+        `SELECT batch_id, product_id, unit, expiry_date
          FROM batches
          WHERE batch_id = ?
+           AND product_id = ?
          LIMIT 1`,
-        [storageBatchId],
+        [storageBatchId, existing.product_id],
       );
 
       if (storageRows.length > 0) {
         nextStorageBatchId = storageRows[0].batch_id;
         nextUnit = storageRows[0].unit || nextUnit;
         nextExpiryDate = storageRows[0].expiry_date || nextExpiryDate;
+      } else {
+        await conn.rollback();
+        return res.status(409).json({
+          error: "storage_batch_id must reference a batch for the same product",
+        });
       }
     }
 
@@ -496,6 +428,21 @@ router.patch("/kitchen/:kitchen_batch_id/return", requireKitchenInventoryAccess,
       }
 
       targetStorageBatchId = fallbackRows[0].batch_id;
+    }
+
+    const [matchingStorageRows] = await conn.query(
+      `SELECT batch_id
+       FROM batches
+       WHERE batch_id = ?
+         AND product_id = ?
+       LIMIT 1`,
+      [targetStorageBatchId, existing.product_id],
+    );
+    if (matchingStorageRows.length === 0) {
+      await conn.rollback();
+      return res.status(409).json({
+        error: "Kitchen batch source must belong to the same product",
+      });
     }
 
     await conn.query(
@@ -748,76 +695,22 @@ router.post("/default", requireInventoryManagerAccess, async (req, res) => {
 
     conn = await db.getConnection();
     await conn.beginTransaction();
-    const hasItemTypeColumn = await ensureProductsItemTypeSchema(conn);
-
-    // Ensure product exists in `products` for FK integrity of batches.product_id -> products.id.
-    const [productRows] = await conn.query(
-      `SELECT id FROM products WHERE id = ? LIMIT 1`,
+    await assertProductsMatchItemType(conn, [productId], STOCK_ITEM, "Batch");
+    const [mirrorRows] = await conn.query(
+      `SELECT p.id, m.Product_ID AS menu_id, i.Inventory_ID AS inventory_id
+       FROM products p
+       LEFT JOIN Menu m ON m.Product_ID = p.id
+       LEFT JOIN Inventory i ON i.Product_ID = p.id
+       WHERE p.id = ?
+       LIMIT 1`,
       [productId],
     );
-
-    if (!productRows.length) {
-      const [menuRows] = await conn.query(
-        `SELECT Product_Name, Price, COALESCE(Stock, 0) AS stock
-         FROM Menu
-         WHERE Product_ID = ?
-         LIMIT 1`,
-        [productId],
-      );
-
-      if (!menuRows.length) {
-        await conn.rollback();
-        return res
-          .status(404)
-          .json({ error: "Product not found in Menu/products" });
-      }
-
-      const menu = menuRows[0];
-      const upsertSql = hasItemTypeColumn
-        ? `INSERT INTO products (id, name, price, quantity, description, item_type)
-           VALUES (?, ?, ?, ?, ?, ?)
-           ON DUPLICATE KEY UPDATE
-             name = VALUES(name),
-             price = VALUES(price)`
-        : `INSERT INTO products (id, name, price, quantity, description)
-           VALUES (?, ?, ?, ?, ?)
-           ON DUPLICATE KEY UPDATE
-             name = VALUES(name),
-             price = VALUES(price)`;
-      await conn.query(
-        upsertSql,
-        hasItemTypeColumn
-          ? [
-              productId,
-              menu.Product_Name || `Product ${productId}`,
-              toNumber(menu.Price),
-              toNumber(menu.stock),
-              null,
-              STOCK_ITEM,
-            ]
-          : [
-              productId,
-              menu.Product_Name || `Product ${productId}`,
-              toNumber(menu.Price),
-              toNumber(menu.stock),
-              null,
-            ],
-      );
+    if (!mirrorRows[0]?.menu_id || !mirrorRows[0]?.inventory_id) {
+      await conn.rollback();
+      return res.status(409).json({
+        error: "Product inventory mirrors are incomplete; run the approved repair migration first",
+      });
     }
-
-    await assertProductsMatchItemType(conn, [productId], STOCK_ITEM, "Batch");
-
-    // Ensure inventory row exists.
-    await conn.query(
-      `INSERT INTO Inventory (Product_ID, Quantity, Stock, Item_Purchased)
-       SELECT m.Product_ID, COALESCE(m.Stock, 0), COALESCE(m.Stock, 0), m.Product_Name
-       FROM Menu m
-       JOIN products p ON p.id = m.Product_ID
-       WHERE m.Product_ID = ?
-         AND ${getProductItemTypeExpression(hasItemTypeColumn, "p", "m")} = ?
-         AND NOT EXISTS (SELECT 1 FROM Inventory i WHERE i.Product_ID = m.Product_ID)`,
-      [productId, STOCK_ITEM],
-    );
 
     const [existing] = await conn.query(
       `SELECT * FROM batches
@@ -910,6 +803,22 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
 
     conn = await db.getConnection();
     await conn.beginTransaction();
+    await assertProductsMatchItemType(conn, [productId], STOCK_ITEM, "Batch");
+    const [mirrorRows] = await conn.query(
+      `SELECT p.id, m.Product_ID AS menu_id, i.Inventory_ID AS inventory_id
+       FROM products p
+       LEFT JOIN Menu m ON m.Product_ID = p.id
+       LEFT JOIN Inventory i ON i.Product_ID = p.id
+       WHERE p.id = ?
+       LIMIT 1`,
+      [productId],
+    );
+    if (!mirrorRows[0]?.menu_id || !mirrorRows[0]?.inventory_id) {
+      await conn.rollback();
+      return res.status(409).json({
+        error: "Product inventory mirrors are incomplete; run the approved repair migration first",
+      });
+    }
 
     const [result] = await conn.query(
       `INSERT INTO batches
@@ -988,6 +897,7 @@ router.post("/withdraw", requireInventoryManagerAccess, async (req, res) => {
     conn = await db.getConnection();
     await conn.beginTransaction();
 
+    await assertProductsMatchItemType(conn, [productId], STOCK_ITEM, "Batch");
     await reconcileDefaultBatchForStock(conn, productId);
 
     const normalizedStrategy =

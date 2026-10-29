@@ -35,7 +35,10 @@ function publishMutationEvents(req) {
   }
 
   if (/^\/api\/purchase-orders(?:\/|$)/.test(req.path)) {
-    publish(EVENT_TOPICS.PURCHASE_ORDERS_CHANGED, { reason });
+    publish(EVENT_TOPICS.PURCHASE_ORDERS_CHANGED, {
+      reason,
+      targetRoles: ["administrator", "inventory_manager"],
+    });
     if (/\/receive\/?$/.test(req.path)) {
       publish(EVENT_TOPICS.INVENTORY_CHANGED, { reason });
     }

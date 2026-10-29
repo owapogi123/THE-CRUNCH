@@ -7,6 +7,7 @@ const {
   assertProductsMatchItemType,
 } = require("../utils/productItemType");
 const { requireInventoryManagerAccess } = require("../middleware/staffAccess");
+const { assertTableColumns } = require("../services/schemaAssertions");
 
 function normaliseRecordedBy(recorded_by) {
   if (recorded_by == null) return null;
@@ -15,22 +16,17 @@ function normaliseRecordedBy(recorded_by) {
 }
 
 async function ensureKitchenBatchesTable(conn = db) {
-  await conn.query(`
-    CREATE TABLE IF NOT EXISTS kitchen_batches (
-      kitchen_batch_id INT PRIMARY KEY AUTO_INCREMENT,
-      storage_batch_id INT NULL,
-      product_id INT NOT NULL,
-      withdrawn_qty DECIMAL(10,2) NOT NULL,
-      used_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
-      returned_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
-      unit VARCHAR(20) DEFAULT 'kg',
-      expiry_date DATE NULL,
-      withdrawn_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      status ENUM('active','reconciled') DEFAULT 'active',
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )
-  `);
+  await assertTableColumns(
+    conn,
+    {
+      kitchen_batches: [
+        "kitchen_batch_id", "storage_batch_id", "product_id",
+        "withdrawn_qty", "used_qty", "returned_qty", "unit", "expiry_date",
+        "withdrawn_at", "status", "created_at", "updated_at",
+      ],
+    },
+    "Kitchen-batch schema",
+  );
 }
 
 async function applySpoilageToKitchenBatches(conn, product_id, qty) {

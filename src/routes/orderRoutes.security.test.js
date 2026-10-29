@@ -3,6 +3,7 @@ const jwt = require("jsonwebtoken");
 
 process.env.JWT_SECRET = "order-route-test-secret";
 process.env.DISCOUNT_AUTH_CODE = "test-only-discount-code";
+process.env.PAYMONGO_ENABLED = "false";
 
 const state = {
   writes: [],
@@ -160,6 +161,7 @@ async function invokeHandlers(handlers, { token, body }) {
 
 const invokeOrder = (request) => invokeHandlers(createHandlers, request);
 const invokeAuthorization = (request) => invokeHandlers(authorizationHandlers, request);
+const { issueBypassCheckout } = require("../services/paymongoMode");
 
 const cashierToken = jwt.sign(
   { userId: 10, role: "cashier" },
@@ -179,6 +181,19 @@ const baseStaffBody = {
   discount_name: "Regular customer",
   cashierId: 999,
 };
+const baseCustomerBody = {
+  items: [{ product_id: 1, qty: 2 }],
+  order_type: "take-out",
+};
+
+function assertRejectedBeforePersistence(result) {
+  assert.equal(result.statusCode, 400);
+  assert.equal(state.writes.length, 0);
+  assert.equal(state.receipts.length, 0);
+  assert.equal(state.deductions, 0);
+  assert.equal(state.commits, 0);
+  assert.equal(state.rollbacks, 0);
+}
 
 (async () => {
   resetState();
@@ -288,6 +303,83 @@ const baseStaffBody = {
     "JWT customer ID must override a forged body customerUserId",
   );
   assert.equal(state.deductions, 0);
+
+  resetState();
+  const forgedPaidCashOrder = await invokeOrder({
+    token: customerToken,
+    body: {
+      ...baseCustomerBody,
+      payment_method: "cash_on_pickup",
+      payment_status: "Paid",
+      payment_reference: "FAKE-CASH-REFERENCE",
+      proof_image_url: "/uploads/payment-proofs/fake.png",
+    },
+  });
+  assert.equal(forgedPaidCashOrder.statusCode, 200);
+  const forgedPaidWrite = state.writes.find((write) => write.sql.startsWith("INSERT INTO orders"));
+  assert.equal(forgedPaidWrite.params[6], null, "customer reference must not authorize cash payment");
+  assert.equal(forgedPaidWrite.params[7], "Pending Payment");
+  assert.equal(forgedPaidWrite.params[9], null, "customer proof must not be persisted as confirmation");
+  assert.equal(state.receipts[0].amountPaid, 0);
+  assert.equal(state.deductions, 0);
+
+  for (const unsupportedOrderType of ["dine-in", "delivery"]) {
+    resetState();
+    const unsupportedOrder = await invokeOrder({
+      token: customerToken,
+      body: {
+        ...baseCustomerBody,
+        order_type: unsupportedOrderType,
+        payment_method: "cash_on_pickup",
+      },
+    });
+    assertRejectedBeforePersistence(unsupportedOrder);
+  }
+
+  resetState();
+  const invalidPaymentMethod = await invokeOrder({
+    token: customerToken,
+    body: {
+      ...baseCustomerBody,
+      payment_method: "card",
+      payment_status: "Paid",
+    },
+  });
+  assertRejectedBeforePersistence(invalidPaymentMethod);
+
+  resetState();
+  const fakeReference = await invokeOrder({
+    token: customerToken,
+    body: {
+      ...baseCustomerBody,
+      payment_method: "gcash",
+      payment_status: "Paid",
+      payment_reference: "FAKE-GCASH-REFERENCE",
+    },
+  });
+  assertRejectedBeforePersistence(fakeReference);
+
+  resetState();
+  const verifiedCheckout = issueBypassCheckout({
+    customerUserId: 20,
+    items: baseCustomerBody.items,
+  });
+  const verifiedOnlineOrder = await invokeOrder({
+    token: customerToken,
+    body: {
+      ...baseCustomerBody,
+      payment_method: "gcash",
+      checkout_session_id: verifiedCheckout.checkoutSessionId,
+      payment_status: "Pending",
+      payment_reference: "FORGED-REFERENCE-IGNORED",
+    },
+  });
+  assert.equal(verifiedOnlineOrder.statusCode, 200);
+  const verifiedOnlineWrite = state.writes.find((write) => write.sql.startsWith("INSERT INTO orders"));
+  assert.equal(verifiedOnlineWrite.params[6], verifiedCheckout.paymentReference);
+  assert.equal(verifiedOnlineWrite.params[7], "Paid");
+  assert.equal(state.receipts[0].amountPaid, 100);
+  assert.equal(state.deductions, 1);
 
   console.log("Order route security integration tests passed");
 })().catch((error) => {

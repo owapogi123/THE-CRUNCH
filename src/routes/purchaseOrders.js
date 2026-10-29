@@ -9,6 +9,16 @@ const {
   getProductItemTypeExpression,
 } = require("../utils/productItemType");
 const { requireInventoryManagerAccess } = require("../middleware/staffAccess");
+const {
+  PURCHASE_ORDER_STATUSES,
+  getGenericTransitionError,
+  getReceiveTransitionError,
+  getUnitCompatibilityError,
+} = require("../services/purchaseOrderPolicy");
+const {
+  STAFF_NOTIFICATION_AUDIENCES,
+  createStaffNotification,
+} = require("../services/staffNotificationService");
 
 // helpers
 
@@ -36,6 +46,36 @@ function hasProvidedValue(value) {
 
 function formatPOId(counter) {
   return `PO-${String(counter).padStart(4, "0")}`;
+}
+
+async function createPurchaseOrderNotification(
+  connection,
+  { poId, event, actorUserId, supplier, status, deliveryDate },
+) {
+  const eventLabels = {
+    created: "created",
+    ordered: "sent to supplier",
+    received: "received",
+    cancelled: "cancelled",
+  };
+  const eventLabel = eventLabels[event] || event;
+  return createStaffNotification(connection, {
+    dedupeKey: `purchase_order:${poId}:${event}`,
+    category: "purchase_order",
+    eventType: `purchase_order.${event}`,
+    entityId: poId,
+    audience: STAFF_NOTIFICATION_AUDIENCES.BOTH,
+    actorUserId,
+    title: `Purchase order ${eventLabel} · ${poId}`,
+    message: `${supplier || "Supplier"} · Status: ${status}`,
+    status,
+    metadata: {
+      poId,
+      supplier: supplier || null,
+      status,
+      deliveryDate: deliveryDate || null,
+    },
+  });
 }
 
 function toDateString(value) {
@@ -159,6 +199,91 @@ function computeUsableUntil(baseValue, shelfLifeDays, shelfLifeHours) {
   return toSqlDateTime(usableUntil);
 }
 
+class PurchaseOrderHttpError extends Error {
+  constructor(statusCode, message) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+}
+
+function throwPurchaseOrderError(statusCode, message) {
+  throw new PurchaseOrderHttpError(statusCode, message);
+}
+
+function toProductId(item) {
+  const value = Number(item?.productId ?? item?.product_id);
+  return Number.isInteger(value) && value > 0 ? value : null;
+}
+
+async function resolveStockProduct(conn, item, itemTypeExpr, { lock = false } = {}) {
+  const productId = toProductId(item);
+  const whereClause = productId
+    ? "p.id = ?"
+    : "LOWER(TRIM(p.name)) = LOWER(TRIM(?))";
+  const lookupValue = productId || String(item.name || "").trim();
+  const [rows] = await conn.query(
+    `SELECT p.id AS product_id,
+            p.name AS product_name,
+            COALESCE(p.quantity, 0) AS product_quantity,
+            m.Product_ID AS menu_product_id,
+            COALESCE(m.Stock, 0) AS menu_stock,
+            COALESCE(m.Category_Name, '') AS category_name,
+            i.Inventory_ID AS inventory_id,
+            COALESCE(i.Stock, 0) AS inventory_stock,
+            NULLIF(TRIM(i.unit), '') AS inventory_unit
+       FROM products p
+       LEFT JOIN Menu m ON m.Product_ID = p.id
+       LEFT JOIN Inventory i ON i.Product_ID = p.id
+      WHERE ${whereClause}
+        AND ${itemTypeExpr} = ?
+      ORDER BY p.id${lock ? " FOR UPDATE" : ""}`,
+    [lookupValue, STOCK_ITEM],
+  );
+
+  if (rows.length === 0) {
+    throwPurchaseOrderError(
+      422,
+      `No stock inventory product could be resolved for "${item.name}"`,
+    );
+  }
+  if (productId && rows.length > 1) {
+    throwPurchaseOrderError(
+      409,
+      `Inventory product "${item.name}" has multiple main-stock rows; receiving requires data reconciliation`,
+    );
+  }
+  if (!productId && rows.length > 1) {
+    throwPurchaseOrderError(
+      409,
+      `Multiple inventory products match legacy item "${item.name}"; receiving requires an explicit product mapping`,
+    );
+  }
+  const product = rows[0];
+  if (!product.menu_product_id) {
+    throwPurchaseOrderError(
+      422,
+      `Inventory product "${item.name}" has no main-stock record`,
+    );
+  }
+  return product;
+}
+
+function assertMatchingStockMirrors(item, product) {
+  const values = product.inventory_id
+    ? [
+        Number(product.inventory_stock),
+        Number(product.menu_stock),
+        Number(product.product_quantity),
+      ]
+    : [Number(product.menu_stock), Number(product.product_quantity)];
+  if (!values.every(Number.isFinite) || !values.every((value) => value === values[0])) {
+    throwPurchaseOrderError(
+      409,
+      `Stock records for "${item.name}" are out of sync; receiving was stopped before inventory changed`,
+    );
+  }
+}
+
 // supplier history logger
 
 async function logSupplierHistory(
@@ -200,6 +325,7 @@ function shapePO(row, items = []) {
     receivedDate: toDateString(row.received_date) || undefined,
     items: items.map((i) => ({
       id: i.item_id,
+      productId: i.product_id == null ? null : Number(i.product_id),
       name: i.name,
       category: i.category || "",
       unit: i.unit || "",
@@ -212,7 +338,7 @@ function shapePO(row, items = []) {
 
 // GET /api/purchase-orders
 
-router.get("/", async (_req, res) => {
+router.get("/", requireInventoryManagerAccess, async (_req, res) => {
   try {
     const [orders] = await db.query(
       `SELECT * FROM purchase_orders ORDER BY created_at DESC`,
@@ -243,7 +369,7 @@ router.get("/", async (_req, res) => {
 
 // GET /api/purchase-orders/:id
 
-router.get("/:id", async (req, res) => {
+router.get("/:id", requireInventoryManagerAccess, async (req, res) => {
   const poId = req.params.id;
 
   try {
@@ -341,13 +467,42 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
     }
   }
 
-  const validStatuses = ["Draft", "Ordered", "Received", "Cancelled"];
-  const safeStatus = validStatuses.includes(status) ? status : "Draft";
+  if (!PURCHASE_ORDER_STATUSES.includes(status)) {
+    return res.status(400).json({
+      error: `status must be one of: ${PURCHASE_ORDER_STATUSES.join(", ")}`,
+    });
+  }
+  if (status !== "Draft") {
+    return res.status(409).json({
+      error: "New purchase orders must start in Draft status",
+    });
+  }
 
   let conn;
   try {
+    const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+    const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p", "m");
     conn = await db.getConnection();
     await conn.beginTransaction();
+
+    const resolvedItems = [];
+    for (const item of items) {
+      const product = await resolveStockProduct(conn, item, itemTypeExpr);
+      const unitError = getUnitCompatibilityError(
+        item.unit,
+        product.inventory_unit,
+      );
+      if (unitError) {
+        throwPurchaseOrderError(422, `${unitError} for "${item.name}"`);
+      }
+      resolvedItems.push({
+        ...item,
+        productId: product.product_id,
+        name: product.product_name,
+        category: product.category_name || String(item.category || "").trim(),
+        unit: product.inventory_unit || String(item.unit || "").trim(),
+      });
+    }
 
     await conn.query(`UPDATE po_counter SET value = value + 1 WHERE id = 1`);
     const [[{ value: counter }]] = await conn.query(
@@ -366,20 +521,20 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
         contact.trim(),
         orderDate,
         delivDate,
-        safeStatus,
+        "Draft",
         notes.trim() || null,
         String(receiptNo).trim() || null,
       ],
     );
 
-    for (const item of items) {
-      if (!item.name || !item.name.trim()) continue;
+    for (const item of resolvedItems) {
       await conn.query(
         `INSERT INTO purchase_order_items
-           (po_id, name, category, unit, quantity, unit_cost, expected_expiry_date)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+           (po_id, product_id, name, category, unit, quantity, unit_cost, expected_expiry_date)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           poId,
+          item.productId,
           item.name.trim(),
           (item.category || "").trim(),
           (item.unit || "").trim(),
@@ -391,16 +546,6 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
       );
     }
 
-    await conn.commit();
-
-    // Log PO Created
-    await logSupplierHistory({
-      supplier_name: supplier.trim(),
-      action: "Purchase Order Created",
-      details: `PO: ${poId} | ${items.length} item(s) | Delivery: ${delivDate}${notes.trim() ? ` | Notes: ${notes.trim()}` : ""}`,
-      performed_by: null,
-    });
-
     const [[created]] = await conn.query(
       `SELECT * FROM purchase_orders WHERE po_id = ?`,
       [poId],
@@ -410,11 +555,28 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
       [poId],
     );
 
+    await createPurchaseOrderNotification(conn, {
+      poId,
+      event: "created",
+      actorUserId: req.user?.userId,
+      supplier: created.supplier,
+      status: created.status,
+      deliveryDate: created.delivery_date,
+    });
+
+    await conn.commit();
+
+    await logSupplierHistory({
+      supplier_name: supplier.trim(),
+      action: "Purchase Order Created",
+      details: `PO: ${poId} | ${items.length} item(s) | Delivery: ${delivDate}${notes.trim() ? ` | Notes: ${notes.trim()}` : ""}`,
+      performed_by: null,
+    });
     res.status(201).json(shapePO(created, createdItems));
   } catch (err) {
     if (conn) await conn.rollback();
-    console.error("POST /purchase-orders error:", err);
-    res.status(500).json({ error: err.message });
+    if (!err.statusCode) console.error("POST /purchase-orders error:", err);
+    res.status(err.statusCode || 500).json({ error: err.message });
   } finally {
     if (conn) conn.release();
   }
@@ -426,10 +588,9 @@ router.patch("/:id/status", requireInventoryManagerAccess, async (req, res) => {
   const poId = req.params.id;
   const { status } = req.body;
 
-  const validStatuses = ["Draft", "Ordered", "Received", "Cancelled"];
-  if (!validStatuses.includes(status)) {
+  if (!PURCHASE_ORDER_STATUSES.includes(status)) {
     return res.status(400).json({
-      error: `status must be one of: ${validStatuses.join(", ")}`,
+      error: `status must be one of: ${PURCHASE_ORDER_STATUSES.join(", ")}`,
     });
   }
 
@@ -439,42 +600,26 @@ router.patch("/:id/status", requireInventoryManagerAccess, async (req, res) => {
     await conn.beginTransaction();
 
     const [[existing]] = await conn.query(
-      `SELECT * FROM purchase_orders WHERE po_id = ?`,
+      `SELECT * FROM purchase_orders WHERE po_id = ? FOR UPDATE`,
       [poId],
     );
 
     if (!existing) {
-      await conn.rollback();
-      return res.status(404).json({ error: "Purchase order not found" });
+      throwPurchaseOrderError(404, "Purchase order not found");
     }
 
-    if (existing.status === "Cancelled" && status !== "Cancelled") {
-      await conn.rollback();
-      return res
-        .status(409)
-        .json({ error: "Cannot change status of a Cancelled order" });
+    const transitionError = getGenericTransitionError(existing.status, status);
+    if (transitionError) {
+      throwPurchaseOrderError(
+        transitionError.statusCode,
+        transitionError.message,
+      );
     }
 
     await conn.query(`UPDATE purchase_orders SET status = ? WHERE po_id = ?`, [
       status,
       poId,
     ]);
-
-    await conn.commit();
-
-    // Log status change
-    const actionMap = {
-      Ordered: "Purchase Order Sent to Supplier",
-      Cancelled: "Purchase Order Cancelled",
-    };
-    if (actionMap[status]) {
-      await logSupplierHistory({
-        supplier_name: existing.supplier,
-        action: actionMap[status],
-        details: `PO: ${poId} | Previous status: ${existing.status}`,
-        performed_by: null,
-      });
-    }
 
     const [[updated]] = await conn.query(
       `SELECT * FROM purchase_orders WHERE po_id = ?`,
@@ -485,11 +630,34 @@ router.patch("/:id/status", requireInventoryManagerAccess, async (req, res) => {
       [poId],
     );
 
+    await createPurchaseOrderNotification(conn, {
+      poId,
+      event: status === "Ordered" ? "ordered" : "cancelled",
+      actorUserId: req.user?.userId,
+      supplier: updated.supplier,
+      status: updated.status,
+      deliveryDate: updated.delivery_date,
+    });
+
+    await conn.commit();
+
+    const actionMap = {
+      Ordered: "Purchase Order Sent to Supplier",
+      Cancelled: "Purchase Order Cancelled",
+    };
+    await logSupplierHistory({
+      supplier_name: existing.supplier,
+      action: actionMap[status],
+      details: `PO: ${poId} | Previous status: ${existing.status}`,
+      performed_by: null,
+    });
     res.json(shapePO(updated, items));
   } catch (err) {
     if (conn) await conn.rollback();
-    console.error(`PATCH /purchase-orders/${poId}/status error:`, err);
-    res.status(500).json({ error: err.message });
+    if (!err.statusCode) {
+      console.error(`PATCH /purchase-orders/${poId}/status error:`, err);
+    }
+    res.status(err.statusCode || 500).json({ error: err.message });
   } finally {
     if (conn) conn.release();
   }
@@ -520,33 +688,29 @@ router.patch("/:id/receive", requireInventoryManagerAccess, async (req, res) => 
     await conn.beginTransaction();
 
     const [[existing]] = await conn.query(
-      `SELECT * FROM purchase_orders WHERE po_id = ?`,
+      `SELECT * FROM purchase_orders WHERE po_id = ? FOR UPDATE`,
       [poId],
     );
 
     if (!existing) {
-      await conn.rollback();
-      return res.status(404).json({ error: "Purchase order not found" });
+      throwPurchaseOrderError(404, "Purchase order not found");
     }
 
-    if (existing.status === "Received") {
-      await conn.rollback();
-      return res
-        .status(409)
-        .json({ error: "Order already marked as Received" });
-    }
-
-    if (existing.status === "Cancelled") {
-      await conn.rollback();
-      return res
-        .status(409)
-        .json({ error: "Cannot receive a Cancelled order" });
+    const receiveTransitionError = getReceiveTransitionError(existing.status);
+    if (receiveTransitionError) {
+      throwPurchaseOrderError(
+        receiveTransitionError.statusCode,
+        receiveTransitionError.message,
+      );
     }
 
     const [items] = await conn.query(
       `SELECT * FROM purchase_order_items WHERE po_id = ?`,
       [poId],
     );
+    if (items.length === 0) {
+      throwPurchaseOrderError(422, "Purchase order has no items to receive");
+    }
 
     const invalidItem = items.find((item) => {
       const quantity = toNumber(item.quantity, Number.NaN);
@@ -558,126 +722,39 @@ router.patch("/:id/receive", requireInventoryManagerAccess, async (req, res) => 
       );
     });
     if (invalidItem) {
-      await conn.rollback();
-      return res.status(400).json({
-        error:
-          "Purchase order contains an item quantity outside the allowed whole-number range of 1 to 999",
-      });
+      throwPurchaseOrderError(
+        400,
+        "Purchase order contains an item quantity outside the allowed whole-number range of 1 to 999",
+      );
     }
 
-    await conn.query(
-      `UPDATE purchase_orders
-       SET status = 'Received', receipt_no = ?, received_by = ?, received_date = ?
-       WHERE po_id = ?`,
-      [receiptNo ? String(receiptNo).trim() : null, receivedBy, recDate, poId],
-    );
-
+    const receivePlan = [];
     const receivedItemNames = [];
 
     for (const item of items) {
       const qty = toNumber(item.quantity);
-      if (qty <= 0) continue;
+      const product = await resolveStockProduct(conn, item, itemTypeExpr, {
+        lock: true,
+      });
+      assertMatchingStockMirrors(item, product);
 
-      let productId = null;
-      let productRow = null;
-
-      const [[matchedProduct]] = await conn.query(
-        `SELECT p.id AS product_id,
-                p.name AS product_name,
-                p.price,
-                p.quantity,
-                COALESCE(m.Promo, '') AS promo,
-                COALESCE(m.Category_Name, '') AS category_name
-         FROM products p
-         LEFT JOIN Menu m ON m.Product_ID = p.id
-         WHERE LOWER(TRIM(p.name)) = LOWER(TRIM(?))
-           AND ${itemTypeExpr} = ?
-         LIMIT 1`,
-        [item.name, STOCK_ITEM],
+      const [batchUnitRows] = await conn.query(
+        `SELECT DISTINCT unit
+           FROM batches
+          WHERE product_id = ?
+            AND unit IS NOT NULL
+            AND TRIM(unit) <> ''`,
+        [product.product_id],
       );
-
-      if (matchedProduct) {
-        productId = matchedProduct.product_id;
-        productRow = matchedProduct;
-      } else {
-        const [[matchedMenu]] = await conn.query(
-          `SELECT m.Product_ID AS product_id,
-                  m.Product_Name AS product_name,
-                  COALESCE(m.Price, 0) AS price,
-                  COALESCE(m.Stock, 0) AS stock,
-                  COALESCE(m.Promo, '') AS promo,
-                  COALESCE(m.Category_Name, '') AS category_name
-           FROM Menu m
-           LEFT JOIN products p ON p.id = m.Product_ID
-           WHERE LOWER(TRIM(m.Product_Name)) = LOWER(TRIM(?))
-             AND ${itemTypeExpr} = ?
-           LIMIT 1`,
-          [item.name, STOCK_ITEM],
-        );
-
-        if (matchedMenu) {
-          productId = matchedMenu.product_id;
-          productRow = matchedMenu;
-
-          const upsertSql = hasItemTypeColumn
-            ? `INSERT INTO products (id, name, price, quantity, description, item_type)
-               VALUES (?, ?, ?, ?, ?, ?)
-               ON DUPLICATE KEY UPDATE
-                 name = VALUES(name),
-                 price = VALUES(price)`
-            : `INSERT INTO products (id, name, price, quantity, description)
-               VALUES (?, ?, ?, ?, ?)
-               ON DUPLICATE KEY UPDATE
-                 name = VALUES(name),
-                 price = VALUES(price)`;
-          await conn.query(
-            upsertSql,
-            hasItemTypeColumn
-              ? [
-                  matchedMenu.product_id,
-                  matchedMenu.product_name || item.name,
-                  toNumber(matchedMenu.price),
-                  toNumber(matchedMenu.stock),
-                  null,
-                  STOCK_ITEM,
-                ]
-              : [
-                  matchedMenu.product_id,
-                  matchedMenu.product_name || item.name,
-                  toNumber(matchedMenu.price),
-                  toNumber(matchedMenu.stock),
-                  null,
-                ],
-          );
-        }
-      }
-
-      if (!productId) {
-        console.warn(
-          `[PO Receive] ${poId}: No product match for "${item.name}" - skipping`,
-        );
-        continue;
-      }
-
-      const [[menuRow]] = await conn.query(
-        `SELECT Product_ID FROM Menu WHERE Product_ID = ? LIMIT 1`,
-        [productId],
+      const unitError = getUnitCompatibilityError(
+        item.unit,
+        product.inventory_unit,
+        batchUnitRows.map((row) => row.unit),
       );
-
-      if (!menuRow) {
-        await conn.query(
-          `INSERT INTO Menu (Product_ID, Product_Name, Price, Stock)
-           VALUES (?, ?, ?, ?)`,
-          [
-            productId,
-            productRow?.product_name || item.name,
-            toNumber(productRow?.price),
-            toNumber(productRow?.quantity),
-          ],
-        );
+      if (unitError) {
+        throwPurchaseOrderError(422, `${unitError} for "${item.name}"`);
       }
-
-      const unit = item.unit || "kg";
+      const unit = product.inventory_unit || String(item.unit).trim();
       const shelfLifeInput = itemShelfLife?.[item.item_id] || {};
       const shelfLifeDays = toPositiveIntegerOrNull(
         shelfLifeInput.shelfLifeDays,
@@ -698,31 +775,63 @@ router.patch("/:id/receive", requireInventoryManagerAccess, async (req, res) => 
         : null;
 
       if (usesShelfLife && !usableUntil) {
-        await conn.rollback();
-        return res.status(400).json({
-          error: `Shelf life is required for "${item.name}"`,
-        });
+        throwPurchaseOrderError(
+          400,
+          `Shelf life is required for "${item.name}"`,
+        );
       }
 
       if (usesExpiry && !itemExpiryDate) {
-        await conn.rollback();
-        return res.status(400).json({
-          error: `Expiry date is required for "${item.name}"`,
-        });
+        throwPurchaseOrderError(
+          400,
+          `Expiry date is required for "${item.name}"`,
+        );
       }
 
-      await conn.query(
-        `INSERT INTO Inventory (Product_ID, Quantity, Stock, Item_Purchased)
-         SELECT m.Product_ID, COALESCE(m.Stock, 0), COALESCE(m.Stock, 0), m.Product_Name
-         FROM Menu m
-         WHERE m.Product_ID = ?
-           AND NOT EXISTS (
-             SELECT 1 FROM Inventory i WHERE i.Product_ID = m.Product_ID
-           )`,
-        [productId],
-      );
+      if (!product.inventory_id) {
+        const [inventoryInsert] = await conn.query(
+          `INSERT INTO Inventory (Product_ID, Quantity, Stock, Item_Purchased, unit)
+           SELECT m.Product_ID, COALESCE(m.Stock, 0), COALESCE(m.Stock, 0), m.Product_Name, ?
+             FROM Menu m
+            WHERE m.Product_ID = ?
+              AND NOT EXISTS (
+                SELECT 1 FROM Inventory i WHERE i.Product_ID = m.Product_ID
+              )`,
+          [unit, product.product_id],
+        );
+        if (inventoryInsert.affectedRows !== 1) {
+          throwPurchaseOrderError(
+            409,
+            `Could not establish a single main-stock row for "${item.name}"`,
+          );
+        }
+      }
 
-      const [batchResult] = await conn.query(
+      receivePlan.push({
+        item,
+        productId: product.product_id,
+        qty,
+        unit,
+        shelfLifeDays,
+        shelfLifeHours,
+        itemExpiryDate,
+        usableUntil,
+      });
+    }
+
+    for (const plan of receivePlan) {
+      const {
+        item,
+        productId,
+        qty,
+        unit,
+        shelfLifeDays,
+        shelfLifeHours,
+        itemExpiryDate,
+        usableUntil,
+      } = plan;
+
+      await conn.query(
         `INSERT INTO batches
            (product_id, quantity, remaining_qty, unit, received_date, expiry_date, shelf_life_days, shelf_life_hours, usable_until, notes)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -740,7 +849,7 @@ router.patch("/:id/receive", requireInventoryManagerAccess, async (req, res) => 
         ],
       );
 
-      await conn.query(
+      const [inventoryUpdate] = await conn.query(
         `UPDATE Inventory
          SET Stock = COALESCE(Stock, 0) + ?,
              Last_Update = NOW()
@@ -748,19 +857,60 @@ router.patch("/:id/receive", requireInventoryManagerAccess, async (req, res) => 
         [qty, productId],
       );
 
-      await conn.query(
+      const [menuUpdate] = await conn.query(
         `UPDATE Menu SET Stock = COALESCE(Stock, 0) + ? WHERE Product_ID = ?`,
         [qty, productId],
       );
 
-      await conn.query(
+      const [productUpdate] = await conn.query(
         `UPDATE products SET quantity = COALESCE(quantity, 0) + ? WHERE id = ?`,
         [qty, productId],
       );
 
-      receivedItemNames.push(`${item.name} x${qty} ${unit}`);
+      if (
+        inventoryUpdate.affectedRows !== 1 ||
+        menuUpdate.affectedRows !== 1 ||
+        productUpdate.affectedRows !== 1
+      ) {
+        throwPurchaseOrderError(
+          409,
+          `Main-stock update failed for "${item.name}"; no purchase-order quantities were committed`,
+        );
+      }
 
+      receivedItemNames.push(`${item.name} x${qty} ${unit}`);
     }
+
+    const [statusUpdate] = await conn.query(
+      `UPDATE purchase_orders
+          SET status = 'Received', receipt_no = ?, received_by = ?, received_date = ?
+        WHERE po_id = ? AND status = 'Ordered'`,
+      [receiptNo ? String(receiptNo).trim() : null, receivedBy, recDate, poId],
+    );
+    if (statusUpdate.affectedRows !== 1) {
+      throwPurchaseOrderError(
+        409,
+        "Purchase order status changed before receiving could complete",
+      );
+    }
+
+    const [[updated]] = await conn.query(
+      `SELECT * FROM purchase_orders WHERE po_id = ?`,
+      [poId],
+    );
+    const [updatedItems] = await conn.query(
+      `SELECT * FROM purchase_order_items WHERE po_id = ?`,
+      [poId],
+    );
+
+    await createPurchaseOrderNotification(conn, {
+      poId,
+      event: "received",
+      actorUserId: req.user?.userId,
+      supplier: updated.supplier,
+      status: updated.status,
+      deliveryDate: updated.delivery_date,
+    });
 
     await conn.commit();
 
@@ -772,20 +922,13 @@ router.patch("/:id/receive", requireInventoryManagerAccess, async (req, res) => 
       performed_by: receivedBy,
     });
 
-    const [[updated]] = await conn.query(
-      `SELECT * FROM purchase_orders WHERE po_id = ?`,
-      [poId],
-    );
-    const [updatedItems] = await conn.query(
-      `SELECT * FROM purchase_order_items WHERE po_id = ?`,
-      [poId],
-    );
-
     res.json(shapePO(updated, updatedItems));
   } catch (err) {
     if (conn) await conn.rollback();
-    console.error(`PATCH /purchase-orders/${poId}/receive error:`, err);
-    res.status(500).json({ error: err.message });
+    if (!err.statusCode) {
+      console.error(`PATCH /purchase-orders/${poId}/receive error:`, err);
+    }
+    res.status(err.statusCode || 500).json({ error: err.message });
   } finally {
     if (conn) conn.release();
   }
@@ -795,24 +938,43 @@ router.patch("/:id/receive", requireInventoryManagerAccess, async (req, res) => 
 
 router.delete("/:id", requireInventoryManagerAccess, async (req, res) => {
   const poId = req.params.id;
+  let conn;
 
   try {
-    const [[existing]] = await db.query(
-      `SELECT * FROM purchase_orders WHERE po_id = ?`,
+    conn = await db.getConnection();
+    await conn.beginTransaction();
+    const [[existing]] = await conn.query(
+      `SELECT * FROM purchase_orders WHERE po_id = ? FOR UPDATE`,
       [poId],
     );
 
-    if (!existing)
-      return res.status(404).json({ error: "Purchase order not found" });
-
-    if (existing.status === "Received") {
-      return res.status(409).json({ error: "Cannot cancel a Received order" });
+    if (!existing) {
+      throwPurchaseOrderError(404, "Purchase order not found");
+    }
+    const transitionError = getGenericTransitionError(
+      existing.status,
+      "Cancelled",
+    );
+    if (transitionError) {
+      throwPurchaseOrderError(
+        transitionError.statusCode,
+        transitionError.message,
+      );
     }
 
-    await db.query(
+    await conn.query(
       `UPDATE purchase_orders SET status = 'Cancelled' WHERE po_id = ?`,
       [poId],
     );
+    await createPurchaseOrderNotification(conn, {
+      poId,
+      event: "cancelled",
+      actorUserId: req.user?.userId,
+      supplier: existing.supplier,
+      status: "Cancelled",
+      deliveryDate: existing.delivery_date,
+    });
+    await conn.commit();
 
     // ── Log cancellation ────────────────────────────────────────────────────
     await logSupplierHistory({
@@ -824,8 +986,13 @@ router.delete("/:id", requireInventoryManagerAccess, async (req, res) => {
 
     res.json({ success: true, id: poId, status: "Cancelled" });
   } catch (err) {
-    console.error(`DELETE /purchase-orders/${poId} error:`, err);
-    res.status(500).json({ error: err.message });
+    if (conn) await conn.rollback();
+    if (!err.statusCode) {
+      console.error(`DELETE /purchase-orders/${poId} error:`, err);
+    }
+    res.status(err.statusCode || 500).json({ error: err.message });
+  } finally {
+    if (conn) conn.release();
   }
 });
 

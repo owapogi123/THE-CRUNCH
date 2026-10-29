@@ -35,5 +35,35 @@ assert.equal(run("administrator").calledNext, true);
 assert.equal(run("inventory_manager").calledNext, true);
 assert.equal(run("cashier").statusCode, 403);
 assert.equal(run("cashier").calledNext, false);
+assert.equal(run("cook").statusCode, 403);
+assert.equal(run("cook").calledNext, false);
+assert.equal(run("customer").statusCode, 403);
+assert.equal(run("customer").calledNext, false);
+
+const inventoryRouter = require("../routes/inventoryRoutes");
+for (const [method, routePath] of [
+  ["get", "/alerts"],
+  ["post", "/alerts/read-all"],
+  ["post", "/alerts/:alertId/read"],
+]) {
+  const route = inventoryRouter.stack.find(
+    (layer) => layer.route?.path === routePath && layer.route.methods?.[method],
+  )?.route;
+  assert.ok(route, `${method.toUpperCase()} ${routePath} was not found`);
+  assert.equal(route.stack[0].handle.name, "roleAccessMiddleware");
+}
+
+const staffNotificationRouter = require("../routes/staffNotificationRoutes");
+for (const [method, routePath] of [
+  ["get", "/"],
+  ["post", "/read-all"],
+  ["post", "/:notificationId/read"],
+]) {
+  const route = staffNotificationRouter.stack.find(
+    (layer) => layer.route?.path === routePath && layer.route.methods?.[method],
+  )?.route;
+  assert.ok(route, `${method.toUpperCase()} ${routePath} was not found`);
+  assert.equal(route.stack[0].handle.name, "roleAccessMiddleware");
+}
 
 console.log("inventory alert access tests passed");

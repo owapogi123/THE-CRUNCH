@@ -8,6 +8,7 @@ const {
   deliverOtp,
 } = require("../services/otpDeliveryService");
 const { getJwtSecret } = require("../services/jwtConfig");
+const { assertTableColumns } = require("../services/schemaAssertions");
 
 const router = express.Router();
 
@@ -34,18 +35,16 @@ function toBooleanFlag(value) {
 }
 
 async function ensurePendingSignupsTable() {
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS pending_signups (
-      pending_signup_id INT AUTO_INCREMENT PRIMARY KEY,
-      username VARCHAR(100) NOT NULL,
-      email VARCHAR(150) NOT NULL UNIQUE,
-      password_hash VARCHAR(255) NOT NULL,
-      otp_code VARCHAR(10) NOT NULL,
-      otp_expires_at DATETIME NOT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )
-  `);
+  await assertTableColumns(
+    db,
+    {
+      pending_signups: [
+        "pending_signup_id", "username", "email", "password_hash",
+        "otp_code", "otp_expires_at",
+      ],
+    },
+    "Pending-signup schema",
+  );
 }
 
 async function findPendingSignupByEmail(email) {
@@ -89,25 +88,11 @@ async function sendVerificationEmailOrThrow({
 }
 
 async function ensurePasswordResetColumns() {
-  const [codeColumns] = await db.query(
-    `SHOW COLUMNS FROM users LIKE 'password_reset_code'`,
+  await assertTableColumns(
+    db,
+    { users: ["password_reset_code", "password_reset_expires"] },
+    "Password-reset schema",
   );
-  if (codeColumns.length === 0) {
-    await db.query(
-      `ALTER TABLE users
-       ADD COLUMN password_reset_code VARCHAR(10) NULL`,
-    );
-  }
-
-  const [expiryColumns] = await db.query(
-    `SHOW COLUMNS FROM users LIKE 'password_reset_expires'`,
-  );
-  if (expiryColumns.length === 0) {
-    await db.query(
-      `ALTER TABLE users
-       ADD COLUMN password_reset_expires DATETIME NULL`,
-    );
-  }
 }
 
 router.post("/register", async (req, res) => {

@@ -8,6 +8,7 @@ const {
   STOCK_ITEM,
   ensureProductsItemTypeSchema,
   getProductItemTypeExpression,
+  assertProductsMatchItemType,
 } = require("../utils/productItemType");
 const {
   requireCookViewAccess,
@@ -17,6 +18,15 @@ const {
   requireInventoryManagerAccess,
   requireKitchenInventoryAccess,
 } = require("../middleware/staffAccess");
+const { getFinalizedSaleSql } = require("../services/financialStatus");
+const { assertTableColumns } = require("../services/schemaAssertions");
+const {
+  getVisibleInventoryAlertSeverities,
+  listInventoryNotifications,
+  markAllInventoryNotificationsRead,
+  markInventoryNotificationRead,
+  reconcileInventoryAlerts,
+} = require("../services/inventoryNotificationService");
 
 function normalizeBooleanFlag(value, fallback = true) {
   if (value === undefined || value === null || value === "") return fallback;
@@ -111,58 +121,21 @@ function toMySqlDateTime(value) {
   return d.toISOString().slice(0, 19).replace("T", " ");
 }
 
-async function addColumnIfMissing(conn, tableName, columnName, definition) {
-  const [rows] = await conn.query(`SHOW COLUMNS FROM \`${tableName}\` LIKE ?`, [
-    columnName,
-  ]);
-  if (rows.length > 0) return;
-  await conn.query(
-    `ALTER TABLE \`${tableName}\` ADD COLUMN \`${columnName}\` ${definition}`,
-  );
-}
-
 async function ensureDailyUsageTables(conn = db) {
-  await conn.query(`
-    CREATE TABLE IF NOT EXISTS daily_usage_reports (
-      report_id INT PRIMARY KEY AUTO_INCREMENT,
-      report_date DATE NOT NULL,
-      status ENUM('pending','finalized') NOT NULL DEFAULT 'pending',
-      created_by INT NULL,
-      finalized_by INT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      finalized_at DATETIME NULL,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      UNIQUE KEY uniq_daily_usage_report_date (report_date)
-    )
-  `);
-
-  await conn.query(`
-    CREATE TABLE IF NOT EXISTS daily_usage_report_items (
-      usage_item_id INT PRIMARY KEY AUTO_INCREMENT,
-      report_id INT NOT NULL,
-      product_id INT NOT NULL,
-      product_name VARCHAR(255) NOT NULL,
-      category VARCHAR(120) DEFAULT '',
-      unit VARCHAR(50) DEFAULT 'unit',
-      withdrawn_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
-      used_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
-      wasted_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
-      returned_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
-      notes TEXT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      UNIQUE KEY uniq_daily_usage_report_product (report_id, product_id),
-      CONSTRAINT fk_daily_usage_items_report
-        FOREIGN KEY (report_id) REFERENCES daily_usage_reports(report_id)
-        ON DELETE CASCADE
-    )
-  `);
-
-  await addColumnIfMissing(
+  await assertTableColumns(
     conn,
-    "daily_usage_reports",
-    "updated_at",
-    "TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP",
+    {
+      daily_usage_reports: [
+        "report_id", "report_date", "status", "created_by", "finalized_by",
+        "created_at", "finalized_at", "updated_at",
+      ],
+      daily_usage_report_items: [
+        "usage_item_id", "report_id", "product_id", "product_name",
+        "category", "unit", "withdrawn_qty", "used_qty", "wasted_qty",
+        "returned_qty", "notes", "created_at", "updated_at",
+      ],
+    },
+    "Daily-usage schema",
   );
 }
 
@@ -477,13 +450,19 @@ router.get("/", requireCookViewAccess, async (req, res) => {
          GROUP BY Product_ID
        ) sa ON sa.Product_ID = i.Product_ID
        LEFT JOIN (
-         SELECT oi.Product_ID,
-           SUM(oi.Quantity) AS soldToday
-         FROM order_item oi
-         JOIN orders o ON o.Order_ID = oi.Order_ID
-         WHERE DATE(o.Order_Date) = CURDATE()
-           AND LOWER(COALESCE(o.Status, '')) NOT IN ('cancelled')
-         GROUP BY oi.Product_ID
+         SELECT sold.Product_ID, SUM(sold.Quantity) AS soldToday
+         FROM (
+           SELECT
+             COALESCE(mi.product_id, oi.Product_ID) AS Product_ID,
+             oi.Quantity * COALESCE(mi.quantity_required, 1) AS Quantity
+           FROM order_item oi
+           JOIN orders o ON o.Order_ID = oi.Order_ID
+           LEFT JOIN menu_item_ingredients mi
+             ON mi.menu_product_id = oi.Product_ID
+           WHERE DATE(o.Order_Date) = CURDATE()
+             AND ${getFinalizedSaleSql("o")}
+         ) sold
+         GROUP BY sold.Product_ID
        ) ot ON ot.Product_ID = i.Product_ID
        WHERE ${productItemTypeExpr} = ?
        ORDER BY i.Inventory_ID ASC`,
@@ -512,8 +491,12 @@ const requireInventoryAlertAccess = requireRoleAccess(
   "Inventory alert access denied",
 );
 
-router.get("/alerts", requireInventoryAlertAccess, async (_req, res) => {
+router.get("/alerts", requireInventoryAlertAccess, async (req, res) => {
   try {
+    const userId = Number(req.user?.userId);
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      return res.status(401).json({ message: "Invalid authenticated user" });
+    }
     const hasItemTypeColumn = true;
     const productItemTypeExpr = getProductItemTypeExpression(
       hasItemTypeColumn,
@@ -564,25 +547,37 @@ router.get("/alerts", requireInventoryAlertAccess, async (_req, res) => {
         thresholds,
       };
     });
+    await reconcileInventoryAlerts(db, items);
 
-    const summary = items.reduce(
+    const visibleSeverities = new Set(
+      getVisibleInventoryAlertSeverities(req.user?.role),
+    );
+    const visibleItems = items.filter(
+      (item) =>
+        item.severity !== "normal" && visibleSeverities.has(item.severity),
+    );
+    const { notifications, unreadCount } = await listInventoryNotifications(db, {
+      userId,
+      role: req.user?.role,
+    });
+
+    const summary = visibleItems.reduce(
       (acc, item) => {
-        acc.totalItems += 1;
         if (item.severity === "out") acc.outOfStock += 1;
         else if (item.severity === "critical") acc.critical += 1;
         else if (item.severity === "low") acc.low += 1;
-        else acc.normal += 1;
         return acc;
       },
       {
-        totalItems: 0,
-        normal: 0,
+        totalItems: items.length,
+        normal: items.filter((item) => item.severity === "normal").length,
         low: 0,
         critical: 0,
         outOfStock: 0,
       },
     );
 
+    res.set("Cache-Control", "private, no-store");
     res.json({
       generatedAt: new Date().toISOString(),
       defaults,
@@ -590,13 +585,65 @@ router.get("/alerts", requireInventoryAlertAccess, async (_req, res) => {
         ...summary,
         attention: summary.low + summary.critical + summary.outOfStock,
       },
-      items: items.filter((item) => item.severity !== "normal"),
+      items: visibleItems,
+      notifications,
+      unreadCount,
     });
   } catch (err) {
     console.error("GET /inventory/alerts error:", err);
-    res.status(500).json({ message: "DB error", error: err.message });
+    res.status(500).json({ message: "Unable to load inventory alerts" });
   }
 });
+
+router.post(
+  "/alerts/read-all",
+  requireInventoryAlertAccess,
+  async (req, res) => {
+    try {
+      const userId = Number(req.user?.userId);
+      if (!Number.isSafeInteger(userId) || userId <= 0) {
+        return res.status(401).json({ message: "Invalid authenticated user" });
+      }
+      const markedCount = await markAllInventoryNotificationsRead(db, {
+        userId,
+        role: req.user?.role,
+      });
+      return res.json({ message: "Notifications marked as read", markedCount });
+    } catch (err) {
+      console.error("POST /inventory/alerts/read-all error:", err);
+      return res.status(500).json({ message: "Unable to mark notifications as read" });
+    }
+  },
+);
+
+router.post(
+  "/alerts/:alertId/read",
+  requireInventoryAlertAccess,
+  async (req, res) => {
+    try {
+      const userId = Number(req.user?.userId);
+      const alertId = Number(req.params.alertId);
+      if (!Number.isSafeInteger(userId) || userId <= 0) {
+        return res.status(401).json({ message: "Invalid authenticated user" });
+      }
+      if (!Number.isSafeInteger(alertId) || alertId <= 0) {
+        return res.status(400).json({ message: "Invalid alert id" });
+      }
+      const marked = await markInventoryNotificationRead(db, {
+        alertId,
+        userId,
+        role: req.user?.role,
+      });
+      if (!marked) {
+        return res.status(404).json({ message: "Notification not found" });
+      }
+      return res.json({ message: "Notification marked as read", alertId });
+    } catch (err) {
+      console.error("POST /inventory/alerts/:alertId/read error:", err);
+      return res.status(500).json({ message: "Unable to mark notification as read" });
+    }
+  },
+);
 
 // PUT /api/inventory/:inventory_id
 router.put("/:inventory_id", requireInventoryManagerAccess, async (req, res) => {
@@ -798,8 +845,9 @@ router.put("/:inventory_id", requireInventoryManagerAccess, async (req, res) => 
 
 // POST /api/inventory/batches
 router.post("/batches", requireInventoryManagerAccess, async (req, res) => {
+  let conn;
   try {
-    const { productId, productName, quantity, unit, expiresAt } = req.body;
+    const { productId, quantity, unit, expiresAt } = req.body;
     const qty = Number(quantity) || 0;
 
     if (!Number.isFinite(Number(productId)) || qty <= 0) {
@@ -808,62 +856,51 @@ router.post("/batches", requireInventoryManagerAccess, async (req, res) => {
         .json({ message: "productId and quantity are required" });
     }
 
-    const [menuRows] = await db.query(
-      "SELECT Product_ID FROM Menu WHERE Product_ID = ?",
+    conn = await db.getConnection();
+    await conn.beginTransaction();
+    await assertProductsMatchItemType(conn, [productId], STOCK_ITEM, "Batch");
+
+    const [mirrorRows] = await conn.query(
+      `SELECT p.id, m.Product_ID AS menu_id, i.Inventory_ID AS inventory_id
+       FROM products p
+       LEFT JOIN Menu m ON m.Product_ID = p.id
+       LEFT JOIN Inventory i ON i.Product_ID = p.id
+       WHERE p.id = ?
+       LIMIT 1`,
       [productId],
     );
-    if (menuRows.length === 0) {
-      const [prodRows] = await db.query(
-        "SELECT name, price, quantity FROM products WHERE id = ?",
-        [productId],
-      );
-      if (prodRows.length > 0) {
-        const p = prodRows[0];
-        await db.query(
-          "INSERT INTO Menu (Product_ID, Product_Name, Price, Stock) VALUES (?,?,?,?)",
-          [productId, p.name, p.price || 0, p.quantity || 0],
-        );
-      } else {
-        const safeName = String(productName || `Product ${productId}`);
-        await db.query(
-          "INSERT INTO Menu (Product_ID, Product_Name, Price, Stock) VALUES (?,?,?,?)",
-          [productId, safeName, 0, 0],
-        );
-      }
+    if (!mirrorRows[0]?.menu_id || !mirrorRows[0]?.inventory_id) {
+      await conn.rollback();
+      return res.status(409).json({
+        message:
+          "Product inventory mirrors are incomplete; run the approved repair migration before receiving stock.",
+      });
     }
 
     const formattedExpiresAt = toMySqlDateTime(expiresAt);
 
-    const [insertResult] = await db.query(
+    const [insertResult] = await conn.query(
       `INSERT INTO batches
          (product_id, quantity, remaining_qty, unit, received_date, expiry_date, status, returned_qty, notes)
        VALUES (?, ?, ?, ?, CURDATE(), ?, 'active', 0, NULL)`,
       [productId, qty, qty, unit || "piece", formattedExpiresAt],
     );
 
-    await db.query(
-      `INSERT INTO Inventory (Product_ID, Quantity, Stock, Item_Purchased)
-       SELECT m.Product_ID, 0, 0, m.Product_Name
-       FROM Menu m
-       WHERE m.Product_ID = ?
-         AND NOT EXISTS (SELECT 1 FROM Inventory i WHERE i.Product_ID = m.Product_ID)`,
-      [productId],
-    );
-
     // Delivery — only mainStock increases, dailyWithdrawn stays unchanged
-    await db.query(
+    await conn.query(
       "UPDATE Inventory SET Stock = COALESCE(Stock, 0) + ?, Last_Update = NOW() WHERE Product_ID = ?",
       [qty, productId],
     );
-    await db.query(
+    await conn.query(
       "UPDATE Menu SET Stock = COALESCE(Stock, 0) + ? WHERE Product_ID = ?",
       [qty, productId],
     );
-    await db.query(
+    await conn.query(
       "UPDATE products SET quantity = COALESCE(quantity, 0) + ? WHERE id = ?",
       [qty, productId],
     );
 
+    await conn.commit();
     res.status(201).json({
       batch_id: insertResult.insertId,
       product_id: productId,
@@ -874,8 +911,11 @@ router.post("/batches", requireInventoryManagerAccess, async (req, res) => {
       status: "active",
     });
   } catch (err) {
+    if (conn) await conn.rollback();
     console.error("Error adding batch:", err);
     res.status(500).json({ message: "DB error", error: err.message });
+  } finally {
+    if (conn) conn.release();
   }
 });
 
@@ -904,7 +944,7 @@ router.post("/batches/:batchId/return", requireInventoryManagerAccess, async (re
       (Number(batch.remaining_qty) || 0) - qtyToReturn,
       0,
     );
-    const newStatus = newQty === 0 ? "returned" : "partial";
+    const newStatus = newQty === 0 ? "returned" : "active";
 
     await db.query(
       "UPDATE batches SET status = ?, remaining_qty = ?, returned_qty = COALESCE(returned_qty, 0) + ? WHERE batch_id = ?",

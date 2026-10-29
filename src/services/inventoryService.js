@@ -814,6 +814,7 @@ async function restoreStockForRefundedOrder(
     const [orderRows] = await conn.query(
       `SELECT
          Order_ID AS orderId,
+         Status AS orderStatus,
          payment_status AS paymentStatus,
          COALESCE(stock_deducted, 0) AS stockDeducted
        FROM orders
@@ -825,6 +826,12 @@ async function restoreStockForRefundedOrder(
 
     if (!orderRows.length) {
       throw new Error("Order not found for stock restoration");
+    }
+
+    if (String(orderRows[0].orderStatus || "").trim().toLowerCase() !== "refunded") {
+      const error = new Error("Inventory can only be restored for a successfully refunded order");
+      error.statusCode = 409;
+      throw error;
     }
 
     if (Number(orderRows[0].stockDeducted) !== 1) {

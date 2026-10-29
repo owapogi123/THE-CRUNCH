@@ -2,8 +2,7 @@ const jwt = require("jsonwebtoken");
 const { canAccessRoles } = require("./roleAccess");
 const { getJwtSecret } = require("../services/jwtConfig");
 
-// `cook` is retained only so existing accounts continue to work during the
-// transition away from a dedicated cook role.
+// Cook is a first-class staff role with access limited to kitchen workflows.
 const COOK_VIEW_ROLES = Object.freeze([
   "administrator",
   "cashier",

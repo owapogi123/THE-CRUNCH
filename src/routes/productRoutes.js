@@ -1020,6 +1020,7 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
 
 // DELETE product
 router.delete("/:id", requireInventoryManagerAccess, async (req, res) => {
+    let conn;
     try {
         await ensureProductSchema(db);
         const productId = Number(req.params.id);
@@ -1027,38 +1028,62 @@ router.delete("/:id", requireInventoryManagerAccess, async (req, res) => {
             return res.status(400).json({ message: "Invalid product ID" });
         }
 
-        // Temporarily disable foreign key checks to allow cascading deletes
-        await db.query("SET FOREIGN_KEY_CHECKS=0");
+        conn = await db.getConnection();
+        await conn.beginTransaction();
 
-        try {
-            await db.query(
-                "DELETE FROM menu_item_ingredients WHERE menu_product_id = ? OR product_id = ?",
-                [productId, productId],
-            );
-
-            // Delete batches associated with this product
-            await db.query("DELETE FROM batches WHERE product_id = ?", [productId]);
-
-            // Delete inventory entries
-            await db.query("DELETE FROM Inventory WHERE Product_ID = ?", [productId]);
-
-            // Delete stock status entries
-            await db.query("DELETE FROM Stock_Status WHERE Product_ID = ?", [productId]);
-
-            // Delete menu entries
-            await db.query("DELETE FROM Menu WHERE Product_ID = ?", [productId]);
-
-            // Delete from products table
-            await db.query("DELETE FROM products WHERE id = ?", [productId]);
-
-            res.json({ message: "Product deleted successfully" });
-        } finally {
-            // Re-enable foreign key checks
-            await db.query("SET FOREIGN_KEY_CHECKS=1");
+        const [[history]] = await conn.query(
+            `SELECT
+               EXISTS(SELECT 1 FROM batches WHERE product_id = ? LIMIT 1) AS has_storage_batches,
+               EXISTS(SELECT 1 FROM kitchen_batches WHERE product_id = ? LIMIT 1) AS has_kitchen_batches,
+               EXISTS(SELECT 1 FROM order_item WHERE Product_ID = ? LIMIT 1) AS has_order_items,
+               EXISTS(SELECT 1 FROM purchase_order_items WHERE product_id = ? LIMIT 1) AS has_purchase_order_items,
+               EXISTS(SELECT 1 FROM Stock_Status WHERE Product_ID = ? LIMIT 1) AS has_stock_history,
+               EXISTS(SELECT 1 FROM receipt_snapshot_items WHERE original_product_id = ? LIMIT 1) AS has_receipt_history,
+               EXISTS(SELECT 1 FROM daily_usage_report_items WHERE product_id = ? LIMIT 1) AS has_daily_usage,
+               EXISTS(SELECT 1 FROM kitchen_usage_items WHERE product_id = ? LIMIT 1) AS has_kitchen_usage,
+               EXISTS(SELECT 1 FROM feedback WHERE product_id = ? LIMIT 1) AS has_feedback,
+               EXISTS(SELECT 1 FROM Suppliers WHERE Product_ID = ? LIMIT 1) AS has_supplier_link,
+               EXISTS(
+                   SELECT 1 FROM menu_item_ingredients
+                   WHERE menu_product_id = ? OR product_id = ?
+                   LIMIT 1
+               ) AS has_ingredient_link`,
+            Array(12).fill(productId),
+        );
+        if (Object.values(history || {}).some((value) => Number(value) !== 0)) {
+            await conn.rollback();
+            return res.status(409).json({
+                message: "Products with historical records or active relationships cannot be hard deleted.",
+            });
         }
+
+        await conn.query(
+            "DELETE FROM menu_item_ingredients WHERE menu_product_id = ? OR product_id = ?",
+            [productId, productId],
+        );
+        await conn.query("DELETE FROM Inventory WHERE Product_ID = ?", [productId]);
+        await conn.query("DELETE FROM Stock_Status WHERE Product_ID = ?", [productId]);
+        await conn.query("DELETE FROM Menu WHERE Product_ID = ?", [productId]);
+        const [result] = await conn.query("DELETE FROM products WHERE id = ?", [productId]);
+
+        if (result.affectedRows === 0) {
+            await conn.rollback();
+            return res.status(404).json({ message: "Product not found" });
+        }
+
+        await conn.commit();
+        res.json({ message: "Product deleted successfully" });
     } catch (err) {
+        if (conn) await conn.rollback();
+        if (err && err.code === "ER_ROW_IS_REFERENCED_2") {
+            return res.status(409).json({
+                message: "Product cannot be deleted because historical records reference it.",
+            });
+        }
         console.error("DELETE /products/:id error:", err);
         res.status(500).json({ message: 'DB error', error: err.message });
+    } finally {
+        if (conn) conn.release();
     }
 });
 

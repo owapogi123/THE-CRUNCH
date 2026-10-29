@@ -4,80 +4,23 @@ const {
   requireInventoryManagerAccess,
   requireKitchenInventoryAccess,
 } = require("../middleware/staffAccess");
-
-async function addColumnIfMissing(conn, tableName, columnName, definition) {
-  const [rows] = await conn.query(`SHOW COLUMNS FROM \`${tableName}\` LIKE ?`, [
-    columnName,
-  ]);
-  if (rows.length > 0) return;
-  await conn.query(
-    `ALTER TABLE \`${tableName}\` ADD COLUMN \`${columnName}\` ${definition}`,
-  );
-}
+const { assertTableColumns } = require("../services/schemaAssertions");
 
 async function ensureKitchenUsageTables(conn = db) {
-  await conn.query(`
-    CREATE TABLE IF NOT EXISTS kitchen_usage_reports (
-      report_id INT PRIMARY KEY AUTO_INCREMENT,
-      report_date DATE NOT NULL,
-      status ENUM('draft','submitted','finalized') NOT NULL DEFAULT 'draft',
-      prepared_by INT NULL,
-      finalized_by INT NULL,
-      finalized_at DATETIME NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      UNIQUE KEY uniq_report_date (report_date)
-    )
-  `);
-
-  await conn.query(`
-    CREATE TABLE IF NOT EXISTS kitchen_usage_items (
-      usage_item_id INT PRIMARY KEY AUTO_INCREMENT,
-      report_id INT NOT NULL,
-      product_id INT NULL,
-      product_name VARCHAR(255) NOT NULL DEFAULT '',
-      category VARCHAR(255) NOT NULL DEFAULT 'RAW MATERIAL',
-      unit VARCHAR(50) NOT NULL DEFAULT 'unit',
-      withdrawn_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
-      used_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
-      spoilage_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
-      note TEXT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      UNIQUE KEY uniq_report_product (report_id, product_id),
-      CONSTRAINT fk_kitchen_usage_report
-        FOREIGN KEY (report_id) REFERENCES kitchen_usage_reports(report_id)
-        ON DELETE CASCADE
-    )
-  `);
-
-  await conn.query(`
-    ALTER TABLE kitchen_usage_items
-    MODIFY COLUMN product_id INT NULL
-  `);
-  await addColumnIfMissing(
+  await assertTableColumns(
     conn,
-    "kitchen_usage_items",
-    "product_name",
-    "VARCHAR(255) NOT NULL DEFAULT ''",
-  );
-  await addColumnIfMissing(
-    conn,
-    "kitchen_usage_items",
-    "category",
-    "VARCHAR(255) NOT NULL DEFAULT 'RAW MATERIAL'",
-  );
-  await addColumnIfMissing(
-    conn,
-    "kitchen_usage_items",
-    "unit",
-    "VARCHAR(50) NOT NULL DEFAULT 'unit'",
-  );
-  await addColumnIfMissing(
-    conn,
-    "kitchen_usage_items",
-    "withdrawn_qty",
-    "DECIMAL(10,2) NOT NULL DEFAULT 0",
+    {
+      kitchen_usage_reports: [
+        "report_id", "report_date", "status", "prepared_by", "finalized_by",
+        "finalized_at", "created_at", "updated_at",
+      ],
+      kitchen_usage_items: [
+        "usage_item_id", "report_id", "product_id", "product_name",
+        "category", "unit", "withdrawn_qty", "used_qty", "spoilage_qty",
+        "note", "created_at", "updated_at",
+      ],
+    },
+    "Kitchen-usage schema",
   );
 }
 

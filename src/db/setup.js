@@ -7,7 +7,9 @@ const {
   logDatabaseDiagnostics,
   validateDatabaseConfig,
 } = require("../config/databaseEnvironment");
-const { ensureProductsItemTypeSchema } = require("../utils/productItemType");
+const {
+  initializeProductsItemTypeSchema,
+} = require("../utils/productItemType");
 const {
   initializeStockManagerSchema,
 } = require("../services/stockManagerSchemaService");
@@ -76,7 +78,7 @@ async function setup(options = {}) {
   const dbConfig = getDatabaseConfig();
   try {
     logDatabaseDiagnostics(log, dbConfig);
-    validateDatabaseConfig(dbConfig);
+    validateDatabaseConfig(dbConfig, { requireExplicit: true });
     await logDatabaseDnsDiagnostics(log, dbConfig);
     const sslOptions = getDatabaseSslOptions(dbConfig);
 
@@ -106,6 +108,10 @@ async function setup(options = {}) {
       "DROP TABLE IF EXISTS purchase_orders;",
       "DROP TABLE IF EXISTS po_counter;",
       "DROP TABLE IF EXISTS feedback;",
+      "DROP TABLE IF EXISTS staff_notification_reads;",
+      "DROP TABLE IF EXISTS staff_notifications;",
+      "DROP TABLE IF EXISTS inventory_alert_reads;",
+      "DROP TABLE IF EXISTS inventory_alerts;",
       "DROP TABLE IF EXISTS pending_signups;",
       "DROP TABLE IF EXISTS menu_item_ingredients;",
       "DROP TABLE IF EXISTS Order_Tracking;",
@@ -253,9 +259,79 @@ CREATE TABLE IF NOT EXISTS Inventory (
     FOREIGN KEY (Product_ID) REFERENCES Menu(Product_ID)
 );
 
+CREATE TABLE IF NOT EXISTS inventory_alerts (
+    alert_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    inventory_id INT NOT NULL,
+    product_id INT NULL,
+    product_name VARCHAR(150) NOT NULL,
+    category VARCHAR(150) NOT NULL DEFAULT 'Uncategorized',
+    unit VARCHAR(50) NOT NULL DEFAULT 'piece',
+    stock_value DECIMAL(14,4) NOT NULL DEFAULT 0,
+    severity ENUM('low','critical','out') NOT NULL,
+    low_threshold DECIMAL(14,4) NOT NULL DEFAULT 0,
+    critical_threshold DECIMAL(14,4) NOT NULL DEFAULT 0,
+    active_episode TINYINT(1) NULL DEFAULT 1,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_observed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    resolved_at TIMESTAMP NULL,
+    resolution_reason ENUM('recovered','severity_changed','inventory_removed') NULL,
+    UNIQUE KEY uq_inventory_alerts_active (inventory_id, active_episode),
+    KEY idx_inventory_alerts_history (inventory_id, created_at),
+    KEY idx_inventory_alerts_resolved (resolved_at, created_at)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS inventory_alert_reads (
+    alert_id BIGINT UNSIGNED NOT NULL,
+    user_id INT NOT NULL,
+    read_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (alert_id, user_id),
+    KEY idx_inventory_alert_reads_user (user_id, read_at),
+    CONSTRAINT fk_inventory_alert_reads_alert
+      FOREIGN KEY (alert_id) REFERENCES inventory_alerts(alert_id)
+      ON DELETE CASCADE,
+    CONSTRAINT fk_inventory_alert_reads_user
+      FOREIGN KEY (user_id) REFERENCES users(id)
+      ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS staff_notifications (
+    notification_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    dedupe_key VARCHAR(190) NOT NULL,
+    category ENUM('refund_request','purchase_order') NOT NULL,
+    event_type VARCHAR(80) NOT NULL,
+    entity_id VARCHAR(64) NOT NULL,
+    audience ENUM('administrator','inventory_manager','administrator,inventory_manager') NOT NULL,
+    actor_user_id INT NULL,
+    title VARCHAR(190) NOT NULL,
+    message VARCHAR(500) NOT NULL DEFAULT '',
+    status VARCHAR(50) NOT NULL DEFAULT '',
+    metadata_json JSON NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    resolved_at TIMESTAMP NULL,
+    PRIMARY KEY (notification_id),
+    UNIQUE KEY uq_staff_notifications_dedupe (dedupe_key),
+    KEY idx_staff_notifications_audience_created (audience, created_at),
+    KEY idx_staff_notifications_category_entity (category, entity_id)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS staff_notification_reads (
+    notification_id BIGINT UNSIGNED NOT NULL,
+    user_id INT NOT NULL,
+    read_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (notification_id, user_id),
+    KEY idx_staff_notification_reads_user (user_id, read_at),
+    CONSTRAINT fk_staff_notification_reads_notification
+      FOREIGN KEY (notification_id) REFERENCES staff_notifications(notification_id)
+      ON DELETE CASCADE,
+    CONSTRAINT fk_staff_notification_reads_user
+      FOREIGN KEY (user_id) REFERENCES users(id)
+      ON DELETE CASCADE
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS batches (
     batch_id INT PRIMARY KEY AUTO_INCREMENT,
-    product_id INT,
+    product_id INT NOT NULL,
     delivery_batch_id VARCHAR(50),
     quantity DECIMAL(10,2) NOT NULL,
     remaining_qty DECIMAL(10,2) NOT NULL DEFAULT 0,
@@ -270,7 +346,10 @@ CREATE TABLE IF NOT EXISTS batches (
     notes VARCHAR(255) NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (product_id) REFERENCES Menu(Product_ID)
+    INDEX idx_batches_product_id (product_id),
+    CONSTRAINT fk_batches_product
+      FOREIGN KEY (product_id) REFERENCES products(id)
+      ON UPDATE RESTRICT ON DELETE RESTRICT
 );
 
 CREATE TABLE IF NOT EXISTS kitchen_batches (
@@ -285,7 +364,15 @@ CREATE TABLE IF NOT EXISTS kitchen_batches (
     withdrawn_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     status ENUM('active','reconciled') DEFAULT 'active',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_kitchen_batches_storage_batch_id (storage_batch_id),
+    INDEX idx_kitchen_batches_product_id (product_id),
+    CONSTRAINT fk_kitchen_batches_storage_batch
+      FOREIGN KEY (storage_batch_id) REFERENCES batches(batch_id)
+      ON UPDATE RESTRICT ON DELETE RESTRICT,
+    CONSTRAINT fk_kitchen_batches_product
+      FOREIGN KEY (product_id) REFERENCES products(id)
+      ON UPDATE RESTRICT ON DELETE RESTRICT
 );
 
 CREATE TABLE IF NOT EXISTS Suppliers (
@@ -421,6 +508,7 @@ CREATE TABLE IF NOT EXISTS refund_requests (
     requester_user_id INT NOT NULL,
     requester_name_snapshot VARCHAR(100) NOT NULL,
     requester_role_snapshot VARCHAR(50) NOT NULL DEFAULT 'cashier',
+    reason_snapshot VARCHAR(500) NOT NULL DEFAULT 'Cashier requested a refund review.',
     status ENUM('Pending','Ignored','Actioned') NOT NULL DEFAULT 'Pending',
     requested_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     reviewed_by_user_id INT NULL,
@@ -493,13 +581,15 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
 CREATE TABLE IF NOT EXISTS purchase_order_items (
     item_id INT PRIMARY KEY AUTO_INCREMENT,
     po_id VARCHAR(12) NOT NULL,
+    product_id INT NULL,
     name VARCHAR(255) NOT NULL,
     category VARCHAR(100) DEFAULT '',
     unit VARCHAR(50) DEFAULT '',
     quantity DECIMAL(10,2) NOT NULL DEFAULT 0,
     unit_cost DECIMAL(10,2) NOT NULL DEFAULT 0,
     expected_expiry_date DATE DEFAULT NULL,
-    FOREIGN KEY (po_id) REFERENCES purchase_orders(po_id) ON DELETE CASCADE
+    FOREIGN KEY (po_id) REFERENCES purchase_orders(po_id) ON DELETE CASCADE,
+    INDEX idx_purchase_order_items_product_id (product_id)
 );
 
 CREATE TABLE IF NOT EXISTS kitchen_usage_reports (
@@ -636,6 +726,19 @@ CREATE TABLE IF NOT EXISTS role_permissions (
 
     await connection.query(createStatements);
     log.log("Tables created.");
+
+    await ensureColumn(
+      connection,
+      "purchase_order_items",
+      "product_id",
+      "`product_id` INT NULL AFTER `po_id`",
+    );
+    await ensureIndex(
+      connection,
+      "purchase_order_items",
+      "idx_purchase_order_items_product_id",
+      "INDEX `idx_purchase_order_items_product_id` (`product_id`)",
+    );
 
     const [inventoryCategoryColumns] = await connection.query(
       `SHOW COLUMNS FROM inventory_categories`,
@@ -948,7 +1051,7 @@ END
       "promo_label",
       "`promo_label` VARCHAR(100) NULL",
     );
-    await ensureProductsItemTypeSchema(connection);
+    await initializeProductsItemTypeSchema(connection);
     await ensureColumn(
       connection,
       "Menu",

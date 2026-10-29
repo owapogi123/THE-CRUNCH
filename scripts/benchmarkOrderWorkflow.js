@@ -356,7 +356,7 @@ async function main() {
     onEvent: (event) => workflowEvents.push(event),
   });
 
-  async function measure(name, requests) {
+  async function measure(name, requests, expectedStatus = 200) {
     currentStatements = [];
     const startedAt = performance.now();
     const responses = [];
@@ -367,7 +367,7 @@ async function main() {
     const statements = currentStatements;
     currentStatements = null;
     for (const response of responses) {
-      if (response.status !== 200) {
+      if (response.status !== expectedStatus) {
         throw new Error(`${name} failed: ${response.status} ${JSON.stringify(response.body)}`);
       }
     }
@@ -408,13 +408,13 @@ async function main() {
     ]));
     results.push(await measure("Refund after Start", [
       { orderId: orderIds.preparedRefund, body: { status: "Refunded" } },
-    ]));
+    ], 409));
     results.push(await measure("Refund from Ready", [
       { orderId: orderIds.readyRefund, body: { status: "Refunded" } },
-    ]));
+    ], 409));
     results.push(await measure("Refund from Completed", [
       { orderId: orderIds.completedRefund, body: { status: "Refunded" } },
-    ]));
+    ], 409));
     results.push(await measure("Cancel queued order", [
       { orderId: orderIds.cancellation, body: { status: "Cancelled" } },
     ]));
@@ -448,9 +448,9 @@ async function main() {
       ],
     );
     assert.equal(results[3].responseBodies[0].inventoryRestored, true);
-    assert.equal(results[4].responseBodies[0].inventoryRestored, false);
-    assert.equal(results[5].responseBodies[0].inventoryRestored, false);
-    assert.equal(results[6].responseBodies[0].inventoryRestored, false);
+    assert.equal(results[4].responseBodies[0].reason, "preparation_started");
+    assert.equal(results[5].responseBodies[0].reason, "preparation_started");
+    assert.equal(results[6].responseBodies[0].reason, "preparation_started");
     assert.equal(Number(refundState.inventoryStock), 10.7);
     assert.equal(Number(refundState.menuStock), 10.7);
     assert.equal(Number(refundState.productStock), 10.7);

@@ -11,15 +11,19 @@ const state = {
   commits: 0,
   rollbacks: 0,
   events: [],
+  notifications: [],
 };
 
 function resetState() {
   state.order = {
     id: 55,
     cashierId: 10,
-    status: "Completed",
+    status: "Queued",
     orderNumberValue: 1,
     paymentStatus: "Paid",
+    prepStartedAt: null,
+    startedAt: null,
+    readyAt: null,
     requesterName: "Cashier Ten",
     requesterRole: "cashier",
   };
@@ -29,6 +33,7 @@ function resetState() {
   state.commits = 0;
   state.rollbacks = 0;
   state.events = [];
+  state.notifications = [];
 }
 
 function mockModule(request, exports) {
@@ -52,6 +57,14 @@ const connection = {
     if (normalized.startsWith("INSERT INTO refund_requests")) {
       state.writes.push({ sql: normalized, params });
       return [{ insertId: 901, affectedRows: 1 }];
+    }
+    if (normalized.startsWith("INSERT INTO staff_notifications")) {
+      state.notifications.push({ sql: normalized, params });
+      return [{ insertId: 501, affectedRows: 1 }];
+    }
+    if (normalized.startsWith("UPDATE staff_notifications")) {
+      state.notifications.push({ sql: normalized, params });
+      return [{ affectedRows: 1 }];
     }
     if (normalized.startsWith("UPDATE refund_requests")) {
       state.writes.push({ sql: normalized, params });
@@ -133,17 +146,48 @@ async function invoke(handlers, { role, userId, body = {}, params = {}, query = 
       cashierId: 999,
       role: "administrator",
       status: "Actioned",
+      reason: "Customer reported a duplicate charge",
     },
   });
   assert.equal(created.statusCode, 201);
   assert.equal(created.body.request.status, "Pending");
-  assert.deepEqual(state.writes[0].params, [55, "ORD-055", 10, "Cashier Ten", "cashier"]);
+  assert.deepEqual(state.writes[0].params, [
+    55,
+    "ORD-055",
+    10,
+    "Cashier Ten",
+    "cashier",
+    "Customer reported a duplicate charge",
+  ]);
+  assert.equal(created.body.request.reason, "Customer reported a duplicate charge");
+  assert.equal(state.notifications.length, 1);
+  assert.equal(state.notifications[0].params[0], "refund_request:order:55");
+  assert.equal(state.notifications[0].params[4], "administrator");
   assert.equal(state.writes.some((write) => /UPDATE (orders|payments)/i.test(write.sql)), false);
   assert.equal(state.commits, 1);
   assert.equal(state.events.length, 1);
 
+  for (const order of [
+    { status: "Queued", paymentStatus: "Pending Payment" },
+    { status: "Preparing", paymentStatus: "Paid", prepStartedAt: new Date() },
+    { status: "Ready for Pickup", paymentStatus: "Paid", readyAt: new Date() },
+    { status: "Completed", paymentStatus: "Paid" },
+    { status: "Refunded", paymentStatus: "Paid" },
+    { status: "Cancelled", paymentStatus: "Paid" },
+  ]) {
+    resetState();
+    Object.assign(state.order, order);
+    const rejected = await invoke(createHandlers, {
+      role: "cashier",
+      userId: 10,
+      body: { orderId: 55 },
+    });
+    assert.equal(rejected.statusCode, 409, `${order.status}/${order.paymentStatus}`);
+    assert.equal(state.writes.length, 0);
+  }
+
   resetState();
-  state.existingRequest = { id: 901, status: "Pending" };
+  state.existingRequest = { id: 901, orderId: 55, status: "Pending" };
   const duplicate = await invoke(createHandlers, {
     role: "cashier",
     userId: 10,
@@ -180,7 +224,7 @@ async function invoke(handlers, { role, userId, body = {}, params = {}, query = 
   assert.equal(state.connectionCount, 0);
 
   resetState();
-  state.existingRequest = { id: 901, status: "Pending" };
+  state.existingRequest = { id: 901, orderId: 55, status: "Pending" };
   const ignored = await invoke(ignoreHandlers, {
     role: "administrator",
     userId: 30,
@@ -190,6 +234,9 @@ async function invoke(handlers, { role, userId, body = {}, params = {}, query = 
   assert.equal(ignored.body.status, "Ignored");
   assert.match(state.writes[0].sql, /^UPDATE refund_requests/);
   assert.deepEqual(state.writes[0].params, [30, 901]);
+  assert.equal(state.notifications.length, 1);
+  assert.match(state.notifications[0].sql, /^UPDATE staff_notifications/);
+  assert.deepEqual(state.notifications[0].params.slice(-2), ["refund_request", "55"]);
   assert.equal(state.writes.some((write) => /UPDATE (orders|payments)/i.test(write.sql)), false);
 
   console.log("Refund request authorization and mutation tests passed");

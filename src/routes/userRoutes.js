@@ -3,7 +3,7 @@ const router = express.Router();
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const db = require("../config/db");
-const { isSuperuserRole } = require("../middleware/roleAccess");
+const { isSuperuserRole, normalizeRole } = require("../middleware/roleAccess");
 const { getJwtSecret } = require("../services/jwtConfig");
 
 const STAFF_FIELD_MAX_LENGTH = 100;
@@ -12,12 +12,12 @@ const STAFF_PASSWORD_MIN_LENGTH = 8;
 const ASSIGNABLE_STAFF_ROLES = [
   "administrator",
   "cashier",
+  "cook",
   "inventory_manager",
 ];
 const STAFF_NAME_PATTERN = /^[A-Za-z][A-Za-z.' -]*[A-Za-z.]$|^[A-Za-z.]$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PASSWORD_PATTERN = /^(?=.*[A-Za-z])(?=.*\d).+$/;
-const CUSTOMER_ROLES = new Set(["customer", "user"]);
 
 function normalizeStaffName(value) {
   const normalized = String(value ?? "").trim();
@@ -106,7 +106,7 @@ const verifyAdmin = (req, res, next) => {
   }
 };
 
-const verifyEmployee = async (req, res, next) => {
+const verifyOwnAccount = async (req, res, next) => {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -137,41 +137,58 @@ const verifyEmployee = async (req, res, next) => {
     if (!account) {
       return res.status(401).json({ message: "Account not found" });
     }
-    if (CUSTOMER_ROLES.has(String(account.role || "").toLowerCase())) {
-      return res.status(403).json({ message: "Employee account required" });
-    }
-
     req.user = decoded;
-    req.employeeAccount = account;
+    req.ownAccount = account;
     next();
   } catch (error) {
-    console.error("Employee account verification failed:", error);
+    console.error("Account verification failed:", error);
     return res.status(500).json({ message: "Server error" });
   }
 };
 
 function shapeOwnAccount(account) {
   return {
-    id: account.id,
-    username: account.username,
-    email: account.email,
-    role: account.role,
+    id: Number(account.id),
+    username: String(account.username || ""),
+    email: String(account.email || ""),
+    role: normalizeRole(account.role),
   };
 }
 
-router.get("/me", verifyEmployee, (req, res) => {
-  res.json(shapeOwnAccount(req.employeeAccount));
+function hasProtectedAccountFields(body) {
+  const protectedFields = [
+    "id",
+    "userId",
+    "user_id",
+    "email",
+    "email_verified",
+    "role",
+    "permissions",
+  ];
+  return protectedFields.some((field) =>
+    Object.prototype.hasOwnProperty.call(body || {}, field),
+  );
+}
+
+router.get("/me", verifyOwnAccount, (req, res) => {
+  res.set("Cache-Control", "private, no-store");
+  res.json(shapeOwnAccount(req.ownAccount));
 });
 
-router.put("/me", verifyEmployee, async (req, res) => {
+router.put("/me", verifyOwnAccount, async (req, res) => {
   try {
+    if (hasProtectedAccountFields(req.body)) {
+      return res.status(400).json({
+        message: "Email, role, permissions, and account identity cannot be changed here.",
+      });
+    }
     const username = normalizeStaffName(req.body?.username);
     const [duplicates] = await db.query(
       `SELECT id
          FROM users
         WHERE LOWER(username) = LOWER(?) AND id <> ?
         LIMIT 1`,
-      [username, req.employeeAccount.id],
+      [username, req.ownAccount.id],
     );
     if (duplicates.length > 0) {
       return res.status(409).json({ message: "Username already exists" });
@@ -179,15 +196,18 @@ router.put("/me", verifyEmployee, async (req, res) => {
 
     await db.query("UPDATE users SET username = ? WHERE id = ?", [
       username,
-      req.employeeAccount.id,
+      req.ownAccount.id,
     ]);
     res.json(
       shapeOwnAccount({
-        ...req.employeeAccount,
+        ...req.ownAccount,
         username,
       }),
     );
   } catch (err) {
+    if (err?.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({ message: "Username already exists" });
+    }
     if (err instanceof Error && err.message.startsWith("Full name")) {
       return res.status(400).json({ message: err.message });
     }
@@ -195,8 +215,13 @@ router.put("/me", verifyEmployee, async (req, res) => {
   }
 });
 
-router.put("/me/password", verifyEmployee, async (req, res) => {
+router.put("/me/password", verifyOwnAccount, async (req, res) => {
   try {
+    if (hasProtectedAccountFields(req.body)) {
+      return res.status(400).json({
+        message: "Account identity, email, role, and permissions cannot be changed here.",
+      });
+    }
     const currentPassword = String(req.body?.currentPassword ?? "");
     const newPassword = normalizeStaffPassword(req.body?.newPassword);
     const confirmPassword = String(req.body?.confirmPassword ?? "");
@@ -218,7 +243,7 @@ router.put("/me/password", verifyEmployee, async (req, res) => {
 
     const currentPasswordMatches = await bcrypt.compare(
       currentPassword,
-      req.employeeAccount.password_hash,
+      req.ownAccount.password_hash,
     );
     if (!currentPasswordMatches) {
       return res.status(400).json({ message: "Current password is incorrect." });
@@ -227,7 +252,7 @@ router.put("/me/password", verifyEmployee, async (req, res) => {
     const passwordHash = await bcrypt.hash(newPassword, 10);
     await db.query("UPDATE users SET password_hash = ? WHERE id = ?", [
       passwordHash,
-      req.employeeAccount.id,
+      req.ownAccount.id,
     ]);
     res.json({ message: "Password changed successfully" });
   } catch (err) {
