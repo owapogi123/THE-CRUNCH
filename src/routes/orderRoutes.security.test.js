@@ -282,6 +282,36 @@ function assertRejectedBeforePersistence(result) {
   assert.equal(excess.statusCode, 200);
   assert.equal(state.receipts[0].changeAmount, 50);
 
+  for (const paymentReference of ["AB12", "AB12_345", "1234567890123456"]) {
+    resetState();
+    const invalidDelivery = await invokeOrder({
+      token: cashierToken,
+      body: {
+        ...baseStaffBody,
+        order_type: "delivery",
+        payment_method: "grabfood",
+        payment_reference: paymentReference,
+      },
+    });
+    assertRejectedBeforePersistence(invalidDelivery);
+  }
+
+  resetState();
+  const delivery = await invokeOrder({
+    token: cashierToken,
+    body: {
+      ...baseStaffBody,
+      order_type: "delivery",
+      payment_method: "grabfood",
+      payment_reference: "GF-1234567890",
+    },
+  });
+  assert.equal(delivery.statusCode, 200);
+  const deliveryWrite = state.writes.find((write) => write.sql.startsWith("INSERT INTO orders"));
+  assert.equal(deliveryWrite.params[6], "GF-1234567890");
+  assert.equal(deliveryWrite.params[8], "GrabFood");
+  assert.equal(state.receipts[0].cashTendered, null);
+
   resetState();
   const online = await invokeOrder({
     token: customerToken,

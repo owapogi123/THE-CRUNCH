@@ -9,11 +9,11 @@ const routeCases = [
   [require("./inventoryRoutes"), "put", "/:inventory_id", "inventory_manager", "inventory updates"],
   [require("./inventoryRoutes"), "post", "/batches", "inventory_manager", "inventory batch writes"],
   [require("./inventoryRoutes"), "patch", "/daily-usage/:id/finalize", "inventory_manager", "daily usage finalization"],
-  [require("./kitchenUsageRoutes"), "put", "/today", "cook", "legacy kitchen usage writes"],
+  [require("./kitchenUsageRoutes"), "put", "/today", "inventory_manager", "legacy kitchen usage writes"],
   [require("./kitchenUsageRoutes"), "patch", "/:reportId/finalize", "inventory_manager", "legacy kitchen usage finalization"],
   [require("./Purchaseorders"), "post", "/", "inventory_manager", "purchase order writes"],
   [require("./batches"), "post", "/", "inventory_manager", "storage batch writes"],
-  [require("./batches"), "post", "/kitchen", "cook", "kitchen batch writes"],
+  [require("./batches"), "post", "/kitchen", "inventory_manager", "kitchen batch writes"],
   [require("./stockStatusRoutes"), "post", "/", "inventory_manager", "stock-status writes"],
   [require("./suppliersRoutes"), "post", "/", "inventory_manager", "supplier writes"],
   [require("./settingsRoutes"), "post", "/", "administrator", "settings writes"],
@@ -117,6 +117,28 @@ test("product image upload authenticates before Multer writes a file", async () 
     "administrator",
   );
   assert.equal(administrator.reachedHandler, true);
+});
+
+test("product images use the configured durable volume without changing stored record URLs", () => {
+  const path = require("node:path");
+  const imageRouter = require("./uploadProductImageRoutes");
+
+  assert.equal(
+    imageRouter.resolveProductImageUploadRoot({
+      RAILWAY_VOLUME_MOUNT_PATH: path.join("tmp", "railway-volume"),
+    }),
+    path.join("tmp", "railway-volume", "product-images"),
+  );
+  assert.equal(
+    imageRouter.resolveProductImageUploadRoot({
+      PRODUCT_IMAGE_UPLOAD_DIR: path.join("tmp", "custom-products"),
+      RAILWAY_VOLUME_MOUNT_PATH: path.join("tmp", "railway-volume"),
+    }),
+    path.resolve("tmp", "custom-products"),
+  );
+
+  const fileRoute = findRoute(imageRouter, "get", "/files/:filename");
+  assert.ok(fileRoute, "durable product images must have a stable read route");
 });
 
 test("legacy kitchen usage actor IDs come from JWT identity", () => {

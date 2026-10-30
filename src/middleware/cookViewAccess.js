@@ -2,12 +2,11 @@ const jwt = require("jsonwebtoken");
 const { canAccessRoles } = require("./roleAccess");
 const { getJwtSecret } = require("../services/jwtConfig");
 
-// Cook is a first-class staff role with access limited to kitchen workflows.
+// Cook View is a workflow, not an assignable staff role.
 const COOK_VIEW_ROLES = Object.freeze([
   "administrator",
   "cashier",
   "inventory_manager",
-  "cook",
 ]);
 
 function requireAuthenticatedUser(req, res, next) {

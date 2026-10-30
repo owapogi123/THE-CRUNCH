@@ -38,6 +38,26 @@ function normalizeBooleanFlag(value, fallback = true) {
   return fallback;
 }
 
+function normalizeStockDecimal(value, label) {
+  const normalized = Number(value);
+  if (!Number.isFinite(normalized) || normalized < 0) {
+    const error = new Error(`Invalid ${label} value`);
+    error.statusCode = 400;
+    throw error;
+  }
+  if (
+    normalized > 9999999999.9999 ||
+    Math.abs(normalized * 10000 - Math.round(normalized * 10000)) > 1e-7
+  ) {
+    const error = new Error(
+      `${label} must fit DECIMAL(14,4) and use at most 4 decimal places`,
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+  return Math.round(normalized * 10000) / 10000;
+}
+
 const DEFAULT_BACKEND_LOW_STOCK_THRESHOLD = 10;
 const DEFAULT_BACKEND_CRITICAL_STOCK_THRESHOLD = 5;
 
@@ -647,6 +667,7 @@ router.post(
 
 // PUT /api/inventory/:inventory_id
 router.put("/:inventory_id", requireInventoryManagerAccess, async (req, res) => {
+  let conn;
   try {
     const inventoryId = Number(req.params.inventory_id);
     if (!Number.isFinite(inventoryId) || inventoryId <= 0) {
@@ -667,32 +688,38 @@ router.put("/:inventory_id", requireInventoryManagerAccess, async (req, res) => 
     const fields = [];
     const values = [];
 
+    const [existingRows] = await db.query(
+      `SELECT
+         Product_ID AS productId,
+         COALESCE(Reorder_Point, 20) AS reorderPoint,
+         COALESCE(Critical_Point, 5) AS criticalPoint,
+         COALESCE(use_default_thresholds, 1) AS useDefaultThresholds,
+         low_stock_threshold AS lowStockThreshold,
+         critical_stock_threshold AS criticalStockThreshold
+       FROM Inventory
+       WHERE Inventory_ID = ?`,
+      [inventoryId],
+    );
+    if (existingRows.length === 0) {
+      return res.status(404).json({ message: "Inventory record not found" });
+    }
+    const existingInventory = existingRows[0];
+
     if (stock !== undefined) {
-      if (!Number.isFinite(Number(stock)) || Number(stock) < 0)
-        return res.status(400).json({ message: "Invalid stock value" });
       fields.push("Stock = ?");
-      values.push(Number(stock));
+      values.push(normalizeStockDecimal(stock, "stock"));
     }
     if (daily_withdrawn !== undefined) {
-      if (!Number.isFinite(Number(daily_withdrawn)) || Number(daily_withdrawn) < 0) {
-        return res.status(400).json({ message: "Invalid daily_withdrawn value" });
-      }
       fields.push("Daily_Withdrawn = ?");
-      values.push(Number(daily_withdrawn));
+      values.push(normalizeStockDecimal(daily_withdrawn, "daily_withdrawn"));
     }
     if (returned !== undefined) {
-      if (!Number.isFinite(Number(returned)) || Number(returned) < 0) {
-        return res.status(400).json({ message: "Invalid returned value" });
-      }
       fields.push("Returned = ?");
-      values.push(Number(returned));
+      values.push(normalizeStockDecimal(returned, "returned"));
     }
     if (wasted !== undefined) {
-      if (!Number.isFinite(Number(wasted)) || Number(wasted) < 0) {
-        return res.status(400).json({ message: "Invalid wasted value" });
-      }
       fields.push("Wasted = ?");
-      values.push(Number(wasted));
+      values.push(normalizeStockDecimal(wasted, "wasted"));
     }
 
     if (
@@ -702,48 +729,32 @@ router.put("/:inventory_id", requireInventoryManagerAccess, async (req, res) => 
       lowStockThreshold !== undefined ||
       criticalStockThreshold !== undefined
     ) {
-      const [existingRows] = await db.query(
-        `SELECT
-           COALESCE(Reorder_Point, 20) AS reorderPoint,
-           COALESCE(Critical_Point, 5) AS criticalPoint,
-           COALESCE(use_default_thresholds, 1) AS useDefaultThresholds,
-           low_stock_threshold AS lowStockThreshold,
-           critical_stock_threshold AS criticalStockThreshold
-         FROM Inventory
-         WHERE Inventory_ID = ?`,
-        [inventoryId],
-      );
-
-      if (existingRows.length === 0) {
-        return res.status(404).json({ message: "Inventory record not found" });
-      }
-
       const nextReorderPoint =
         reorderPoint !== undefined
           ? Number(reorderPoint)
-          : Number(existingRows[0].reorderPoint);
+          : Number(existingInventory.reorderPoint);
       const nextCriticalPoint =
         criticalPoint !== undefined
           ? Number(criticalPoint)
-          : Number(existingRows[0].criticalPoint);
+          : Number(existingInventory.criticalPoint);
       const nextUseDefaultThresholds = normalizeBooleanFlag(
         useDefaultThresholds,
-        Number(existingRows[0].useDefaultThresholds ?? 1) === 1,
+        Number(existingInventory.useDefaultThresholds ?? 1) === 1,
       );
       const nextLowStockThreshold =
         lowStockThreshold !== undefined && lowStockThreshold !== null && lowStockThreshold !== ""
           ? Number(lowStockThreshold)
-          : existingRows[0].lowStockThreshold == null
+          : existingInventory.lowStockThreshold == null
             ? null
-            : Number(existingRows[0].lowStockThreshold);
+            : Number(existingInventory.lowStockThreshold);
       const nextCriticalStockThreshold =
         criticalStockThreshold !== undefined &&
         criticalStockThreshold !== null &&
         criticalStockThreshold !== ""
           ? Number(criticalStockThreshold)
-          : existingRows[0].criticalStockThreshold == null
+          : existingInventory.criticalStockThreshold == null
             ? null
-            : Number(existingRows[0].criticalStockThreshold);
+            : Number(existingInventory.criticalStockThreshold);
 
       if (!Number.isFinite(nextReorderPoint) || nextReorderPoint < 0) {
         return res.status(400).json({ message: "Invalid reorderPoint value" });
@@ -820,26 +831,60 @@ router.put("/:inventory_id", requireInventoryManagerAccess, async (req, res) => 
     }
 
     fields.push("Last_Update = NOW()");
-    values.push(inventoryId);
+    conn = await db.getConnection();
+    await conn.beginTransaction();
 
-    const [result] = await db.query(
+    const [[lockedInventory]] = await conn.query(
+      `SELECT Product_ID AS productId
+         FROM Inventory
+        WHERE Inventory_ID = ?
+        FOR UPDATE`,
+      [inventoryId],
+    );
+    if (!lockedInventory) {
+      const error = new Error("Inventory record not found");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const [result] = await conn.query(
       `UPDATE Inventory SET ${fields.join(", ")} WHERE Inventory_ID = ?`,
-      values,
+      [...values, inventoryId],
     );
 
     if (result.affectedRows === 0) {
-      return res.status(404).json({ message: "Inventory record not found" });
+      const error = new Error("Inventory record not found");
+      error.statusCode = 404;
+      throw error;
     }
 
-    const [rows] = await db.query(
+    if (stock !== undefined) {
+      const normalizedStock = normalizeStockDecimal(stock, "stock");
+      await conn.query("UPDATE Menu SET Stock = ? WHERE Product_ID = ?", [
+        normalizedStock,
+        lockedInventory.productId,
+      ]);
+      await conn.query("UPDATE products SET quantity = ? WHERE id = ?", [
+        normalizedStock,
+        lockedInventory.productId,
+      ]);
+    }
+
+    const [rows] = await conn.query(
       `SELECT * FROM Inventory WHERE Inventory_ID = ?`,
       [inventoryId],
     );
 
+    await conn.commit();
     res.json(rows[0]);
   } catch (err) {
-    console.error("Error updating inventory:", err);
-    res.status(500).json({ message: "DB error", error: err.message });
+    if (conn) await conn.rollback();
+    if (!err?.statusCode) console.error("Error updating inventory:", err);
+    res
+      .status(err?.statusCode || 500)
+      .json({ message: err?.statusCode ? err.message : "DB error", error: err.message });
+  } finally {
+    if (conn) conn.release();
   }
 });
 

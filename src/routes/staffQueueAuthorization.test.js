@@ -42,7 +42,7 @@ for (const path of ["/new-online", "/ready-pickup", "/delivery-handover"]) {
     assert.equal((await runBoundary(route, "", false)).statusCode, 401);
     assert.equal((await runBoundary(route, "customer")).statusCode, 403);
     assert.equal((await runBoundary(route, "cashier")).reachedHandler, true);
-    assert.equal((await runBoundary(route, "cook")).reachedHandler, true);
+    assert.equal((await runBoundary(route, "cook")).statusCode, 403);
     assert.equal((await runBoundary(route, "administrator")).reachedHandler, true);
   });
 }

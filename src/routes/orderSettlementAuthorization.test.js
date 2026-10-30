@@ -32,6 +32,7 @@ function resetState(order) {
     paymentStatus: "Paid",
     paymentRecordStatus: "Completed",
     stockDeducted: 1,
+    hasPendingRefundRequest: 0,
     ...order,
   };
   state.connectionCount = 0;
@@ -208,8 +209,8 @@ function paymentUpdate() {
 
   resetState();
   const alternativePaymentField = await invokePatch({
-    role: "cook",
-    userId: 40,
+    role: "inventory_manager",
+    userId: 20,
     body: { status: "Preparing", payment_reference: "FORGED" },
   });
   assert.equal(alternativePaymentField.statusCode, 400);
@@ -268,8 +269,8 @@ function paymentUpdate() {
     stockDeducted: 0,
   });
   const cookCompletion = await invokePatch({
-    role: "cook",
-    userId: 40,
+    role: "inventory_manager",
+    userId: 20,
     body: { status: "Completed", completeFromPreparing: true },
   });
   assert.equal(cookCompletion.statusCode, 200);
@@ -289,8 +290,7 @@ function paymentUpdate() {
     userId: 10,
     body: {
       status: "Completed",
-      cashierId: 10,
-      handoverTimestamp: "2026-10-29T08:00:00.000Z",
+      cashierId: 999,
       riderName: "Test Rider",
     },
   });
@@ -298,6 +298,9 @@ function paymentUpdate() {
   assert.equal(deliveryHandover.body.status, "Completed");
   assert.equal(orderUpdate().sql.includes("handoverTimestamp = ?"), true);
   assert.equal(orderUpdate().sql.includes("riderName = ?"), true);
+  assert.equal(orderUpdate().sql.includes("verified_by = ?"), true);
+  assert.equal(orderUpdate().params.includes(10), true, "authenticated handover staff must be recorded");
+  assert.equal(orderUpdate().params.includes(999), false, "body cashier ID must not identify the handover staff");
   assert.equal(paymentUpdate(), undefined, "delivery handover must not rewrite settled payment records");
 
   resetState({ paymentStatus: "Pending Payment", paymentRecordStatus: "Pending", stockDeducted: 0 });
@@ -497,6 +500,17 @@ function paymentUpdate() {
     assert.equal(state.connectionCount, 0);
     assert.equal(state.writes.length, 0);
   }
+
+  resetState();
+  state.existingOrder.hasPendingRefundRequest = 1;
+  const pendingRefundKitchenStart = await invokePatch({
+    role: "cashier",
+    userId: 10,
+    body: { status: "Preparing" },
+  });
+  assert.equal(pendingRefundKitchenStart.statusCode, 409);
+  assert.equal(pendingRefundKitchenStart.body.code, "REFUND_REQUEST_PENDING");
+  assert.equal(state.writes.length, 0);
 
   resetState();
   const kitchenTransition = await invokePatch({

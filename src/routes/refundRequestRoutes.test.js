@@ -86,6 +86,7 @@ mockModule("../services/orderIdentifierService", {
 });
 mockModule("../services/applicationEvents", {
   publishRefundRequestMutation(payload) { state.events.push(payload); },
+  publishOrderMutation(payload) { state.events.push(payload); },
 });
 
 const router = require("./refundRequestRoutes");
@@ -165,7 +166,11 @@ async function invoke(handlers, { role, userId, body = {}, params = {}, query = 
   assert.equal(state.notifications[0].params[4], "administrator");
   assert.equal(state.writes.some((write) => /UPDATE (orders|payments)/i.test(write.sql)), false);
   assert.equal(state.commits, 1);
-  assert.equal(state.events.length, 1);
+  assert.equal(state.events.length, 2);
+  assert.deepEqual(state.events.map((event) => event.reason), [
+    "refund_request.created",
+    "refund_request.pending",
+  ]);
 
   for (const order of [
     { status: "Queued", paymentStatus: "Pending Payment" },

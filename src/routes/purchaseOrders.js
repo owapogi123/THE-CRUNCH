@@ -44,6 +44,59 @@ function hasProvidedValue(value) {
   );
 }
 
+function validateDraftItems(items) {
+  if (!Array.isArray(items) || items.length === 0) {
+    throwPurchaseOrderError(400, "At least one item is required");
+  }
+  return items.map((item) => {
+    const name = String(item?.name ?? "").trim();
+    if (!name) {
+      throwPurchaseOrderError(400, "Each purchase order item must have a name");
+    }
+    if (name.length > PURCHASE_ORDER_NAME_MAX_LENGTH) {
+      throwPurchaseOrderError(
+        400,
+        "Purchase order item name must not exceed 100 characters",
+      );
+    }
+    const rawQuantity = String(item.quantity ?? "").trim();
+    const quantity = toNumber(rawQuantity, Number.NaN);
+    if (
+      !/^\d+$/.test(rawQuantity) ||
+      !Number.isInteger(quantity) ||
+      quantity < 1 ||
+      quantity > PURCHASE_ORDER_QUANTITY_MAX
+    ) {
+      throwPurchaseOrderError(
+        400,
+        "Purchase order item quantity must be a whole number from 1 to 999",
+      );
+    }
+    const rawUnitCost = item.unitCost ?? item.unit_cost;
+    const unitCost = hasProvidedValue(rawUnitCost) ? Number(rawUnitCost) : 0;
+    if (
+      (hasProvidedValue(rawUnitCost) && !hasValidNumericLength(rawUnitCost)) ||
+      !Number.isFinite(unitCost) ||
+      unitCost < 0 ||
+      unitCost > 99999999.99 ||
+      Math.abs(unitCost * 100 - Math.round(unitCost * 100)) > 1e-7
+    ) {
+      throwPurchaseOrderError(
+        400,
+        "Purchase order item unit cost must fit DECIMAL(10,2) and cannot be negative",
+      );
+    }
+    const unit = String(item.unit ?? "").trim();
+    if (!unit) {
+      throwPurchaseOrderError(
+        400,
+        "Purchase order item unit is required and must come from inventory",
+      );
+    }
+    return { ...item, name, quantity, unitCost, unit };
+  });
+}
+
 function formatPOId(counter) {
   return `PO-${String(counter).padStart(4, "0")}`;
 }
@@ -52,6 +105,9 @@ async function createPurchaseOrderNotification(
   connection,
   { poId, event, actorUserId, supplier, status, deliveryDate },
 ) {
+  if (event !== "received") {
+    return { notificationId: null, created: false };
+  }
   const eventLabels = {
     created: "created",
     ordered: "sent to supplier",
@@ -65,7 +121,10 @@ async function createPurchaseOrderNotification(
     eventType: `purchase_order.${event}`,
     entityId: poId,
     audience: STAFF_NOTIFICATION_AUDIENCES.BOTH,
-    actorUserId,
+    // Receipt is a business event for both approved roles, including the
+    // authenticated receiver. A null actor prevents the per-user feed filter
+    // from hiding it from that receiver.
+    actorUserId: null,
     title: `Purchase order ${eventLabel} · ${poId}`,
     message: `${supplier || "Supplier"} · Status: ${status}`,
     status,
@@ -393,6 +452,134 @@ router.get("/:id", requireInventoryManagerAccess, async (req, res) => {
   }
 });
 
+// PUT /api/purchase-orders/:id
+// Drafts are replaced atomically so a failed item validation/write cannot
+// leave the purchase-order header and item rows out of sync.
+router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
+  const poId = req.params.id;
+  const {
+    supplier,
+    contact = "",
+    date,
+    deliveryDate,
+    notes = "",
+    items = [],
+  } = req.body;
+
+  let conn;
+  try {
+    const normalizedSupplier = String(supplier ?? "").trim();
+    if (!normalizedSupplier) {
+      throwPurchaseOrderError(400, "supplier is required");
+    }
+    const delivery = toDateString(deliveryDate);
+    if (!delivery) {
+      throwPurchaseOrderError(400, "deliveryDate is required");
+    }
+    const orderDate = toDateString(date) || toDateString(new Date());
+    const validatedItems = validateDraftItems(items);
+
+    const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+    const itemTypeExpr = getProductItemTypeExpression(
+      hasItemTypeColumn,
+      "p",
+      "m",
+    );
+    conn = await db.getConnection();
+    await conn.beginTransaction();
+
+    const [[existing]] = await conn.query(
+      "SELECT * FROM purchase_orders WHERE po_id = ? FOR UPDATE",
+      [poId],
+    );
+    if (!existing) throwPurchaseOrderError(404, "Purchase order not found");
+    if (existing.status !== "Draft") {
+      throwPurchaseOrderError(
+        409,
+        `Only Draft purchase orders can be edited; current status is ${existing.status}`,
+      );
+    }
+
+    const resolvedItems = [];
+    for (const item of validatedItems) {
+      const product = await resolveStockProduct(conn, item, itemTypeExpr);
+      const unitError = getUnitCompatibilityError(
+        item.unit,
+        product.inventory_unit,
+      );
+      if (unitError) {
+        throwPurchaseOrderError(422, `${unitError} for "${item.name}"`);
+      }
+      resolvedItems.push({
+        ...item,
+        productId: product.product_id,
+        name: product.product_name,
+        category: product.category_name || String(item.category || "").trim(),
+        unit: product.inventory_unit || item.unit,
+      });
+    }
+
+    await conn.query(
+      `UPDATE purchase_orders
+          SET supplier = ?, contact = ?, order_date = ?, delivery_date = ?, notes = ?
+        WHERE po_id = ? AND status = 'Draft'`,
+      [
+        normalizedSupplier,
+        String(contact ?? "").trim(),
+        orderDate,
+        delivery,
+        String(notes ?? "").trim() || null,
+        poId,
+      ],
+    );
+    await conn.query("DELETE FROM purchase_order_items WHERE po_id = ?", [poId]);
+    for (const item of resolvedItems) {
+      await conn.query(
+        `INSERT INTO purchase_order_items
+           (po_id, product_id, name, category, unit, quantity, unit_cost, expected_expiry_date)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          poId,
+          item.productId,
+          item.name,
+          String(item.category || "").trim(),
+          item.unit,
+          item.quantity,
+          item.unitCost,
+          toDateString(item.expectedExpiryDate ?? item.expected_expiry_date) ||
+            null,
+        ],
+      );
+    }
+
+    const [[updated]] = await conn.query(
+      "SELECT * FROM purchase_orders WHERE po_id = ?",
+      [poId],
+    );
+    const [updatedItems] = await conn.query(
+      "SELECT * FROM purchase_order_items WHERE po_id = ?",
+      [poId],
+    );
+    await conn.commit();
+
+    await logSupplierHistory({
+      supplier_name: normalizedSupplier,
+      action: "Purchase Order Draft Updated",
+      details: `PO: ${poId} | ${resolvedItems.length} item(s) | Delivery: ${delivery}`,
+      performed_by: null,
+    });
+    return res.json(shapePO(updated, updatedItems));
+  } catch (err) {
+    if (conn) await conn.rollback();
+    if (!err.statusCode) {
+      console.error(`PUT /purchase-orders/${poId} error:`, err);
+    }
+    return res.status(err.statusCode || 500).json({ error: err.message });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
 // POST /api/purchase-orders
 
 router.post("/", requireInventoryManagerAccess, async (req, res) => {
@@ -454,9 +641,15 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
         });
       }
       const safeUnitCost = toNumber(submittedUnitCost, Number.NaN);
-      if (!Number.isFinite(safeUnitCost) || safeUnitCost < 0) {
+      if (
+        !Number.isFinite(safeUnitCost) ||
+        safeUnitCost < 0 ||
+        safeUnitCost > 99999999.99 ||
+        Math.abs(safeUnitCost * 100 - Math.round(safeUnitCost * 100)) > 1e-7
+      ) {
         return res.status(400).json({
-          error: "Purchase order item unit cost cannot be negative",
+          error:
+            "Purchase order item unit cost must fit DECIMAL(10,2), use at most 2 decimal places, and cannot be negative",
         });
       }
     }

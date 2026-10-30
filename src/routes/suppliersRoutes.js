@@ -13,6 +13,68 @@ const SUPPLIER_COLUMNS = new Set([
   "email",
   "products_supplied",
 ]);
+const SUPPLIER_NAME_MAX_LENGTH = 120;
+const SUPPLIER_CONTACT_MAX_LENGTH = 50;
+const SUPPLIER_EMAIL_MAX_LENGTH = 254;
+
+function supplierClientError(message, statusCode = 400) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+function normalizeSupplierName(value) {
+  const normalized = String(value ?? "").trim().replace(/\s+/g, " ");
+  if (!normalized) throw supplierClientError("supplier_name is required");
+  if (normalized.length > SUPPLIER_NAME_MAX_LENGTH) {
+    throw supplierClientError("supplier_name must not exceed 120 characters");
+  }
+  return normalized;
+}
+
+function normalizeSupplierContact(value) {
+  if (value === null || value === undefined || String(value).trim() === "") {
+    return null;
+  }
+  const normalized = String(value).trim();
+  if (normalized.length > SUPPLIER_CONTACT_MAX_LENGTH) {
+    throw supplierClientError("contact_number must not exceed 50 characters");
+  }
+  return normalized;
+}
+
+function normalizeSupplierEmail(value) {
+  if (value === null || value === undefined || String(value).trim() === "") {
+    return null;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (
+    normalized.length > SUPPLIER_EMAIL_MAX_LENGTH ||
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)
+  ) {
+    throw supplierClientError("email must be a valid email address");
+  }
+  return normalized;
+}
+
+async function assertUniqueSupplierName(name, excludeId = null) {
+  const params = [name];
+  let exclusion = "";
+  if (excludeId !== null) {
+    exclusion = " AND Supplier_ID <> ?";
+    params.push(Number(excludeId));
+  }
+  const [rows] = await db.query(
+    `SELECT Supplier_ID
+       FROM Suppliers
+      WHERE LOWER(TRIM(SupplierName)) = LOWER(?)${exclusion}
+      LIMIT 1`,
+    params,
+  );
+  if (rows.length > 0) {
+    throw supplierClientError(`A supplier named "${name}" already exists.`, 409);
+  }
+}
 
 function buildSupplierSelect(columns) {
   const hasEmail = columns.has("email");
@@ -34,7 +96,9 @@ function buildSupplierSelect(columns) {
 function normalizeOptionalProductId(value) {
   if (value === null || value === undefined || value === "") return null;
   const productId = Number(value);
-  if (!Number.isFinite(productId) || productId <= 0) return null;
+  if (!Number.isSafeInteger(productId) || productId <= 0) {
+    throw supplierClientError("product_id must be a positive integer");
+  }
   return productId;
 }
 
@@ -195,21 +259,15 @@ router.put("/:supplier_id", requireInventoryManagerAccess, async (req, res) => {
     const detailParts = [];
 
     if (Object.prototype.hasOwnProperty.call(req.body, "supplier_name")) {
-      const supplierName = String(req.body.supplier_name ?? "").trim();
-      if (!supplierName) {
-        return res
-          .status(400)
-          .json({ message: "supplier_name cannot be empty" });
-      }
+      const supplierName = normalizeSupplierName(req.body.supplier_name);
+      await assertUniqueSupplierName(supplierName, supplierId);
       updates.push("SupplierName = ?");
       values.push(supplierName);
       detailParts.push(`Name: ${existing.supplier_name} -> ${supplierName}`);
     }
 
     if (Object.prototype.hasOwnProperty.call(req.body, "contact_number")) {
-      const contactNumber = req.body.contact_number
-        ? String(req.body.contact_number).trim()
-        : null;
+      const contactNumber = normalizeSupplierContact(req.body.contact_number);
       updates.push("Contact_Number = ?");
       values.push(contactNumber);
       detailParts.push(
@@ -249,7 +307,7 @@ router.put("/:supplier_id", requireInventoryManagerAccess, async (req, res) => {
       columns.has("email") &&
       Object.prototype.hasOwnProperty.call(req.body, "email")
     ) {
-      const email = req.body.email ? String(req.body.email).trim() : null;
+      const email = normalizeSupplierEmail(req.body.email);
       updates.push("Email = ?");
       values.push(email);
       detailParts.push(`Email: ${existing.email ?? "-"} -> ${email ?? "-"}`);
@@ -300,9 +358,9 @@ router.put("/:supplier_id", requireInventoryManagerAccess, async (req, res) => {
   } catch (err) {
     console.error("Error updating supplier:", err);
     const errorMessage = String(err?.message || "Unknown error");
-    const isClientError = /stock_item|not found/i.test(errorMessage);
+    const isClientError = Boolean(err?.statusCode) || /stock_item|not found/i.test(errorMessage);
     res
-      .status(isClientError ? 400 : 500)
+      .status(err?.statusCode || (isClientError ? 400 : 500))
       .json({ message: isClientError ? errorMessage : "DB error", error: errorMessage });
   }
 });
@@ -319,13 +377,14 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
       products_supplied,
     } = req.body;
 
-    if (!supplier_name) {
-      return res.status(400).json({ message: "supplier_name is required" });
-    }
+    const normalizedSupplierName = normalizeSupplierName(supplier_name);
+    const normalizedContactNumber = normalizeSupplierContact(contact_number);
+    const normalizedEmail = normalizeSupplierEmail(email);
+    await assertUniqueSupplierName(normalizedSupplierName);
 
     const columns = SUPPLIER_COLUMNS;
     const fieldNames = ["SupplierName", "Contact_Number"];
-    const values = [supplier_name, contact_number ?? null];
+    const values = [normalizedSupplierName, normalizedContactNumber];
 
     if (columns.has("delivery_schedule")) {
       fieldNames.push("Delivery_Schedule");
@@ -341,7 +400,7 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
 
     if (columns.has("email")) {
       fieldNames.push("Email");
-      values.push(email ?? null);
+      values.push(normalizedEmail);
     }
 
     if (columns.has("products_supplied")) {
@@ -368,12 +427,12 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
     //  Log the addition
     await logSupplierHistory({
       supplier_id: result.insertId,
-      supplier_name,
+      supplier_name: normalizedSupplierName,
       action: "Supplier Added",
       details:
         [
-          contact_number ? `Contact: ${contact_number}` : null,
-          email ? `Email: ${email}` : null,
+          normalizedContactNumber ? `Contact: ${normalizedContactNumber}` : null,
+          normalizedEmail ? `Email: ${normalizedEmail}` : null,
           products_supplied ? `Products: ${products_supplied}` : null,
           delivery_schedule ? `Schedule: ${delivery_schedule}` : null,
         ]
@@ -385,9 +444,9 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
   } catch (err) {
     console.error("Error creating supplier:", err);
     const errorMessage = String(err?.message || "Unknown error");
-    const isClientError = /stock_item|not found/i.test(errorMessage);
+    const isClientError = Boolean(err?.statusCode) || /stock_item|not found/i.test(errorMessage);
     res
-      .status(isClientError ? 400 : 500)
+      .status(err?.statusCode || (isClientError ? 400 : 500))
       .json({ message: isClientError ? errorMessage : "DB error", error: errorMessage });
   }
 });
@@ -407,13 +466,29 @@ router.delete("/:supplier_id", requireInventoryManagerAccess, async (req, res) =
       [supplierId],
     );
 
+    if (!supplier) {
+      return res.status(404).json({ message: "Supplier not found" });
+    }
+
+    const [[reference]] = await db.query(
+      `SELECT po_id
+         FROM purchase_orders
+        WHERE LOWER(TRIM(supplier)) = LOWER(TRIM(?))
+        LIMIT 1`,
+      [supplier.supplier_name],
+    );
+    if (reference) {
+      return res.status(409).json({
+        message:
+          "Supplier cannot be deleted because purchase-order history references it. Keep the supplier record to preserve history.",
+      });
+    }
+
     const [result] = await db.query(
       "DELETE FROM Suppliers WHERE Supplier_ID = ?",
       [supplierId],
     );
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: "Supplier not found" });
-    }
+    if (result.affectedRows === 0) return res.status(404).json({ message: "Supplier not found" });
 
     // Log the removal
     if (supplier) {

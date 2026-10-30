@@ -12,7 +12,6 @@ const STAFF_PASSWORD_MIN_LENGTH = 8;
 const ASSIGNABLE_STAFF_ROLES = [
   "administrator",
   "cashier",
-  "cook",
   "inventory_manager",
 ];
 const STAFF_NAME_PATTERN = /^[A-Za-z][A-Za-z.' -]*[A-Za-z.]$|^[A-Za-z.]$/;

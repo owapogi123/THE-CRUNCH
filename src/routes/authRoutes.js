@@ -258,6 +258,11 @@ router.post("/login", async (req, res) => {
 
     const emailVerified = toBooleanFlag(user.email_verified);
     const normalizedRole = String(user.role || "").trim().toLowerCase();
+    if (normalizedRole === "cook") {
+      return res.status(403).json({
+        message: "The Cook role has been retired. Ask an Administrator to assign a supported staff role.",
+      });
+    }
     if (normalizedRole === "customer" && !emailVerified) {
       return res.status(403).json({
         message: "Please verify your email before signing in",

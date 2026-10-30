@@ -61,6 +61,18 @@ function normalizeProductDescription(value) {
     return normalized;
 }
 
+function normalizeProductCategory(value, { required = false } = {}) {
+    const normalized = String(value ?? "").trim();
+    if (!normalized) {
+        if (required) throw new Error("Category is required for menu items.");
+        return null;
+    }
+    if (normalized.length > 150) {
+        throw new Error("Category must not exceed 150 characters.");
+    }
+    return normalized;
+}
+
 function normalizeInventoryUnit(value) {
     const normalized = String(value ?? "").trim();
     if (!normalized) {
@@ -70,6 +82,38 @@ function normalizeInventoryUnit(value) {
         throw new Error("Unit must not exceed 30 characters.");
     }
     return normalized;
+}
+
+function normalizeInventoryQuantity(value, label = "quantity") {
+    const normalized = Number(value);
+    if (!Number.isFinite(normalized) || normalized < 0) {
+        throw new Error(`Invalid ${label} value`);
+    }
+    if (
+        normalized > 9999999999.9999 ||
+        Math.abs(normalized * 10000 - Math.round(normalized * 10000)) > 1e-7
+    ) {
+        throw new Error(
+            `${label} must fit DECIMAL(14,4) and use at most 4 decimal places`,
+        );
+    }
+    return Math.round(normalized * 10000) / 10000;
+}
+
+function normalizeCurrencyAmount(value, label = "price") {
+    const normalized = Number(value);
+    if (!Number.isFinite(normalized) || normalized < 0) {
+        throw new Error(`Invalid ${label} value`);
+    }
+    if (
+        normalized > 99999999.99 ||
+        Math.abs(normalized * 100 - Math.round(normalized * 100)) > 1e-7
+    ) {
+        throw new Error(
+            `${label} must fit DECIMAL(10,2) and use at most 2 decimal places`,
+        );
+    }
+    return Math.round(normalized * 100) / 100;
 }
 
 function normalizeProductImageValue(value) {
@@ -84,6 +128,28 @@ function normalizeProductImageValue(value) {
         );
     }
     return normalized;
+}
+
+async function assertUniqueProductName(database, name, excludeId = null) {
+    const params = [String(name).trim()];
+    let exclusion = "";
+    if (excludeId !== null) {
+        exclusion = " AND id <> ?";
+        params.push(Number(excludeId));
+    }
+
+    const [rows] = await database.query(
+        `SELECT id
+           FROM products
+          WHERE LOWER(TRIM(name)) = LOWER(?)${exclusion}
+          LIMIT 1`,
+        params,
+    );
+    if (rows.length > 0) {
+        const error = new Error(`A product named "${String(name).trim()}" already exists.`);
+        error.statusCode = 409;
+        throw error;
+    }
 }
 
 function sanitizeProductImageValue(value) {
@@ -141,10 +207,15 @@ function normalizePromoValues(isPromotional, promoPrice, promoLabel) {
         String(isPromotional || "").toLowerCase() === "true" ||
         String(isPromotional || "") === "1";
 
-    const normalizedPromoPrice =
+    const normalizedPromoPriceInput =
         promoPrice === undefined || promoPrice === null || promoPrice === ""
             ? null
             : Number(promoPrice);
+
+    const normalizedPromoPrice =
+        normalizedPromoPriceInput === null
+            ? null
+            : normalizeCurrencyAmount(normalizedPromoPriceInput, "promo price");
 
     if (
         normalizedPromoPrice !== null &&
@@ -186,9 +257,9 @@ function enrichIngredientAvailability(rows, ingredientMap) {
     });
 }
 
-async function attachIngredientAvailability(rows) {
+async function attachIngredientAvailability(rows, database = db) {
     const ingredientMap = await fetchMenuIngredients(
-        db,
+        database,
         rows.map((row) => row.id),
     );
     return enrichIngredientAvailability(rows, ingredientMap);
@@ -344,6 +415,7 @@ router.get("/", (req, res) => runWithDbQueryTiming(async (queryTiming) => {
 
 // ADD product
 router.post("/", requireInventoryManagerAccess, async (req, res) => {
+    let conn;
     try {
         const hasItemTypeColumn = await ensureProductSchema(db);
         const {
@@ -397,29 +469,29 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
         const normalizedName = normalizeProductName(name, {
             stockOnly: normalizedItemType === STOCK_ITEM,
         });
+        await assertUniqueProductName(db, normalizedName);
         const normalizedDescription = normalizeProductDescription(description);
+        const normalizedProductCategory = normalizeProductCategory(category, {
+            required: normalizedItemType === MENU_ITEM,
+        });
         const normalizedUnit = normalizeInventoryUnit(unit);
         const normalizedPromo = normalizePromoValues(
             is_promotional,
             promo_price,
             promo_label,
         );
-        const safePrice =
+        const safePriceInput =
             price === undefined || price === null || price === ""
                 ? 0
                 : Number(price);
-        const safeQuantity =
+        const safePrice = normalizeCurrencyAmount(safePriceInput);
+        const safeQuantityInput =
             quantity === undefined || quantity === null || quantity === ""
                 ? 0
                 : Number(quantity);
-        if (!Number.isFinite(safePrice) || safePrice < 0) {
-            return res.status(400).json({ message: "Invalid price value" });
-        }
+        const safeQuantity = normalizeInventoryQuantity(safeQuantityInput);
         if (normalizedItemType === MENU_ITEM && safePrice < 1) {
             return res.status(400).json({ message: "Price must be at least \u20B11." });
-        }
-        if (!Number.isFinite(safeQuantity) || safeQuantity < 0) {
-            return res.status(400).json({ message: "Invalid quantity value" });
         }
         if (
             normalizedPromo.promoPrice !== null &&
@@ -496,18 +568,24 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
             insertValues.push(normalizedItemType);
         }
 
-        const [result] = await db.query(
+        conn = await db.getConnection();
+        await conn.beginTransaction();
+        await assertUniqueProductName(conn, normalizedName);
+
+        const [result] = await conn.query(
             `INSERT INTO products (${insertColumns.join(", ")})
              VALUES (${insertColumns.map(() => "?").join(",")})`,
             insertValues,
         );
 
         const newId = result.insertId;
-        await db.query(
+        await conn.query(
             "UPDATE products SET menu_code = CONCAT('M-', LPAD(id, 3, '0')) WHERE id = ?",
             [newId],
         );
-        const normalizedCategory = String(category || "").toLowerCase().trim();
+        const normalizedCategory = String(normalizedProductCategory || "")
+            .toLowerCase()
+            .trim();
         const promoTag = normalizedItemType === MENU_ITEM
             ? "MENU FOOD"
             : raw_material
@@ -520,14 +598,14 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
         // we explicitly set Product_ID to keep both tables aligned. If the
         // Menu table has an auto-increment counter lower than newId this will
         // bump it automatically.
-        await db.query(
+        await conn.query(
             `INSERT INTO Menu
                 (Product_ID, Product_Name, Category_Name, Price, Stock, Promo, manual_override, manual_status)
              VALUES (?,?,?,?,?,?,?,?)`,
             [
                 newId,
                 normalizedName,
-                category || null,
+                normalizedProductCategory,
                 safePrice,
                 safeQuantity,
                 promoTag,
@@ -536,7 +614,7 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
             ]
         );
 
-        await db.query(
+        await conn.query(
             `INSERT INTO Inventory (
                 Product_ID,
                 Quantity,
@@ -575,11 +653,16 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
         );
 
         if (normalizedIngredients !== null) {
-            await replaceMenuIngredients(db, newId, normalizedIngredients);
+            await replaceMenuIngredients(conn, newId, normalizedIngredients);
         }
 
+        await conn.commit();
         res.status(201).json({ message: "Product added", id: newId });
     } catch (err) {
+        if (conn) await conn.rollback();
+        if (err?.statusCode) {
+            return res.status(err.statusCode).json({ message: err.message });
+        }
         if (err && err.message === "Invalid promo price value") {
             return res.status(400).json({ message: err.message });
         }
@@ -591,11 +674,18 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
                 err.message === "ingredients must be an array" ||
                 err.message === "Each ingredient must include a valid product_id" ||
                 err.message === "Each ingredient must include a positive quantity_required" ||
+                /DECIMAL\(14,4\)|at most 4 decimal places/i.test(err.message) ||
+                err.message === "Invalid quantity value" ||
+                err.message === "Invalid price value" ||
+                /DECIMAL\(10,2\)|at most 2 decimal places/i.test(err.message) ||
                 err.message === "Product name is required." ||
                 err.message === "Product name must be at least 2 characters." ||
                 err.message === "Product name must not exceed 100 characters." ||
                 err.message === "Unit must not exceed 30 characters." ||
                 err.message === "Description must not exceed 100 characters." ||
+                err.message === "Category is required for menu items." ||
+                err.message === "Category must not exceed 150 characters." ||
+                /Force Available is no longer supported/i.test(err.message) ||
                 err.message ===
                     "Material name may only use letters, numbers, spaces, apostrophes, and hyphens." ||
                 /must be (stock_item|menu_item)|was not found/i.test(err.message))
@@ -604,11 +694,14 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
         }
         console.error(err);
         res.status(500).json({ message: 'DB error', error: err.message });
+    } finally {
+        if (conn) conn.release();
     }
 });
 
 // UPDATE product
 router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
+    let conn;
     try {
         const hasItemTypeColumn = await ensureProductSchema(db);
 
@@ -663,6 +756,7 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
                     normalizeItemType(existingProduct.item_type, MENU_ITEM) ===
                     STOCK_ITEM,
             });
+            await assertUniqueProductName(db, safeName, productId);
             productFields.push("name = ?");
             productValues.push(safeName);
             menuFields.push("Product_Name = ?");
@@ -677,10 +771,7 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
         }
 
         if (price !== undefined) {
-            const safePrice = Number(price);
-            if (!Number.isFinite(safePrice) || safePrice < 0) {
-                return res.status(400).json({ message: "Invalid price value" });
-            }
+            const safePrice = normalizeCurrencyAmount(price);
             productFields.push("price = ?");
             productValues.push(safePrice);
             menuFields.push("Price = ?");
@@ -688,10 +779,7 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
         }
 
         if (quantity !== undefined) {
-            const safeQuantity = Number(quantity);
-            if (!Number.isFinite(safeQuantity) || safeQuantity < 0) {
-                return res.status(400).json({ message: "Invalid quantity value" });
-            }
+            const safeQuantity = normalizeInventoryQuantity(quantity);
             productFields.push("quantity = ?");
             productValues.push(safeQuantity);
             menuFields.push("Stock = ?");
@@ -851,8 +939,11 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
         }
 
         if (category !== undefined) {
+            const normalizedProductCategory = normalizeProductCategory(category, {
+                required: effectiveTargetItemType === MENU_ITEM,
+            });
             menuFields.push("Category_Name = ?");
-            menuValues.push(category ? String(category).trim() : null);
+            menuValues.push(normalizedProductCategory);
         }
 
         if (
@@ -864,22 +955,29 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
             return res.status(400).json({ message: "No fields to update" });
         }
 
+        conn = await db.getConnection();
+        await conn.beginTransaction();
+
+        if (name !== undefined) {
+            await assertUniqueProductName(conn, productValues[0], productId);
+        }
+
         if (productFields.length > 0) {
-            await db.query(
+            await conn.query(
                 `UPDATE products SET ${productFields.join(", ")} WHERE id = ?`,
                 [...productValues, productId],
             );
         }
 
         await assertProductsMatchItemType(
-            db,
+            conn,
             [productId],
             effectiveTargetItemType,
             effectiveTargetItemType === MENU_ITEM ? "Menu" : "Stock",
         );
 
         if (menuFields.length > 0) {
-            await db.query(
+            await conn.query(
                 `UPDATE Menu SET ${menuFields.join(", ")} WHERE Product_ID = ?`,
                 [...menuValues, productId],
             );
@@ -887,7 +985,7 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
 
         if (inventoryFields.length > 0) {
             inventoryFields.push("Last_Update = NOW()");
-            const [[existingInventory]] = await db.query(
+            const [[existingInventory]] = await conn.query(
                 `SELECT Inventory_ID
                  FROM Inventory
                  WHERE Product_ID = ?
@@ -927,7 +1025,7 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
                     critical_stock_threshold === ""
                         ? null
                         : Number(critical_stock_threshold);
-                await db.query(
+                await conn.query(
                     `INSERT INTO Inventory (
                         Product_ID,
                         Quantity,
@@ -953,14 +1051,14 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
                     ],
                 );
             }
-            await db.query(
+            await conn.query(
                 `UPDATE Inventory SET ${inventoryFields.join(", ")} WHERE Product_ID = ?`,
                 [...inventoryValues, productId],
             );
         }
 
         if (normalizedIngredients !== null) {
-            await replaceMenuIngredients(db, productId, normalizedIngredients);
+            await replaceMenuIngredients(conn, productId, normalizedIngredients);
         }
 
         const responseItemTypeExpr = getProductItemTypeExpression(
@@ -968,7 +1066,7 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
             "p",
             "m",
         );
-        const [rows] = await db.query(
+        const [rows] = await conn.query(
             `SELECT p.*, m.Category_Name AS category,
                     COALESCE(NULLIF(TRIM(i.unit), ''), 'piece') AS unit,
                     CAST(CASE
@@ -985,12 +1083,19 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
         );
 
         if (rows.length === 0) {
-            return res.status(404).json({ message: "Product not found" });
+            const error = new Error("Product not found after update");
+            error.statusCode = 404;
+            throw error;
         }
 
-        const [enrichedRow] = await attachIngredientAvailability(rows);
+        const [enrichedRow] = await attachIngredientAvailability(rows, conn);
+        await conn.commit();
         res.json(enrichedRow);
     } catch (err) {
+        if (conn) await conn.rollback();
+        if (err?.statusCode) {
+            return res.status(err.statusCode).json({ message: err.message });
+        }
         if (err && err.message === "Invalid promo price value") {
             return res.status(400).json({ message: err.message });
         }
@@ -1002,11 +1107,18 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
                 err.message === "ingredients must be an array" ||
                 err.message === "Each ingredient must include a valid product_id" ||
                 err.message === "Each ingredient must include a positive quantity_required" ||
+                /DECIMAL\(14,4\)|at most 4 decimal places/i.test(err.message) ||
+                err.message === "Invalid quantity value" ||
+                err.message === "Invalid price value" ||
+                /DECIMAL\(10,2\)|at most 2 decimal places/i.test(err.message) ||
                 err.message === "Product name is required." ||
                 err.message === "Product name must be at least 2 characters." ||
                 err.message === "Product name must not exceed 100 characters." ||
                 err.message === "Unit must not exceed 30 characters." ||
                 err.message === "Description must not exceed 100 characters." ||
+                err.message === "Category is required for menu items." ||
+                err.message === "Category must not exceed 150 characters." ||
+                /Force Available is no longer supported/i.test(err.message) ||
                 err.message ===
                     "Material name may only use letters, numbers, spaces, apostrophes, and hyphens." ||
                 /must be (stock_item|menu_item)|was not found/i.test(err.message))
@@ -1015,6 +1127,8 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
         }
         console.error("PUT /products/:id error:", err);
         res.status(500).json({ message: 'DB error', error: err.message });
+    } finally {
+        if (conn) conn.release();
     }
 });
 

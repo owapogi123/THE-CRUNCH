@@ -96,6 +96,7 @@ function createReadStateDb() {
     "out",
   ]);
   assert.deepEqual(getVisibleInventoryAlertSeverities("inventory_manager"), [
+    "low",
     "critical",
     "out",
   ]);
@@ -171,13 +172,13 @@ function createReadStateDb() {
   });
   assert.deepEqual(
     managerBefore.notifications.map((alert) => alert.severity).sort(),
-    ["critical", "out"],
+    ["critical", "low", "out"],
   );
-  assert.equal(managerBefore.unreadCount, 2);
+  assert.equal(managerBefore.unreadCount, 3);
   assert.equal(await markAllInventoryNotificationsRead(db, {
     userId: 20,
     role: "inventory_manager",
-  }), 2);
+  }), 3);
   const managerAfter = await listInventoryNotifications(db, {
     userId: 20,
     role: "inventory_manager",
@@ -187,7 +188,7 @@ function createReadStateDb() {
     userId: 20,
     role: "administrator",
   });
-  assert.equal(userTwoAsAdmin.unreadCount, 1, "mark-all respects role visibility");
+  assert.equal(userTwoAsAdmin.unreadCount, 0, "approved stock severities match for both roles");
 
   const migration = fs.readFileSync(
     path.join(__dirname, "..", "db", "migrations", "2026-10-29_inventory-notification-lifecycle.sql"),

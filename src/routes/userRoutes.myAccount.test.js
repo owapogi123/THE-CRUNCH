@@ -224,9 +224,8 @@ async function invoke(handlers, { userId, role, body = {}, authenticated = true 
     authenticated: false,
     body: { email: "cook@example.test", password: "Newpass2" },
   });
-  assert.equal(cookLogin.statusCode, 200);
-  assert.equal(cookLogin.body.role, "cook");
-  assert.equal(jwt.verify(cookLogin.body.token, process.env.JWT_SECRET).role, "cook");
+  assert.equal(cookLogin.statusCode, 403);
+  assert.match(cookLogin.body.message, /retired/i);
 
   const createCook = await invoke(createStaffHandlers, {
     userId: 1,
@@ -238,12 +237,10 @@ async function invoke(handlers, { userId, role, body = {}, authenticated = true 
       role: "cook",
     },
   });
-  assert.equal(createCook.statusCode, 201);
-  assert.equal(createCook.body.role, "cook");
-  assert.equal(state.users.get(createCook.body.userId).role, "cook");
-  assert.equal(await bcrypt.compare("Cookpass1", state.users.get(createCook.body.userId).password_hash), true);
+  assert.equal(createCook.statusCode, 400);
+  assert.equal(createCook.body.message, "Invalid role");
 
-  console.log("My Account ownership, all-role access, password, Cook login, and Cook creation tests passed.");
+  console.log("My Account ownership, password, and retired Cook-role guards passed.");
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;

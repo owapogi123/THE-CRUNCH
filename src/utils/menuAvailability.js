@@ -21,7 +21,17 @@ function normalizeManualStatus(value) {
 }
 
 function isManualOverrideEnabled(row = {}) {
-  return Number(row.manual_override ?? row.manualOverride ?? 0) === 1;
+  const overrideEnabled =
+    Number(row.manual_override ?? row.manualOverride ?? 0) === 1;
+  const status = normalizeManualStatus(
+    row.manual_status ?? row.manualStatus ?? "Available",
+  );
+
+  // "Force Available" is no longer a supported mode. Treat legacy rows with
+  // manual_override=1/manual_status=Available as Auto at runtime, without
+  // mutating production data. A reviewed data migration can normalize those
+  // rows later after the production backup/approval process is complete.
+  return overrideEnabled && status === "Out of Stock";
 }
 
 function computeAvailableServings(ingredients) {
@@ -54,16 +64,8 @@ function isAutoMenuMissingIngredients(row = {}, ingredients = []) {
 }
 
 function resolveProductAvailabilityStatus(row = {}, ingredients = []) {
-  const manualStatus = String(
-    row.manual_status ?? row.manualStatus ?? "Available",
-  )
-    .trim()
-    .toLowerCase();
-
   if (isManualOverrideEnabled(row)) {
-    return manualStatus === "out of stock" || manualStatus === "unavailable"
-      ? "Out of Stock"
-      : "Available";
+    return "Out of Stock";
   }
 
   const itemType = String(row.item_type ?? row.itemType ?? "menu_item")
@@ -100,7 +102,9 @@ function deriveManualOverrideState(payload = {}) {
     return { manualOverride: 0, manualStatus: "Available" };
   }
   if (overrideMode === "force available") {
-    return { manualOverride: 1, manualStatus: "Available" };
+    throw new Error(
+      'Force Available is no longer supported. Use "Auto" or "Force Out of Stock".',
+    );
   }
   if (overrideMode === "force out of stock") {
     return { manualOverride: 1, manualStatus: "Out of Stock" };
@@ -113,10 +117,16 @@ function deriveManualOverrideState(payload = {}) {
       String(payload.manual_override ?? "").trim().toLowerCase() === "true" ||
       String(payload.manual_override ?? "").trim() === "1";
 
-    return {
-      manualOverride: manualOverride ? 1 : 0,
-      manualStatus: normalizeManualStatus(payload.manual_status),
-    };
+    const manualStatus = normalizeManualStatus(payload.manual_status);
+    if (manualOverride && manualStatus !== "Out of Stock") {
+      throw new Error(
+        'Force Available is no longer supported. Use "Auto" or "Force Out of Stock".',
+      );
+    }
+
+    return manualOverride
+      ? { manualOverride: 1, manualStatus: "Out of Stock" }
+      : { manualOverride: 0, manualStatus: "Available" };
   }
 
   const legacyStatus = String(payload.availability_status ?? "")
@@ -152,8 +162,22 @@ function normalizeMenuIngredients(ingredients) {
       throw new Error("Each ingredient must include a positive quantity_required");
     }
 
+    if (
+      quantityRequired > 9999999999.9999 ||
+      Math.abs(quantityRequired * 10000 - Math.round(quantityRequired * 10000)) >
+        1e-7
+    ) {
+      throw new Error(
+        "Ingredient quantities must fit DECIMAL(14,4) and use at most 4 decimal places",
+      );
+    }
+
     const current = merged.get(productId) ?? 0;
-    merged.set(productId, current + quantityRequired);
+    const mergedQuantity = current + quantityRequired;
+    if (mergedQuantity > 9999999999.9999) {
+      throw new Error("Combined ingredient quantity exceeds DECIMAL(14,4)");
+    }
+    merged.set(productId, Math.round(mergedQuantity * 10000) / 10000);
   }
 
   return Array.from(merged.entries()).map(([productId, quantityRequired]) => ({

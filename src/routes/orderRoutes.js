@@ -178,7 +178,16 @@ function normalizePaymentMethod(value) {
     return "gcash_onsite";
   }
   if (v === "gcash") return "gcash";
+  if (v === "grabfood" || v === "grab food") return "grabfood";
+  if (v === "foodpanda" || v === "food panda") return "foodpanda";
+  if (v === "other") return "other";
   return v === "cash" ? "cash" : String(value);
+}
+
+function isThirdPartyDeliveryMethod(value) {
+  return ["grabfood", "foodpanda", "other"].includes(
+    normalizePaymentMethod(value),
+  );
 }
 
 function getStoredPaymentMethod(method, options = {}) {
@@ -187,6 +196,9 @@ function getStoredPaymentMethod(method, options = {}) {
 
   if (normalizedMethod === "gcash") return "GCash";
   if (normalizedMethod === "gcash_onsite") return "Onsite GCash / E-Payment";
+  if (normalizedMethod === "grabfood") return "GrabFood";
+  if (normalizedMethod === "foodpanda") return "foodpanda";
+  if (normalizedMethod === "other") return "Other";
   if (
     normalizedMethod === "cash_on_pickup" ||
     (normalizedMethod === "cash" && isOnlinePickupOrder)
@@ -601,20 +613,24 @@ router.get("/", requireCookViewAccess, async (req, res) => {
          o.riderName       AS riderName,
          p.Payment_Type    AS paymentRecordMethod,
          p.Payment_ID      AS paymentId,
+         p.Payment_Date    AS paymentDate,
          oi.Product_ID     AS productId,
          oi.Quantity       AS quantity,
          oi.Subtotal       AS subtotal,
          COALESCE(m.Product_Name, pr.name) AS productName,
          COALESCE(m.Price,        pr.price) AS price,
-         COALESCE(u.username, c.UserName) AS cashierName
+         COALESCE(u.username, c.UserName) AS cashierName,
+         COALESCE(handover_user.username, handover_cashier.UserName) AS handoverStaffName
        FROM orders o
        LEFT JOIN order_item oi ON o.Order_ID = oi.Order_ID
        LEFT JOIN Menu      m  ON m.Product_ID  = oi.Product_ID
        LEFT JOIN products  pr ON pr.id          = oi.Product_ID
        LEFT JOIN users     u  ON u.id           = COALESCE(o.Cashier_ID, o.verified_by)
        LEFT JOIN Cashier   c  ON c.Cashier_ID   = COALESCE(o.Cashier_ID, o.verified_by)
+       LEFT JOIN users     handover_user ON handover_user.id = o.verified_by
+       LEFT JOIN Cashier   handover_cashier ON handover_cashier.Cashier_ID = o.verified_by
        LEFT JOIN (
-         SELECT p1.Order_ID, p1.Payment_ID, p1.Payment_Type
+         SELECT p1.Order_ID, p1.Payment_ID, p1.Payment_Type, p1.Payment_Date
          FROM payments p1
          INNER JOIN (
            SELECT Order_ID, MAX(Payment_ID) AS maxPaymentId
@@ -673,6 +689,12 @@ router.get("/queue", requireCookViewAccess, async (req, res) => {
          ) latest ON latest.maxPaymentId = p1.Payment_ID
        ) p ON p.Order_ID = o.Order_ID
        WHERE LOWER(COALESCE(o.Status, '')) NOT IN ('completed', 'cancelled', 'awaiting cashier review', 'picked up', 'refunded')
+         AND NOT EXISTS (
+           SELECT 1
+           FROM refund_requests pending_refund
+           WHERE pending_refund.order_id = o.Order_ID
+             AND pending_refund.status = 'Pending'
+         )
        ORDER BY o.Order_ID ASC`
     );
 
@@ -916,6 +938,7 @@ router.get("/delivery-handover", requireCookViewAccess, async (req, res) => {
          o.business_date     AS businessDate,
          o.payment_status    AS paymentStatus,
          o.payment_method    AS paymentMethod,
+         o.payment_reference AS paymentReference,
          (
            SELECT p.Payment_Status
            FROM payments p
@@ -952,6 +975,7 @@ router.get("/delivery-handover", requireCookViewAccess, async (req, res) => {
             r.paymentStatus || r.paymentRecordStatus || "Pending",
           ),
           paymentMethod: r.paymentMethod || null,
+          paymentReference: r.paymentReference || null,
           handoverTimestamp: r.handoverTimestamp,
           riderName: r.riderName,
           items: [],
@@ -1444,6 +1468,25 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
       });
     }
     const submittedPaymentReference = String(payment_reference || paymentReference || "").trim() || null;
+    const isThirdPartyDelivery = isThirdPartyDeliveryMethod(normalizedPaymentMethod);
+    if (finalOrderType === "delivery" && !isThirdPartyDelivery) {
+      return res.status(400).json({
+        message: "Delivery orders require GrabFood, foodpanda, or Other as the platform",
+      });
+    }
+    if (finalOrderType !== "delivery" && isThirdPartyDelivery) {
+      return res.status(400).json({
+        message: "Third-party platform payments are only valid for delivery orders",
+      });
+    }
+    if (
+      isThirdPartyDelivery &&
+      (!submittedPaymentReference || !/^[A-Za-z0-9-]{5,15}$/.test(submittedPaymentReference))
+    ) {
+      return res.status(400).json({
+        message: "Platform reference must be 5 to 15 letters, numbers, or hyphens",
+      });
+    }
     const submittedCheckoutSessionId = String(
       checkout_session_id || checkoutSessionId || ""
     ).trim() || null;
@@ -1983,16 +2026,21 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
 
     const authenticatedActorId = Number(req.user?.userId);
     if (
-      (isPersistedSettlement || hasPaymentStatusUpdate) &&
+      (isPersistedSettlement || hasPaymentStatusUpdate ||
+        handoverTimestamp !== undefined || riderName !== undefined) &&
       (!Number.isSafeInteger(authenticatedActorId) || authenticatedActorId <= 0)
     ) {
       return res.status(401).json({ message: "Invalid authenticated staff user" });
     }
 
+    const isHandoverMutation =
+      handoverTimestamp !== undefined || riderName !== undefined;
     const resolvedCashierId = isPersistedSettlement
       ? null
       : hasPaymentStatusUpdate
         ? authenticatedActorId
+        : isHandoverMutation
+          ? null
         : cashierId ?? cashier_id ?? null;
 
     conn = await db.getConnection();
@@ -2026,6 +2074,12 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
            LIMIT 1
          ) AS paymentRecordStatus,
          COALESCE(stock_deducted, 0) AS stockDeducted
+         ,EXISTS(
+           SELECT 1
+           FROM refund_requests pending_refund
+           WHERE pending_refund.order_id = o.Order_ID
+             AND pending_refund.status = 'Pending'
+         ) AS hasPendingRefundRequest
        FROM orders o
        WHERE o.Order_ID = ?
        LIMIT 1
@@ -2046,6 +2100,7 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
         existingRows[0].readyAt,
       ) ||
       ["Preparing", "Ready for Pickup", "Completed"].includes(currentStatus);
+    const hasPendingRefundRequest = Number(existingRows[0].hasPendingRefundRequest) === 1;
     const currentOrderType = normalizeOrderType(existingRows[0].orderType);
     const isOnlinePickupCompletion =
       Number(existingRows[0].customerUserId) > 0 &&
@@ -2075,6 +2130,32 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
       return res.status(400).json({
         message: "Timer can only be updated while the order is queued or preparing",
       });
+    }
+
+    if (
+      hasPendingRefundRequest &&
+      (hasTimerUpdate ||
+        (hasStatusUpdate &&
+          requestedStatus !== "Refunded" &&
+          requestedStatus !== "Cancelled"))
+    ) {
+      return res.status(409).json({
+        code: "REFUND_REQUEST_PENDING",
+        message: "Kitchen updates are paused while this refund request is pending administrator review",
+      });
+    }
+
+    const isDeliveryHandover =
+      currentOrderType === "delivery" &&
+      hasStatusUpdate &&
+      requestedStatus === "Completed";
+    if (isHandoverMutation && !isDeliveryHandover) {
+      return res.status(400).json({
+        message: "Rider handover details can only be recorded while completing a delivery order",
+      });
+    }
+    if (isDeliveryHandover && !String(riderName || "").trim()) {
+      return res.status(400).json({ message: "Rider name is required for delivery handover" });
     }
 
     let nextStatus = currentStatus;
@@ -2261,9 +2342,11 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
       values.push(persistedCashierId);
     }
 
-    if (handoverTimestamp) {
+    if (isDeliveryHandover) {
       fields.push("handoverTimestamp = ?");
-      values.push(new Date(handoverTimestamp));
+      values.push(new Date());
+      fields.push("verified_by = ?");
+      values.push(authenticatedActorId);
     }
 
     if (riderName !== undefined) {

@@ -11,7 +11,7 @@ const requireInventoryManagerAccess = requireRoleAccess(
 );
 
 const requireKitchenInventoryAccess = requireRoleAccess(
-  ["inventory_manager", "cook"],
+  ["inventory_manager"],
   "Kitchen inventory access required",
 );
 

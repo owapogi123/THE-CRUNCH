@@ -21,16 +21,6 @@ const DEFAULT_ROLE_PERMISSIONS = Object.freeze({
     salesReports: true,
     settings: false,
   }),
-  cook: Object.freeze({
-    overview: false,
-    orders: true,
-    menuManagement: false,
-    menus: false,
-    stockManager: false,
-    userAccounts: false,
-    salesReports: false,
-    settings: false,
-  }),
   inventory_manager: Object.freeze({
     overview: true,
     orders: true,
@@ -46,7 +36,6 @@ const DEFAULT_ROLE_PERMISSIONS = Object.freeze({
 const DEFAULT_PERMISSION_ROLE_LOCKS = Object.freeze({
   administrator: false,
   cashier: false,
-  cook: false,
   inventory_manager: false,
 });
 

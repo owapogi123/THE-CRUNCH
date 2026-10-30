@@ -4,7 +4,7 @@ const { normalizeRole } = require("../middleware/roleAccess");
 
 const ACTIVE_ALERT_SEVERITIES = Object.freeze(["low", "critical", "out"]);
 const ADMIN_ALERT_SEVERITIES = Object.freeze(["low", "critical", "out"]);
-const INVENTORY_MANAGER_ALERT_SEVERITIES = Object.freeze(["critical", "out"]);
+const INVENTORY_MANAGER_ALERT_SEVERITIES = Object.freeze(["low", "critical", "out"]);
 
 function getVisibleInventoryAlertSeverities(role) {
   const normalizedRole = normalizeRole(role);
@@ -220,7 +220,9 @@ function mapNotificationRow(row) {
     resolved_at: toIsoString(row.resolved_at),
     resolution_reason: row.resolution_reason || null,
     is_active: row.resolved_at == null,
-    is_read: row.read_at != null,
+    // A resolved episode remains available as history, but it is no longer an
+    // actionable unread alert and must not keep the header badge lit.
+    is_read: row.read_at != null || row.resolved_at != null,
     read_at: toIsoString(row.read_at),
   };
 }
@@ -263,6 +265,7 @@ async function listInventoryNotifications(database, { userId, role, limit = 200 
          ON alert_read.alert_id = alert.alert_id
         AND alert_read.user_id = ?
       WHERE alert.severity IN (${placeholders})
+        AND alert.resolved_at IS NULL
         AND alert_read.alert_id IS NULL`,
     [userId, ...severities],
   );

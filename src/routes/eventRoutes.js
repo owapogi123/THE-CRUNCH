@@ -8,7 +8,6 @@ const STAFF_ROLES = new Set([
   "administrator",
   "cashier",
   "inventory_manager",
-  "cook",
 ]);
 const CUSTOMER_ROLES = new Set(["customer", "user", "costumer"]);
 const DEFAULT_HEARTBEAT_MS = 20_000;

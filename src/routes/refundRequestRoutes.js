@@ -11,6 +11,7 @@ const {
   formatOrderNumber,
 } = require("../services/orderIdentifierService");
 const {
+  publishOrderMutation,
   publishRefundRequestMutation,
 } = require("../services/applicationEvents");
 const {
@@ -298,6 +299,7 @@ router.post("/", requireCashier, async (req, res) => {
     await connection.commit();
     transactionStarted = false;
     publishRefundRequestMutation({ reason: "refund_request.created" });
+    publishOrderMutation({ reason: "refund_request.pending" });
     return res.status(201).json({
       message: "Refund request sent to Administrator.",
       request: {
@@ -389,6 +391,7 @@ router.patch("/:id/ignore", requireAdministrator, async (req, res) => {
     await connection.commit();
     transactionStarted = false;
     publishRefundRequestMutation({ reason: "refund_request.ignored" });
+    publishOrderMutation({ reason: "refund_request.ignored" });
     return res.json({ message: "Refund request ignored.", id: requestId, status: "Ignored" });
   } catch (error) {
     const statusCode = Number(error?.statusCode);

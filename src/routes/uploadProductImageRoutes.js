@@ -5,7 +5,17 @@ const crypto = require("crypto");
 const multer = require("multer");
 const { requireInventoryManagerAccess } = require("../middleware/staffAccess");
 
-const uploadRoot = path.join(__dirname, "..", "..", "uploads", "products");
+function resolveProductImageUploadRoot(env = process.env) {
+  const configuredRoot = String(env.PRODUCT_IMAGE_UPLOAD_DIR || "").trim();
+  if (configuredRoot) return path.resolve(configuredRoot);
+
+  const railwayVolumeRoot = String(env.RAILWAY_VOLUME_MOUNT_PATH || "").trim();
+  if (railwayVolumeRoot) return path.join(railwayVolumeRoot, "product-images");
+
+  return path.join(__dirname, "..", "..", "uploads", "products");
+}
+
+const uploadRoot = resolveProductImageUploadRoot();
 fs.mkdirSync(uploadRoot, { recursive: true });
 
 const allowedMimeTypes = new Set([
@@ -73,11 +83,29 @@ router.post(
 
     return res.json({
       message: "Product image uploaded",
-      fileUrl: `/uploads/products/${encodeURIComponent(req.file.filename)}`,
+      fileUrl: `/api/upload-product-image/files/${encodeURIComponent(req.file.filename)}`,
       originalName: req.file.originalname || null,
     });
   },
 );
+
+router.get("/files/:filename", (req, res) => {
+  const filename = String(req.params.filename || "");
+  if (!filename || path.basename(filename) !== filename) {
+    return res.status(400).json({ message: "Invalid product image filename" });
+  }
+
+  res.setHeader("Cache-Control", "public, max-age=86400, immutable");
+  return res.sendFile(filename, { root: uploadRoot }, (error) => {
+    if (!error || res.headersSent) return;
+    res.status(error.statusCode === 404 ? 404 : 500).json({
+      message:
+        error.statusCode === 404
+          ? "Product image not found"
+          : "Failed to load product image",
+    });
+  });
+});
 
 router.use((err, _req, res, next) => {
   if (!err) return next();
@@ -90,5 +118,8 @@ router.use((err, _req, res, next) => {
     message: err.message || "Failed to upload product image",
   });
 });
+
+router.resolveProductImageUploadRoot = resolveProductImageUploadRoot;
+router.uploadRoot = uploadRoot;
 
 module.exports = router;

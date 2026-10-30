@@ -1,7 +1,9 @@
 const assert = require("node:assert/strict");
 const {
   computeAvailableServings,
+  deriveManualOverrideState,
   isAutoMenuMissingIngredients,
+  normalizeMenuIngredients,
   resolveProductAvailabilityStatus,
 } = require("./menuAvailability");
 
@@ -26,14 +28,14 @@ assert.equal(
     { ...autoMenu, manual_override: 1, manual_status: "Available" },
     [],
   ),
-  "Available",
+  "Out of Stock",
 );
 assert.equal(
   isAutoMenuMissingIngredients(
     { ...autoMenu, manual_override: 1, manual_status: "Available" },
     [],
   ),
-  false,
+  true,
 );
 assert.equal(
   resolveProductAvailabilityStatus(
@@ -41,6 +43,42 @@ assert.equal(
     sufficient,
   ),
   "Out of Stock",
+);
+
+assert.deepEqual(deriveManualOverrideState({ override_mode: "Auto" }), {
+  manualOverride: 0,
+  manualStatus: "Available",
+});
+assert.deepEqual(
+  deriveManualOverrideState({ override_mode: "Force Out of Stock" }),
+  { manualOverride: 1, manualStatus: "Out of Stock" },
+);
+assert.throws(
+  () => deriveManualOverrideState({ override_mode: "Force Available" }),
+  /no longer supported/i,
+);
+
+assert.deepEqual(
+  normalizeMenuIngredients([
+    { product_id: 4, quantity_required: 0.125 },
+    { product_id: 4, quantity_required: 0.375 },
+  ]),
+  [{ productId: 4, quantityRequired: 0.5 }],
+);
+assert.throws(
+  () =>
+    normalizeMenuIngredients([
+      { product_id: 4, quantity_required: 0.00001 },
+    ]),
+  /at most 4 decimal places/i,
+);
+assert.throws(
+  () =>
+    deriveManualOverrideState({
+      manual_override: true,
+      manual_status: "Available",
+    }),
+  /no longer supported/i,
 );
 
 assert.equal(resolveProductAvailabilityStatus(autoMenu, sufficient), "Available");

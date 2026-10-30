@@ -176,6 +176,10 @@ function createConnection() {
         });
         return [{ affectedRows: 1 }];
       }
+      if (q.startsWith("DELETE FROM purchase_order_items")) {
+        state.items = [];
+        return [{ affectedRows: 1 }];
+      }
       if (q.startsWith("INSERT INTO staff_notifications")) {
         state.notifications.push({ sql: q, params: [...params] });
         return [{ insertId: state.notifications.length, affectedRows: 1 }];
@@ -210,6 +214,18 @@ function createConnection() {
       }
       if (q.startsWith("UPDATE purchase_orders SET status = ?")) {
         state.po.status = params[0];
+        return [{ affectedRows: 1 }];
+      }
+      if (q.startsWith("UPDATE purchase_orders SET supplier = ?")) {
+        if (state.po.status !== "Draft") return [{ affectedRows: 0 }];
+        state.po = {
+          ...state.po,
+          supplier: params[0],
+          contact: params[1],
+          order_date: params[2],
+          delivery_date: params[3],
+          notes: params[4],
+        };
         return [{ affectedRows: 1 }];
       }
       return [[]];
@@ -260,6 +276,7 @@ const cancelHandlers = handlersFor("/:id", "delete");
 const createHandlers = handlersFor("/", "post");
 const listHandlers = handlersFor("/", "get");
 const detailHandlers = handlersFor("/:id", "get");
+const editHandlers = handlersFor("/:id", "put");
 
 function tokenFor(role) {
   return jwt.sign({ role, userId: 20 }, process.env.JWT_SECRET, { expiresIn: "5m" });
@@ -332,16 +349,47 @@ async function invoke(
   assert.equal(created.body.status, "Draft");
   assert.equal(created.body.items[0].productId, 7);
   assert.equal(state.items[0].product_id, 7);
-  assert.equal(state.notifications.length, 1);
-  assert.equal(state.notifications[0].params[0], "purchase_order:PO-0001:created");
-  assert.equal(state.notifications[0].params[4], "administrator,inventory_manager");
-  assert.equal(state.notifications[0].params[5], 20);
+  assert.equal(state.notifications.length, 0);
+
+  reset("Draft");
+  const edited = await invoke(editHandlers, {
+    body: {
+      supplier: "Updated Supplier",
+      deliveryDate: "2026-10-27",
+      notes: "Updated safely",
+      items: [
+        {
+          productId: 7,
+          name: "Flour",
+          unit: "kg",
+          quantity: 4,
+          unitCost: 25,
+        },
+      ],
+    },
+  });
+  assert.equal(edited.statusCode, 200);
+  assert.equal(edited.body.status, "Draft");
+  assert.equal(edited.body.supplier, "Updated Supplier");
+  assert.equal(edited.body.items.length, 1);
+  assert.equal(edited.body.items[0].quantity, 4);
+
+  reset("Ordered");
+  const editOrdered = await invoke(editHandlers, {
+    body: {
+      supplier: "Supplier",
+      deliveryDate: "2026-10-27",
+      items: [{ productId: 7, name: "Flour", unit: "kg", quantity: 4 }],
+    },
+  });
+  assert.equal(editOrdered.statusCode, 409);
+  assert.equal(state.items[0].quantity, 3);
 
   reset("Draft");
   const ordered = await invoke(statusHandlers, { body: { status: "Ordered" } });
   assert.equal(ordered.statusCode, 200);
   assert.equal(state.po.status, "Ordered");
-  assert.equal(state.notifications[0].params[0], "purchase_order:PO-0001:ordered");
+  assert.equal(state.notifications.length, 0);
 
   const genericReceive = await invoke(statusHandlers, { body: { status: "Received" } });
   assert.equal(genericReceive.statusCode, 409);
@@ -351,7 +399,7 @@ async function invoke(
   const cancelled = await invoke(cancelHandlers);
   assert.equal(cancelled.statusCode, 200);
   assert.equal(state.po.status, "Cancelled");
-  assert.equal(state.notifications[0].params[0], "purchase_order:PO-0001:cancelled");
+  assert.equal(state.notifications.length, 0);
 
   reset("Received");
   const receivedCancel = await invoke(cancelHandlers);
@@ -375,6 +423,8 @@ async function invoke(
   assert.equal(state.product.product_quantity, 13);
   assert.equal(state.batches.length, 1);
   assert.equal(state.notifications[0].params[0], "purchase_order:PO-0001:received");
+  assert.equal(state.notifications[0].params[4], "administrator,inventory_manager");
+  assert.equal(state.notifications[0].params[5], null);
 
   const duplicate = await invoke(receiveHandlers, { body: { receivedBy: "Manager" } });
   assert.equal(duplicate.statusCode, 409);

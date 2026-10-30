@@ -15,7 +15,6 @@ const COOK_VIEW_PERMISSION_ROLES = [
   "administrator",
   "cashier",
   "inventory_manager",
-  "cook",
 ];
 
 function enforceSuperuserPermissions(permissions) {

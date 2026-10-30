@@ -123,7 +123,7 @@ async function main() {
       "expired JWT subscriber was not cleaned up",
     );
 
-    const staffTokens = ["administrator", "cashier", "cook", "inventory_manager"]
+    const staffTokens = ["administrator", "cashier", "inventory_manager"]
       .map((role, index) => token({ userId: index + 1, role }));
     for (const staffToken of staffTokens) {
       clients.push(await openStream(baseUrl, staffToken));
@@ -140,10 +140,10 @@ async function main() {
     clients.push(customerOne, customerTwo);
 
     await waitForCondition(
-      () => getSubscriberCount() === 6,
+      () => getSubscriberCount() === 5,
       "all SSE clients should be registered",
     );
-    assert.equal(getSubscriberCount("staff"), 4);
+    assert.equal(getSubscriberCount("staff"), 3);
     assert.equal(getSubscriberCount("customer"), 2);
     await Promise.all(clients.map((client) => waitForText(
       client,
@@ -160,7 +160,7 @@ async function main() {
       reason: "order.status_updated",
       customerUserIds: [101],
     });
-    await Promise.all([...clients.slice(0, 4), customerOne].map((client) =>
+    await Promise.all([...clients.slice(0, 3), customerOne].map((client) =>
       waitForText(
         client,
         (text) => text.includes('"reason":"order.status_updated"'),
@@ -181,7 +181,7 @@ async function main() {
     assert.equal(customerEvent.topic, "orders.changed");
 
     publish(EVENT_TOPICS.PAYMENTS_CHANGED, { reason: "order.payment_updated" });
-    await Promise.all(clients.slice(0, 4).map((client) => waitForText(
+    await Promise.all(clients.slice(0, 3).map((client) => waitForText(
       client,
       (text) => text.includes('"reason":"order.payment_updated"'),
       "staff client did not receive payment invalidation",
@@ -201,7 +201,7 @@ async function main() {
       tokenExpirationClosesStream: "pass",
       sseHeadersAndConnectedFrame: "pass",
       heartbeat: "pass",
-      fourStaffClients: "pass",
+      currentStaffClients: "pass",
       customerTargeting: "pass",
       minimalPayload: "pass",
       subscriberCleanup: "pass",
