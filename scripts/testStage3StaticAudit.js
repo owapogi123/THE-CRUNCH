@@ -47,6 +47,11 @@ assert.equal(/require\([^)]*(?:config\/db|mysql)/.test(eventRouteSource), false)
 assert.equal(/require\([^)]*(?:config\/db|mysql)/.test(eventServiceSource), false);
 assert.match(eventRouteSource, /: heartbeat/);
 assert.match(eventRouteSource, /X-Accel-Buffering/);
+assert.doesNotMatch(
+  eventRouteSource,
+  /Connection:\s*["']keep-alive["']/,
+  "SSE must not emit an HTTP\/1-only Connection header through Railway HTTP\/2",
+);
 
 console.log(JSON.stringify({
   dashboardPollingRemoved: "pass",

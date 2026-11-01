@@ -61,9 +61,13 @@ function createEventRouter({ heartbeatMs = DEFAULT_HEARTBEAT_MS } = {}) {
     res.set({
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
       "X-Accel-Buffering": "no",
     });
+    // Connection-specific response headers are forbidden by HTTP/2. Railway
+    // handles protocol negotiation at the edge; keep the upstream TCP socket
+    // healthy without emitting a `Connection` header to the client.
+    res.socket?.setKeepAlive(true);
+    res.socket?.setNoDelay(true);
     res.flushHeaders?.();
 
     const cleanup = () => {

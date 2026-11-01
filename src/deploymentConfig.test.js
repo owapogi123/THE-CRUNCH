@@ -25,6 +25,12 @@ assert.match(appSource, /res\.status\(503\)/);
 assert.match(appSource, /https:\/\/thecrunch\.site/);
 assert.match(appSource, /https:\/\/www\.thecrunch\.site/);
 assert.match(appSource, /https:\/\/the-crunch\.pages\.dev/);
+assert.match(appSource, /http:\/\/localhost:5173/);
+assert.match(
+  appSource,
+  /require\("\.\/routes\/Purchaseorders"\)/,
+  "the purchase-order route import must match the Git filename on Linux",
+);
 assert.doesNotMatch(appSource, /origin:\s*["']\*["']/);
 
 console.log("Backend deployment configuration tests passed.");
