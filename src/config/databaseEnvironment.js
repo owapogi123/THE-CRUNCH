@@ -214,6 +214,66 @@ function validateDatabaseConfig(config = getDatabaseConfig(), options = {}) {
   return config;
 }
 
+function getSafeModuleNotFoundDetails(error) {
+  const match =
+    error && typeof error.message === "string"
+      ? /^Cannot find module ['"]([^'"\r\n]+)['"]/.exec(error.message)
+      : null;
+  const moduleName = match && match[1];
+
+  if (!moduleName || !/^[a-zA-Z0-9@._/\\-]+$/.test(moduleName)) return {};
+
+  const requireStack = Array.isArray(error.requireStack)
+    ? error.requireStack
+        .filter((filename) => typeof filename === "string")
+        .map((filename) => {
+          const relative = path.relative(process.cwd(), filename);
+          const safePath =
+            relative &&
+            !relative.startsWith(`..${path.sep}`) &&
+            !path.isAbsolute(relative)
+              ? relative
+              : path.basename(filename);
+          return safePath.split(path.sep).join("/");
+        })
+        .filter((filename) => /^[a-zA-Z0-9@._/-]+$/.test(filename))
+    : [];
+
+  const stackFrames =
+    typeof error.stack === "string"
+      ? error.stack
+          .split(/\r?\n/)
+          .filter((line) => /^\s*at\s/.test(line))
+          .map((line) => {
+            const normalizedCwd = process.cwd().split(path.sep).join("/");
+            return line
+              .split("\\").join("/")
+              .replaceAll(normalizedCwd, "<app>")
+              .trim();
+          })
+          .filter(
+            (line) =>
+              line.includes("<app>") ||
+              line.includes("node:internal") ||
+              line.includes("node_modules"),
+          )
+          .slice(0, 20)
+      : [];
+
+  return {
+    message: `Cannot find module '${moduleName}'`,
+    ...(requireStack.length > 0 ? { requireStack } : {}),
+    ...(stackFrames.length > 0
+      ? {
+          stack: [
+            `Error: Cannot find module '${moduleName}'`,
+            ...stackFrames,
+          ].join("\n"),
+        }
+      : {}),
+  };
+}
+
 function getSafeDatabaseErrorDetails(error, config = getDatabaseConfig()) {
   const diagnostics = getDatabaseDiagnostics(config);
   const sslDiagnostics = getDatabaseSslDiagnostics(config);
@@ -236,6 +296,7 @@ function getSafeDatabaseErrorDetails(error, config = getDatabaseConfig()) {
     ...(error && safeErrorCodes.includes(code)
       ? { message: error.message }
       : {}),
+    ...(code === "MODULE_NOT_FOUND" ? getSafeModuleNotFoundDetails(error) : {}),
     hostConfigured: diagnostics.hostConfigured,
     portConfigured: diagnostics.portConfigured,
     port: diagnostics.port,

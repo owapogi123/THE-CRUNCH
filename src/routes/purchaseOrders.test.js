@@ -262,7 +262,7 @@ mockModule("../utils/productItemType", {
   getProductItemTypeExpression() { return "'stock_item'"; },
 });
 
-const router = require("./Purchaseorders");
+const router = require("./purchaseOrders");
 
 function handlersFor(path, method) {
   const layer = router.stack.find(

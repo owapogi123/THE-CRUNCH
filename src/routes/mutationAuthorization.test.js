@@ -11,7 +11,7 @@ const routeCases = [
   [require("./inventoryRoutes"), "patch", "/daily-usage/:id/finalize", "inventory_manager", "daily usage finalization"],
   [require("./kitchenUsageRoutes"), "put", "/today", "inventory_manager", "legacy kitchen usage writes"],
   [require("./kitchenUsageRoutes"), "patch", "/:reportId/finalize", "inventory_manager", "legacy kitchen usage finalization"],
-  [require("./Purchaseorders"), "post", "/", "inventory_manager", "purchase order writes"],
+  [require("./purchaseOrders"), "post", "/", "inventory_manager", "purchase order writes"],
   [require("./batches"), "post", "/", "inventory_manager", "storage batch writes"],
   [require("./batches"), "post", "/kitchen", "inventory_manager", "kitchen batch writes"],
   [require("./stockStatusRoutes"), "post", "/", "inventory_manager", "stock-status writes"],

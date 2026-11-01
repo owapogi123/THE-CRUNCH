@@ -81,7 +81,7 @@ assert.match(appSource, /https:\/\/the-crunch\.pages\.dev/);
 assert.match(appSource, /http:\/\/localhost:5173/);
 assert.match(
   appSource,
-  /require\("\.\/routes\/Purchaseorders"\)/,
+  /require\("\.\/routes\/purchaseOrders"\)/,
   "the purchase-order route import must match the Git filename on Linux",
 );
 assert.doesNotMatch(appSource, /origin:\s*["']\*["']/);
