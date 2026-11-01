@@ -16,6 +16,14 @@ function resolveProductImageUploadRoot(env = process.env) {
 }
 
 const uploadRoot = resolveProductImageUploadRoot();
+const recoveredImageRoot = path.join(
+  __dirname,
+  "..",
+  "..",
+  "assets",
+  "product-images",
+  "legacy",
+);
 fs.mkdirSync(uploadRoot, { recursive: true });
 
 const allowedMimeTypes = new Set([
@@ -95,8 +103,20 @@ router.get("/files/:filename", (req, res) => {
     return res.status(400).json({ message: "Invalid product image filename" });
   }
 
+  const uploadedPath = path.join(uploadRoot, filename);
+  const recoveredPath = path.join(recoveredImageRoot, filename);
+  const servingRoot = fs.existsSync(uploadedPath)
+    ? uploadRoot
+    : fs.existsSync(recoveredPath)
+      ? recoveredImageRoot
+      : null;
+
+  if (!servingRoot) {
+    return res.status(404).json({ message: "Product image not found" });
+  }
+
   res.setHeader("Cache-Control", "public, max-age=86400, immutable");
-  return res.sendFile(filename, { root: uploadRoot }, (error) => {
+  return res.sendFile(filename, { root: servingRoot }, (error) => {
     if (!error || res.headersSent) return;
     res.status(error.statusCode === 404 ? 404 : 500).json({
       message:
@@ -121,5 +141,6 @@ router.use((err, _req, res, next) => {
 
 router.resolveProductImageUploadRoot = resolveProductImageUploadRoot;
 router.uploadRoot = uploadRoot;
+router.recoveredImageRoot = recoveredImageRoot;
 
 module.exports = router;
