@@ -503,6 +503,21 @@ async function invoke(
   assert.equal(state.notifications[0].params[4], "administrator,inventory_manager");
   assert.equal(state.notifications[0].params[5], null);
 
+  const receivedDetail = await invoke(detailHandlers);
+  assert.equal(receivedDetail.statusCode, 200);
+  assert.equal(receivedDetail.body.status, "Received");
+  assert.equal(receivedDetail.body.receiptNo, "DR-2020-001");
+  assert.equal(receivedDetail.body.receivedDate, "2020-01-02");
+  assert.equal(receivedDetail.body.deliveryDate, "2026-10-20");
+
+  const receivedHistory = await invoke(listHandlers);
+  assert.equal(receivedHistory.statusCode, 200);
+  assert.equal(receivedHistory.body.length, 1);
+  assert.equal(receivedHistory.body[0].status, "Received");
+  assert.equal(receivedHistory.body[0].receiptNo, "DR-2020-001");
+  assert.equal(receivedHistory.body[0].receivedDate, "2020-01-02");
+  assert.equal(receivedHistory.body[0].deliveryDate, "2026-10-20");
+
   const duplicate = await invoke(receiveHandlers, { body: { receivedBy: "Manager" } });
   assert.equal(duplicate.statusCode, 409);
   assert.equal(state.inventoryAdds, 3);
