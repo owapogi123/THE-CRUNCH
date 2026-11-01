@@ -27,6 +27,11 @@ const {
   markInventoryNotificationRead,
   reconcileInventoryAlerts,
 } = require("../services/inventoryNotificationService");
+const {
+  directStockUpdateResponse,
+  findDirectStockQuantityFields,
+  stockReceiptRequiresPurchaseOrderResponse,
+} = require("../utils/stockMutationPolicy");
 
 function normalizeBooleanFlag(value, fallback = true) {
   if (value === undefined || value === null || value === "") return fallback;
@@ -36,26 +41,6 @@ function normalizeBooleanFlag(value, fallback = true) {
   if (["1", "true", "yes", "on"].includes(normalized)) return true;
   if (["0", "false", "no", "off"].includes(normalized)) return false;
   return fallback;
-}
-
-function normalizeStockDecimal(value, label) {
-  const normalized = Number(value);
-  if (!Number.isFinite(normalized) || normalized < 0) {
-    const error = new Error(`Invalid ${label} value`);
-    error.statusCode = 400;
-    throw error;
-  }
-  if (
-    normalized > 9999999999.9999 ||
-    Math.abs(normalized * 10000 - Math.round(normalized * 10000)) > 1e-7
-  ) {
-    const error = new Error(
-      `${label} must fit DECIMAL(14,4) and use at most 4 decimal places`,
-    );
-    error.statusCode = 400;
-    throw error;
-  }
-  return Math.round(normalized * 10000) / 10000;
 }
 
 const DEFAULT_BACKEND_LOW_STOCK_THRESHOLD = 10;
@@ -132,13 +117,6 @@ function getInventoryAlertSeverity(stockValue, thresholds) {
   if (stock <= thresholds.critical) return "critical";
   if (stock <= thresholds.low) return "low";
   return "normal";
-}
-
-function toMySqlDateTime(value) {
-  if (!value) return null;
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toISOString().slice(0, 19).replace("T", " ");
 }
 
 async function ensureDailyUsageTables(conn = db) {
@@ -674,11 +652,14 @@ router.put("/:inventory_id", requireInventoryManagerAccess, async (req, res) => 
       return res.status(400).json({ message: "Invalid inventory_id" });
     }
 
+    const directStockFields = findDirectStockQuantityFields(req.body);
+    if (directStockFields.length > 0) {
+      return res
+        .status(400)
+        .json(directStockUpdateResponse(directStockFields));
+    }
+
     const {
-      stock,
-      daily_withdrawn,
-      returned,
-      wasted,
       reorderPoint,
       criticalPoint,
       useDefaultThresholds,
@@ -704,23 +685,6 @@ router.put("/:inventory_id", requireInventoryManagerAccess, async (req, res) => 
       return res.status(404).json({ message: "Inventory record not found" });
     }
     const existingInventory = existingRows[0];
-
-    if (stock !== undefined) {
-      fields.push("Stock = ?");
-      values.push(normalizeStockDecimal(stock, "stock"));
-    }
-    if (daily_withdrawn !== undefined) {
-      fields.push("Daily_Withdrawn = ?");
-      values.push(normalizeStockDecimal(daily_withdrawn, "daily_withdrawn"));
-    }
-    if (returned !== undefined) {
-      fields.push("Returned = ?");
-      values.push(normalizeStockDecimal(returned, "returned"));
-    }
-    if (wasted !== undefined) {
-      fields.push("Wasted = ?");
-      values.push(normalizeStockDecimal(wasted, "wasted"));
-    }
 
     if (
       reorderPoint !== undefined ||
@@ -858,18 +822,6 @@ router.put("/:inventory_id", requireInventoryManagerAccess, async (req, res) => 
       throw error;
     }
 
-    if (stock !== undefined) {
-      const normalizedStock = normalizeStockDecimal(stock, "stock");
-      await conn.query("UPDATE Menu SET Stock = ? WHERE Product_ID = ?", [
-        normalizedStock,
-        lockedInventory.productId,
-      ]);
-      await conn.query("UPDATE products SET quantity = ? WHERE id = ?", [
-        normalizedStock,
-        lockedInventory.productId,
-      ]);
-    }
-
     const [rows] = await conn.query(
       `SELECT * FROM Inventory WHERE Inventory_ID = ?`,
       [inventoryId],
@@ -889,79 +841,8 @@ router.put("/:inventory_id", requireInventoryManagerAccess, async (req, res) => 
 });
 
 // POST /api/inventory/batches
-router.post("/batches", requireInventoryManagerAccess, async (req, res) => {
-  let conn;
-  try {
-    const { productId, quantity, unit, expiresAt } = req.body;
-    const qty = Number(quantity) || 0;
-
-    if (!Number.isFinite(Number(productId)) || qty <= 0) {
-      return res
-        .status(400)
-        .json({ message: "productId and quantity are required" });
-    }
-
-    conn = await db.getConnection();
-    await conn.beginTransaction();
-    await assertProductsMatchItemType(conn, [productId], STOCK_ITEM, "Batch");
-
-    const [mirrorRows] = await conn.query(
-      `SELECT p.id, m.Product_ID AS menu_id, i.Inventory_ID AS inventory_id
-       FROM products p
-       LEFT JOIN Menu m ON m.Product_ID = p.id
-       LEFT JOIN Inventory i ON i.Product_ID = p.id
-       WHERE p.id = ?
-       LIMIT 1`,
-      [productId],
-    );
-    if (!mirrorRows[0]?.menu_id || !mirrorRows[0]?.inventory_id) {
-      await conn.rollback();
-      return res.status(409).json({
-        message:
-          "Product inventory mirrors are incomplete; run the approved repair migration before receiving stock.",
-      });
-    }
-
-    const formattedExpiresAt = toMySqlDateTime(expiresAt);
-
-    const [insertResult] = await conn.query(
-      `INSERT INTO batches
-         (product_id, quantity, remaining_qty, unit, received_date, expiry_date, status, returned_qty, notes)
-       VALUES (?, ?, ?, ?, CURDATE(), ?, 'active', 0, NULL)`,
-      [productId, qty, qty, unit || "piece", formattedExpiresAt],
-    );
-
-    // Delivery — only mainStock increases, dailyWithdrawn stays unchanged
-    await conn.query(
-      "UPDATE Inventory SET Stock = COALESCE(Stock, 0) + ?, Last_Update = NOW() WHERE Product_ID = ?",
-      [qty, productId],
-    );
-    await conn.query(
-      "UPDATE Menu SET Stock = COALESCE(Stock, 0) + ? WHERE Product_ID = ?",
-      [qty, productId],
-    );
-    await conn.query(
-      "UPDATE products SET quantity = COALESCE(quantity, 0) + ? WHERE id = ?",
-      [qty, productId],
-    );
-
-    await conn.commit();
-    res.status(201).json({
-      batch_id: insertResult.insertId,
-      product_id: productId,
-      quantity: qty,
-      remaining_qty: qty,
-      unit: unit || "piece",
-      expiry_date: formattedExpiresAt,
-      status: "active",
-    });
-  } catch (err) {
-    if (conn) await conn.rollback();
-    console.error("Error adding batch:", err);
-    res.status(500).json({ message: "DB error", error: err.message });
-  } finally {
-    if (conn) conn.release();
-  }
+router.post("/batches", requireInventoryManagerAccess, (_req, res) => {
+  res.status(400).json(stockReceiptRequiresPurchaseOrderResponse());
 });
 
 // POST /api/inventory/batches/:batchId/return

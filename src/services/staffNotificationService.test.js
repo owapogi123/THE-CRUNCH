@@ -20,6 +20,17 @@ assert.deepEqual(getAudienceCondition("administrator").audiences, [
   "administrator",
   STAFF_NOTIFICATION_AUDIENCES.BOTH,
 ]);
+assert.deepEqual(getAudienceCondition("inventory_manager").audiences, [
+  "inventory_manager",
+  STAFF_NOTIFICATION_AUDIENCES.BOTH,
+]);
+assert.equal(
+  getAudienceCondition("inventory_manager").audiences.includes(
+    STAFF_NOTIFICATION_AUDIENCES.ADMINISTRATOR,
+  ),
+  false,
+  "Administrator-only notifications must not be selected for Inventory Managers",
+);
 
 (async () => {
   const calls = [];

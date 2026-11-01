@@ -297,7 +297,7 @@ CREATE TABLE IF NOT EXISTS inventory_alert_reads (
 CREATE TABLE IF NOT EXISTS staff_notifications (
     notification_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     dedupe_key VARCHAR(190) NOT NULL,
-    category ENUM('refund_request','purchase_order') NOT NULL,
+    category ENUM('refund_request','purchase_order','inventory_change') NOT NULL,
     event_type VARCHAR(80) NOT NULL,
     entity_id VARCHAR(64) NOT NULL,
     audience ENUM('administrator','inventory_manager','administrator,inventory_manager') NOT NULL,
@@ -568,7 +568,7 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
     supplier VARCHAR(255) NOT NULL,
     contact VARCHAR(100) DEFAULT '',
     order_date DATE NOT NULL,
-    delivery_date DATE NOT NULL,
+    delivery_date DATE DEFAULT NULL,
     status ENUM('Draft','Ordered','Received','Cancelled') NOT NULL DEFAULT 'Draft',
     notes TEXT DEFAULT NULL,
     receipt_no VARCHAR(255) DEFAULT NULL,

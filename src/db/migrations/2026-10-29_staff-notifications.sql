@@ -4,7 +4,7 @@
 CREATE TABLE IF NOT EXISTS staff_notifications (
     notification_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     dedupe_key VARCHAR(190) NOT NULL,
-    category ENUM('refund_request','purchase_order') NOT NULL,
+    category ENUM('refund_request','purchase_order','inventory_change') NOT NULL,
     event_type VARCHAR(80) NOT NULL,
     entity_id VARCHAR(64) NOT NULL,
     audience ENUM('administrator','inventory_manager','administrator,inventory_manager') NOT NULL,

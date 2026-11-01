@@ -38,6 +38,8 @@ function createExistingSchemaDb({ nullBatchCount = 0 } = {}) {
     "Product_ID",
     "batches_ibfk_1",
   );
+  let notificationCategoryType = "enum('refund_request','purchase_order')";
+  let purchaseOrderDeliveryNullable = "NO";
 
   return {
     calls,
@@ -63,6 +65,19 @@ function createExistingSchemaDb({ nullBatchCount = 0 } = {}) {
             COLUMN_TYPE: "int",
             IS_NULLABLE: "YES",
             COLUMN_DEFAULT: null,
+          }]];
+        }
+        if (/LOWER\(TABLE_NAME\) = 'staff_notifications'/i.test(normalized)) {
+          return [[{
+            COLUMN_TYPE: notificationCategoryType,
+            IS_NULLABLE: "NO",
+          }]];
+        }
+        if (/LOWER\(TABLE_NAME\) = 'purchase_orders'/i.test(normalized)) {
+          return [[{
+            DATA_TYPE: "date",
+            COLUMN_TYPE: "date",
+            IS_NULLABLE: purchaseOrderDeliveryNullable,
           }]];
         }
       }
@@ -106,6 +121,15 @@ function createExistingSchemaDb({ nullBatchCount = 0 } = {}) {
           "id",
           "fk_batches_product",
         );
+        return [{ affectedRows: 0 }];
+      }
+      if (/^ALTER TABLE `staff_notifications`/i.test(normalized)) {
+        notificationCategoryType =
+          "enum('refund_request','purchase_order','inventory_change')";
+        return [{ affectedRows: 0 }];
+      }
+      if (/^ALTER TABLE `purchase_orders`/i.test(normalized)) {
+        purchaseOrderDeliveryNullable = "YES";
         return [{ affectedRows: 0 }];
       }
       if (/^(ALTER TABLE|INSERT INTO products)/i.test(normalized)) {

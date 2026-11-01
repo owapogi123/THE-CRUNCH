@@ -27,6 +27,10 @@ const {
     runWithDbQueryTiming,
 } = require("../services/requestTiming");
 const { requireInventoryManagerAccess } = require("../middleware/staffAccess");
+const {
+    directStockUpdateResponse,
+    findDirectStockQuantityFields,
+} = require("../utils/stockMutationPolicy");
 
 const PRODUCT_NAME_MAX_LENGTH = 100;
 const PRODUCT_DESCRIPTION_MAX_LENGTH = 100;
@@ -490,6 +494,11 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
                 ? 0
                 : Number(quantity);
         const safeQuantity = normalizeInventoryQuantity(safeQuantityInput);
+        if (safeQuantity > 0) {
+            return res
+                .status(400)
+                .json(directStockUpdateResponse(["quantity"]));
+        }
         if (normalizedItemType === MENU_ITEM && safePrice < 1) {
             return res.status(400).json({ message: "Price must be at least \u20B11." });
         }
@@ -703,12 +712,18 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
 router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
     let conn;
     try {
-        const hasItemTypeColumn = await ensureProductSchema(db);
-
         const productId = Number(req.params.id);
         if (!Number.isFinite(productId) || productId <= 0) {
             return res.status(400).json({ message: "Invalid product ID" });
         }
+        const directStockFields = findDirectStockQuantityFields(req.body);
+        if (directStockFields.length > 0) {
+            return res
+                .status(400)
+                .json(directStockUpdateResponse(directStockFields));
+        }
+
+        const hasItemTypeColumn = await ensureProductSchema(db);
         const itemTypeSelect = hasItemTypeColumn ? "item_type" : "NULL AS item_type";
         const [[existingProduct]] = await db.query(
             `SELECT ${itemTypeSelect}, price, name, quantity
@@ -724,7 +739,6 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
         const {
             name,
             price,
-            quantity,
             description,
             category,
             image,
@@ -776,18 +790,6 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
             productValues.push(safePrice);
             menuFields.push("Price = ?");
             menuValues.push(safePrice);
-        }
-
-        if (quantity !== undefined) {
-            const safeQuantity = normalizeInventoryQuantity(quantity);
-            productFields.push("quantity = ?");
-            productValues.push(safeQuantity);
-            menuFields.push("Stock = ?");
-            menuValues.push(safeQuantity);
-            inventoryFields.push("Stock = ?");
-            inventoryValues.push(safeQuantity);
-            inventoryFields.push("Quantity = ?");
-            inventoryValues.push(safeQuantity);
         }
 
         if (
@@ -993,10 +995,7 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
                 [productId],
             );
             if (!existingInventory) {
-                const fallbackQuantity =
-                    quantity !== undefined
-                        ? Number(quantity)
-                        : Number(existingProduct.quantity ?? 0);
+                const fallbackQuantity = Number(existingProduct.quantity ?? 0);
                 const fallbackItemPurchased =
                     name !== undefined
                         ? normalizeProductName(name, {

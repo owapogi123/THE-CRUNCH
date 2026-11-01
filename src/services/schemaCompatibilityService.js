@@ -160,7 +160,7 @@ const CRITICAL_COLUMNS = {
   },
   staff_notifications: {
     notification_id: ["bigint unsigned", false], dedupe_key: ["varchar(190)", false],
-    category: ["enum('refund_request','purchase_order')", false],
+    category: ["enum('refund_request','purchase_order','inventory_change')", false],
     audience: ["enum('administrator','inventory_manager','administrator,inventory_manager')", false],
     actor_user_id: ["int", true], metadata_json: ["json", true],
     created_at: ["timestamp", false], resolved_at: ["timestamp", true],
@@ -173,6 +173,9 @@ const CRITICAL_COLUMNS = {
     item_id: ["int", false], po_id: ["varchar(12)", false],
     product_id: ["int", true], quantity: ["decimal(10,2)", false],
     unit_cost: ["decimal(10,2)", false],
+  },
+  purchase_orders: {
+    delivery_date: ["date", true],
   },
   batches: {
     batch_id: ["int", false], product_id: ["int", false],

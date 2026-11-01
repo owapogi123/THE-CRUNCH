@@ -19,6 +19,7 @@ const {
   STAFF_NOTIFICATION_AUDIENCES,
   createStaffNotification,
 } = require("../services/staffNotificationService");
+const { getBusinessDateParts } = require("../services/orderIdentifierService");
 
 // helpers
 
@@ -472,9 +473,16 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
     if (!normalizedSupplier) {
       throwPurchaseOrderError(400, "supplier is required");
     }
-    const delivery = toDateString(deliveryDate);
-    if (!delivery) {
-      throwPurchaseOrderError(400, "deliveryDate is required");
+    const deliveryDateProvided = Object.prototype.hasOwnProperty.call(
+      req.body,
+      "deliveryDate",
+    );
+    let delivery = null;
+    if (deliveryDateProvided && hasProvidedValue(deliveryDate)) {
+      delivery = toDateString(deliveryDate);
+      if (!delivery) {
+        throwPurchaseOrderError(400, "deliveryDate must be a valid date");
+      }
     }
     const orderDate = toDateString(date) || toDateString(new Date());
     const validatedItems = validateDraftItems(items);
@@ -498,6 +506,10 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
         409,
         `Only Draft purchase orders can be edited; current status is ${existing.status}`,
       );
+    }
+    if (!deliveryDateProvided) {
+      // Omission means "unchanged" for legacy drafts; explicit null clears it.
+      delivery = toDateString(existing.delivery_date);
     }
 
     const resolvedItems = [];
@@ -565,7 +577,7 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
     await logSupplierHistory({
       supplier_name: normalizedSupplier,
       action: "Purchase Order Draft Updated",
-      details: `PO: ${poId} | ${resolvedItems.length} item(s) | Delivery: ${delivery}`,
+      details: `PO: ${poId} | ${resolvedItems.length} item(s)${delivery ? ` | Delivery: ${delivery}` : ""}`,
       performed_by: null,
     });
     return res.json(shapePO(updated, updatedItems));
@@ -599,10 +611,12 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
   }
 
   const orderDate = toDateString(date) || toDateString(new Date());
-  const delivDate = toDateString(deliveryDate);
+  const delivDate = hasProvidedValue(deliveryDate)
+    ? toDateString(deliveryDate)
+    : null;
 
-  if (!delivDate) {
-    return res.status(400).json({ error: "deliveryDate is required" });
+  if (hasProvidedValue(deliveryDate) && !delivDate) {
+    return res.status(400).json({ error: "deliveryDate must be a valid date" });
   }
 
   if (!Array.isArray(items) || items.length === 0) {
@@ -762,7 +776,7 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
     await logSupplierHistory({
       supplier_name: supplier.trim(),
       action: "Purchase Order Created",
-      details: `PO: ${poId} | ${items.length} item(s) | Delivery: ${delivDate}${notes.trim() ? ` | Notes: ${notes.trim()}` : ""}`,
+      details: `PO: ${poId} | ${items.length} item(s)${delivDate ? ` | Delivery: ${delivDate}` : ""}${notes.trim() ? ` | Notes: ${notes.trim()}` : ""}`,
       performed_by: null,
     });
     res.status(201).json(shapePO(created, createdItems));
@@ -868,9 +882,29 @@ router.patch("/:id/receive", requireInventoryManagerAccess, async (req, res) => 
     itemShelfLife = {},
   } = req.body;
 
-  const receivedAt = receivedDate ? new Date(receivedDate) : new Date();
-  const safeReceivedAt = isNaN(receivedAt.getTime()) ? new Date() : receivedAt;
-  const recDate = toDateString(safeReceivedAt) || toDateString(new Date());
+  const currentDateTime = new Date();
+  const today = getBusinessDateParts(currentDateTime).businessDate;
+  const receivedDateProvided = hasProvidedValue(receivedDate);
+  const recDate = receivedDateProvided ? toDateString(receivedDate) : today;
+  if (!recDate) {
+    return res.status(400).json({ error: "receivedDate must be a valid date" });
+  }
+  if (today && recDate > today) {
+    return res.status(400).json({
+      error: "receivedDate cannot be in the future",
+    });
+  }
+  // Keep the current time-of-day for shelf-life calculations while applying
+  // the staff-selected calendar date to the DATE column and batch timestamps.
+  const [receivedYear, receivedMonth, receivedDay] = recDate
+    .split("-")
+    .map(Number);
+  const safeReceivedAt = new Date(currentDateTime);
+  safeReceivedAt.setUTCFullYear(
+    receivedYear,
+    receivedMonth - 1,
+    receivedDay,
+  );
 
   let conn;
   try {
@@ -1111,7 +1145,7 @@ router.patch("/:id/receive", requireInventoryManagerAccess, async (req, res) => 
     await logSupplierHistory({
       supplier_name: existing.supplier, // ← directly from PO, always correct
       action: "Batch Received",
-      details: `PO: ${poId} | Receipt: ${receiptNo ? String(receiptNo).trim() : "N/A"} | Received by: ${receivedBy} | Items: ${receivedItemNames.join(", ") || "none"}`,
+      details: `PO: ${poId} | Receipt: ${receiptNo ? String(receiptNo).trim() : "N/A"} | Actual receipt date: ${recDate} | Received by: ${receivedBy} | Items: ${receivedItemNames.join(", ") || "none"}`,
       performed_by: receivedBy,
     });
 

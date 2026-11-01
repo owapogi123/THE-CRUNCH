@@ -206,6 +206,8 @@ function createConnection() {
         if (state.po.status !== "Ordered") return [{ affectedRows: 0 }];
         state.po.status = "Received";
         state.po.receipt_no = params[0];
+        state.po.received_by = params[1];
+        state.po.received_date = params[2];
         return [{ affectedRows: 1 }];
       }
       if (q.startsWith("UPDATE purchase_orders SET status = 'Cancelled'")) {
@@ -260,7 +262,7 @@ mockModule("../utils/productItemType", {
   getProductItemTypeExpression() { return "'stock_item'"; },
 });
 
-const router = require("./purchaseOrders");
+const router = require("./Purchaseorders");
 
 function handlersFor(path, method) {
   const layer = router.stack.find(
@@ -338,10 +340,21 @@ async function invoke(
   assert.equal(state.connections, 0);
 
   reset("Draft");
+  const invalidDeliveryDate = await invoke(createHandlers, {
+    body: {
+      supplier: "Supplier",
+      deliveryDate: "not-a-date",
+      items: [{ productId: 7, name: "Flour", unit: "kg", quantity: 3 }],
+    },
+  });
+  assert.equal(invalidDeliveryDate.statusCode, 400);
+  assert.match(invalidDeliveryDate.body.error, /valid date/);
+  assert.equal(state.connections, 0);
+
+  reset("Draft");
   const created = await invoke(createHandlers, {
     body: {
       supplier: "Supplier",
-      deliveryDate: "2026-10-24",
       items: [{ productId: 7, name: "Flour", unit: "kg", quantity: 3 }],
     },
   });
@@ -349,13 +362,30 @@ async function invoke(
   assert.equal(created.body.status, "Draft");
   assert.equal(created.body.items[0].productId, 7);
   assert.equal(state.items[0].product_id, 7);
+  assert.equal(state.po.delivery_date, null);
+  assert.equal(state.items[0].unit_cost, 0);
+  assert.equal(state.inventoryAdds, 0);
+  assert.equal(state.batches.length, 0);
   assert.equal(state.notifications.length, 0);
 
   reset("Draft");
+  const createdWithExpectedDelivery = await invoke(createHandlers, {
+    body: {
+      supplier: "Supplier",
+      deliveryDate: "2026-10-24",
+      items: [{ productId: 7, name: "Flour", unit: "kg", quantity: 3 }],
+    },
+  });
+  assert.equal(createdWithExpectedDelivery.statusCode, 201);
+  assert.equal(state.po.delivery_date, "2026-10-24");
+  assert.equal(state.inventoryAdds, 0);
+  assert.equal(state.batches.length, 0);
+
+  reset("Draft");
+  state.po.delivery_date = "2026-10-24";
   const edited = await invoke(editHandlers, {
     body: {
       supplier: "Updated Supplier",
-      deliveryDate: "2026-10-27",
       notes: "Updated safely",
       items: [
         {
@@ -373,12 +403,28 @@ async function invoke(
   assert.equal(edited.body.supplier, "Updated Supplier");
   assert.equal(edited.body.items.length, 1);
   assert.equal(edited.body.items[0].quantity, 4);
+  assert.equal(
+    state.po.delivery_date,
+    "2026-10-24",
+    "omitting deliveryDate must preserve a legacy draft's existing value",
+  );
+
+  reset("Draft");
+  state.po.delivery_date = "2026-10-24";
+  const clearedDeliveryDate = await invoke(editHandlers, {
+    body: {
+      supplier: "Supplier",
+      deliveryDate: null,
+      items: [{ productId: 7, name: "Flour", unit: "kg", quantity: 4 }],
+    },
+  });
+  assert.equal(clearedDeliveryDate.statusCode, 200);
+  assert.equal(state.po.delivery_date, null);
 
   reset("Ordered");
   const editOrdered = await invoke(editHandlers, {
     body: {
       supplier: "Supplier",
-      deliveryDate: "2026-10-27",
       items: [{ productId: 7, name: "Flour", unit: "kg", quantity: 4 }],
     },
   });
@@ -414,9 +460,40 @@ async function invoke(
   }
 
   reset("Ordered");
-  const received = await invoke(receiveHandlers, { body: { receivedBy: "Manager" } });
+  const invalidReceivedDate = await invoke(receiveHandlers, {
+    body: { receivedBy: "Manager", receivedDate: "not-a-date" },
+  });
+  assert.equal(invalidReceivedDate.statusCode, 400);
+  assert.equal(state.inventoryAdds, 0);
+  assert.equal(state.connections, 0);
+
+  reset("Ordered");
+  const futureReceivedDate = await invoke(receiveHandlers, {
+    body: { receivedBy: "Manager", receivedDate: "2999-01-01" },
+  });
+  assert.equal(futureReceivedDate.statusCode, 400);
+  assert.match(futureReceivedDate.body.error, /future/);
+  assert.equal(state.inventoryAdds, 0);
+  assert.equal(state.connections, 0);
+
+  reset("Ordered");
+  state.po.delivery_date = "2026-10-20";
+  const received = await invoke(receiveHandlers, {
+    body: {
+      receivedBy: "Manager",
+      receivedDate: "2020-01-02",
+      receiptNo: "DR-2020-001",
+    },
+  });
   assert.equal(received.statusCode, 200);
   assert.equal(state.po.status, "Received");
+  assert.equal(state.po.received_date, "2020-01-02");
+  assert.equal(state.po.receipt_no, "DR-2020-001");
+  assert.equal(
+    state.po.delivery_date,
+    "2026-10-20",
+    "receiving must not overwrite the expected delivery date",
+  );
   assert.equal(state.inventoryAdds, 3);
   assert.equal(state.product.inventory_stock, 13);
   assert.equal(state.product.menu_stock, 13);

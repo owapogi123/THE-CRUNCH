@@ -8,6 +8,10 @@ const {
 } = require("../utils/productItemType");
 const { requireInventoryManagerAccess } = require("../middleware/staffAccess");
 const { assertTableColumns } = require("../services/schemaAssertions");
+const {
+  STAFF_NOTIFICATION_AUDIENCES,
+  createStaffNotification,
+} = require("../services/staffNotificationService");
 
 function normaliseRecordedBy(recorded_by) {
   if (recorded_by == null) return null;
@@ -227,11 +231,20 @@ router.post("/spoilage", requireInventoryManagerAccess, async (req, res) => {
   try {
     const { product_id, quantity, recorded_by } = req.body;
     const qty = Number(quantity) || 0;
+    const actorUserId = Number(req.user?.userId);
+    const actorName =
+      String(req.user?.username || "").trim() ||
+      (Number.isSafeInteger(actorUserId) && actorUserId > 0
+        ? `Staff #${actorUserId}`
+        : "Authorized staff member");
 
     if (!Number.isFinite(Number(product_id)) || qty <= 0) {
       return res
         .status(400)
         .json({ message: "product_id and quantity are required" });
+    }
+    if (!Number.isSafeInteger(actorUserId) || actorUserId <= 0) {
+      return res.status(401).json({ message: "Invalid authenticated user" });
     }
 
     conn = await db.getConnection();
@@ -243,10 +256,19 @@ router.post("/spoilage", requireInventoryManagerAccess, async (req, res) => {
 
     const [inventoryRows] = await conn.query(
       `SELECT
-         COALESCE(Daily_Withdrawn, 0) AS dailyWithdrawn,
-         COALESCE(Wasted, 0) AS wasted
-       FROM Inventory
-       WHERE Product_ID = ?
+         COALESCE(i.Daily_Withdrawn, 0) AS dailyWithdrawn,
+         COALESCE(i.Wasted, 0) AS wasted,
+         COALESCE(
+           NULLIF(TRIM(p.name), ''),
+           NULLIF(TRIM(m.Product_Name), ''),
+           NULLIF(TRIM(i.Item_Purchased), ''),
+           CONCAT('Product #', i.Product_ID)
+         ) AS productName,
+         COALESCE(NULLIF(TRIM(i.unit), ''), 'unit') AS unit
+       FROM Inventory i
+       LEFT JOIN products p ON p.id = i.Product_ID
+       LEFT JOIN Menu m ON m.Product_ID = i.Product_ID
+       WHERE i.Product_ID = ?
        FOR UPDATE`,
       [product_id],
     );
@@ -270,11 +292,15 @@ router.post("/spoilage", requireInventoryManagerAccess, async (req, res) => {
       });
     }
 
-    await conn.query(
+    const [stockStatusResult] = await conn.query(
       `INSERT INTO Stock_Status (Product_ID, Type, Quantity, Status_Date, RecordedBy)
        VALUES (?, 'spoilage', ?, NOW(), ?)`,
       [product_id, qty, normaliseRecordedBy(recorded_by)],
     );
+    const stockStatusId = Number(stockStatusResult?.insertId);
+    if (!Number.isSafeInteger(stockStatusId) || stockStatusId <= 0) {
+      throw new Error("Unable to identify the completed spoilage operation");
+    }
 
     // Spoilage — deducts mainStock only, dailyWithdrawn unchanged
     await applySpoilageToKitchenBatches(conn, product_id, qty);
@@ -288,11 +314,37 @@ router.post("/spoilage", requireInventoryManagerAccess, async (req, res) => {
       [qty, qty, product_id],
     );
 
+    const productName = String(inventoryRows[0].productName || `Product #${product_id}`);
+    const unit = String(inventoryRows[0].unit || "unit");
+    await createStaffNotification(conn, {
+      dedupeKey: `inventory_change:spoilage:${stockStatusId}`,
+      category: "inventory_change",
+      eventType: "inventory.spoilage",
+      entityId: stockStatusId,
+      audience: STAFF_NOTIFICATION_AUDIENCES.ADMINISTRATOR,
+      actorUserId,
+      title: `Inventory write-off · ${productName}`,
+      message: `${qty} ${unit} of ${productName} written off by ${actorName}.`,
+      status: "Completed",
+      metadata: {
+        actionType: "spoilage_write_off",
+        stockStatusId,
+        productId: Number(product_id),
+        productName,
+        quantity: qty,
+        unit,
+        actorUserId,
+        actorName,
+        targetTab: "alerts",
+      },
+    });
+
     await conn.commit();
     res.status(201).json({
       success: true,
       product_id,
       quantity: qty,
+      stockStatusId,
       dailyWithdrawn: +(availableWithdrawn - qty).toFixed(2),
       wasted: +((Number(inventoryRows[0].wasted) || 0) + qty).toFixed(2),
     });

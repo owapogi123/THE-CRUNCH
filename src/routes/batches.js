@@ -12,6 +12,11 @@ const {
   requireKitchenInventoryAccess,
 } = require("../middleware/staffAccess");
 const { assertTableColumns } = require("../services/schemaAssertions");
+const {
+  directStockUpdateResponse,
+  findDirectStockQuantityFields,
+  stockReceiptRequiresPurchaseOrderResponse,
+} = require("../utils/stockMutationPolicy");
 
 // Phase 4A canonical contract: products(id) is the authority;
 // batches.product_id is NOT NULL; unit/status retain VARCHAR
@@ -784,91 +789,8 @@ router.post("/default", requireInventoryManagerAccess, async (req, res) => {
 });
 
 // POST add a new batch
-router.post("/", requireInventoryManagerAccess, async (req, res) => {
-  const { product_id, quantity, unit, received_date, expiry_date, notes } =
-    req.body;
-
-  const productId = toNumber(product_id);
-  const qty = toNumber(quantity);
-
-  if (!productId || qty <= 0 || !received_date) {
-    return res
-      .status(400)
-      .json({ error: "product_id, quantity and received_date are required" });
-  }
-
-  let conn;
-  try {
-    await ensureBatchesTable();
-
-    conn = await db.getConnection();
-    await conn.beginTransaction();
-    await assertProductsMatchItemType(conn, [productId], STOCK_ITEM, "Batch");
-    const [mirrorRows] = await conn.query(
-      `SELECT p.id, m.Product_ID AS menu_id, i.Inventory_ID AS inventory_id
-       FROM products p
-       LEFT JOIN Menu m ON m.Product_ID = p.id
-       LEFT JOIN Inventory i ON i.Product_ID = p.id
-       WHERE p.id = ?
-       LIMIT 1`,
-      [productId],
-    );
-    if (!mirrorRows[0]?.menu_id || !mirrorRows[0]?.inventory_id) {
-      await conn.rollback();
-      return res.status(409).json({
-        error: "Product inventory mirrors are incomplete; run the approved repair migration first",
-      });
-    }
-
-    const [result] = await conn.query(
-      `INSERT INTO batches
-         (product_id, quantity, remaining_qty, unit, received_date, expiry_date, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        productId,
-        qty,
-        qty,
-        unit || "kg",
-        received_date,
-        expiry_date || null,
-        notes || null,
-      ],
-    );
-
-    // Keep inventory/menu/products aligned with your current stock flow.
-    await conn.query(
-      `UPDATE Inventory
-       SET Stock = COALESCE(Stock, 0) + ?, Last_Update = NOW()
-       WHERE Product_ID = ?`,
-      [qty, productId],
-    );
-
-    await conn.query(
-      `UPDATE Menu
-       SET Stock = COALESCE(Stock, 0) + ?
-       WHERE Product_ID = ?`,
-      [qty, productId],
-    );
-
-    await conn.query(
-      `UPDATE products
-       SET quantity = COALESCE(quantity, 0) + ?
-       WHERE id = ?`,
-      [qty, productId],
-    );
-
-    await conn.commit();
-
-    res
-      .status(201)
-      .json({ batch_id: result.insertId, message: "Batch added successfully" });
-  } catch (err) {
-    if (conn) await conn.rollback();
-    console.error("Error adding batch:", err);
-    res.status(500).json({ error: err.message });
-  } finally {
-    if (conn) conn.release();
-  }
+router.post("/", requireInventoryManagerAccess, (_req, res) => {
+  res.status(400).json(stockReceiptRequiresPurchaseOrderResponse());
 });
 
 // POST withdraw using FIFO or FEFO
@@ -1015,16 +937,21 @@ router.post("/withdraw", requireInventoryManagerAccess, async (req, res) => {
   }
 });
 
-// PUT edit batch (expiry/status/notes/unit and quantities)
+// PUT edit batch metadata. Quantities must only change through stock movements.
 router.put("/:batch_id", requireInventoryManagerAccess, async (req, res) => {
   const batchId = toNumber(req.params.batch_id);
   if (!batchId) {
     return res.status(400).json({ error: "Invalid batch_id" });
   }
 
+  const directStockFields = findDirectStockQuantityFields(req.body);
+  if (directStockFields.length > 0) {
+    return res
+      .status(400)
+      .json(directStockUpdateResponse(directStockFields));
+  }
+
   const {
-    quantity,
-    remaining_qty,
     unit,
     received_date,
     expiry_date,
@@ -1052,26 +979,6 @@ router.put("/:batch_id", requireInventoryManagerAccess, async (req, res) => {
 
     const updates = [];
     const values = [];
-
-    if (quantity !== undefined) {
-      const q = toNumber(quantity);
-      if (q < 0) {
-        await conn.rollback();
-        return res.status(400).json({ error: "quantity must be >= 0" });
-      }
-      updates.push("quantity = ?");
-      values.push(q);
-    }
-
-    if (remaining_qty !== undefined) {
-      const rq = toNumber(remaining_qty);
-      if (rq < 0) {
-        await conn.rollback();
-        return res.status(400).json({ error: "remaining_qty must be >= 0" });
-      }
-      updates.push("remaining_qty = ?");
-      values.push(rq);
-    }
 
     if (unit !== undefined) {
       updates.push("unit = ?");
@@ -1108,36 +1015,6 @@ router.put("/:batch_id", requireInventoryManagerAccess, async (req, res) => {
       `UPDATE batches SET ${updates.join(", ")} WHERE batch_id = ?`,
       values,
     );
-
-    // Keep Inventory/Menu/products stock aligned when remaining qty is edited.
-    if (remaining_qty !== undefined) {
-      const oldRemaining = toNumber(current.remaining_qty);
-      const newRemaining = toNumber(remaining_qty);
-      const delta = +(newRemaining - oldRemaining).toFixed(2);
-
-      if (delta !== 0) {
-        await conn.query(
-          `UPDATE Inventory
-           SET Stock = GREATEST(COALESCE(Stock, 0) + ?, 0), Last_Update = NOW()
-           WHERE Product_ID = ?`,
-          [delta, current.product_id],
-        );
-
-        await conn.query(
-          `UPDATE Menu
-           SET Stock = GREATEST(COALESCE(Stock, 0) + ?, 0)
-           WHERE Product_ID = ?`,
-          [delta, current.product_id],
-        );
-
-        await conn.query(
-          `UPDATE products
-           SET quantity = GREATEST(COALESCE(quantity, 0) + ?, 0)
-           WHERE id = ?`,
-          [delta, current.product_id],
-        );
-      }
-    }
 
     const [updatedRows] = await conn.query(
       `SELECT * FROM batches WHERE batch_id = ?`,

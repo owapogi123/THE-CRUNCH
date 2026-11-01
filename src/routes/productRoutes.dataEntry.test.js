@@ -142,6 +142,11 @@ const createLayer = router.stack.find(
 );
 assert.ok(createLayer, "POST /products route missing");
 const createHandler = createLayer.route.stack.at(-1).handle;
+const updateLayer = router.stack.find(
+  (entry) => entry.route?.path === "/:id" && entry.route.methods?.put,
+);
+assert.ok(updateLayer, "PUT /products/:id route missing");
+const updateHandler = updateLayer.route.stack.at(-1).handle;
 
 async function invoke(body) {
   const req = { body };
@@ -157,6 +162,23 @@ async function invoke(body) {
     },
   };
   await createHandler(req, res);
+  return result;
+}
+
+async function invokeUpdate(body) {
+  const req = { params: { id: "7" }, body };
+  const result = { statusCode: 200, body: null };
+  const res = {
+    status(code) {
+      result.statusCode = code;
+      return this;
+    },
+    json(value) {
+      result.body = value;
+      return this;
+    },
+  };
+  await updateHandler(req, res);
   return result;
 }
 
@@ -200,10 +222,24 @@ function validProduct(overrides = {}) {
   assert.equal(state.products.length, 0);
 
   reset();
+  const initialStock = await invoke(validProduct({ quantity: 25 }));
+  assert.equal(initialStock.statusCode, 400);
+  assert.equal(initialStock.body.code, "DIRECT_STOCK_UPDATE_NOT_ALLOWED");
+  assert.deepEqual(initialStock.body.fields, ["quantity"]);
+  assert.equal(state.products.length, 0);
+
+  reset();
   state.products.push({ id: 7, name: "Chicken Bowl" });
   const duplicate = await invoke(validProduct());
   assert.equal(duplicate.statusCode, 409);
   assert.equal(state.products.length, 1);
+
+  for (const field of ["quantity", "stock", "mainStock", "main_stock"]) {
+    const rejected = await invokeUpdate({ [field]: 100 });
+    assert.equal(rejected.statusCode, 400, `${field} should be rejected`);
+    assert.equal(rejected.body.code, "DIRECT_STOCK_UPDATE_NOT_ALLOWED");
+    assert.deepEqual(rejected.body.fields, [field]);
+  }
 
   console.log("Product data-entry transaction tests passed");
 })().catch((error) => {
