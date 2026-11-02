@@ -1,5 +1,7 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs/promises");
 const http = require("node:http");
+const os = require("node:os");
 const path = require("node:path");
 const jwt = require("jsonwebtoken");
 const mysql = require("mysql2/promise");
@@ -11,8 +13,10 @@ const {
 
 process.env.NODE_ENV = "test";
 process.env.JWT_SECRET ||= "receipt-snapshot-test-only-secret";
+process.env.DISCOUNT_AUTH_CODE ||= "receipt-snapshot-discount-code";
 const databaseName = `the_crunch_receipt_verify_${Date.now()}_${process.pid}`;
 process.env.DB_NAME = databaseName;
+let paymentQrRoot = null;
 
 function serverConfig() {
   const dbConfig = getDatabaseConfig();
@@ -89,6 +93,10 @@ function cashPayload(overrides = {}) {
 }
 
 async function main() {
+  paymentQrRoot = await fs.mkdtemp(path.join(os.tmpdir(), "crunch-receipt-payment-qr-"));
+  process.env.QR_PAYMENT_UPLOAD_DIR = paymentQrRoot;
+  const paymentQrUpdatedAt = "2026-11-03T00:00:00.000Z";
+  const paymentQrFilename = "gcash-qr-1793664000000-00000000-0000-4000-8000-000000000001.png";
   const { setup } = require("../src/db/setup");
   await setup({ log: { log() {}, error: console.error } });
   await setup({ log: { log() {}, error: console.error } });
@@ -113,9 +121,27 @@ async function main() {
       taxRate: "12", serviceCharge: "5",
     })],
   );
+  await fs.writeFile(
+    path.join(paymentQrRoot, paymentQrFilename),
+    Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"),
+  );
+  await db.query(
+    `INSERT INTO system_settings (setting_key, settings_json)
+     VALUES ('gcash_qr_payment', ?)
+     ON DUPLICATE KEY UPDATE settings_json = VALUES(settings_json)`,
+    [JSON.stringify({
+      filename: paymentQrFilename,
+      mimeType: "image/png",
+      updatedAt: paymentQrUpdatedAt,
+    })],
+  );
   await db.query("INSERT INTO Menu (Product_ID, Product_Name, Price, Availability, Stock, manual_override, manual_status) VALUES (1, 'Burger', 100, TRUE, 20, 0, 'Available')");
   await db.query("INSERT INTO products (id, name, price, quantity, item_type) VALUES (1, 'Burger', 100, 20, 'menu_item')");
   await db.query("INSERT INTO Inventory (Product_ID, Quantity, Stock, Item_Purchased) VALUES (1, 20, 20, 'Burger')");
+  await db.query("INSERT INTO Menu (Product_ID, Product_Name, Price, Availability, Stock, manual_override, manual_status) VALUES (2, 'Burger ingredient', 0, TRUE, 100, 0, 'Available')");
+  await db.query("INSERT INTO products (id, name, price, quantity, item_type) VALUES (2, 'Burger ingredient', 0, 100, 'stock_item')");
+  await db.query("INSERT INTO Inventory (Product_ID, Quantity, Stock, Item_Purchased) VALUES (2, 100, 100, 'Burger ingredient')");
+  await db.query("INSERT INTO menu_item_ingredients (menu_product_id, product_id, quantity_required) VALUES (1, 2, 1)");
 
   const app = require("../src/app");
   const server = await new Promise((resolve, reject) => {
@@ -147,7 +173,22 @@ async function main() {
   ];
 
   try {
-    const cash = await requestJson(port, "POST", "/api/orders", cashPayload());
+    const discountAuthorization = await requestJson(
+      port,
+      "POST",
+      "/api/orders/discount-authorization",
+      {
+        discount_id: 2,
+        authorization_code: process.env.DISCOUNT_AUTH_CODE,
+        items: [{ product_id: 1, qty: 2 }],
+      },
+      adminToken,
+    );
+    assert.equal(discountAuthorization.status, 200);
+    const cash = await requestJson(port, "POST", "/api/orders", cashPayload({
+      discount_id: 2,
+      discount_authorization: discountAuthorization.body.approvalToken,
+    }), adminToken);
     assert.equal(cash.status, 200);
     assert.equal(cash.body.id, cash.body.orderId);
     assert.equal(cash.body.orderNumber, "#1000");
@@ -172,9 +213,9 @@ async function main() {
     assert.equal(cash.body.receipt.isLegacyReceipt, false);
     assert.deepEqual(
       staffEvents.map((event) => event.topic),
-      ["orders.changed", "payments.changed", "inventory.changed"],
+      ["orders.changed", "payments.changed"],
     );
-    assert.deepEqual(customerEvents.map((event) => event.topic), ["orders.changed"]);
+    assert.deepEqual(customerEvents.map((event) => event.topic), []);
     assert.equal(unrelatedCustomerEvents.length, 0);
 
     const receiptRoute = `/api/orders/${cash.body.orderId}/receipt`;
@@ -187,12 +228,13 @@ async function main() {
     const onsite = await requestJson(port, "POST", "/api/orders", cashPayload({
       items: [{ product_id: 1, qty: 1 }],
       payment_method: "gcash_onsite", payment_status: "Paid",
-      payment_reference: "RECEIPT-GCASH-1",
-      proof_image_url: "/uploads/payment-proofs/receipt-test.jpg",
+      payment_reference: "POS-GCASH-00000000-0000-4000-8000-000000000002",
+      payment_qr_version: paymentQrUpdatedAt,
+      total: 117,
       customer_type: "Regular customer", discount_name: "Regular customer",
       table_id: null, table_number: undefined, cash_tendered: undefined,
       change_amount: undefined, order_note: undefined,
-    }));
+    }), adminToken);
     assert.equal(onsite.status, 200);
     assert.equal(onsite.body.orderNumber, "#1001");
     assert.equal(onsite.body.receipt.paymentMethod, "Onsite GCash / E-Payment");
@@ -217,7 +259,7 @@ async function main() {
     const failed = await requestJson(port, "POST", "/api/orders", cashPayload({
       items: [{ product_id: 1, qty: 1 }], customer_type: "Regular customer",
       discount_name: "Regular customer", cash_tendered: 120,
-    }));
+    }), adminToken);
     assert.equal(failed.status, 500);
     await db.query("DROP TRIGGER fail_receipt_snapshot_item");
     const [afterFailureRows] = await db.query(
@@ -239,7 +281,7 @@ async function main() {
     const afterRollback = await requestJson(port, "POST", "/api/orders", cashPayload({
       items: [{ product_id: 1, qty: 1 }], customer_type: "Regular customer",
       discount_name: "Regular customer", cash_tendered: 120,
-    }));
+    }), adminToken);
     assert.equal(afterRollback.status, 200);
     assert.equal(afterRollback.body.orderNumber, "#1002");
     assert.match(afterRollback.body.transactionId, /^100\d{6}003$/);
@@ -251,7 +293,7 @@ async function main() {
       customer_type: "Regular customer",
       discount_name: "Regular customer",
       cash_tendered: undefined,
-    }));
+    }), adminToken);
     assert.equal(pendingPayment.status, 200);
     const eventsBeforePaymentConfirmation = staffEvents.length;
     const paymentConfirmation = await requestJson(
@@ -261,12 +303,16 @@ async function main() {
       { payment_status: "Paid", cashierId: 1 },
       adminToken,
     );
-    assert.equal(paymentConfirmation.status, 200);
-    assert.deepEqual(
-      staffEvents.slice(eventsBeforePaymentConfirmation).map((event) => event.topic),
-      ["orders.changed", "payments.changed", "inventory.changed"],
+    assert.equal(paymentConfirmation.status, 400);
+    assert.match(
+      paymentConfirmation.body.message,
+      /only be confirmed as paid during online pickup review/i,
     );
-    assert.equal(staffEvents.at(-3)?.reason, "order.payment_updated");
+    assert.equal(
+      staffEvents.length,
+      eventsBeforePaymentConfirmation,
+      "rejected payment updates must not publish change events",
+    );
 
     const pendingCancellation = await requestJson(port, "POST", "/api/orders", cashPayload({
       items: [{ product_id: 1, qty: 1 }],
@@ -275,7 +321,7 @@ async function main() {
       customer_type: "Regular customer",
       discount_name: "Regular customer",
       cash_tendered: undefined,
-    }));
+    }), adminToken);
     assert.equal(pendingCancellation.status, 200);
     const eventsBeforeCancellation = staffEvents.length;
     const cancellation = await requestJson(
@@ -331,9 +377,9 @@ async function main() {
     ]) assert.deepEqual(refundedResponse.body[field], originalReceipt[field]);
     assert.deepEqual(
       staffEvents.slice(eventsBeforeRefund).map((event) => event.topic),
-      ["orders.changed", "payments.changed", "inventory.changed"],
+      ["orders.changed", "payments.changed"],
     );
-    assert.equal(customerEvents.at(-1)?.reason, "order.refunded");
+    assert.equal(customerEvents.length, 0);
     assert.equal(unrelatedCustomerEvents.length, 0);
 
     console.log(JSON.stringify({
@@ -355,4 +401,7 @@ async function main() {
 main().catch((error) => {
   console.error(error && error.stack ? error.stack : error);
   process.exitCode = 1;
-}).finally(dropDatabase);
+}).finally(async () => {
+  await dropDatabase();
+  if (paymentQrRoot) await fs.rm(paymentQrRoot, { recursive: true, force: true });
+});

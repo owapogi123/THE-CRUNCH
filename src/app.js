@@ -87,6 +87,8 @@ const feedbackRoutes = require("./routes/feedbackRoutes");
 app.use("/api/feedback", feedbackRoutes);
 const settingsRoutes = require("./routes/settingsRoutes");
 app.use("/api/settings", settingsRoutes);
+const paymentQrRoutes = require("./routes/paymentQrRoutes");
+app.use("/api/payment-qr", paymentQrRoutes);
 const contentRoutes = require("./routes/contentRoutes");
 app.use("/api", contentRoutes);
 const paymongoRoutes = require("./routes/paymongoRoutes");

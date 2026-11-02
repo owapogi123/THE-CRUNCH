@@ -45,6 +45,7 @@ const {
 const { validateCashTender } = require("../services/cashValidationService");
 const { getSettlementEligibility } = require("../services/refundEligibility");
 const { updateStaffNotificationStatus } = require("../services/staffNotificationService");
+const { getActivePaymentQr } = require("../services/paymentQrService");
 const {
   APPROVAL_TTL_SECONDS,
   claimDiscountApproval,
@@ -1398,6 +1399,8 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
       payment_status,
       proofImageUrl,
       proof_image_url,
+      paymentQrVersion,
+      payment_qr_version,
       customerName,
       customer_name,
       customerEmail,
@@ -1491,7 +1494,7 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
     ).trim() || null;
     const submittedProofImageUrl =
       String(proof_image_url || proofImageUrl || "").trim() || null;
-    const effectiveProofImageUrl = isStaffOrderActor
+    const effectiveProofImageUrl = isStaffOrderActor && normalizedPaymentMethod !== "gcash_onsite"
       ? submittedProofImageUrl
       : null;
     const submittedCustomerName =
@@ -1541,22 +1544,27 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
       if (normalizedPaymentMethod === "cash") {
         effectivePaymentStatus = "Paid";
       } else if (normalizedPaymentMethod === "gcash_onsite") {
-        effectivePaymentStatus = normalizePaymentStatus(
-          payment_status || paymentStatus || "Pending Verification"
-        );
-
-        if (!submittedProofImageUrl) {
+        if (!/^POS-GCASH-[0-9a-f-]{36}$/i.test(submittedPaymentReference || "")) {
           return res.status(400).json({
-            message: "Onsite e-payment orders require a proof image before confirmation",
+            message: "Onsite GCash confirmation requires a valid checkout request id",
           });
         }
-
-        if (!isPaidPaymentStatus(effectivePaymentStatus)) {
-          return res.status(400).json({
-            message: "Onsite e-payment orders must be manually confirmed by the cashier before placement",
+        const activePaymentQr = await getActivePaymentQr(db);
+        if (!activePaymentQr) {
+          return res.status(409).json({
+            message: "GCash QR payment is not configured. Ask an Administrator to upload it in Settings.",
           });
         }
-
+        const submittedQrVersion = String(
+          payment_qr_version || paymentQrVersion || "",
+        ).trim();
+        if (!submittedQrVersion || submittedQrVersion !== String(activePaymentQr.updatedAt || "")) {
+          return res.status(409).json({
+            message: "The GCash QR image changed. Reopen checkout before confirming payment.",
+          });
+        }
+        effectivePaymentStatus = "Paid";
+        effectivePaymentReference = submittedPaymentReference;
         verifiedBy = resolvedCashierId;
         verifiedAt = new Date();
       } else {
@@ -1685,6 +1693,20 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
       billingSettings,
       appliedDiscount.discountRate,
     );
+
+    if (resolvedCashierId != null && normalizedPaymentMethod === "gcash_onsite") {
+      const submittedGrandTotal = Number(total);
+      if (
+        !Number.isFinite(submittedGrandTotal) ||
+        Math.abs(submittedGrandTotal - billingTotals.grandTotal) > 0.009
+      ) {
+        const amountError = new Error(
+          "GCash amount changed during checkout. Reopen the payment QR and confirm the updated total.",
+        );
+        amountError.statusCode = 409;
+        throw amountError;
+      }
+    }
 
     if (
       isOnlinePickupOrder &&

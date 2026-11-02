@@ -11,6 +11,8 @@ const state = {
   rollbacks: 0,
   receipts: [],
   deductions: 0,
+  paymentReferences: new Set(),
+  qrConfigured: true,
 };
 
 function resetState() {
@@ -19,6 +21,8 @@ function resetState() {
   state.rollbacks = 0;
   state.receipts = [];
   state.deductions = 0;
+  state.paymentReferences = new Set();
+  state.qrConfigured = true;
 }
 
 function mockModule(request, exports) {
@@ -33,6 +37,16 @@ const connection = {
   release() {},
   async query(sql, params = []) {
     const normalizedSql = String(sql).replace(/\s+/g, " ").trim();
+    if (normalizedSql.startsWith("INSERT INTO orders")) {
+      const paymentReference = params[6];
+      if (paymentReference && state.paymentReferences.has(paymentReference)) {
+        const duplicate = new Error("Duplicate entry for payment_reference");
+        duplicate.code = "ER_DUP_ENTRY";
+        duplicate.sqlMessage = "Duplicate entry for key 'uq_orders_payment_reference'";
+        throw duplicate;
+      }
+      if (paymentReference) state.paymentReferences.add(paymentReference);
+    }
     if (/^(INSERT|UPDATE|DELETE)\b/i.test(normalizedSql)) {
       state.writes.push({ sql: normalizedSql, params });
     }
@@ -125,6 +139,13 @@ mockModule("../services/applicationEvents", {
 mockModule("../services/requestTiming", {
   isDevelopmentTimingEnabled: () => false,
   runWithDbQueryTiming: (callback) => callback({ queries: [] }),
+});
+mockModule("../services/paymentQrService", {
+  async getActivePaymentQr() {
+    return state.qrConfigured
+      ? { filename: "configured-qr.png", updatedAt: "2026-11-03T00:00:00.000Z" }
+      : null;
+  },
 });
 
 const router = require("./orderRoutes");
@@ -223,6 +244,103 @@ function assertRejectedBeforePersistence(result) {
     0,
     "paid order creation must not deduct stock before completion",
   );
+
+  resetState();
+  const missingQrReference = await invokeOrder({
+    token: cashierToken,
+    body: {
+      ...baseStaffBody,
+      payment_method: "gcash_onsite",
+      payment_status: "Paid",
+    },
+  });
+  assert.equal(missingQrReference.statusCode, 400);
+  assert.equal(state.writes.length, 0);
+
+  resetState();
+  state.qrConfigured = false;
+  const missingQrConfiguration = await invokeOrder({
+    token: cashierToken,
+    body: {
+      ...baseStaffBody,
+      payment_method: "gcash_onsite",
+      payment_reference: "POS-GCASH-00000000-0000-4000-8000-000000000001",
+    },
+  });
+  assert.equal(missingQrConfiguration.statusCode, 409);
+  assert.equal(state.writes.length, 0);
+
+  resetState();
+  const manualGcashReference = "POS-GCASH-00000000-0000-4000-8000-000000000002";
+  const staleQrConfirmation = await invokeOrder({
+    token: cashierToken,
+    body: {
+      ...baseStaffBody,
+      payment_method: "gcash_onsite",
+      payment_reference: manualGcashReference,
+      payment_qr_version: "2026-11-02T00:00:00.000Z",
+      total: 100,
+    },
+  });
+  assert.equal(staleQrConfirmation.statusCode, 409);
+  assert.match(staleQrConfirmation.body.message, /QR image changed/i);
+  assert.equal(state.writes.length, 0);
+
+  resetState();
+  const mismatchedManualGcash = await invokeOrder({
+    token: cashierToken,
+    body: {
+      ...baseStaffBody,
+      payment_method: "gcash_onsite",
+      payment_reference: manualGcashReference,
+      payment_qr_version: "2026-11-03T00:00:00.000Z",
+      total: 1,
+    },
+  });
+  assert.equal(mismatchedManualGcash.statusCode, 409);
+  assert.match(mismatchedManualGcash.body.message, /amount changed/i);
+  assert.equal(state.receipts.length, 0);
+
+  resetState();
+  const manualGcashOrder = await invokeOrder({
+    token: cashierToken,
+    body: {
+      ...baseStaffBody,
+      payment_method: "gcash_onsite",
+      payment_status: "Pending",
+      payment_reference: manualGcashReference,
+      payment_qr_version: "2026-11-03T00:00:00.000Z",
+      total: 100,
+    },
+  });
+  assert.equal(manualGcashOrder.statusCode, 200);
+  const manualGcashWrite = state.writes.find((write) => write.sql.startsWith("INSERT INTO orders"));
+  assert.equal(manualGcashWrite.params[0], 100, "backend-calculated total must be authoritative");
+  assert.equal(manualGcashWrite.params[4], "Pending", "confirmed payment enters the existing kitchen queue workflow");
+  assert.equal(manualGcashWrite.params[6], manualGcashReference);
+  assert.equal(manualGcashWrite.params[7], "Paid");
+  assert.equal(manualGcashWrite.params[8], "Onsite GCash / E-Payment");
+  assert.equal(manualGcashWrite.params[9], null, "new manual GCash flow does not require a proof upload");
+  assert.equal(manualGcashWrite.params[10], 10, "authenticated Cashier records manual verification");
+  assert.ok(manualGcashWrite.params[11] instanceof Date);
+  const manualGcashPayment = state.writes.find((write) => write.sql.startsWith("INSERT INTO payments"));
+  assert.deepEqual(manualGcashPayment.params.slice(1, 3), ["Onsite GCash / E-Payment", "Completed"]);
+  assert.equal(state.receipts[0].amountPaid, 100);
+  assert.equal(state.deductions, 0, "payment confirmation must not deduct inventory");
+
+  const duplicateManualGcash = await invokeOrder({
+    token: cashierToken,
+    body: {
+      ...baseStaffBody,
+      payment_method: "gcash_onsite",
+      payment_reference: manualGcashReference,
+      payment_qr_version: "2026-11-03T00:00:00.000Z",
+      total: 100,
+    },
+  });
+  assert.equal(duplicateManualGcash.statusCode, 409);
+  assert.match(duplicateManualGcash.body.message, /already been used/i);
+  assert.equal(state.receipts.length, 1, "duplicate confirmation must not create another receipt");
 
   resetState();
   const wrongAuthorization = await invokeAuthorization({
