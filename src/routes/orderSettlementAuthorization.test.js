@@ -244,7 +244,11 @@ function paymentUpdate() {
     assert.equal(orderUpdate().params.includes(userId), true, "JWT actor must be persisted as cashier");
     assert.equal(orderUpdate().params.includes(999), false, "body cashier ID must not be trusted");
     assert.deepEqual(paymentUpdate().params, ["Completed", "55"]);
-    assert.equal(state.deductions, 1);
+    assert.equal(
+      state.deductions,
+      0,
+      "payment confirmation must not deduct before completion",
+    );
   }
 
   resetState({
@@ -278,6 +282,25 @@ function paymentUpdate() {
   assert.equal(orderUpdate().sql.includes("payment_status"), false);
   assert.equal(paymentUpdate(), undefined, "kitchen completion must not mutate payment records");
   assert.equal(state.deductions, 0);
+
+  resetState({
+    status: "Preparing",
+    paymentStatus: "Paid",
+    paymentRecordStatus: "Completed",
+    stockDeducted: 0,
+  });
+  const paidCompletion = await invokePatch({
+    role: "inventory_manager",
+    userId: 20,
+    body: { status: "Completed", completeFromPreparing: true },
+  });
+  assert.equal(paidCompletion.statusCode, 200);
+  assert.equal(paidCompletion.body.status, "Completed");
+  assert.equal(
+    state.deductions,
+    1,
+    "completed and paid orders must deduct exactly once",
+  );
 
   resetState({
     status: "Ready for Pickup",

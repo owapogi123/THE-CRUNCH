@@ -137,6 +137,15 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
         .json({ message: "product_id, type, and quantity are required" });
     }
 
+    if (["initial", "supplementary", "return"].includes(typeLow)) {
+      return res.status(409).json({
+        code: "BATCH_STOCK_MOVEMENT_REQUIRED",
+        message:
+          "Use the batch withdrawal or kitchen return workflow so inventory and batch quantities remain synchronized.",
+      });
+    }
+    return res.status(400).json({ message: "Unsupported stock movement type" });
+
     const recordedByValue = normaliseRecordedBy(recorded_by);
 
     conn = await db.getConnection();

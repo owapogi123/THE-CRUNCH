@@ -847,6 +847,7 @@ router.post("/batches", requireInventoryManagerAccess, (_req, res) => {
 
 // POST /api/inventory/batches/:batchId/return
 router.post("/batches/:batchId/return", requireInventoryManagerAccess, async (req, res) => {
+  let conn;
   try {
     const { batchId } = req.params;
     const qtyToReturn = Number(req.body.quantity) || 0;
@@ -857,28 +858,42 @@ router.post("/batches/:batchId/return", requireInventoryManagerAccess, async (re
         .json({ message: "quantity must be greater than 0" });
     }
 
-    const [rows] = await db.query(
-      "SELECT product_id, remaining_qty FROM batches WHERE batch_id = ?",
+    conn = await db.getConnection();
+    await conn.beginTransaction();
+    const [rows] = await conn.query(
+      `SELECT product_id, quantity, remaining_qty
+         FROM batches
+        WHERE batch_id = ?
+        FOR UPDATE`,
       [batchId],
     );
     if (rows.length === 0) {
+      await conn.rollback();
       return res.status(404).json({ message: "Batch not found" });
     }
 
     const batch = rows[0];
-    const newQty = Math.max(
-      (Number(batch.remaining_qty) || 0) - qtyToReturn,
+    const remainingQty = Number(batch.remaining_qty) || 0;
+    const maxReturnable = Math.max(
       0,
+      +((Number(batch.quantity) || 0) - remainingQty).toFixed(2),
     );
-    const newStatus = newQty === 0 ? "returned" : "active";
+    if (qtyToReturn > maxReturnable) {
+      await conn.rollback();
+      return res.status(400).json({
+        message: `Return quantity exceeds withdrawn amount (${maxReturnable})`,
+      });
+    }
+    const newQty = +(remainingQty + qtyToReturn).toFixed(2);
+    const newStatus = "returned";
 
-    await db.query(
+    await conn.query(
       "UPDATE batches SET status = ?, remaining_qty = ?, returned_qty = COALESCE(returned_qty, 0) + ? WHERE batch_id = ?",
       [newStatus, newQty, qtyToReturn, batchId],
     );
 
     // Batch return — mainStock goes back up, dailyWithdrawn goes back down
-    await db.query(
+    const [inventoryUpdate] = await conn.query(
       `UPDATE Inventory
        SET Stock           = COALESCE(Stock, 0) + ?,
            Daily_Withdrawn = GREATEST(COALESCE(Daily_Withdrawn, 0) - ?, 0),
@@ -886,15 +901,24 @@ router.post("/batches/:batchId/return", requireInventoryManagerAccess, async (re
        WHERE Product_ID = ?`,
       [qtyToReturn, qtyToReturn, batch.product_id],
     );
-    await db.query(
+    const [menuUpdate] = await conn.query(
       "UPDATE Menu SET Stock = COALESCE(Stock, 0) + ? WHERE Product_ID = ?",
       [qtyToReturn, batch.product_id],
     );
-    await db.query(
+    const [productUpdate] = await conn.query(
       "UPDATE products SET quantity = COALESCE(quantity, 0) + ? WHERE id = ?",
       [qtyToReturn, batch.product_id],
     );
 
+    if (
+      inventoryUpdate.affectedRows !== 1 ||
+      menuUpdate.affectedRows !== 1 ||
+      productUpdate.affectedRows !== 1
+    ) {
+      throw new Error("Inventory mirrors are incomplete; batch return was rolled back");
+    }
+
+    await conn.commit();
     res.json({
       success: true,
       batch_id: batchId,
@@ -902,8 +926,11 @@ router.post("/batches/:batchId/return", requireInventoryManagerAccess, async (re
       quantity: newQty,
     });
   } catch (err) {
+    if (conn) await conn.rollback();
     console.error("Error returning batch:", err);
     res.status(500).json({ message: "DB error", error: err.message });
+  } finally {
+    if (conn) conn.release();
   }
 });
 

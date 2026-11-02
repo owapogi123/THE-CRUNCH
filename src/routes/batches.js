@@ -58,7 +58,7 @@ function toNumber(value, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
-async function getKitchenBatchById(conn, kitchenBatchId) {
+async function getKitchenBatchById(conn, kitchenBatchId, { lock = false } = {}) {
   const [rows] = await conn.query(
     `SELECT
        kb.kitchen_batch_id,
@@ -76,7 +76,7 @@ async function getKitchenBatchById(conn, kitchenBatchId) {
      LEFT JOIN products p ON p.id = kb.product_id
      LEFT JOIN Menu m ON m.Product_ID = kb.product_id
      WHERE kb.kitchen_batch_id = ?
-     LIMIT 1`,
+     LIMIT 1${lock ? " FOR UPDATE" : ""}`,
     [kitchenBatchId],
   );
 
@@ -88,13 +88,14 @@ async function reconcileDefaultBatchForStock(conn, productId) {
     `SELECT COALESCE(Stock, 0) AS stock
      FROM Inventory
      WHERE Product_ID = ?
-     LIMIT 1`,
+     LIMIT 1
+     FOR UPDATE`,
     [productId],
   );
 
   const inventoryStock = toNumber(inventoryRow?.stock);
   if (inventoryStock <= 0) {
-    return { created: false, addedQty: 0 };
+    return { created: false, addedQty: 0, inventoryStock };
   }
 
   const [batchRows] = await conn.query(
@@ -111,7 +112,7 @@ async function reconcileDefaultBatchForStock(conn, productId) {
   const missingQty = +(inventoryStock - batchStock).toFixed(2);
 
   if (missingQty <= 0) {
-    return { created: false, addedQty: 0 };
+    return { created: false, addedQty: 0, inventoryStock };
   }
 
   const [[lastBatchRow]] = await conn.query(
@@ -130,7 +131,7 @@ async function reconcileDefaultBatchForStock(conn, productId) {
     [productId, missingQty, missingQty, lastBatchRow?.unit || "kg"],
   );
 
-  return { created: true, addedQty: missingQty };
+  return { created: true, addedQty: missingQty, inventoryStock };
 }
 
 router.get("/kitchen", async (_req, res) => {
@@ -314,7 +315,9 @@ router.patch("/kitchen/:kitchen_batch_id/supplement", requireKitchenInventoryAcc
     conn = await db.getConnection();
     await conn.beginTransaction();
 
-    const existing = await getKitchenBatchById(conn, kitchenBatchId);
+    const existing = await getKitchenBatchById(conn, kitchenBatchId, {
+      lock: true,
+    });
     if (!existing) {
       await conn.rollback();
       return res.status(404).json({ error: "Kitchen batch not found" });
@@ -388,7 +391,9 @@ router.patch("/kitchen/:kitchen_batch_id/return", requireKitchenInventoryAccess,
     conn = await db.getConnection();
     await conn.beginTransaction();
 
-    const existing = await getKitchenBatchById(conn, kitchenBatchId);
+    const existing = await getKitchenBatchById(conn, kitchenBatchId, {
+      lock: true,
+    });
     if (!existing) {
       await conn.rollback();
       return res.status(404).json({ error: "Kitchen batch not found" });
@@ -472,7 +477,7 @@ router.patch("/kitchen/:kitchen_batch_id/return", requireKitchenInventoryAccess,
       ],
     );
 
-    await conn.query(
+    const [inventoryUpdate] = await conn.query(
       `UPDATE Inventory
        SET Stock = COALESCE(Stock, 0) + ?,
            Daily_Withdrawn = GREATEST(COALESCE(Daily_Withdrawn, 0) - ?, 0),
@@ -482,19 +487,27 @@ router.patch("/kitchen/:kitchen_batch_id/return", requireKitchenInventoryAccess,
       [qty, qty, qty, existing.product_id],
     );
 
-    await conn.query(
+    const [menuUpdate] = await conn.query(
       `UPDATE Menu
        SET Stock = COALESCE(Stock, 0) + ?
        WHERE Product_ID = ?`,
       [qty, existing.product_id],
     );
 
-    await conn.query(
+    const [productUpdate] = await conn.query(
       `UPDATE products
        SET quantity = COALESCE(quantity, 0) + ?
        WHERE id = ?`,
       [qty, existing.product_id],
     );
+
+    if (
+      inventoryUpdate.affectedRows !== 1 ||
+      menuUpdate.affectedRows !== 1 ||
+      productUpdate.affectedRows !== 1
+    ) {
+      throw new Error("Inventory mirrors are incomplete; kitchen return was rolled back");
+    }
 
     const nextReturnedQty = +(toNumber(existing.returned_qty) + qty).toFixed(2);
     const nextUsedQty = toNumber(existing.used_qty);
@@ -539,7 +552,9 @@ router.patch("/kitchen/:kitchen_batch_id/reconcile", requireKitchenInventoryAcce
     conn = await db.getConnection();
     await conn.beginTransaction();
 
-    const existing = await getKitchenBatchById(conn, kitchenBatchId);
+    const existing = await getKitchenBatchById(conn, kitchenBatchId, {
+      lock: true,
+    });
     if (!existing) {
       await conn.rollback();
       return res.status(404).json({ error: "Kitchen batch not found" });
@@ -820,7 +835,13 @@ router.post("/withdraw", requireInventoryManagerAccess, async (req, res) => {
     await conn.beginTransaction();
 
     await assertProductsMatchItemType(conn, [productId], STOCK_ITEM, "Batch");
-    await reconcileDefaultBatchForStock(conn, productId);
+    const reconciliation = await reconcileDefaultBatchForStock(conn, productId);
+    if (reconciliation.inventoryStock < qtyNeeded) {
+      await conn.rollback();
+      return res.status(400).json({
+        error: `Insufficient stock. Available: ${reconciliation.inventoryStock}`,
+      });
+    }
 
     const normalizedStrategy =
       String(strategy || "fifo").toLowerCase() === "fefo" ? "fefo" : "fifo";
@@ -845,7 +866,8 @@ router.post("/withdraw", requireInventoryManagerAccess, async (req, res) => {
          AND status IN ('active', 'returned')
          AND remaining_qty > 0
          AND (expiry_date IS NULL OR expiry_date >= CURDATE())
-       ${orderClause}`,
+       ${orderClause}
+       FOR UPDATE`,
       [productId],
     );
 
@@ -898,7 +920,7 @@ router.post("/withdraw", requireInventoryManagerAccess, async (req, res) => {
       ],
     );
 
-    await conn.query(
+    const [inventoryUpdate] = await conn.query(
       `UPDATE Inventory
        SET Stock = GREATEST(COALESCE(Stock, 0) - ?, 0),
            Daily_Withdrawn = COALESCE(Daily_Withdrawn, 0) + ?,
@@ -907,19 +929,27 @@ router.post("/withdraw", requireInventoryManagerAccess, async (req, res) => {
       [qtyNeeded, qtyNeeded, productId],
     );
 
-    await conn.query(
+    const [menuUpdate] = await conn.query(
       `UPDATE Menu
        SET Stock = GREATEST(COALESCE(Stock, 0) - ?, 0)
        WHERE Product_ID = ?`,
       [qtyNeeded, productId],
     );
 
-    await conn.query(
+    const [productUpdate] = await conn.query(
       `UPDATE products
        SET quantity = GREATEST(COALESCE(quantity, 0) - ?, 0)
        WHERE id = ?`,
       [qtyNeeded, productId],
     );
+
+    if (
+      inventoryUpdate.affectedRows !== 1 ||
+      menuUpdate.affectedRows !== 1 ||
+      productUpdate.affectedRows !== 1
+    ) {
+      throw new Error("Inventory mirrors are incomplete; withdrawal was rolled back");
+    }
 
     await conn.commit();
 
@@ -1052,7 +1082,7 @@ router.post("/return", requireInventoryManagerAccess, async (req, res) => {
     await conn.beginTransaction();
 
     const [batches] = await conn.query(
-      `SELECT * FROM batches WHERE batch_id = ?`,
+      `SELECT * FROM batches WHERE batch_id = ? FOR UPDATE`,
       [batchId],
     );
 
@@ -1062,6 +1092,16 @@ router.post("/return", requireInventoryManagerAccess, async (req, res) => {
     }
 
     const batch = batches[0];
+    const maxReturnable = Math.max(
+      0,
+      +(toNumber(batch.quantity) - toNumber(batch.remaining_qty)).toFixed(2),
+    );
+    if (returnQty > maxReturnable) {
+      await conn.rollback();
+      return res.status(400).json({
+        error: `Return quantity exceeds withdrawn amount (${maxReturnable})`,
+      });
+    }
 
     await conn.query(
       `UPDATE batches
@@ -1082,7 +1122,7 @@ router.post("/return", requireInventoryManagerAccess, async (req, res) => {
       ],
     );
 
-    await conn.query(
+    const [inventoryUpdate] = await conn.query(
       `UPDATE Inventory
        SET Stock = COALESCE(Stock, 0) + ?,
            Daily_Withdrawn = GREATEST(COALESCE(Daily_Withdrawn, 0) - ?, 0),
@@ -1092,19 +1132,27 @@ router.post("/return", requireInventoryManagerAccess, async (req, res) => {
       [returnQty, returnQty, returnQty, batch.product_id],
     );
 
-    await conn.query(
+    const [menuUpdate] = await conn.query(
       `UPDATE Menu
        SET Stock = COALESCE(Stock, 0) + ?
        WHERE Product_ID = ?`,
       [returnQty, batch.product_id],
     );
 
-    await conn.query(
+    const [productUpdate] = await conn.query(
       `UPDATE products
        SET quantity = COALESCE(quantity, 0) + ?
        WHERE id = ?`,
       [returnQty, batch.product_id],
     );
+
+    if (
+      inventoryUpdate.affectedRows !== 1 ||
+      menuUpdate.affectedRows !== 1 ||
+      productUpdate.affectedRows !== 1
+    ) {
+      throw new Error("Inventory mirrors are incomplete; batch return was rolled back");
+    }
 
     await conn.commit();
 

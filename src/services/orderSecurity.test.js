@@ -139,6 +139,10 @@ try {
     "deductPrevalidatedStockForPaidOrder(",
     createRouteStart,
   );
+  const completionDeductionIndex = routeSource.indexOf(
+    'nextStatus === "Completed"',
+    routeSource.indexOf('router.patch("/:id"'),
+  );
 
   assert.ok(createRouteStart >= 0, "Order creation must require authentication");
   assert.ok(
@@ -149,8 +153,15 @@ try {
   assert.ok(cashValidationIndex < orderInsertIndex);
   assert.ok(cashValidationIndex < paymentInsertIndex);
   assert.ok(cashValidationIndex < receiptInsertIndex);
-  assert.ok(cashValidationIndex < inventoryIndex);
-  assert.ok(receiptInsertIndex < inventoryIndex, "Inventory timing must remain unchanged");
+  assert.equal(
+    inventoryIndex,
+    -1,
+    "order creation must not deduct stock before completion",
+  );
+  assert.ok(
+    completionDeductionIndex >= 0,
+    "stock deduction must be gated by Completed status",
+  );
   assert.ok(routeSource.includes('actorRole === "customer"'));
   assert.ok(routeSource.includes('normalizedPaymentMethod === "cash_on_pickup"'));
 

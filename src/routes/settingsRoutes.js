@@ -326,6 +326,10 @@ function sanitizeSettingsPayload(payload) {
       source.enableConfirmDialogs,
       true,
     ),
+    lowStockAlertsEnabled: normalizeBoolean(
+      source.lowStockAlertsEnabled,
+      true,
+    ),
     taxRate: normalizeNonNegativeNumericString(
       source.taxRate ?? "",
       "taxRate",

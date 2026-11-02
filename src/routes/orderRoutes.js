@@ -9,7 +9,6 @@ const {
 } = require("../middleware/cookViewAccess");
 const { sendCustomerOrderReceiptEmail } = require("../services/emailService");
 const {
-  deductPrevalidatedStockForPaidOrder,
   deductStockForPaidOrder,
   prepareOrderItemsAndStock,
   restoreStockForRefundedOrder,
@@ -1842,20 +1841,6 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
       }),
     );
 
-    if (isPaidPaymentStatus(effectivePaymentStatus)) {
-      await runOrderStage(
-        req,
-        "deduct stock",
-        () => deductPrevalidatedStockForPaidOrder(
-          orderId,
-          effectivePaymentStatus,
-          stockPlan.deductions,
-          cashierContext.recordedByAdminId,
-          conn,
-        ),
-      );
-    }
-
     await runOrderStage(req, "commit", () => conn.commit());
     txStarted = false;
     orderCommitted = true;
@@ -1864,7 +1849,7 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
       reason: "order.created",
       customerUserId: resolvedCustomerUserId,
       paymentChanged: true,
-      inventoryChanged: isPaidPaymentStatus(effectivePaymentStatus),
+      inventoryChanged: false,
     });
     if (claimedBypassSessionId) {
       consumeBypassCheckout(claimedBypassSessionId);
@@ -2365,8 +2350,8 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
     );
 
     const shouldDeductStockNow =
-      nextStatus !== "Refunded" &&
-      !isPaidPaymentStatus(effectiveCurrentPaymentStatus) &&
+      hasStatusUpdate &&
+      nextStatus === "Completed" &&
       isPaidPaymentStatus(nextPaymentStatus) &&
       Number(existingRows[0].stockDeducted) === 0;
 

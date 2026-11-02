@@ -218,7 +218,11 @@ function assertRejectedBeforePersistence(result) {
   assert.equal(state.receipts[0].changeAmount, 0);
   const exactOrderWrite = state.writes.find((write) => write.sql.startsWith("INSERT INTO orders"));
   assert.equal(exactOrderWrite.params[2], 10, "JWT cashier ID must override the body value");
-  assert.equal(state.deductions, 1);
+  assert.equal(
+    state.deductions,
+    0,
+    "paid order creation must not deduct stock before completion",
+  );
 
   resetState();
   const wrongAuthorization = await invokeAuthorization({
@@ -409,7 +413,11 @@ function assertRejectedBeforePersistence(result) {
   assert.equal(verifiedOnlineWrite.params[6], verifiedCheckout.paymentReference);
   assert.equal(verifiedOnlineWrite.params[7], "Paid");
   assert.equal(state.receipts[0].amountPaid, 100);
-  assert.equal(state.deductions, 1);
+  assert.equal(
+    state.deductions,
+    0,
+    "verified online payment must not deduct stock before completion",
+  );
 
   console.log("Order route security integration tests passed");
 })().catch((error) => {

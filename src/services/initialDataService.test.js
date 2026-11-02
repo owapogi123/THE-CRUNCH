@@ -43,6 +43,12 @@ const {
     "fresh defaults must not overwrite existing settings",
   );
   assert.deepEqual(sanitizeSettingsPayload({}), DEFAULT_RESTAURANT_SETTINGS);
+  assert.equal(
+    sanitizeSettingsPayload({ lowStockAlertsEnabled: false })
+      .lowStockAlertsEnabled,
+    false,
+    "the saved low-stock notification preference must not be discarded",
+  );
 
   console.log("Initial system setting seed tests passed.");
 })().catch((error) => {

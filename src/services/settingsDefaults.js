@@ -74,6 +74,7 @@ const DEFAULT_RESTAURANT_SETTINGS = Object.freeze({
   toastPosition: "top-right",
   toastDuration: "4000",
   enableConfirmDialogs: true,
+  lowStockAlertsEnabled: true,
   taxRate: "",
   serviceCharge: "",
   receiptFooter: "",

@@ -49,8 +49,7 @@ async function resolveRecordedByAdminId(recordedBy, connection = db) {
   return adminRows.length ? numericRecordedBy : null;
 }
 
-// Shared helper used by order flow.
-// Paid orders deduct directly from main inventory stock.
+// Shared helper used by the completed-and-paid order flow.
 async function deductStockForOrder(
   productId,
   quantityUsed,
@@ -730,6 +729,12 @@ async function deductStockForPaidOrder(
     }
 
     const order = orderRows[0];
+    if (String(order.orderStatus || "").trim().toLowerCase() !== "completed") {
+      console.info(
+        `[inventoryService] Order ${numericOrderId} stock deduction skipped: order is not completed.`,
+      );
+      return false;
+    }
     if (!isPaidPaymentStatus(order.paymentStatus)) {
       console.info(
         `[inventoryService] Order ${numericOrderId} stock deduction skipped: payment is not confirmed as paid yet.`,
@@ -771,7 +776,7 @@ async function deductStockForPaidOrder(
 
     if (updateResult.affectedRows > 0) {
       console.info(
-        `[inventoryService] Order ${numericOrderId} stock deduction recorded after payment confirmation.`,
+        `[inventoryService] Order ${numericOrderId} stock deduction recorded after completed-and-paid confirmation.`,
       );
     }
 
