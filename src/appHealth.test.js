@@ -41,6 +41,24 @@ const app = require("./app");
       "https://thecrunch.site",
     );
 
+    const productionPreflight = await fetch(`${baseUrl}/api/purchase-orders`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: "https://thecrunch.site",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "authorization,content-type",
+      },
+    });
+    assert.equal(productionPreflight.status, 204);
+    assert.equal(
+      productionPreflight.headers.get("access-control-allow-origin"),
+      "https://thecrunch.site",
+    );
+    assert.equal(
+      productionPreflight.headers.get("access-control-allow-credentials"),
+      "true",
+    );
+
     const previewCorsResponse = await fetch(`${baseUrl}/health/live`, {
       headers: { Origin: "https://preview-123.the-crunch.pages.dev" },
     });

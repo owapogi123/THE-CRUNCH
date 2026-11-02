@@ -161,6 +161,11 @@ assert.equal(
     userId: 8,
     role: "administrator",
   }), true, "an already-read received-PO notification remains an idempotent success");
+  const readInsertSql = idempotentReadQueries.find((sql) =>
+    sql.startsWith("INSERT INTO staff_notification_reads"));
+  assert.match(readInsertSql, /ON DUPLICATE KEY UPDATE read_at = CURRENT_TIMESTAMP$/);
+  const duplicateUpdateSql = readInsertSql.split("ON DUPLICATE KEY UPDATE")[1];
+  assert.doesNotMatch(duplicateUpdateSql, /LAST_INSERT_ID|notification_id/);
   assert.equal(
     idempotentReadQueries.some((sql) =>
       /purchase_orders|purchase_order_items|inventory|batches|receipt/i.test(sql),

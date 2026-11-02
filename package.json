@@ -22,6 +22,7 @@
     "test:inventory-stabilization": "node src/services/inventoryService.orderLifecycle.test.js && node src/routes/batches.stockMovement.test.js && node src/routes/stockStatusWorkflowGuard.test.js && node src/utils/menuAvailability.test.js && node src/services/inventoryAvailability.dataEntry.test.js && node src/routes/inventoryRoutes.dataEntry.test.js && node src/routes/batches.stockOverwrite.test.js && node src/services/inventoryNotificationService.test.js && node src/middleware/inventoryAlertAccess.test.js",
     "test:sse": "node scripts/testSseEvents.js && node scripts/testStage3StaticAudit.js",
     "test:batch4": "node src/utils/menuAvailability.test.js && node src/middleware/inventoryAlertAccess.test.js && node src/services/inventoryNotificationService.test.js && node src/services/staffNotificationService.test.js && node src/middleware/productCacheInvalidation.test.js",
+    "test:staff-notifications:mysql": "node src/services/staffNotificationService.mysql.test.js",
     "test:inventory-notifications": "node src/db/migrations/inventoryChangeNotificationCategory.test.js && node src/services/staffNotificationService.test.js && node src/routes/stockStatusNotifications.test.js && node src/middleware/inventoryAlertAccess.test.js",
     "test:account": "node src/routes/userRoutes.myAccount.test.js",
     "test:product-images": "node src/routes/uploadProductImageRoutes.test.js",
