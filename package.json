@@ -25,7 +25,8 @@
     "test:inventory-notifications": "node src/db/migrations/inventoryChangeNotificationCategory.test.js && node src/services/staffNotificationService.test.js && node src/routes/stockStatusNotifications.test.js && node src/middleware/inventoryAlertAccess.test.js",
     "test:account": "node src/routes/userRoutes.myAccount.test.js",
     "test:product-images": "node src/routes/uploadProductImageRoutes.test.js",
-    "test:blockers": "node src/services/jwtConfig.test.js && node src/services/paymongoCheckoutService.test.js && node src/routes/mutationAuthorization.test.js && node src/routes/staffQueueAuthorization.test.js && node src/services/orderSecurity.test.js && node src/routes/orderRoutes.security.test.js && node src/routes/orderSettlementAuthorization.test.js && node src/routes/refundRequestRoutes.test.js && node src/services/refundRequestEvents.test.js && node src/routes/settingsPermissions.test.js && node src/routes/userRoutes.myAccount.test.js"
+    "test:operational-auth": "node src/routes/operationalReadAuthorization.test.js",
+    "test:blockers": "node src/services/jwtConfig.test.js && node src/services/paymongoCheckoutService.test.js && node src/routes/mutationAuthorization.test.js && node src/routes/operationalReadAuthorization.test.js && node src/routes/staffQueueAuthorization.test.js && node src/services/orderSecurity.test.js && node src/routes/orderRoutes.security.test.js && node src/routes/orderSettlementAuthorization.test.js && node src/routes/refundRequestRoutes.test.js && node src/services/refundRequestEvents.test.js && node src/routes/settingsPermissions.test.js && node src/routes/userRoutes.myAccount.test.js"
   },
   "dependencies": {
     "@babel/parser": "^7.29.0",

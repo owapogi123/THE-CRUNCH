@@ -1,31 +1,9 @@
 const router = require("express").Router();
-const jwt = require("jsonwebtoken");
 const db = require("../config/db");
-const { getJwtSecret } = require("../services/jwtConfig");
+const { requireAuthenticatedUser } = require("../middleware/cookViewAccess");
+const { requireAdministratorAccess } = require("../middleware/staffAccess");
 
 const MAX_FEEDBACK_LENGTH = 200;
-
-function verifyToken(req, res, next) {
-  const authHeader = req.headers.authorization || "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
-
-  if (!token) {
-    return res.status(401).json({
-      success: false,
-      message: "Please log in to submit feedback.",
-    });
-  }
-
-  try {
-    req.user = jwt.verify(token, getJwtSecret());
-    return next();
-  } catch (error) {
-    return res.status(401).json({
-      success: false,
-      message: "Invalid or expired login session.",
-    });
-  }
-}
 
 function normalizeNullableInt(value) {
   if (value === undefined || value === null || value === "") return null;
@@ -33,7 +11,7 @@ function normalizeNullableInt(value) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : NaN;
 }
 
-router.post("/", verifyToken, async (req, res) => {
+router.post("/", requireAuthenticatedUser, async (req, res) => {
   try {
     const productId = normalizeNullableInt(req.body?.product_id);
     const customerUserId = Number(
@@ -145,7 +123,7 @@ router.post("/", verifyToken, async (req, res) => {
   }
 });
 
-router.get("/", async (_req, res) => {
+router.get("/", requireAdministratorAccess, async (_req, res) => {
   try {
     const [rows] = await db.query(
       `SELECT

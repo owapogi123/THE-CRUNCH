@@ -94,7 +94,7 @@ async function ensureInventoryRow(conn, product_id, hasItemTypeColumn = true) {
 }
 
 // GET /api/stock-status/today
-router.get("/today", async (req, res) => {
+router.get("/today", requireInventoryManagerAccess, async (req, res) => {
   try {
     const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
     const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p", "m");

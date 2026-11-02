@@ -1,5 +1,6 @@
 const router = require("express").Router();
 const db = require("../config/db");
+const { requireInventoryManagerAccess } = require("../middleware/staffAccess");
 const {
   STOCK_ITEM,
   ensureProductsItemTypeSchema,
@@ -15,7 +16,7 @@ async function reportTypeColumn() {
 }
 
 // GET /api/reports
-router.get("/", async (req, res) => {
+router.get("/", requireInventoryManagerAccess, async (req, res) => {
   try {
     const typeColumn = await reportTypeColumn();
     const [rows] = await db.query(
@@ -37,7 +38,7 @@ router.get("/", async (req, res) => {
 });
 
 // GET /api/reports/weekly?start=YYYY-MM-DD
-router.get("/weekly", async (req, res) => {
+router.get("/weekly", requireInventoryManagerAccess, async (req, res) => {
   const { start } = req.query;
   if (!start) return res.status(400).json({ error: "start date required" });
 
@@ -132,7 +133,7 @@ router.get("/weekly", async (req, res) => {
 });
 
 // GET /api/reports/monthly?year=2026&month=4
-router.get("/monthly", async (req, res) => {
+router.get("/monthly", requireInventoryManagerAccess, async (req, res) => {
   const { year, month } = req.query;
   if (!year || !month)
     return res.status(400).json({ error: "year and month required" });

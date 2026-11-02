@@ -207,7 +207,7 @@ async function logSupplierHistory({
 }
 
 // GET /api/suppliers
-router.get("/", async (req, res) => {
+router.get("/", requireInventoryManagerAccess, async (req, res) => {
   try {
     const columns = SUPPLIER_COLUMNS;
     const [rows] = await db.query(
@@ -223,7 +223,7 @@ router.get("/", async (req, res) => {
 });
 
 // GET /api/suppliers/history  <-- must be BEFORE /:supplier_id muna
-router.get("/history", async (req, res) => {
+router.get("/history", requireInventoryManagerAccess, async (req, res) => {
   try {
     const [history] = await db.query(
       `SELECT * FROM supplier_history ORDER BY created_at DESC LIMIT 200`,

@@ -134,7 +134,7 @@ async function reconcileDefaultBatchForStock(conn, productId) {
   return { created: true, addedQty: missingQty, inventoryStock };
 }
 
-router.get("/kitchen", async (_req, res) => {
+router.get("/kitchen", requireInventoryManagerAccess, async (_req, res) => {
   try {
     await ensureBatchesTable();
     await ensureKitchenBatchesTable();
@@ -166,7 +166,7 @@ router.get("/kitchen", async (_req, res) => {
   }
 });
 
-router.get("/kitchen/today", async (_req, res) => {
+router.get("/kitchen/today", requireInventoryManagerAccess, async (_req, res) => {
   try {
     await ensureBatchesTable();
     await ensureKitchenBatchesTable();
@@ -611,7 +611,7 @@ router.patch("/kitchen/:kitchen_batch_id/reconcile", requireKitchenInventoryAcce
 });
 
 // GET all batches for a product
-router.get("/product/:product_id", async (req, res) => {
+router.get("/product/:product_id", requireInventoryManagerAccess, async (req, res) => {
   try {
     await ensureBatchesTable();
     const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
@@ -640,7 +640,7 @@ router.get("/product/:product_id", async (req, res) => {
 });
 
 // GET yesterday's returned batches
-router.get("/returned/yesterday", async (_req, res) => {
+router.get("/returned/yesterday", requireInventoryManagerAccess, async (_req, res) => {
   try {
     await ensureBatchesTable();
     const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
@@ -666,7 +666,7 @@ router.get("/returned/yesterday", async (_req, res) => {
 });
 
 // GET all active batches (FIFO source)
-router.get("/active", async (_req, res) => {
+router.get("/active", requireInventoryManagerAccess, async (_req, res) => {
   try {
     await ensureBatchesTable();
 
