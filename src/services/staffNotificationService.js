@@ -179,7 +179,28 @@ async function markStaffNotificationRead(database, { notificationId, userId, rol
        read_at = CURRENT_TIMESTAMP`,
     [userId, notificationId, ...audience.audiences, userId],
   );
-  return Number(result?.affectedRows) > 0 || Number(result?.insertId) === Number(notificationId);
+  if (
+    Number(result?.affectedRows) > 0 ||
+    Number(result?.insertId) === Number(notificationId)
+  ) {
+    return true;
+  }
+
+  // A repeated acknowledgement can be a successful no-op in MySQL (for
+  // example, when another tab marked the same notification read in the same
+  // timestamp second). In that case affectedRows and insertId may both be 0.
+  // Confirm the persistent notification is still visible to this user instead
+  // of coupling read state to the status of its purchase order or other entity.
+  const [rows] = await database.query(
+    `SELECT notification.notification_id
+       FROM staff_notifications notification
+      WHERE notification.notification_id = ?
+        AND notification.audience IN (?, ?)
+        AND (notification.actor_user_id IS NULL OR notification.actor_user_id <> ?)
+      LIMIT 1`,
+    [notificationId, ...audience.audiences, userId],
+  );
+  return rows.length > 0;
 }
 
 async function markAllStaffNotificationsRead(database, { userId, role }) {

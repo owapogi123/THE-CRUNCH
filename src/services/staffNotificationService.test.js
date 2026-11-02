@@ -9,6 +9,7 @@ const {
   listStaffNotifications,
   markAllStaffNotificationsRead,
   markStaffNotificationRead,
+  mapStaffNotificationRow,
 } = require("./staffNotificationService");
 
 assert.equal(canAccessStaffNotifications("administrator"), true);
@@ -122,6 +123,67 @@ assert.equal(
     userId: 8,
     role: "cashier",
   }), false);
+
+  const receivedPurchaseOrderNotification = mapStaffNotificationRow({
+    notification_id: "91",
+    category: "purchase_order",
+    event_type: "purchase_order.received",
+    entity_id: "PO-0007",
+    title: "Purchase order received",
+    message: "Supplier · Status: Received",
+    status: "Received",
+    metadata_json: JSON.stringify({ poId: "PO-0007", status: "Received" }),
+    actor_user_id: null,
+    created_at: "2026-11-02T01:00:00.000Z",
+    updated_at: "2026-11-02T01:00:00.000Z",
+    resolved_at: null,
+    read_at: null,
+  });
+  assert.equal(receivedPurchaseOrderNotification.notification_id, 91);
+  assert.equal(receivedPurchaseOrderNotification.status, "Received");
+
+  const idempotentReadQueries = [];
+  const idempotentDatabase = {
+    async query(sql) {
+      const normalized = String(sql).replace(/\s+/g, " ").trim();
+      idempotentReadQueries.push(normalized);
+      if (normalized.startsWith("INSERT INTO staff_notification_reads")) {
+        return [{ affectedRows: 0, insertId: 0 }];
+      }
+      if (normalized.startsWith("SELECT notification.notification_id")) {
+        return [[{ notification_id: 91 }]];
+      }
+      throw new Error(`Unexpected query: ${normalized}`);
+    },
+  };
+  assert.equal(await markStaffNotificationRead(idempotentDatabase, {
+    notificationId: receivedPurchaseOrderNotification.notification_id,
+    userId: 8,
+    role: "administrator",
+  }), true, "an already-read received-PO notification remains an idempotent success");
+  assert.equal(
+    idempotentReadQueries.some((sql) =>
+      /purchase_orders|purchase_order_items|inventory|batches|receipt/i.test(sql),
+    ),
+    false,
+    "marking a notification read must not query or mutate PO, receipt, or inventory data",
+  );
+
+  const missingDatabase = {
+    async query(sql) {
+      const normalized = String(sql).replace(/\s+/g, " ").trim();
+      if (normalized.startsWith("INSERT INTO staff_notification_reads")) {
+        return [{ affectedRows: 0, insertId: 0 }];
+      }
+      if (normalized.startsWith("SELECT notification.notification_id")) return [[]];
+      throw new Error(`Unexpected query: ${normalized}`);
+    },
+  };
+  assert.equal(await markStaffNotificationRead(missingDatabase, {
+    notificationId: 999,
+    userId: 8,
+    role: "administrator",
+  }), false, "a genuinely missing notification still returns not found");
 
   console.log("Staff notification lifecycle, visibility, and read-state tests passed.");
 })().catch((error) => {
