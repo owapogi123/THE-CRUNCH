@@ -4,6 +4,7 @@ const jwt = require("jsonwebtoken");
 process.env.JWT_SECRET = "order-route-test-secret";
 process.env.DISCOUNT_AUTH_CODE = "test-only-discount-code";
 process.env.PAYMONGO_ENABLED = "false";
+const validProofUrl = "/api/upload-proof/1793664000000-00000000-0000-4000-8000-000000000003.png";
 
 const state = {
   writes: [],
@@ -145,6 +146,14 @@ mockModule("../services/paymentQrService", {
     return state.qrConfigured
       ? { filename: "configured-qr.png", updatedAt: "2026-11-03T00:00:00.000Z" }
       : null;
+  },
+});
+mockModule("./uploadProofRoutes", {
+  async validateStoredProofUrl(value) {
+    if (value === validProofUrl) return value;
+    const error = new Error("Payment proof must use the protected upload endpoint");
+    error.statusCode = 400;
+    throw error;
   },
 });
 
@@ -294,12 +303,44 @@ function assertRejectedBeforePersistence(result) {
       payment_method: "gcash_onsite",
       payment_reference: manualGcashReference,
       payment_qr_version: "2026-11-03T00:00:00.000Z",
+      proof_image_url: validProofUrl,
       total: 1,
     },
   });
   assert.equal(mismatchedManualGcash.statusCode, 409);
   assert.match(mismatchedManualGcash.body.message, /amount changed/i);
   assert.equal(state.receipts.length, 0);
+
+  resetState();
+  const missingManualGcashProof = await invokeOrder({
+    token: cashierToken,
+    body: {
+      ...baseStaffBody,
+      payment_method: "gcash_onsite",
+      payment_reference: manualGcashReference,
+      payment_qr_version: "2026-11-03T00:00:00.000Z",
+      total: 100,
+    },
+  });
+  assert.equal(missingManualGcashProof.statusCode, 400);
+  assert.match(missingManualGcashProof.body.message, /payment proof is required/i);
+  assert.equal(state.writes.length, 0);
+
+  resetState();
+  const externalManualGcashProof = await invokeOrder({
+    token: cashierToken,
+    body: {
+      ...baseStaffBody,
+      payment_method: "gcash_onsite",
+      payment_reference: manualGcashReference,
+      payment_qr_version: "2026-11-03T00:00:00.000Z",
+      proof_image_url: "https://example.invalid/untrusted-proof.png",
+      total: 100,
+    },
+  });
+  assert.equal(externalManualGcashProof.statusCode, 400);
+  assert.match(externalManualGcashProof.body.message, /protected upload endpoint/i);
+  assert.equal(state.writes.length, 0);
 
   resetState();
   const manualGcashOrder = await invokeOrder({
@@ -310,6 +351,7 @@ function assertRejectedBeforePersistence(result) {
       payment_status: "Pending",
       payment_reference: manualGcashReference,
       payment_qr_version: "2026-11-03T00:00:00.000Z",
+      proof_image_url: validProofUrl,
       total: 100,
     },
   });
@@ -320,7 +362,7 @@ function assertRejectedBeforePersistence(result) {
   assert.equal(manualGcashWrite.params[6], manualGcashReference);
   assert.equal(manualGcashWrite.params[7], "Paid");
   assert.equal(manualGcashWrite.params[8], "Onsite GCash / E-Payment");
-  assert.equal(manualGcashWrite.params[9], null, "new manual GCash flow does not require a proof upload");
+  assert.equal(manualGcashWrite.params[9], validProofUrl, "onsite GCash proof URL must be stored on the order");
   assert.equal(manualGcashWrite.params[10], 10, "authenticated Cashier records manual verification");
   assert.ok(manualGcashWrite.params[11] instanceof Date);
   const manualGcashPayment = state.writes.find((write) => write.sql.startsWith("INSERT INTO payments"));
@@ -335,6 +377,7 @@ function assertRejectedBeforePersistence(result) {
       payment_method: "gcash_onsite",
       payment_reference: manualGcashReference,
       payment_qr_version: "2026-11-03T00:00:00.000Z",
+      proof_image_url: validProofUrl,
       total: 100,
     },
   });

@@ -3,7 +3,15 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const multer = require("multer");
-const { requireCookViewAccess } = require("../middleware/cookViewAccess");
+const {
+  requireCookViewAccess,
+  requireRoleAccess,
+} = require("../middleware/cookViewAccess");
+
+const requirePaymentProofUploadAccess = requireRoleAccess(
+  ["cashier"],
+  "Cashier or Administrator access required",
+);
 
 const uploadRoot = path.resolve(
   process.env.PROOF_UPLOAD_DIR ||
@@ -52,6 +60,42 @@ function getProofContentType(filename) {
   return "image/jpeg";
 }
 
+async function validateStoredProofUrl(value) {
+  const normalizedUrl = String(value || "").trim();
+  const match = normalizedUrl.match(/^\/api\/upload-proof\/([^/?#]+)$/i);
+  if (!match) {
+    const error = new Error("Payment proof must use the protected upload endpoint");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  let filename;
+  try {
+    filename = decodeURIComponent(match[1]);
+  } catch {
+    const error = new Error("Payment proof URL is invalid");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (
+    !generatedProofFilename.test(filename) ||
+    path.basename(filename) !== filename
+  ) {
+    const error = new Error("Payment proof URL is invalid");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  try {
+    await fs.promises.access(path.join(uploadRoot, filename), fs.constants.R_OK);
+  } catch {
+    const error = new Error("Uploaded payment proof is no longer available");
+    error.statusCode = 400;
+    throw error;
+  }
+  return `/api/upload-proof/${encodeURIComponent(filename)}`;
+}
+
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, uploadRoot),
   filename: (_req, file, cb) => {
@@ -75,7 +119,7 @@ const upload = multer({
   },
 });
 
-router.post("/", requireCookViewAccess, upload.single("proof"), async (req, res, next) => {
+router.post("/", requirePaymentProofUploadAccess, upload.single("proof"), async (req, res, next) => {
   if (!req.file) {
     return res.status(400).json({ message: "Proof image is required" });
   }
@@ -139,5 +183,7 @@ router.use((err, _req, res, next) => {
     message: err.message || "Failed to upload payment proof",
   });
 });
+
+router.validateStoredProofUrl = validateStoredProofUrl;
 
 module.exports = router;

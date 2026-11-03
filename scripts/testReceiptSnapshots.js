@@ -95,8 +95,10 @@ function cashPayload(overrides = {}) {
 async function main() {
   paymentQrRoot = await fs.mkdtemp(path.join(os.tmpdir(), "crunch-receipt-payment-qr-"));
   process.env.QR_PAYMENT_UPLOAD_DIR = paymentQrRoot;
+  process.env.PROOF_UPLOAD_DIR = paymentQrRoot;
   const paymentQrUpdatedAt = "2026-11-03T00:00:00.000Z";
   const paymentQrFilename = "gcash-qr-1793664000000-00000000-0000-4000-8000-000000000001.png";
+  const paymentProofFilename = "1793664000001-00000000-0000-4000-8000-000000000003.png";
   const { setup } = require("../src/db/setup");
   await setup({ log: { log() {}, error: console.error } });
   await setup({ log: { log() {}, error: console.error } });
@@ -124,6 +126,10 @@ async function main() {
   await fs.writeFile(
     path.join(paymentQrRoot, paymentQrFilename),
     Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"),
+  );
+  await fs.copyFile(
+    path.join(paymentQrRoot, paymentQrFilename),
+    path.join(paymentQrRoot, paymentProofFilename),
   );
   await db.query(
     `INSERT INTO system_settings (setting_key, settings_json)
@@ -230,6 +236,7 @@ async function main() {
       payment_method: "gcash_onsite", payment_status: "Paid",
       payment_reference: "POS-GCASH-00000000-0000-4000-8000-000000000002",
       payment_qr_version: paymentQrUpdatedAt,
+      proof_image_url: `/api/upload-proof/${paymentProofFilename}`,
       total: 117,
       customer_type: "Regular customer", discount_name: "Regular customer",
       table_id: null, table_number: undefined, cash_tendered: undefined,

@@ -79,7 +79,21 @@ async function main() {
     process.env.JWT_SECRET,
     { expiresIn: "5m" },
   );
+  const cashierToken = jwt.sign(
+    { id: 3, userId: 3, role: "cashier" },
+    process.env.JWT_SECRET,
+    { expiresIn: "5m" },
+  );
+  const inventoryManagerToken = jwt.sign(
+    { id: 4, userId: 4, role: "inventory_manager" },
+    process.env.JWT_SECRET,
+    { expiresIn: "5m" },
+  );
   const adminHeaders = { Authorization: `Bearer ${adminToken}` };
+  const cashierHeaders = { Authorization: `Bearer ${cashierToken}` };
+  const inventoryManagerHeaders = {
+    Authorization: `Bearer ${inventoryManagerToken}`,
+  };
 
   try {
     const existing = await request(
@@ -92,10 +106,21 @@ async function main() {
     assert.deepEqual(existing.body, png);
 
     const multipart = multipartProof("cashier-camera.txt", "image/png", png);
+    const inventoryManagerUpload = await request(port, "/api/upload-proof", {
+      method: "POST",
+      headers: {
+        ...inventoryManagerHeaders,
+        "Content-Type": multipart.contentType,
+        "Content-Length": multipart.body.length,
+      },
+      body: multipart.body,
+    });
+    assert.equal(inventoryManagerUpload.status, 403);
+
     const uploaded = await request(port, "/api/upload-proof", {
       method: "POST",
       headers: {
-        ...adminHeaders,
+        ...cashierHeaders,
         "Content-Type": multipart.contentType,
         "Content-Length": multipart.body.length,
       },
@@ -107,12 +132,25 @@ async function main() {
       uploadPayload.fileUrl,
       /^\/api\/upload-proof\/\d{13}-[0-9a-f-]{36}\.png$/i,
     );
+    const proofRouter = require("../src/routes/uploadProofRoutes");
+    assert.equal(
+      await proofRouter.validateStoredProofUrl(uploadPayload.fileUrl),
+      uploadPayload.fileUrl,
+    );
+    await assert.rejects(
+      () => proofRouter.validateStoredProofUrl("https://example.invalid/proof.png"),
+      /protected upload endpoint/i,
+    );
 
     const newlyServed = await request(port, uploadPayload.fileUrl, {
       headers: adminHeaders,
     });
     assert.equal(newlyServed.status, 200);
     assert.deepEqual(newlyServed.body, png);
+    const reportingAccess = await request(port, uploadPayload.fileUrl, {
+      headers: inventoryManagerHeaders,
+    });
+    assert.equal(reportingAccess.status, 200);
 
     const unauthenticated = await request(port, uploadPayload.fileUrl);
     assert.equal(unauthenticated.status, 401);
@@ -170,6 +208,9 @@ async function main() {
           newProofUploadedAndServed: true,
           missingProofReturned404: true,
           publicAndCustomerAccessDenied: true,
+          cashierUploadAllowedAndInventoryUploadDenied: true,
+          authorizedReportingAccessPreserved: true,
+          storedProofUrlValidated: true,
           traversalBlocked: true,
           invalidImageRejectedAndRemoved: true,
         },

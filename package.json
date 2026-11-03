@@ -24,6 +24,7 @@
     "test:batch4": "node src/utils/menuAvailability.test.js && node src/middleware/inventoryAlertAccess.test.js && node src/services/inventoryNotificationService.test.js && node src/services/staffNotificationService.test.js && node src/middleware/productCacheInvalidation.test.js",
     "test:staff-notifications:mysql": "node src/services/staffNotificationService.mysql.test.js",
     "test:payment-qr": "node src/routes/paymentQrRoutes.test.js",
+    "test:payment-proofs": "node scripts/verifyProofStorage.js",
     "test:inventory-notifications": "node src/db/migrations/inventoryChangeNotificationCategory.test.js && node src/services/staffNotificationService.test.js && node src/routes/stockStatusNotifications.test.js && node src/middleware/inventoryAlertAccess.test.js",
     "test:account": "node src/routes/userRoutes.myAccount.test.js",
     "test:product-images": "node src/routes/uploadProductImageRoutes.test.js",

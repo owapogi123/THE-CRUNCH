@@ -66,6 +66,7 @@ const {
   verifyPayMongoCheckoutSession: verifyBoundPayMongoCheckoutSession,
 } = require("../services/paymongoCheckoutService");
 const paymongoRoutes = require("./paymongoRoutes");
+const { validateStoredProofUrl } = require("./uploadProofRoutes");
 function withOrderRequestTiming(req, _res, next) {
   if (!isDevelopmentTimingEnabled()) return next();
   return runWithDbQueryTiming((queryTiming) => {
@@ -1494,7 +1495,7 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
     ).trim() || null;
     const submittedProofImageUrl =
       String(proof_image_url || proofImageUrl || "").trim() || null;
-    const effectiveProofImageUrl = isStaffOrderActor && normalizedPaymentMethod !== "gcash_onsite"
+    let effectiveProofImageUrl = isStaffOrderActor && normalizedPaymentMethod !== "gcash_onsite"
       ? submittedProofImageUrl
       : null;
     const submittedCustomerName =
@@ -1561,6 +1562,18 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
         if (!submittedQrVersion || submittedQrVersion !== String(activePaymentQr.updatedAt || "")) {
           return res.status(409).json({
             message: "The GCash QR image changed. Reopen checkout before confirming payment.",
+          });
+        }
+        if (!submittedProofImageUrl) {
+          return res.status(400).json({
+            message: "Payment proof is required before confirming onsite GCash payment",
+          });
+        }
+        try {
+          effectiveProofImageUrl = await validateStoredProofUrl(submittedProofImageUrl);
+        } catch (proofError) {
+          return res.status(proofError.statusCode || 400).json({
+            message: proofError.message || "Payment proof URL is invalid",
           });
         }
         effectivePaymentStatus = "Paid";

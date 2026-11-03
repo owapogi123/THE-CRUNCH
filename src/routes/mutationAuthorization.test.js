@@ -119,6 +119,35 @@ test("product image upload authenticates before Multer writes a file", async () 
   assert.equal(administrator.reachedHandler, true);
 });
 
+test("payment proof upload permits Cashier and Administrator only", async () => {
+  const route = findRoute(require("./uploadProofRoutes"), "post", "/");
+  assert.ok(route);
+  assert.equal(route.stack[0].handle.name, "roleAccessMiddleware");
+  const authorizationBoundary = { stack: route.stack.slice(0, 2) };
+
+  const unauthenticated = await runBoundary(
+    authorizationBoundary,
+    "",
+    { authenticated: false },
+  );
+  assert.equal(unauthenticated.statusCode, 401);
+
+  const inventoryManager = await runBoundary(
+    authorizationBoundary,
+    "inventory_manager",
+  );
+  assert.equal(inventoryManager.statusCode, 403);
+
+  const cashier = await runBoundary(authorizationBoundary, "cashier");
+  assert.equal(cashier.reachedHandler, true);
+
+  const administrator = await runBoundary(
+    authorizationBoundary,
+    "administrator",
+  );
+  assert.equal(administrator.reachedHandler, true);
+});
+
 test("product images use the configured durable volume without changing stored record URLs", () => {
   const path = require("node:path");
   const imageRouter = require("./uploadProductImageRoutes");
