@@ -139,9 +139,13 @@ try {
     "deductPrevalidatedStockForPaidOrder(",
     createRouteStart,
   );
-  const completionDeductionIndex = routeSource.indexOf(
-    'nextStatus === "Completed"',
+  const onlineAcceptanceIndex = routeSource.indexOf(
+    "const isOnlineAcceptance",
     routeSource.indexOf('router.patch("/:id"'),
+  );
+  const acceptanceDeductionIndex = routeSource.indexOf(
+    "deductStockForPaidOrder(id, authenticatedActorId, conn)",
+    onlineAcceptanceIndex,
   );
 
   assert.ok(createRouteStart >= 0, "Order creation must require authentication");
@@ -153,15 +157,15 @@ try {
   assert.ok(cashValidationIndex < orderInsertIndex);
   assert.ok(cashValidationIndex < paymentInsertIndex);
   assert.ok(cashValidationIndex < receiptInsertIndex);
-  assert.equal(
-    inventoryIndex,
-    -1,
-    "order creation must not deduct stock before completion",
+  assert.ok(
+    inventoryIndex > receiptInsertIndex,
+    "paid onsite order creation must deduct after persistent order records are prepared",
   );
   assert.ok(
-    completionDeductionIndex >= 0,
-    "stock deduction must be gated by Completed status",
+    onlineAcceptanceIndex >= 0 && acceptanceDeductionIndex > onlineAcceptanceIndex,
+    "online acceptance must be the persisted-order stock deduction trigger",
   );
+  assert.doesNotMatch(routeSource, /const shouldDeductStockNow[\s\S]*?nextStatus === "Completed"/);
   assert.ok(routeSource.includes('actorRole === "customer"'));
   assert.ok(routeSource.includes('normalizedPaymentMethod === "cash_on_pickup"'));
 

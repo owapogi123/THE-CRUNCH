@@ -93,4 +93,9 @@ test("inventory restoration remains row-locked and exact-once guarded", () => {
   assert.match(restoreFunction, /SET stock_deducted = 0/);
   assert.match(restoreFunction, /COALESCE\(stock_deducted, 0\) = 1/);
   assert.match(restoreFunction, /successfully refunded order/);
+  assert.match(restoreFunction, /loadOrderDeductionSnapshot/);
+  assert.doesNotMatch(
+    restoreFunction.slice(0, restoreFunction.indexOf("module.exports")),
+    /getOrderIngredientDeductions\(numericOrderId/,
+  );
 });

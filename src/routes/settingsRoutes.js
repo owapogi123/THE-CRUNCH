@@ -16,6 +16,19 @@ const COOK_VIEW_PERMISSION_ROLES = [
   "cashier",
   "inventory_manager",
 ];
+const DELIVERY_PLATFORM_LINKS_KEY = "delivery_platform_links";
+const DELIVERY_PLATFORM_HOSTS = Object.freeze({
+  grabfood: new Set(["r.grab.com", "food.grab.com", "app.grab.com"]),
+  foodpanda: new Set([
+    "foodpanda.go.link",
+    "foodpanda.ph",
+    "www.foodpanda.ph",
+  ]),
+});
+const EMPTY_DELIVERY_PLATFORM_LINKS = Object.freeze({
+  grabfoodUrl: null,
+  foodpandaUrl: null,
+});
 
 function enforceSuperuserPermissions(permissions) {
   for (const permissionKey of VALID_PERMISSION_KEYS) {
@@ -242,6 +255,92 @@ function normalizeNonNegativeNumericString(value, fieldName, fallback = "") {
   return String(normalizeNumber(value, fieldName, { min: 0 }));
 }
 
+function validateDeliveryPlatformUrl(value, platform) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return null;
+  const key = String(platform || "").trim().toLowerCase();
+  const label = key === "grabfood" ? "GrabFood" : "Foodpanda";
+  if (normalized.length > 2048) {
+    throw new Error(`${label} ordering URL is too long`);
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    throw new Error(`${label} ordering URL must be a valid HTTPS URL`);
+  }
+
+  const allowedHosts = DELIVERY_PLATFORM_HOSTS[key];
+  const hostname = parsed.hostname.toLowerCase().replace(/\.$/, "");
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username ||
+    parsed.password ||
+    (parsed.port && parsed.port !== "443") ||
+    !allowedHosts?.has(hostname)
+  ) {
+    throw new Error(
+      `${label} ordering URL must use HTTPS on an approved official ${label} domain`,
+    );
+  }
+
+  return parsed.toString();
+}
+
+function sanitizeDeliveryPlatformLinks(payload) {
+  const source = payload && typeof payload === "object" ? payload : {};
+  return {
+    grabfoodUrl: validateDeliveryPlatformUrl(source.grabfoodUrl, "grabfood"),
+    foodpandaUrl: validateDeliveryPlatformUrl(
+      source.foodpandaUrl,
+      "foodpanda",
+    ),
+  };
+}
+
+function normalizeStoredDeliveryPlatformLinks(payload) {
+  const source = payload && typeof payload === "object" ? payload : {};
+  const safe = { ...EMPTY_DELIVERY_PLATFORM_LINKS };
+  try {
+    safe.grabfoodUrl = validateDeliveryPlatformUrl(
+      source.grabfoodUrl,
+      "grabfood",
+    );
+  } catch {
+    safe.grabfoodUrl = null;
+  }
+  try {
+    safe.foodpandaUrl = validateDeliveryPlatformUrl(
+      source.foodpandaUrl,
+      "foodpanda",
+    );
+  } catch {
+    safe.foodpandaUrl = null;
+  }
+  return safe;
+}
+
+async function loadDeliveryPlatformLinks() {
+  const [rows] = await db.query(
+    `SELECT settings_json
+       FROM system_settings
+      WHERE setting_key = ?
+      LIMIT 1`,
+    [DELIVERY_PLATFORM_LINKS_KEY],
+  );
+  if (!rows.length || !rows[0].settings_json) {
+    return { ...EMPTY_DELIVERY_PLATFORM_LINKS };
+  }
+  try {
+    return normalizeStoredDeliveryPlatformLinks(
+      JSON.parse(rows[0].settings_json),
+    );
+  } catch {
+    return { ...EMPTY_DELIVERY_PLATFORM_LINKS };
+  }
+}
+
 function sanitizeSettingsPayload(payload) {
   const source = payload && typeof payload === "object" ? payload : {};
   return {
@@ -344,6 +443,43 @@ function sanitizeSettingsPayload(payload) {
     maintenanceMode: normalizeBoolean(source.maintenanceMode, false),
   };
 }
+
+// Public by design: exposes only the two approved customer ordering URLs.
+router.get("/delivery-links", async (_req, res) => {
+  try {
+    res.json(await loadDeliveryPlatformLinks());
+  } catch (error) {
+    console.error("GET /api/settings/delivery-links error:", error);
+    res.status(500).json({ message: "Failed to load delivery platform links" });
+  }
+});
+
+router.put(
+  "/delivery-links",
+  requireAdministratorAccess,
+  async (req, res) => {
+    try {
+      const links = sanitizeDeliveryPlatformLinks(req.body);
+      await db.query(
+        `INSERT INTO system_settings (setting_key, settings_json)
+         VALUES (?, ?)
+         ON DUPLICATE KEY UPDATE settings_json = VALUES(settings_json)`,
+        [DELIVERY_PLATFORM_LINKS_KEY, JSON.stringify(links)],
+      );
+      res.json(links);
+    } catch (error) {
+      const validationError = /ordering URL/i.test(String(error?.message));
+      if (!validationError) {
+        console.error("PUT /api/settings/delivery-links error:", error);
+      }
+      res.status(validationError ? 400 : 500).json({
+        message: validationError
+          ? error.message
+          : "Failed to save delivery platform links",
+      });
+    }
+  },
+);
 
 router.get("/", async (_req, res) => {
   try {
@@ -1175,5 +1311,8 @@ module.exports.permissionPolicy = {
   mergePermissionsPayload,
   normalizePermissionRoleLocks,
   normalizePermissionsPayload,
+  normalizeStoredDeliveryPlatformLinks,
+  sanitizeDeliveryPlatformLinks,
   sanitizeSettingsPayload,
+  validateDeliveryPlatformUrl,
 };

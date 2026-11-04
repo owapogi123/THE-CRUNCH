@@ -145,9 +145,13 @@ async function main() {
     assert(orderColumnNames.has(required), `missing startup column ${required}`);
   }
   const [paymentIndexes] = await db.query(
-    "SHOW INDEX FROM orders WHERE Key_name = 'uq_orders_payment_reference'",
+    "SHOW INDEX FROM orders WHERE Key_name = 'idx_orders_payment_reference'",
   );
-  assert(paymentIndexes.length > 0, "unique payment-reference index was not created");
+  assert(paymentIndexes.length > 0, "payment-reference lookup index was not created");
+  assert(
+    paymentIndexes.every((index) => Number(index.Non_unique) === 1),
+    "third-party platform references must not be globally unique",
+  );
 
   await db.query(
     `INSERT INTO Admin (Admin_ID, UserName, Email, Password)
@@ -404,7 +408,7 @@ async function main() {
     // The forced failure allocated the fourth pair inside its transaction, so
     // this successful order must reuse it after the rollback.
     assertBusinessIdentifiers(response, "#1003", 4);
-    record("unique payment reference first use", response);
+    record("duplicate-protected payment reference first use", response);
     response = await postJson(port, "/api/orders", onsitePayload);
     assert.equal(response.status, 409);
     record("duplicate payment reference", response);
@@ -424,7 +428,7 @@ async function main() {
     console.log(JSON.stringify({
       database: databaseName,
       repeatedStartup: "pass",
-      schemaAndUniqueIndex: "pass",
+      schemaAndReferenceIndex: "pass",
       legacyApiFallbacks: "pass",
       payMongoRequests,
       results,

@@ -17,6 +17,7 @@ const routeCases = [
   [require("./stockStatusRoutes"), "post", "/", "inventory_manager", "stock-status writes"],
   [require("./suppliersRoutes"), "post", "/", "inventory_manager", "supplier writes"],
   [require("./settingsRoutes"), "post", "/", "administrator", "settings writes"],
+  [require("./settingsRoutes"), "put", "/delivery-links", "administrator", "delivery platform link writes"],
   [require("./settingsRoutes"), "put", "/permissions", "administrator", "permission writes"],
   [require("./settingsRoutes"), "post", "/inventory-categories", "administrator", "category writes"],
   [require("./settingsRoutes"), "post", "/discount-types", "administrator", "discount writes"],

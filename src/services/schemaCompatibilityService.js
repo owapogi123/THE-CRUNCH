@@ -12,7 +12,7 @@ const EXPECTED_TABLES = [
   "inventory_categories", "inventory_units",
   "kitchen", "kitchen_batches", "kitchen_usage_items",
   "kitchen_usage_reports", "menu", "menu_categories",
-  "menu_item_ingredients", "order_daily_counters", "order_item",
+  "menu_item_ingredients", "order_daily_counters", "order_inventory_deductions", "order_item",
   "order_tracking", "orders", "payments", "pending_signups", "po_counter",
   "products", "purchase_order_items", "purchase_orders", "receipt",
   "receipt_snapshot_items", "receipt_snapshots", "refund_requests", "reports",
@@ -57,10 +57,11 @@ const EXPECTED_INDEXES = [
   "menu_item_ingredients|uniq_menu_ingredient|1|menu_product_id,product_id",
   "menu_item_ingredients|fk_menu_item_ingredients_product|0|product_id",
   "order_daily_counters|primary|1|business_date,counter_scope",
+  "order_inventory_deductions|primary|1|order_id,product_id",
   "order_item|primary|1|order_item_id", "order_item|order_id|0|order_id",
   "order_item|product_id|0|product_id", "order_tracking|primary|1|tracking_id",
   "order_tracking|order_id|0|order_id", "orders|primary|1|order_id",
-  "orders|uq_orders_payment_reference|1|payment_reference",
+  "orders|idx_orders_payment_reference|0|payment_reference",
   "orders|uq_orders_transaction_id|1|transaction_id",
   "orders|uq_orders_business_order_number|1|business_date,order_number",
   "orders|customer_id|0|customer_id", "orders|cashier_id|0|cashier_id",
@@ -110,6 +111,7 @@ const EXPECTED_FOREIGN_KEYS = [
   "menu|menu_ibfk_1|category_id|categories|category_id|no action|no action",
   "menu_item_ingredients|fk_menu_item_ingredients_menu|menu_product_id|menu|product_id|no action|cascade",
   "menu_item_ingredients|fk_menu_item_ingredients_product|product_id|menu|product_id|no action|cascade",
+  "order_inventory_deductions|fk_order_inventory_deductions_order|order_id|orders|order_id|restrict|restrict",
   "order_item|order_item_ibfk_1|order_id|orders|order_id|no action|no action",
   "order_item|order_item_ibfk_2|product_id|menu|product_id|no action|no action",
   "order_tracking|order_tracking_ibfk_1|order_id|orders|order_id|no action|no action",
@@ -157,6 +159,10 @@ const CRITICAL_COLUMNS = {
     reason_snapshot: ["varchar(500)", false],
     status: ["enum('Pending','Ignored','Actioned')", false],
     requested_at: ["timestamp", false], reviewed_at: ["timestamp", true],
+  },
+  order_inventory_deductions: {
+    order_id: ["int", false], product_id: ["int", false],
+    quantity: ["decimal(14,4)", false], created_at: ["timestamp", false],
   },
   staff_notifications: {
     notification_id: ["bigint unsigned", false], dedupe_key: ["varchar(190)", false],
@@ -361,6 +367,7 @@ async function validateOrphans(db, foreignKeys) {
 }
 
 async function verifySchemaCompatibility(db, expectedDatabaseName) {
+  const warnings = [];
   const expectedDatabase = String(expectedDatabaseName || "").trim();
   const [[identity]] = await db.query(
     "SELECT DATABASE() AS database_name, @@version AS server_version",
@@ -454,9 +461,22 @@ async function verifySchemaCompatibility(db, expectedDatabaseName) {
   });
   const expectedIndexShapes = new Set(EXPECTED_INDEXES.map(indexShape));
   const actualIndexShapes = new Set(indexSignatures.map(indexShape));
-  const missingIndexShapes = [...expectedIndexShapes]
+  let missingIndexShapes = [...expectedIndexShapes]
     .filter((signature) => !actualIndexShapes.has(signature))
     .sort();
+  const expectedReusablePaymentReferenceIndex = "orders|0|payment_reference";
+  const legacyUniquePaymentReferenceIndex = "orders|1|payment_reference";
+  if (
+    missingIndexShapes.includes(expectedReusablePaymentReferenceIndex) &&
+    actualIndexShapes.has(legacyUniquePaymentReferenceIndex)
+  ) {
+    missingIndexShapes = missingIndexShapes.filter(
+      (signature) => signature !== expectedReusablePaymentReferenceIndex,
+    );
+    warnings.push(
+      "orders.payment_reference remains globally unique; run the third-party reference reuse migration after deploying the application-level duplicate-payment guard.",
+    );
+  }
   if (missingIndexShapes.length > 0) {
     throw createSchemaCompatibilityError(
       "Database indexes do not satisfy the canonical schema contract.",
@@ -520,7 +540,7 @@ async function verifySchemaCompatibility(db, expectedDatabaseName) {
     routineCount: 0,
     eventCount: 0,
     orphanCount: 0,
-    warnings: [],
+    warnings,
     orphanResults,
   };
 }

@@ -40,6 +40,9 @@ function createExistingSchemaDb({ nullBatchCount = 0 } = {}) {
   );
   let notificationCategoryType = "enum('refund_request','purchase_order')";
   let purchaseOrderDeliveryNullable = "NO";
+  let hasUniquePaymentReferenceIndex = true;
+  let hasPaymentReferenceLookupIndex = false;
+  let hasOrderInventoryDeductions = false;
 
   return {
     calls,
@@ -56,6 +59,34 @@ function createExistingSchemaDb({ nullBatchCount = 0 } = {}) {
       if (/^INSERT INTO schema_migrations/i.test(normalized)) {
         appliedMigrations.add(String(params[0]));
         return [{ affectedRows: 1 }];
+      }
+      if (
+        /FROM information_schema\.TABLES/i.test(normalized) &&
+        /LOWER\(TABLE_NAME\) = 'orders'/i.test(normalized)
+      ) {
+        return [[{ 1: 1 }]];
+      }
+      if (
+        /FROM information_schema\.TABLES/i.test(normalized) &&
+        String(params[0] || "").toLowerCase() === "order_inventory_deductions"
+      ) {
+        return [hasOrderInventoryDeductions ? [{ 1: 1 }] : []];
+      }
+      if (
+        /FROM information_schema\.TABLES/i.test(normalized) &&
+        String(params[0] || "").toLowerCase() === "orders"
+      ) {
+        return [[{ 1: 1 }]];
+      }
+      if (/^SHOW INDEX FROM `orders`/i.test(normalized)) {
+        return [[
+          ...(hasUniquePaymentReferenceIndex
+            ? [{ Key_name: "uq_orders_payment_reference", Non_unique: 0 }]
+            : []),
+          ...(hasPaymentReferenceLookupIndex
+            ? [{ Key_name: "idx_orders_payment_reference", Non_unique: 1 }]
+            : []),
+        ]];
       }
 
       if (/FROM information_schema\.COLUMNS/i.test(normalized)) {
@@ -130,6 +161,18 @@ function createExistingSchemaDb({ nullBatchCount = 0 } = {}) {
       }
       if (/^ALTER TABLE `purchase_orders`/i.test(normalized)) {
         purchaseOrderDeliveryNullable = "YES";
+        return [{ affectedRows: 0 }];
+      }
+      if (/DROP INDEX `uq_orders_payment_reference`/i.test(normalized)) {
+        hasUniquePaymentReferenceIndex = false;
+        return [{ affectedRows: 0 }];
+      }
+      if (/CREATE INDEX `idx_orders_payment_reference`/i.test(normalized)) {
+        hasPaymentReferenceLookupIndex = true;
+        return [{ affectedRows: 0 }];
+      }
+      if (/^CREATE TABLE IF NOT EXISTS order_inventory_deductions/i.test(normalized)) {
+        hasOrderInventoryDeductions = true;
         return [{ affectedRows: 0 }];
       }
       if (/^(ALTER TABLE|INSERT INTO products)/i.test(normalized)) {

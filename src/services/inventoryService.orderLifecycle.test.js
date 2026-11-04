@@ -90,25 +90,35 @@ mockModule("./orderItemService", {
 const { deductStockForPaidOrder } = require("./inventoryService");
 
 (async () => {
-  assert.equal(await deductStockForPaidOrder(55), false);
-  assert.equal(state.inventoryUpdates, 0, "queued paid orders must not deduct");
-
-  state.orderStatus = "Completed";
-  state.paymentStatus = "Pending Payment";
-  assert.equal(await deductStockForPaidOrder(55), false);
-  assert.equal(state.inventoryUpdates, 0, "completed unpaid orders must not deduct");
-
-  state.paymentStatus = "Paid";
   assert.equal(await deductStockForPaidOrder(55), true);
-  assert.equal(state.inventoryUpdates, 1);
+  assert.equal(state.inventoryUpdates, 1, "accepted queued paid order must deduct");
   assert.equal(state.inventoryStock, 9);
   assert.equal(state.stockDeducted, 1);
 
   assert.equal(await deductStockForPaidOrder(55), false);
-  assert.equal(state.inventoryUpdates, 1, "repeat completion must not double-deduct");
+  assert.equal(state.inventoryUpdates, 1, "repeat acceptance must not double-deduct");
+
+  state.stockDeducted = 0;
+  state.orderStatus = "Queued";
+  state.paymentStatus = "Pending Payment";
+  assert.equal(await deductStockForPaidOrder(55), false);
+  assert.equal(state.inventoryUpdates, 1, "unpaid acceptance must not deduct");
+
+  state.paymentStatus = "Paid";
+  state.orderStatus = "Preparing";
+  assert.equal(await deductStockForPaidOrder(55), false);
+  assert.equal(state.inventoryUpdates, 1);
+
+  state.orderStatus = "Ready for Pickup";
+  assert.equal(await deductStockForPaidOrder(55), false);
+  assert.equal(state.inventoryUpdates, 1, "ready transition must not deduct");
+
+  state.orderStatus = "Completed";
+  assert.equal(await deductStockForPaidOrder(55), false);
+  assert.equal(state.inventoryUpdates, 1, "completion must not deduct");
   assert.equal(state.rollbacks, 0);
 
-  console.log("Completed-and-paid inventory deduction tests passed");
+  console.log("Paid queue-acceptance inventory deduction tests passed");
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;

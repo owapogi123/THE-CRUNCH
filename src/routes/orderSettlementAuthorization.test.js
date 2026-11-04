@@ -10,7 +10,9 @@ const state = {
   commits: 0,
   rollbacks: 0,
   restoreActors: [],
+  restoreError: null,
   deductions: 0,
+  deductionError: null,
   transactionEvents: [],
   lockingReads: 0,
 };
@@ -40,7 +42,9 @@ function resetState(order) {
   state.commits = 0;
   state.rollbacks = 0;
   state.restoreActors = [];
+  state.restoreError = null;
   state.deductions = 0;
+  state.deductionError = null;
   state.transactionEvents = [];
   state.lockingReads = 0;
 }
@@ -93,10 +97,14 @@ mockModule("../config/db", {
 });
 mockModule("../services/inventoryService", {
   async deductPrevalidatedStockForPaidOrder() {},
-  async deductStockForPaidOrder() { state.deductions += 1; },
+  async deductStockForPaidOrder() {
+    state.deductions += 1;
+    if (state.deductionError) throw state.deductionError;
+  },
   async prepareOrderItemsAndStock() { return { authoritativeItems: [], deductions: [] }; },
   async restoreStockForRefundedOrder(_orderId, actorId) {
     state.restoreActors.push(actorId);
+    if (state.restoreError) throw state.restoreError;
     return true;
   },
 });
@@ -246,10 +254,38 @@ function paymentUpdate() {
     assert.deepEqual(paymentUpdate().params, ["Completed", "55"]);
     assert.equal(
       state.deductions,
-      0,
-      "payment confirmation must not deduct before completion",
+      1,
+      "online acceptance must deduct stock atomically",
     );
   }
+
+  resetState({
+    status: "Awaiting Cashier Review",
+    orderType: "take-out",
+    customerUserId: 77,
+    paymentStatus: "Pending Payment",
+    paymentRecordStatus: "Pending",
+    stockDeducted: 0,
+  });
+  const insufficientStockError = new Error(
+    'Insufficient stock for "Chicken". Required 50, available 0.',
+  );
+  insufficientStockError.statusCode = 409;
+  state.deductionError = insufficientStockError;
+  const rejectedAcceptance = await invokePatch({
+    role: "cashier",
+    userId: 10,
+    body: { status: "Queued", paymentStatus: "Paid" },
+  });
+  assert.equal(rejectedAcceptance.statusCode, 409);
+  assert.match(rejectedAcceptance.body.message, /Insufficient stock/);
+  assert.equal(state.deductions, 1, "acceptance must perform the locked stock check");
+  assert.equal(state.commits, 0, "failed acceptance must not commit order or payment changes");
+  assert.equal(state.rollbacks, 1, "failed acceptance must roll back the entire transaction");
+  assert.deepEqual(
+    state.transactionEvents.filter((event) => event === "commit" || event === "rollback"),
+    ["rollback"],
+  );
 
   resetState({
     status: "Queued",
@@ -298,8 +334,8 @@ function paymentUpdate() {
   assert.equal(paidCompletion.body.status, "Completed");
   assert.equal(
     state.deductions,
-    1,
-    "completed and paid orders must deduct exactly once",
+    0,
+    "completion must not trigger a stock deduction",
   );
 
   resetState({
@@ -325,6 +361,7 @@ function paymentUpdate() {
   assert.equal(orderUpdate().params.includes(10), true, "authenticated handover staff must be recorded");
   assert.equal(orderUpdate().params.includes(999), false, "body cashier ID must not identify the handover staff");
   assert.equal(paymentUpdate(), undefined, "delivery handover must not rewrite settled payment records");
+  assert.equal(state.deductions, 0, "delivery handover must not deduct stock again");
 
   resetState({ paymentStatus: "Pending Payment", paymentRecordStatus: "Pending", stockDeducted: 0 });
   const cashierVoid = await invokePatch({
@@ -399,6 +436,27 @@ function paymentUpdate() {
   assert.equal(adminRefund.statusCode, 200);
   assert.deepEqual(state.restoreActors, [30]);
   assert.deepEqual(refundRequestUpdate().params, [30, "55"]);
+
+  resetState();
+  state.restoreError = Object.assign(
+    new Error(
+      "Original inventory deduction records are missing. Manual inventory review is required before refunding this order.",
+    ),
+    {
+      statusCode: 409,
+      code: "REFUND_INVENTORY_RECONCILIATION_REQUIRED",
+    },
+  );
+  const legacyRefund = await invokePatch({
+    role: "administrator",
+    userId: 30,
+    body: { status: "Refunded" },
+  });
+  assert.equal(legacyRefund.statusCode, 409);
+  assert.equal(legacyRefund.body.code, "REFUND_INVENTORY_RECONCILIATION_REQUIRED");
+  assert.match(legacyRefund.body.message, /Manual inventory review/i);
+  assert.equal(state.commits, 0);
+  assert.equal(state.rollbacks, 1, "legacy refund must roll back order and payment changes");
 
   resetState({
     status: "Completed",

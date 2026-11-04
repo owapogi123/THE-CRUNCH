@@ -2,13 +2,14 @@ const router = require("express").Router();
 const db = require("../config/db");
 const fs = require("fs/promises");
 const path = require("path");
-const crypto = require("crypto");
 const {
   requireAuthenticatedUser,
   requireCookViewAccess,
+  requireRoleAccess,
 } = require("../middleware/cookViewAccess");
 const { sendCustomerOrderReceiptEmail } = require("../services/emailService");
 const {
+  deductPrevalidatedStockForPaidOrder,
   deductStockForPaidOrder,
   prepareOrderItemsAndStock,
   restoreStockForRefundedOrder,
@@ -67,6 +68,14 @@ const {
 } = require("../services/paymongoCheckoutService");
 const paymongoRoutes = require("./paymongoRoutes");
 const { validateStoredProofUrl } = require("./uploadProofRoutes");
+const {
+  findProtectedPaymentReference,
+  getProtectedPaymentReferenceLockName,
+} = require("../services/paymentReferencePolicy");
+const requirePaymentProofUploadAccess = requireRoleAccess(
+  ["cashier"],
+  "Cashier or Administrator access required",
+);
 function withOrderRequestTiming(req, _res, next) {
   if (!isDevelopmentTimingEnabled()) return next();
   return runWithDbQueryTiming((queryTiming) => {
@@ -189,6 +198,29 @@ function isThirdPartyDeliveryMethod(value) {
   return ["grabfood", "foodpanda", "other"].includes(
     normalizePaymentMethod(value),
   );
+}
+
+const MAX_PLATFORM_REFERENCE_LENGTH = 255;
+const PLATFORM_REFERENCE_PATTERN = /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/;
+
+function getThirdPartyReferenceError(method, value) {
+  const normalizedMethod = normalizePaymentMethod(method);
+  const reference = String(value || "").trim();
+  if (!reference) {
+    return normalizedMethod === "foodpanda"
+      ? "Foodpanda order reference is required"
+      : "Platform order reference is required";
+  }
+  if (normalizedMethod === "grabfood" && /^GF-$/i.test(reference)) {
+    return "GrabFood reference must include the actual order ID after GF-";
+  }
+  if (
+    reference.length > MAX_PLATFORM_REFERENCE_LENGTH ||
+    !PLATFORM_REFERENCE_PATTERN.test(reference)
+  ) {
+    return "Platform reference must use letters, numbers, and hyphens without a leading or trailing hyphen";
+  }
+  return null;
 }
 
 function getStoredPaymentMethod(method, options = {}) {
@@ -325,14 +357,6 @@ function getPaymentProofContentType(extension) {
   return "image/jpeg";
 }
 
-function getPaymentProofExtension(mimeType) {
-  const normalized = String(mimeType || "").toLowerCase().trim();
-  if (normalized === "image/png") return ".png";
-  if (normalized === "image/webp") return ".webp";
-  if (normalized === "image/jpg" || normalized === "image/jpeg") return ".jpg";
-  return null;
-}
-
 function buildCustomerReceiptNote(paymentStatus) {
   if (normalizePaymentStatus(paymentStatus) === "Pending Payment") {
     return "Your order will be prepared once payment is confirmed onsite.";
@@ -467,45 +491,6 @@ function calculateBillingTotals(subtotal, settings, discountRate = 0) {
     serviceChargeAmount,
     grandTotal,
   };
-}
-
-async function ensurePaymentProofDirectory() {
-  await fs.mkdir(PAYMENT_PROOF_DIR, { recursive: true });
-}
-
-function parsePaymentProofDataUrl(dataUrl) {
-  const match = String(dataUrl || "").match(
-    /^data:(image\/[a-zA-Z0-9.+-]+);base64,([a-zA-Z0-9+/=]+)$/
-  );
-
-  if (!match) {
-    const error = new Error("Invalid payment proof image");
-    error.statusCode = 400;
-    throw error;
-  }
-
-  const mimeType = match[1].toLowerCase();
-  const extension = getPaymentProofExtension(mimeType);
-  if (!extension) {
-    const error = new Error("Only PNG, JPG, and WEBP payment proof images are supported");
-    error.statusCode = 400;
-    throw error;
-  }
-
-  const buffer = Buffer.from(match[2], "base64");
-  if (!buffer.length) {
-    const error = new Error("Payment proof image is empty");
-    error.statusCode = 400;
-    throw error;
-  }
-
-  if (buffer.length > 5 * 1024 * 1024) {
-    const error = new Error("Payment proof image must be 5 MB or smaller");
-    error.statusCode = 400;
-    throw error;
-  }
-
-  return { buffer, extension };
 }
 
 async function verifyPayMongoCheckoutSession(checkoutSessionId, context = {}) {
@@ -1105,7 +1090,7 @@ router.get("/customer/:customerUserId", requireAuthenticatedUser, async (req, re
   }
 });
 
-// POST /orders/payment-proofs — save cashier onsite e-payment proof image
+// New payment-proof uploads use the validated multipart /api/upload-proof route.
 // GET /orders/shift — today's transactions for the authenticated cashier.
 router.get("/shift", requireCookViewAccess, async (req, res) => {
   try {
@@ -1245,28 +1230,12 @@ router.get(
   },
 );
 
-router.post("/payment-proofs", requireCookViewAccess, async (req, res) => {
-  try {
-    const { dataUrl, originalName } = req.body || {};
-    const { buffer, extension } = parsePaymentProofDataUrl(dataUrl);
-    await ensurePaymentProofDirectory();
-
-    const filename = `${Date.now()}-${crypto.randomUUID()}${extension}`;
-    const absolutePath = path.join(PAYMENT_PROOF_DIR, filename);
-    await fs.writeFile(absolutePath, buffer);
-
-    res.json({
-      message: "Payment proof uploaded",
-      proofImageUrl: `/api/orders/payment-proofs/${encodeURIComponent(filename)}`,
-      originalName: originalName ? String(originalName) : null,
-    });
-  } catch (err) {
-    console.error("POST /orders/payment-proofs error:", err.message);
-    res.status(err.statusCode || 500).json({
-      message: err.message || "Failed to upload payment proof",
-    });
-  }
-});
+router.post("/payment-proofs", requirePaymentProofUploadAccess, (_req, res) =>
+  res.status(410).json({
+    code: "LEGACY_PAYMENT_PROOF_UPLOAD_RETIRED",
+    message: "This legacy payment-proof uploader is retired. Use POST /api/upload-proof.",
+  }),
+);
 
 // GET /orders/payment-proofs/:filename — serve cashier onsite e-payment proof image
 router.get("/payment-proofs/:filename", requireCookViewAccess, async (req, res) => {
@@ -1383,6 +1352,7 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
   let authoritativeItems = [];
   let receiptDto = null;
   let orderOutcome = "failed";
+  let paymentReferenceLockName = null;
   try {
     const {
       items,
@@ -1482,12 +1452,15 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
         message: "Third-party platform payments are only valid for delivery orders",
       });
     }
-    if (
-      isThirdPartyDelivery &&
-      (!submittedPaymentReference || !/^[A-Za-z0-9-]{5,15}$/.test(submittedPaymentReference))
-    ) {
+    const thirdPartyReferenceError = isThirdPartyDelivery
+      ? getThirdPartyReferenceError(
+          normalizedPaymentMethod,
+          submittedPaymentReference,
+        )
+      : null;
+    if (thirdPartyReferenceError) {
       return res.status(400).json({
-        message: "Platform reference must be 5 to 15 letters, numbers, or hyphens",
+        message: thirdPartyReferenceError,
       });
     }
     const submittedCheckoutSessionId = String(
@@ -1667,6 +1640,36 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
     startOrderTransactionTiming(req);
     await runOrderStage(req, "begin transaction", () => conn.beginTransaction());
     txStarted = true;
+    if (effectivePaymentReference && !isThirdPartyDelivery) {
+      const lockName = getProtectedPaymentReferenceLockName(
+        effectivePaymentReference,
+      );
+      const [[lockRow]] = await runOrderStage(
+        req,
+        "lock payment reference",
+        () => conn.query("SELECT GET_LOCK(?, 10) AS acquired", [lockName]),
+      );
+      if (Number(lockRow?.acquired) !== 1) {
+        const lockError = new Error(
+          "Payment confirmation is already being processed; please retry",
+        );
+        lockError.statusCode = 409;
+        throw lockError;
+      }
+      paymentReferenceLockName = lockName;
+      const existingReference = await runOrderStage(
+        req,
+        "check payment reference",
+        () => findProtectedPaymentReference(conn, effectivePaymentReference),
+      );
+      if (existingReference) {
+        const duplicateReferenceError = new Error(
+          "This payment has already been used to place an order",
+        );
+        duplicateReferenceError.statusCode = 409;
+        throw duplicateReferenceError;
+      }
+    }
     const requestedDiscountName =
       discount_name || discountName || customer_type || customerType || "";
     const requestedDiscountId = Number(discount_id ?? discountId);
@@ -1876,6 +1879,23 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
       }),
     );
 
+    const deductedStockAtCreation =
+      isStaffOrderActor && isPaidPaymentStatus(effectivePaymentStatus);
+    if (deductedStockAtCreation) {
+      await runOrderStage(
+        req,
+        "deduct stock",
+        () =>
+          deductPrevalidatedStockForPaidOrder(
+            orderId,
+            effectivePaymentStatus,
+            stockPlan.deductions,
+            cashierContext.recordedByAdminId,
+            conn,
+          ),
+      );
+    }
+
     await runOrderStage(req, "commit", () => conn.commit());
     txStarted = false;
     orderCommitted = true;
@@ -1884,7 +1904,7 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
       reason: "order.created",
       customerUserId: resolvedCustomerUserId,
       paymentChanged: true,
-      inventoryChanged: false,
+      inventoryChanged: deductedStockAtCreation,
     });
     if (claimedBypassSessionId) {
       consumeBypassCheckout(claimedBypassSessionId);
@@ -1968,6 +1988,11 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
       error: err.message,
     });
   } finally {
+    if (conn && paymentReferenceLockName) {
+      await conn
+        .query("SELECT RELEASE_LOCK(?)", [paymentReferenceLockName])
+        .catch(() => undefined);
+    }
     if (conn) conn.release();
     logOrderTiming(req, orderOutcome);
   }
@@ -2384,14 +2409,16 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
       values
     );
 
-    const shouldDeductStockNow =
+    const isOnlineAcceptance =
       hasStatusUpdate &&
-      nextStatus === "Completed" &&
+      isOnlinePickupCompletion &&
+      currentStatus === "Awaiting Cashier Review" &&
+      nextStatus === "Queued" &&
       isPaidPaymentStatus(nextPaymentStatus) &&
       Number(existingRows[0].stockDeducted) === 0;
 
-    if (shouldDeductStockNow) {
-      await deductStockForPaidOrder(id, resolvedCashierId, conn);
+    if (isOnlineAcceptance) {
+      await deductStockForPaidOrder(id, authenticatedActorId, conn);
     }
 
     if (hasStatusUpdate && nextStatus === "Cancelled") {
@@ -2401,13 +2428,13 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
     }
 
     if (hasStatusUpdate && nextStatus === "Refunded") {
-      console.info(
-        `[orderRoutes] Recorded paid refund for order ${id}.`,
-      );
       inventoryRestored = await restoreStockForRefundedOrder(
         id,
         authenticatedActorId,
         conn,
+      );
+      console.info(
+        `[orderRoutes] Recorded paid refund for order ${id}.`,
       );
 
       const [resolvedRequest] = await conn.query(
@@ -2462,7 +2489,7 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
       paymentChanged:
         hasPaymentStatusUpdate ||
         nextStatus === "Refunded",
-      inventoryChanged: shouldDeductStockNow || inventoryRestored === true,
+      inventoryChanged: isOnlineAcceptance || inventoryRestored === true,
     });
     if (refundRequestResolved) {
       publishRefundRequestMutation?.({ reason: "refund_request.actioned" });
@@ -2508,6 +2535,9 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
       .json({
         message: hasClientStatus || matchesKnownClientError ? errorMessage : "DB error",
         error: errorMessage,
+        ...(hasClientStatus && /^REFUND_/i.test(String(err?.code || ""))
+          ? { code: err.code }
+          : {}),
       });
   } finally {
     if (conn && txStarted) {

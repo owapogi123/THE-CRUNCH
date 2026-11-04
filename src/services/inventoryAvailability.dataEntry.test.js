@@ -53,6 +53,27 @@ function productRow(overrides = {}) {
   assert.equal(valid.authoritativeItems[0].subtotal, 198);
   assert.equal(valid.deductions.get(21).requiredQty, 4);
 
+  const sharedDecimalIngredient = await prepareOrderItemsAndStock(
+    connectionFor([
+      productRow({ ingredientQuantityRequired: 0.1255 }),
+      productRow({
+        productId: 8,
+        productName: "Chicken Wrap",
+        currentPrice: 75,
+        ingredientQuantityRequired: 0.25,
+      }),
+    ]),
+    [
+      { product_id: 7, qty: 2 },
+      { product_id: 8, qty: 3 },
+    ],
+  );
+  assert.equal(
+    sharedDecimalIngredient.deductions.get(21).requiredQty,
+    1.001,
+    "shared decimal ingredients must be aggregated once before snapshotting",
+  );
+
   await assert.rejects(
     () =>
       prepareOrderItemsAndStock(

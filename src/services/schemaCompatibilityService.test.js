@@ -11,13 +11,21 @@ const {
   verifySchemaCompatibility,
 } = require("./schemaCompatibilityService");
 
-function indexRows() {
+function indexRows({ legacyUniquePaymentReferenceIndex = false } = {}) {
   return EXPECTED_INDEXES.flatMap((signature) => {
     const [table, index, unique, columns] = signature.split("|");
+    const useLegacyPaymentReferenceIndex =
+      legacyUniquePaymentReferenceIndex &&
+      table === "orders" &&
+      columns === "payment_reference";
     return columns.split(",").map((column, offset) => ({
       TABLE_NAME: table,
-      INDEX_NAME: index === "primary" ? "PRIMARY" : index,
-      NON_UNIQUE: unique === "1" ? 0 : 1,
+      INDEX_NAME: useLegacyPaymentReferenceIndex
+        ? "uq_orders_payment_reference"
+        : index === "primary"
+          ? "PRIMARY"
+          : index,
+      NON_UNIQUE: useLegacyPaymentReferenceIndex ? 0 : unique === "1" ? 0 : 1,
       SEQ_IN_INDEX: offset + 1,
       COLUMN_NAME: column,
     }));
@@ -64,7 +72,10 @@ function triggerRows() {
   }));
 }
 
-function createReadOnlyFakeDb({ orderItemOrphans = 0 } = {}) {
+function createReadOnlyFakeDb({
+  orderItemOrphans = 0,
+  legacyUniquePaymentReferenceIndex = false,
+} = {}) {
   const calls = [];
   return {
     calls,
@@ -85,7 +96,9 @@ function createReadOnlyFakeDb({ orderItemOrphans = 0 } = {}) {
       if (/FROM information_schema\.ROUTINES/i.test(normalized)) return [[]];
       if (/FROM information_schema\.EVENTS/i.test(normalized)) return [[]];
       if (/FROM information_schema\.COLUMNS/i.test(normalized)) return [columnRows()];
-      if (/FROM information_schema\.STATISTICS/i.test(normalized)) return [indexRows()];
+      if (/FROM information_schema\.STATISTICS/i.test(normalized)) {
+        return [indexRows({ legacyUniquePaymentReferenceIndex })];
+      }
       if (/FROM information_schema\.KEY_COLUMN_USAGE/i.test(normalized)) {
         return [foreignKeyRows()];
       }
@@ -103,9 +116,9 @@ function createReadOnlyFakeDb({ orderItemOrphans = 0 } = {}) {
 }
 
 (async () => {
-  assert.equal(EXPECTED_TABLES.length, 46);
-  assert.equal(EXPECTED_INDEXES.length, 98);
-  assert.equal(EXPECTED_FOREIGN_KEYS.length, 32);
+  assert.equal(EXPECTED_TABLES.length, 47);
+  assert.equal(EXPECTED_INDEXES.length, 99);
+  assert.equal(EXPECTED_FOREIGN_KEYS.length, 33);
   assert.equal(Object.keys(EXPECTED_TRIGGERS).length, 2);
 
   const formattedTrigger = "BEGIN\n  INSERT INTO t VALUES (1);\nEND";
@@ -116,13 +129,20 @@ function createReadOnlyFakeDb({ orderItemOrphans = 0 } = {}) {
 
   const db = createReadOnlyFakeDb();
   const result = await verifySchemaCompatibility(db, "thecrunch_updated_local");
-  assert.equal(result.tableCount, 46);
-  assert.equal(result.indexCount, 98);
-  assert.equal(result.foreignKeyCount, 32);
+  assert.equal(result.tableCount, 47);
+  assert.equal(result.indexCount, 99);
+  assert.equal(result.foreignKeyCount, 33);
   assert.equal(result.triggerCount, 2);
   assert.equal(result.orphanCount, 0);
   assert.deepEqual(result.warnings, []);
   assert.ok(db.calls.every((sql) => /^SELECT\b/i.test(sql)));
+
+  const legacyIndexResult = await verifySchemaCompatibility(
+    createReadOnlyFakeDb({ legacyUniquePaymentReferenceIndex: true }),
+    "thecrunch_updated_local",
+  );
+  assert.equal(legacyIndexResult.warnings.length, 1);
+  assert.match(legacyIndexResult.warnings[0], /third-party reference reuse migration/i);
 
   await assert.rejects(
     verifySchemaCompatibility(

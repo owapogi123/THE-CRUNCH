@@ -123,6 +123,7 @@ async function setup(options = {}) {
       "DROP TABLE IF EXISTS Payments;",
       "DROP TABLE IF EXISTS order_item;",
       "DROP TABLE IF EXISTS Order_Item;",
+      "DROP TABLE IF EXISTS order_inventory_deductions;",
       "DROP TABLE IF EXISTS order_daily_counters;",
       "DROP TABLE IF EXISTS orders;",
       "DROP TABLE IF EXISTS Orders;",
@@ -431,6 +432,19 @@ CREATE TABLE IF NOT EXISTS order_item (
     FOREIGN KEY (Order_ID) REFERENCES orders(Order_ID),
     FOREIGN KEY (Product_ID) REFERENCES Menu(Product_ID)
 );
+
+CREATE TABLE IF NOT EXISTS order_inventory_deductions (
+    order_id INT NOT NULL,
+    product_id INT NOT NULL,
+    quantity DECIMAL(14,4) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (order_id, product_id),
+    CONSTRAINT fk_order_inventory_deductions_order
+      FOREIGN KEY (order_id) REFERENCES orders(Order_ID)
+      ON UPDATE RESTRICT ON DELETE RESTRICT,
+    CONSTRAINT chk_order_inventory_deductions_quantity
+      CHECK (quantity > 0)
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS payments (
     Payment_ID INT AUTO_INCREMENT PRIMARY KEY,
@@ -1173,8 +1187,8 @@ END
     await ensureIndex(
       connection,
       "orders",
-      "uq_orders_payment_reference",
-      "UNIQUE INDEX `uq_orders_payment_reference` (`payment_reference`)",
+      "idx_orders_payment_reference",
+      "INDEX `idx_orders_payment_reference` (`payment_reference`)",
     );
     await ensureIndex(
       connection,

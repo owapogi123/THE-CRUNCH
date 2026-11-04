@@ -12,7 +12,9 @@ const state = {
   rollbacks: 0,
   receipts: [],
   deductions: 0,
+  deductionError: null,
   paymentReferences: new Set(),
+  lockNames: [],
   qrConfigured: true,
 };
 
@@ -22,7 +24,9 @@ function resetState() {
   state.rollbacks = 0;
   state.receipts = [];
   state.deductions = 0;
+  state.deductionError = null;
   state.paymentReferences = new Set();
+  state.lockNames = [];
   state.qrConfigured = true;
 }
 
@@ -38,15 +42,22 @@ const connection = {
   release() {},
   async query(sql, params = []) {
     const normalizedSql = String(sql).replace(/\s+/g, " ").trim();
+    if (normalizedSql.startsWith("SELECT GET_LOCK")) {
+      state.lockNames.push(String(params[0]));
+      return [[{ acquired: 1 }]];
+    }
+    if (normalizedSql.startsWith("SELECT RELEASE_LOCK")) {
+      return [[{ released: 1 }]];
+    }
+    if (
+      normalizedSql.startsWith("SELECT Order_ID FROM orders") &&
+      normalizedSql.includes("LOWER(TRIM(payment_reference)) = ?")
+    ) {
+      return [state.paymentReferences.has(String(params[0]).toLowerCase()) ? [{ Order_ID: 1 }] : []];
+    }
     if (normalizedSql.startsWith("INSERT INTO orders")) {
       const paymentReference = params[6];
-      if (paymentReference && state.paymentReferences.has(paymentReference)) {
-        const duplicate = new Error("Duplicate entry for payment_reference");
-        duplicate.code = "ER_DUP_ENTRY";
-        duplicate.sqlMessage = "Duplicate entry for key 'uq_orders_payment_reference'";
-        throw duplicate;
-      }
-      if (paymentReference) state.paymentReferences.add(paymentReference);
+      if (paymentReference) state.paymentReferences.add(String(paymentReference).trim().toLowerCase());
     }
     if (/^(INSERT|UPDATE|DELETE)\b/i.test(normalizedSql)) {
       state.writes.push({ sql: normalizedSql, params });
@@ -94,7 +105,10 @@ const db = {
 
 mockModule("../config/db", db);
 mockModule("../services/inventoryService", {
-  async deductPrevalidatedStockForPaidOrder() { state.deductions += 1; },
+  async deductPrevalidatedStockForPaidOrder() {
+    state.deductions += 1;
+    if (state.deductionError) throw state.deductionError;
+  },
   async deductStockForPaidOrder() {},
   async prepareOrderItemsAndStock(_conn, items) {
     return {
@@ -168,6 +182,17 @@ const authorizationLayer = router.stack.find(
 );
 assert.ok(authorizationLayer, "POST /orders/discount-authorization route was not found");
 const authorizationHandlers = authorizationLayer.route.stack.map((layer) => layer.handle);
+const legacyProofUploadLayer = router.stack.find(
+  (layer) => layer.route?.path === "/payment-proofs" && layer.route.methods?.post,
+);
+assert.ok(legacyProofUploadLayer, "legacy payment-proof POST route was not found");
+const legacyProofUploadHandlers = legacyProofUploadLayer.route.stack.map((layer) => layer.handle);
+assert.ok(
+  router.stack.some(
+    (layer) => layer.route?.path === "/payment-proofs/:filename" && layer.route.methods?.get,
+  ),
+  "historical legacy proof retrieval must remain available",
+);
 
 async function invokeHandlers(handlers, { token, body }) {
   const req = {
@@ -195,6 +220,16 @@ const { issueBypassCheckout } = require("../services/paymongoMode");
 
 const cashierToken = jwt.sign(
   { userId: 10, role: "cashier" },
+  process.env.JWT_SECRET,
+  { expiresIn: "5m" },
+);
+const administratorToken = jwt.sign(
+  { userId: 30, role: "administrator" },
+  process.env.JWT_SECRET,
+  { expiresIn: "5m" },
+);
+const inventoryManagerToken = jwt.sign(
+  { userId: 20, role: "inventory_manager" },
   process.env.JWT_SECRET,
   { expiresIn: "5m" },
 );
@@ -226,6 +261,18 @@ function assertRejectedBeforePersistence(result) {
 }
 
 (async () => {
+  const blockedLegacyProof = await invokeHandlers(legacyProofUploadHandlers, {
+    token: inventoryManagerToken,
+    body: { dataUrl: "data:image/png;base64,invalid" },
+  });
+  assert.equal(blockedLegacyProof.statusCode, 403);
+  const retiredLegacyProof = await invokeHandlers(legacyProofUploadHandlers, {
+    token: cashierToken,
+    body: { dataUrl: "data:image/png;base64,invalid" },
+  });
+  assert.equal(retiredLegacyProof.statusCode, 410);
+  assert.equal(retiredLegacyProof.body.code, "LEGACY_PAYMENT_PROOF_UPLOAD_RETIRED");
+
   resetState();
   const insufficient = await invokeOrder({
     token: cashierToken,
@@ -250,9 +297,33 @@ function assertRejectedBeforePersistence(result) {
   assert.equal(exactOrderWrite.params[2], 10, "JWT cashier ID must override the body value");
   assert.equal(
     state.deductions,
-    0,
-    "paid order creation must not deduct stock before completion",
+    1,
+    "paid onsite order creation must deduct stock before commit",
   );
+
+  resetState();
+  const onsiteStockError = new Error(
+    'Insufficient stock for "Chicken". Required 2, available 1.',
+  );
+  onsiteStockError.statusCode = 409;
+  state.deductionError = onsiteStockError;
+  const rejectedOnsiteOrder = await invokeOrder({
+    token: cashierToken,
+    body: { ...baseStaffBody, cash_tendered: 100 },
+  });
+  assert.equal(rejectedOnsiteOrder.statusCode, 409);
+  assert.match(rejectedOnsiteOrder.body.message, /Insufficient stock/);
+  assert.equal(state.deductions, 1);
+  assert.equal(state.commits, 0, "failed onsite deduction must not commit the order");
+  assert.equal(state.rollbacks, 1, "failed onsite deduction must roll back all order writes");
+
+  resetState();
+  const administratorOrder = await invokeOrder({
+    token: administratorToken,
+    body: { ...baseStaffBody, cash_tendered: 100 },
+  });
+  assert.equal(administratorOrder.statusCode, 200);
+  assert.equal(state.deductions, 1, "Administrator-created paid onsite orders must deduct once");
 
   resetState();
   const missingQrReference = await invokeOrder({
@@ -368,7 +439,7 @@ function assertRejectedBeforePersistence(result) {
   const manualGcashPayment = state.writes.find((write) => write.sql.startsWith("INSERT INTO payments"));
   assert.deepEqual(manualGcashPayment.params.slice(1, 3), ["Onsite GCash / E-Payment", "Completed"]);
   assert.equal(state.receipts[0].amountPaid, 100);
-  assert.equal(state.deductions, 0, "payment confirmation must not deduct inventory");
+  assert.equal(state.deductions, 1, "onsite GCash confirmation must deduct inventory once");
 
   const duplicateManualGcash = await invokeOrder({
     token: cashierToken,
@@ -384,6 +455,25 @@ function assertRejectedBeforePersistence(result) {
   assert.equal(duplicateManualGcash.statusCode, 409);
   assert.match(duplicateManualGcash.body.message, /already been used/i);
   assert.equal(state.receipts.length, 1, "duplicate confirmation must not create another receipt");
+
+  const caseVariantManualGcash = await invokeOrder({
+    token: cashierToken,
+    body: {
+      ...baseStaffBody,
+      payment_method: "gcash_onsite",
+      payment_reference: manualGcashReference.toLowerCase(),
+      payment_qr_version: "2026-11-03T00:00:00.000Z",
+      proof_image_url: validProofUrl,
+      total: 100,
+    },
+  });
+  assert.equal(caseVariantManualGcash.statusCode, 409);
+  assert.match(caseVariantManualGcash.body.message, /already been used/i);
+  assert.equal(
+    new Set(state.lockNames).size,
+    1,
+    "case-equivalent protected references must acquire the same named lock",
+  );
 
   resetState();
   const wrongAuthorization = await invokeAuthorization({
@@ -447,7 +537,14 @@ function assertRejectedBeforePersistence(result) {
   assert.equal(excess.statusCode, 200);
   assert.equal(state.receipts[0].changeAmount, 50);
 
-  for (const paymentReference of ["AB12", "AB12_345", "1234567890123456"]) {
+  for (const paymentReference of [
+    "",
+    "GF-",
+    "AB12_345",
+    "-ABC",
+    "ABC-",
+    "A".repeat(256),
+  ]) {
     resetState();
     const invalidDelivery = await invokeOrder({
       token: cashierToken,
@@ -468,14 +565,72 @@ function assertRejectedBeforePersistence(result) {
       ...baseStaffBody,
       order_type: "delivery",
       payment_method: "grabfood",
-      payment_reference: "GF-1234567890",
+      payment_reference: "GF-123",
     },
   });
   assert.equal(delivery.statusCode, 200);
   const deliveryWrite = state.writes.find((write) => write.sql.startsWith("INSERT INTO orders"));
-  assert.equal(deliveryWrite.params[6], "GF-1234567890");
+  assert.equal(deliveryWrite.params[6], "GF-123");
   assert.equal(deliveryWrite.params[8], "GrabFood");
   assert.equal(state.receipts[0].cashTendered, null);
+  assert.equal(state.deductions, 1, "paid third-party Cashier orders must deduct once");
+  assert.equal(state.lockNames.length, 0, "reusable third-party references must not use the protected lock");
+
+  const repeatedDelivery = await invokeOrder({
+    token: cashierToken,
+    body: {
+      ...baseStaffBody,
+      order_type: "delivery",
+      payment_method: "grabfood",
+      payment_reference: "GF-123",
+    },
+  });
+  assert.equal(
+    repeatedDelivery.statusCode,
+    200,
+    "third-party short references may legitimately be reused",
+  );
+
+  const fullGrabBooking = await invokeOrder({
+    token: cashierToken,
+    body: {
+      ...baseStaffBody,
+      order_type: "delivery",
+      payment_method: "grabfood",
+      payment_reference: "GRAB-BOOKING-2026-ABC-9876543210",
+    },
+  });
+  assert.equal(fullGrabBooking.statusCode, 200);
+
+  resetState();
+  const missingFoodpandaReference = await invokeOrder({
+    token: cashierToken,
+    body: {
+      ...baseStaffBody,
+      order_type: "delivery",
+      payment_method: "foodpanda",
+      payment_reference: "",
+    },
+  });
+  assert.equal(missingFoodpandaReference.statusCode, 400);
+  assert.match(missingFoodpandaReference.body.message, /Foodpanda order reference/i);
+
+  resetState();
+  for (const paymentReference of [
+    "FP9X7",
+    "FOOD-2026-ORDER-ABC-12345678901234567890",
+  ]) {
+    const foodpandaDelivery = await invokeOrder({
+      token: cashierToken,
+      body: {
+        ...baseStaffBody,
+        order_type: "delivery",
+        payment_method: "foodpanda",
+        payment_reference: paymentReference,
+      },
+    });
+    assert.equal(foodpandaDelivery.statusCode, 200);
+  }
 
   resetState();
   const online = await invokeOrder({
@@ -577,7 +732,7 @@ function assertRejectedBeforePersistence(result) {
   assert.equal(
     state.deductions,
     0,
-    "verified online payment must not deduct stock before completion",
+    "verified online submission must wait for Cashier acceptance before deducting stock",
   );
 
   console.log("Order route security integration tests passed");

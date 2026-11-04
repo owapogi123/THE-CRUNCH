@@ -49,7 +49,7 @@ async function resolveRecordedByAdminId(recordedBy, connection = db) {
   return adminRows.length ? numericRecordedBy : null;
 }
 
-// Shared helper used by the completed-and-paid order flow.
+// Shared helper used by paid order activation flows.
 async function deductStockForOrder(
   productId,
   quantityUsed,
@@ -510,6 +510,112 @@ function buildQuantityCase(entries, columnName) {
   };
 }
 
+function getDeductionSnapshotEntries(deductions) {
+  const entries = Array.from(deductions.entries())
+    .map(([productId, requirement]) => [
+      Number(productId),
+      Number(requirement?.requiredQty),
+    ])
+    .filter(([, quantity]) => Number.isFinite(quantity) && quantity > 0)
+    .sort(([left], [right]) => left - right);
+
+  if (
+    entries.length === 0 ||
+    entries.some(([productId]) => !Number.isSafeInteger(productId) || productId <= 0)
+  ) {
+    const error = new Error("Order does not have a valid inventory deduction plan");
+    error.statusCode = 409;
+    error.code = "ORDER_DEDUCTION_SNAPSHOT_INVALID";
+    throw error;
+  }
+  return entries;
+}
+
+async function recordOrderDeductionSnapshot(connection, orderId, deductions) {
+  const entries = getDeductionSnapshotEntries(deductions);
+  const valuesSql = entries.map(() => "(?, ?, ?)").join(", ");
+  const values = entries.flatMap(([productId, quantity]) => [
+    Number(orderId),
+    productId,
+    quantity,
+  ]);
+  try {
+    await connection.query(
+      `INSERT INTO order_inventory_deductions (order_id, product_id, quantity)
+       VALUES ${valuesSql}`,
+      values,
+    );
+  } catch (error) {
+    if (error?.code === "ER_DUP_ENTRY") {
+      const conflict = new Error(
+        "Inventory deduction records already exist for this order",
+      );
+      conflict.statusCode = 409;
+      conflict.code = "ORDER_DEDUCTION_SNAPSHOT_CONFLICT";
+      throw conflict;
+    }
+    throw error;
+  }
+  return entries;
+}
+
+function createRefundSnapshotReviewError(reason) {
+  const error = new Error(
+    `Original inventory deduction records are ${reason}. Manual inventory review is required before refunding this order.`,
+  );
+  error.statusCode = 409;
+  error.code = "REFUND_INVENTORY_RECONCILIATION_REQUIRED";
+  return error;
+}
+
+async function loadOrderDeductionSnapshot(connection, orderId) {
+  const [rows] = await connection.query(
+    `SELECT
+       d.product_id AS productId,
+       d.quantity AS quantity,
+       i.Product_ID AS inventoryProductId,
+       m.Product_ID AS menuProductId,
+       p.id AS productMirrorId
+     FROM order_inventory_deductions d
+     LEFT JOIN Inventory i ON i.Product_ID = d.product_id
+     LEFT JOIN Menu m ON m.Product_ID = d.product_id
+     LEFT JOIN products p ON p.id = d.product_id
+     WHERE d.order_id = ?
+     ORDER BY d.product_id
+     FOR UPDATE`,
+    [Number(orderId)],
+  );
+
+  if (rows.length === 0) {
+    throw createRefundSnapshotReviewError("missing");
+  }
+
+  const deductions = new Map();
+  for (const row of rows) {
+    const productId = Number(row.productId);
+    const quantity = Number(row.quantity);
+    const hasAllMirrors =
+      Number(row.inventoryProductId) === productId &&
+      Number(row.menuProductId) === productId &&
+      Number(row.productMirrorId) === productId;
+    if (
+      !Number.isSafeInteger(productId) ||
+      productId <= 0 ||
+      !Number.isFinite(quantity) ||
+      quantity <= 0 ||
+      deductions.has(productId) ||
+      !hasAllMirrors
+    ) {
+      throw createRefundSnapshotReviewError("inconsistent");
+    }
+    deductions.set(productId, {
+      requiredQty: quantity,
+      name: `Product #${productId}`,
+    });
+  }
+  return deductions;
+}
+
 async function applyStockDeductions(
   connection,
   deductions,
@@ -620,6 +726,7 @@ async function deductPrevalidatedStockForPaidOrder(
   if (!isPaidPaymentStatus(paymentStatus)) {
     throw new Error("Prevalidated stock deduction requires a paid order");
   }
+  await recordOrderDeductionSnapshot(connection, orderId, deductions);
   await applyStockDeductions(connection, deductions, recordedByAdminId);
   const [updateResult] = await connection.query(
     `UPDATE orders
@@ -729,9 +836,9 @@ async function deductStockForPaidOrder(
     }
 
     const order = orderRows[0];
-    if (String(order.orderStatus || "").trim().toLowerCase() !== "completed") {
+    if (String(order.orderStatus || "").trim().toLowerCase() !== "queued") {
       console.info(
-        `[inventoryService] Order ${numericOrderId} stock deduction skipped: order is not completed.`,
+        `[inventoryService] Order ${numericOrderId} stock deduction skipped: order is not queued for preparation.`,
       );
       return false;
     }
@@ -753,6 +860,7 @@ async function deductStockForPaidOrder(
     });
     const deductionEntries = Array.from(deductions.entries());
     await lockAndValidateStockRequirements(conn, deductions);
+    await recordOrderDeductionSnapshot(conn, numericOrderId, deductions);
 
     for (const [productId, requirement] of deductionEntries) {
       const strictRequiredQty = Number(requirement?.requiredQty) || 0;
@@ -769,18 +877,21 @@ async function deductStockForPaidOrder(
       [numericOrderId],
     );
 
+    if (updateResult.affectedRows !== 1) {
+      const error = new Error("Order stock was already deducted");
+      error.statusCode = 409;
+      throw error;
+    }
+
     if (txStarted) {
       await conn.commit();
       txStarted = false;
     }
 
-    if (updateResult.affectedRows > 0) {
-      console.info(
-        `[inventoryService] Order ${numericOrderId} stock deduction recorded after completed-and-paid confirmation.`,
-      );
-    }
-
-    return updateResult.affectedRows > 0;
+    console.info(
+      `[inventoryService] Order ${numericOrderId} stock deduction recorded after paid queue acceptance.`,
+    );
+    return true;
   } catch (error) {
     if (txStarted) {
       await conn.rollback();
@@ -846,7 +957,7 @@ async function restoreStockForRefundedOrder(
       return false;
     }
 
-    const deductions = await getOrderIngredientDeductions(numericOrderId, conn);
+    const deductions = await loadOrderDeductionSnapshot(conn, numericOrderId);
     const recordedByAdminId = await resolveRecordedByAdminId(recordedBy, conn);
     await applyStockRestorations(conn, deductions, recordedByAdminId);
 
@@ -858,22 +969,21 @@ async function restoreStockForRefundedOrder(
       [numericOrderId],
     );
 
+    if (updateResult.affectedRows !== 1) {
+      const error = new Error("Order inventory was already restored");
+      error.statusCode = 409;
+      throw error;
+    }
+
     if (txStarted) {
       await conn.commit();
       txStarted = false;
     }
 
-    if (updateResult.affectedRows > 0) {
-      console.info(
-        `[inventoryService] Order ${numericOrderId} inventory restored after refund.`,
-      );
-    } else {
-      console.info(
-        `[inventoryService] Order ${numericOrderId} inventory restore skipped because already restored.`,
-      );
-    }
-
-    return updateResult.affectedRows > 0;
+    console.info(
+      `[inventoryService] Order ${numericOrderId} inventory restored after refund.`,
+    );
+    return true;
   } catch (error) {
     if (txStarted) {
       await conn.rollback();

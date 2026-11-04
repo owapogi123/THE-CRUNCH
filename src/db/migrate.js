@@ -10,11 +10,15 @@ const {
 const deploymentSchemaAlignment = require("./migrations/2026-10-30_deployment-schema-alignment");
 const inventoryChangeNotificationCategory = require("./migrations/2026-11-01_inventory-change-notification-category");
 const purchaseOrderDeliveryDateNullable = require("./migrations/2026-11-01_purchase-order-delivery-date-nullable");
+const thirdPartyReferenceReuse = require("./migrations/2026-11-03_third-party-reference-reuse");
+const orderInventoryDeductionSnapshots = require("./migrations/2026-11-04_order-inventory-deduction-snapshots");
 
 const MIGRATIONS = [
   deploymentSchemaAlignment,
   inventoryChangeNotificationCategory,
   purchaseOrderDeliveryDateNullable,
+  thirdPartyReferenceReuse,
+  orderInventoryDeductionSnapshots,
 ];
 const LOCK_NAME = "the_crunch_schema_migrations";
 
