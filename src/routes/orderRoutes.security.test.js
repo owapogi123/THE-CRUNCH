@@ -559,6 +559,20 @@ function assertRejectedBeforePersistence(result) {
   }
 
   resetState();
+  const unsupportedOtherPlatform = await invokeOrder({
+    token: cashierToken,
+    body: {
+      ...baseStaffBody,
+      order_type: "delivery",
+      payment_method: "other",
+      payment_reference: "OTHER-123",
+    },
+  });
+  assert.equal(unsupportedOtherPlatform.statusCode, 400);
+  assert.match(unsupportedOtherPlatform.body.message, /GrabFood or Foodpanda/i);
+  assertRejectedBeforePersistence(unsupportedOtherPlatform);
+
+  resetState();
   const delivery = await invokeOrder({
     token: cashierToken,
     body: {

@@ -83,6 +83,13 @@ assert.throws(
 
 assert.equal(resolveProductAvailabilityStatus(autoMenu, sufficient), "Available");
 assert.equal(resolveProductAvailabilityStatus(autoMenu, []), "Out of Stock");
+assert.equal(
+  resolveProductAvailabilityStatus(
+    { ...autoMenu, availability_status: "Hidden" },
+    sufficient,
+  ),
+  "Hidden",
+);
 
 assert.equal(
   resolveProductAvailabilityStatus(

@@ -26,7 +26,10 @@ const {
     isDevelopmentTimingEnabled,
     runWithDbQueryTiming,
 } = require("../services/requestTiming");
-const { requireInventoryManagerAccess } = require("../middleware/staffAccess");
+const {
+    requireAdministratorAccess,
+    requireInventoryManagerAccess,
+} = require("../middleware/staffAccess");
 const {
     directStockUpdateResponse,
     findDirectStockQuantityFields,
@@ -1131,6 +1134,63 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
     }
 });
 
+async function setMenuItemArchiveState(req, res, archived) {
+    try {
+        await ensureProductSchema(db);
+        const productId = Number(req.params.id);
+        if (!Number.isSafeInteger(productId) || productId <= 0) {
+            return res.status(400).json({ message: "Invalid product ID" });
+        }
+
+        const itemTypeExpr = getProductItemTypeExpression(true, "p", "m");
+        const [rows] = await db.query(
+            `SELECT p.id, p.name, p.availability_status, ${itemTypeExpr} AS item_type
+               FROM products p
+               LEFT JOIN Menu m ON m.Product_ID = p.id
+              WHERE p.id = ?
+              LIMIT 1`,
+            [productId],
+        );
+        const product = rows[0];
+        if (!product) {
+            return res.status(404).json({ message: "Product not found" });
+        }
+        if (normalizeItemType(product.item_type, STOCK_ITEM) !== MENU_ITEM) {
+            return res.status(400).json({
+                message: "Only menu items can be archived from Menu Management.",
+            });
+        }
+
+        const nextStatus = archived ? "Hidden" : "Available";
+        await db.query(
+            "UPDATE products SET availability_status = ? WHERE id = ?",
+            [nextStatus, productId],
+        );
+        return res.json({
+            id: productId,
+            availability_status: nextStatus,
+            archived,
+            message: archived
+                ? "Menu item archived. Historical records were preserved."
+                : "Menu item restored. Live ingredient and stock availability still applies.",
+        });
+    } catch (err) {
+        console.error(
+            `${archived ? "ARCHIVE" : "RESTORE"} /products/:id error:`,
+            err,
+        );
+        return res.status(500).json({ message: "DB error", error: err.message });
+    }
+}
+
+router.patch("/:id/archive", requireAdministratorAccess, (req, res) =>
+    setMenuItemArchiveState(req, res, true),
+);
+
+router.patch("/:id/restore", requireAdministratorAccess, (req, res) =>
+    setMenuItemArchiveState(req, res, false),
+);
+
 // DELETE product
 router.delete("/:id", requireInventoryManagerAccess, async (req, res) => {
     let conn;
@@ -1152,6 +1212,7 @@ router.delete("/:id", requireInventoryManagerAccess, async (req, res) => {
                EXISTS(SELECT 1 FROM purchase_order_items WHERE product_id = ? LIMIT 1) AS has_purchase_order_items,
                EXISTS(SELECT 1 FROM Stock_Status WHERE Product_ID = ? LIMIT 1) AS has_stock_history,
                EXISTS(SELECT 1 FROM receipt_snapshot_items WHERE original_product_id = ? LIMIT 1) AS has_receipt_history,
+               EXISTS(SELECT 1 FROM order_inventory_deductions WHERE product_id = ? LIMIT 1) AS has_order_deductions,
                EXISTS(SELECT 1 FROM daily_usage_report_items WHERE product_id = ? LIMIT 1) AS has_daily_usage,
                EXISTS(SELECT 1 FROM kitchen_usage_items WHERE product_id = ? LIMIT 1) AS has_kitchen_usage,
                EXISTS(SELECT 1 FROM feedback WHERE product_id = ? LIMIT 1) AS has_feedback,
@@ -1161,11 +1222,14 @@ router.delete("/:id", requireInventoryManagerAccess, async (req, res) => {
                    WHERE menu_product_id = ? OR product_id = ?
                    LIMIT 1
                ) AS has_ingredient_link`,
-            Array(12).fill(productId),
+            Array(13).fill(productId),
         );
         if (Object.values(history || {}).some((value) => Number(value) !== 0)) {
             await conn.rollback();
             return res.status(409).json({
+                code: "PRODUCT_HAS_PROTECTED_HISTORY",
+                canArchive: true,
+                productId,
                 message: "Products with historical records or active relationships cannot be hard deleted.",
             });
         }
@@ -1190,6 +1254,8 @@ router.delete("/:id", requireInventoryManagerAccess, async (req, res) => {
         if (conn) await conn.rollback();
         if (err && err.code === "ER_ROW_IS_REFERENCED_2") {
             return res.status(409).json({
+                code: "PRODUCT_HAS_PROTECTED_HISTORY",
+                canArchive: true,
                 message: "Product cannot be deleted because historical records reference it.",
             });
         }

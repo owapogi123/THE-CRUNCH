@@ -29,14 +29,14 @@ function formatExpiration(expiresAt) {
   return expiration.toISOString();
 }
 
-function logOtpToConsole({ email, otp, purpose, expiresAt }) {
+function logOtpToConsole({ email, purpose, expiresAt }) {
   console.log(
     [
       "========================================",
       "\u{1F510} OTP TEST MODE",
       `Purpose: ${sanitizeLogValue(purpose)}`,
       `Email: ${sanitizeLogValue(email)}`,
-      `OTP: ${sanitizeLogValue(otp)}`,
+      "OTP: [REDACTED]",
       `Expires: ${formatExpiration(expiresAt)}`,
       "========================================",
     ].join("\n"),
@@ -68,7 +68,6 @@ async function deliverOtp({
   if (getOtpDeliveryMode() === "console") {
     logOtpToConsole({
       email: recipient,
-      otp: code,
       purpose,
       expiresAt,
     });

@@ -64,6 +64,15 @@ function isAutoMenuMissingIngredients(row = {}, ingredients = []) {
 }
 
 function resolveProductAvailabilityStatus(row = {}, ingredients = []) {
+  const storedAvailability = String(
+    row.availability_status ?? row.availabilityStatus ?? "Available",
+  )
+    .trim()
+    .toLowerCase();
+  if (storedAvailability === "hidden") {
+    return "Hidden";
+  }
+
   if (isManualOverrideEnabled(row)) {
     return "Out of Stock";
   }

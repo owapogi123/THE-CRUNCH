@@ -62,7 +62,8 @@ async function loadAuthoritativeOrderItems(connection, items) {
     `SELECT
        p.id AS productId,
        COALESCE(NULLIF(TRIM(m.Product_Name), ''), p.name) AS productName,
-       COALESCE(m.Price, p.price, 0) AS currentPrice
+       COALESCE(m.Price, p.price, 0) AS currentPrice,
+       p.availability_status AS availabilityStatus
      FROM products p
      LEFT JOIN Menu m ON m.Product_ID = p.id
      WHERE p.id IN (${placeholders})`,
@@ -76,6 +77,16 @@ async function loadAuthoritativeOrderItems(connection, items) {
     const product = productsById.get(item.product_id);
     if (!product) {
       throw createOrderItemError(`Unknown product_id ${item.product_id}`);
+    }
+    if (
+      String(product.availabilityStatus || "")
+        .trim()
+        .toLowerCase() === "hidden"
+    ) {
+      throw createOrderItemError(
+        `Product ${item.product_id} is archived and cannot be ordered`,
+        409,
+      );
     }
     const price = Number(product.currentPrice);
     if (!Number.isFinite(price) || price < 0) {

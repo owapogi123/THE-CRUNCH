@@ -196,7 +196,7 @@ const CRITICAL_COLUMNS = {
     used_qty: ["decimal(10,2)", false], returned_qty: ["decimal(10,2)", false],
   },
   users: {
-    password_reset_code: ["varchar(10)", true],
+    password_reset_code: ["varchar(64)", true],
     password_reset_expires: ["datetime", true],
   },
   pending_signups: { pending_signup_id: ["int", false], email: ["varchar(150)", false] },

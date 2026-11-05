@@ -13,6 +13,13 @@ const { assertTableColumns } = require("../services/schemaAssertions");
 const router = express.Router();
 
 const SIGNUP_FIELD_MAX_LENGTH = 50;
+const PASSWORD_RESET_CODE_TTL_MS = 10 * 60 * 1000;
+const PASSWORD_RESET_REQUEST_WINDOW_MS = 15 * 60 * 1000;
+const PASSWORD_RESET_REQUESTS_PER_EMAIL = 3;
+const PASSWORD_RESET_REQUESTS_PER_IP = 15;
+const PASSWORD_RESET_ATTEMPTS_PER_EMAIL = 8;
+const PASSWORD_RESET_ATTEMPTS_PER_IP = 30;
+const passwordResetRateLimits = new Map();
 
 function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
@@ -27,7 +34,89 @@ function getVerificationExpiryDate() {
 }
 
 function getResetExpiryDate() {
-  return new Date(Date.now() + 10 * 60 * 1000);
+  return new Date(Date.now() + PASSWORD_RESET_CODE_TTL_MS);
+}
+
+function getPasswordResetDigest(email, code) {
+  const secret = String(
+    process.env.PASSWORD_RESET_TOKEN_SECRET || getJwtSecret(),
+  );
+  return crypto
+    .createHmac("sha256", secret)
+    .update(`${normalizeEmail(email)}:${String(code || "").trim()}`)
+    .digest("hex");
+}
+
+function safeStringEqual(left, right) {
+  const a = Buffer.from(String(left || ""));
+  const b = Buffer.from(String(right || ""));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function passwordResetCodeMatches(storedCode, email, submittedCode) {
+  const stored = String(storedCode || "").trim();
+  if (!stored) return false;
+  if (/^[a-f0-9]{64}$/i.test(stored)) {
+    return safeStringEqual(stored, getPasswordResetDigest(email, submittedCode));
+  }
+  // Allow reset codes issued immediately before this security upgrade to expire normally.
+  return safeStringEqual(stored, String(submittedCode || "").trim());
+}
+
+function hashRateLimitIdentity(value) {
+  return crypto.createHash("sha256").update(String(value || "unknown")).digest("hex");
+}
+
+function consumePasswordResetRateLimit(scope, identity, limit, now = Date.now()) {
+  const key = `${scope}:${hashRateLimitIdentity(identity)}`;
+  const current = passwordResetRateLimits.get(key);
+  if (!current || current.resetAt <= now) {
+    passwordResetRateLimits.set(key, {
+      count: 1,
+      resetAt: now + PASSWORD_RESET_REQUEST_WINDOW_MS,
+    });
+    return { allowed: true, retryAfterSeconds: 0 };
+  }
+  current.count += 1;
+  if (current.count <= limit) {
+    return { allowed: true, retryAfterSeconds: 0 };
+  }
+  return {
+    allowed: false,
+    retryAfterSeconds: Math.max(1, Math.ceil((current.resetAt - now) / 1000)),
+  };
+}
+
+function checkPasswordResetRateLimits(req, email, purpose) {
+  const isRequest = purpose === "request";
+  const byEmail = consumePasswordResetRateLimit(
+    `${purpose}:email`,
+    email,
+    isRequest ? PASSWORD_RESET_REQUESTS_PER_EMAIL : PASSWORD_RESET_ATTEMPTS_PER_EMAIL,
+  );
+  const byIp = consumePasswordResetRateLimit(
+    `${purpose}:ip`,
+    req.ip || req.socket?.remoteAddress || "unknown",
+    isRequest ? PASSWORD_RESET_REQUESTS_PER_IP : PASSWORD_RESET_ATTEMPTS_PER_IP,
+  );
+  return {
+    allowed: byEmail.allowed && byIp.allowed,
+    retryAfterSeconds: Math.max(byEmail.retryAfterSeconds, byIp.retryAfterSeconds),
+  };
+}
+
+function clearPasswordResetRateLimits(email) {
+  const identity = hashRateLimitIdentity(email);
+  for (const key of passwordResetRateLimits.keys()) {
+    if (key.endsWith(`:${identity}`)) passwordResetRateLimits.delete(key);
+  }
+}
+
+async function waitForMinimumRecoveryResponse(startedAt, minimumMs = 250) {
+  const remaining = minimumMs - (Date.now() - startedAt);
+  if (remaining > 0) {
+    await new Promise((resolve) => setTimeout(resolve, remaining));
+  }
 }
 
 function toBooleanFlag(value) {
@@ -554,14 +643,25 @@ router.post("/resend-verification", async (req, res) => {
 });
 
 router.post("/forgot-password", async (req, res) => {
+  const startedAt = Date.now();
+  const genericMessage =
+    "If that email is registered, a reset code has been sent.";
   try {
     await ensurePasswordResetColumns();
     const email = normalizeEmail(req.body?.email);
-    const genericMessage =
-      "If that email is registered, a reset code has been sent.";
 
     if (!email) {
+      await waitForMinimumRecoveryResponse(startedAt);
       return res.json({ message: genericMessage });
+    }
+
+    const rateLimit = checkPasswordResetRateLimits(req, email, "request");
+    if (!rateLimit.allowed) {
+      res.set("Retry-After", String(rateLimit.retryAfterSeconds));
+      await waitForMinimumRecoveryResponse(startedAt);
+      return res.status(429).json({
+        message: `${genericMessage} Please wait before requesting another code.`,
+      });
     }
 
     const [rows] = await db.query(
@@ -573,11 +673,13 @@ router.post("/forgot-password", async (req, res) => {
     );
 
     if (rows.length === 0) {
+      await waitForMinimumRecoveryResponse(startedAt);
       return res.json({ message: genericMessage });
     }
 
     const user = rows[0];
     const resetCode = generateVerificationCode();
+    const resetCodeDigest = getPasswordResetDigest(email, resetCode);
     const resetExpires = getResetExpiryDate();
 
     await db.query(
@@ -585,7 +687,7 @@ router.post("/forgot-password", async (req, res) => {
        SET password_reset_code = ?,
            password_reset_expires = ?
        WHERE id = ?`,
-      [resetCode, resetExpires, user.id],
+      [resetCodeDigest, resetExpires, user.id],
     );
 
     try {
@@ -597,15 +699,23 @@ router.post("/forgot-password", async (req, res) => {
         customerName: user.username,
       });
     } catch (emailError) {
-      console.error("Password reset email failed:", emailError);
+      await db.query(
+        `UPDATE users
+         SET password_reset_code = NULL,
+             password_reset_expires = NULL
+         WHERE id = ? AND password_reset_code = ?`,
+        [user.id, resetCodeDigest],
+      );
+      console.error("Password reset email delivery failed");
     }
 
+    await waitForMinimumRecoveryResponse(startedAt);
     return res.json({ message: genericMessage });
   } catch (error) {
-    console.error(error);
+    console.error("Password reset request failed");
+    await waitForMinimumRecoveryResponse(startedAt);
     return res.status(500).json({
-      message: "Server error",
-      error: error.message,
+      message: genericMessage,
     });
   }
 });
@@ -615,17 +725,26 @@ router.post("/reset-password", async (req, res) => {
     await ensurePasswordResetColumns();
     const email = normalizeEmail(req.body?.email);
     const code = String(req.body?.code || "").trim();
-    const newPassword = String(req.body?.newPassword || "").trim();
+    const newPassword = String(req.body?.newPassword || "");
+    const invalidMessage = "Invalid or expired reset code";
 
-    if (!email || !code || !newPassword) {
+    if (!email || !/^\d{6}$/.test(code) || !newPassword) {
       return res.status(400).json({
-        message: "Email, reset code, and new password are required",
+        message: invalidMessage,
       });
     }
 
-    if (newPassword.length < 8) {
+    if (newPassword.length < 8 || newPassword.length > 128) {
       return res.status(400).json({
-        message: "Password must be at least 8 characters long",
+        message: "Password must be between 8 and 128 characters long",
+      });
+    }
+
+    const rateLimit = checkPasswordResetRateLimits(req, email, "attempt");
+    if (!rateLimit.allowed) {
+      res.set("Retry-After", String(rateLimit.retryAfterSeconds));
+      return res.status(429).json({
+        message: "Too many reset attempts. Please wait and request a new code.",
       });
     }
 
@@ -638,37 +757,42 @@ router.post("/reset-password", async (req, res) => {
     );
 
     if (rows.length === 0) {
-      return res.status(400).json({ message: "Invalid reset code or email" });
+      return res.status(400).json({ message: invalidMessage });
     }
 
     const user = rows[0];
-    if (!user.password_reset_code || user.password_reset_code !== code) {
-      return res.status(400).json({ message: "Invalid reset code or email" });
+    if (!passwordResetCodeMatches(user.password_reset_code, email, code)) {
+      return res.status(400).json({ message: invalidMessage });
     }
 
     const expiresAt = user.password_reset_expires
       ? new Date(user.password_reset_expires)
       : null;
     if (!expiresAt || Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() < Date.now()) {
-      return res.status(400).json({ message: "Reset code has expired" });
+      return res.status(400).json({ message: invalidMessage });
     }
 
     const passwordHash = await bcrypt.hash(newPassword, 10);
-    await db.query(
+    const [updated] = await db.query(
       `UPDATE users
        SET password_hash = ?,
            password_reset_code = NULL,
            password_reset_expires = NULL
-       WHERE id = ?`,
-      [passwordHash, user.id],
+       WHERE id = ?
+         AND password_reset_code = ?
+         AND password_reset_expires >= CURRENT_TIMESTAMP`,
+      [passwordHash, user.id, user.password_reset_code],
     );
+    if (Number(updated?.affectedRows || 0) !== 1) {
+      return res.status(400).json({ message: invalidMessage });
+    }
 
+    clearPasswordResetRateLimits(email);
     return res.json({ message: "Password reset successfully" });
   } catch (error) {
-    console.error(error);
+    console.error("Password reset completion failed");
     return res.status(500).json({
-      message: "Server error",
-      error: error.message,
+      message: "Unable to reset password. Please request a new code and try again.",
     });
   }
 });
@@ -689,3 +813,10 @@ router.post("/logout", (req, res) => {
 });
 
 module.exports = router;
+module.exports.recoveryPolicy = {
+  PASSWORD_RESET_CODE_TTL_MS,
+  consumePasswordResetRateLimit,
+  getPasswordResetDigest,
+  passwordResetCodeMatches,
+  resetRateLimitsForTests: () => passwordResetRateLimits.clear(),
+};

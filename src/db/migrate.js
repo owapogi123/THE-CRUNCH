@@ -12,6 +12,7 @@ const inventoryChangeNotificationCategory = require("./migrations/2026-11-01_inv
 const purchaseOrderDeliveryDateNullable = require("./migrations/2026-11-01_purchase-order-delivery-date-nullable");
 const thirdPartyReferenceReuse = require("./migrations/2026-11-03_third-party-reference-reuse");
 const orderInventoryDeductionSnapshots = require("./migrations/2026-11-04_order-inventory-deduction-snapshots");
+const passwordResetDigestWidth = require("./migrations/2026-11-05_password-reset-digest-width");
 
 const MIGRATIONS = [
   deploymentSchemaAlignment,
@@ -19,6 +20,7 @@ const MIGRATIONS = [
   purchaseOrderDeliveryDateNullable,
   thirdPartyReferenceReuse,
   orderInventoryDeductionSnapshots,
+  passwordResetDigestWidth,
 ];
 const LOCK_NAME = "the_crunch_schema_migrations";
 

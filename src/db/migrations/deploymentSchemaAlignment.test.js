@@ -43,6 +43,7 @@ function createExistingSchemaDb({ nullBatchCount = 0 } = {}) {
   let hasUniquePaymentReferenceIndex = true;
   let hasPaymentReferenceLookupIndex = false;
   let hasOrderInventoryDeductions = false;
+  let passwordResetCodeLength = 10;
 
   return {
     calls,
@@ -111,6 +112,16 @@ function createExistingSchemaDb({ nullBatchCount = 0 } = {}) {
             IS_NULLABLE: purchaseOrderDeliveryNullable,
           }]];
         }
+        if (
+          /LOWER\(TABLE_NAME\) = 'users'/i.test(normalized) &&
+          /LOWER\(COLUMN_NAME\) = 'password_reset_code'/i.test(normalized)
+        ) {
+          return [[{
+            DATA_TYPE: "varchar",
+            CHARACTER_MAXIMUM_LENGTH: passwordResetCodeLength,
+            IS_NULLABLE: "YES",
+          }]];
+        }
       }
       if (/SELECT COUNT\(\*\) AS invalid_count FROM batches WHERE product_id IS NULL/i.test(normalized)) {
         return [[{ invalid_count: nullBatchCount }]];
@@ -173,6 +184,10 @@ function createExistingSchemaDb({ nullBatchCount = 0 } = {}) {
       }
       if (/^CREATE TABLE IF NOT EXISTS order_inventory_deductions/i.test(normalized)) {
         hasOrderInventoryDeductions = true;
+        return [{ affectedRows: 0 }];
+      }
+      if (/^ALTER TABLE `users` MODIFY COLUMN `password_reset_code` VARCHAR\(64\) NULL/i.test(normalized)) {
+        passwordResetCodeLength = 64;
         return [{ affectedRows: 0 }];
       }
       if (/^(ALTER TABLE|INSERT INTO products)/i.test(normalized)) {

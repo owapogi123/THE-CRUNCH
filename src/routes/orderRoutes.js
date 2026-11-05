@@ -195,7 +195,7 @@ function normalizePaymentMethod(value) {
 }
 
 function isThirdPartyDeliveryMethod(value) {
-  return ["grabfood", "foodpanda", "other"].includes(
+  return ["grabfood", "foodpanda"].includes(
     normalizePaymentMethod(value),
   );
 }
@@ -1441,10 +1441,15 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
       });
     }
     const submittedPaymentReference = String(payment_reference || paymentReference || "").trim() || null;
+    if (normalizedPaymentMethod === "other") {
+      return res.status(400).json({
+        message: "Other Platform is no longer available for new orders. Choose GrabFood or Foodpanda.",
+      });
+    }
     const isThirdPartyDelivery = isThirdPartyDeliveryMethod(normalizedPaymentMethod);
     if (finalOrderType === "delivery" && !isThirdPartyDelivery) {
       return res.status(400).json({
-        message: "Delivery orders require GrabFood, foodpanda, or Other as the platform",
+        message: "Delivery orders require GrabFood or Foodpanda as the platform",
       });
     }
     if (finalOrderType !== "delivery" && isThirdPartyDelivery) {

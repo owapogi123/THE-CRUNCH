@@ -361,6 +361,7 @@ async function prepareOrderItemsAndStock(connection, items) {
        p.id AS productId,
        COALESCE(NULLIF(TRIM(m.Product_Name), ''), p.name) AS productName,
        COALESCE(m.Price, p.price, 0) AS currentPrice,
+       p.availability_status AS availabilityStatus,
        COALESCE(m.manual_override, 0) AS manualOverride,
        COALESCE(m.manual_status, 'Available') AS manualStatus,
        ${orderedItemTypeExpr} AS itemType,
@@ -406,6 +407,17 @@ async function prepareOrderItemsAndStock(connection, items) {
       throw error;
     }
     const product = productRows[0];
+    if (
+      String(product.availabilityStatus || "")
+        .trim()
+        .toLowerCase() === "hidden"
+    ) {
+      const error = new Error(
+        `"${product.productName}" is archived and cannot be ordered.`,
+      );
+      error.statusCode = 409;
+      throw error;
+    }
     const price = Number(product.currentPrice);
     if (!Number.isFinite(price) || price < 0) {
       const error = new Error(
