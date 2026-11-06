@@ -20,6 +20,7 @@ const {
     buildProductCacheKey,
     cache,
     getProductCacheTtlMs,
+    invalidateProductCache,
     PRODUCT_CACHE_PREFIX,
 } = require("../services/cacheService");
 const {
@@ -669,6 +670,7 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
         }
 
         await conn.commit();
+        await invalidateProductCache("product created");
         res.status(201).json({ message: "Product added", id: newId });
     } catch (err) {
         if (conn) await conn.rollback();
@@ -1092,6 +1094,7 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
 
         const [enrichedRow] = await attachIngredientAvailability(rows, conn);
         await conn.commit();
+        await invalidateProductCache("product updated");
         res.json(enrichedRow);
     } catch (err) {
         if (conn) await conn.rollback();
@@ -1166,6 +1169,7 @@ async function setMenuItemArchiveState(req, res, archived) {
             "UPDATE products SET availability_status = ? WHERE id = ?",
             [nextStatus, productId],
         );
+        await invalidateProductCache(archived ? "product archived" : "product restored");
         return res.json({
             id: productId,
             availability_status: nextStatus,
@@ -1249,6 +1253,7 @@ router.delete("/:id", requireInventoryManagerAccess, async (req, res) => {
         }
 
         await conn.commit();
+        await invalidateProductCache("product deleted");
         res.json({ message: "Product deleted successfully" });
     } catch (err) {
         if (conn) await conn.rollback();

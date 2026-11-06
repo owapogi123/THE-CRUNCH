@@ -66,6 +66,10 @@ function connection() {
           ),
         ];
       }
+      if (query.startsWith("SELECT item_type, price, name, quantity FROM products")) {
+        const product = state.products.find((entry) => entry.id === Number(params[0]));
+        return [product ? [product] : []];
+      }
       if (query.startsWith("INSERT INTO products")) {
         const id = state.products.length + 1;
         state.products.push({ id, name: params[0] });
@@ -82,8 +86,40 @@ function connection() {
         if (state.failInventoryInsert) {
           throw new Error("simulated inventory insert failure");
         }
-        state.inventory.push({ productId: params[0], stock: params[2] });
+        state.inventory.push({
+          inventoryId: state.inventory.length + 1,
+          productId: params[0],
+          stock: params[2],
+          unit: params.at(-1) || "piece",
+        });
         return [{ affectedRows: 1 }];
+      }
+      if (query.startsWith("SELECT Inventory_ID FROM Inventory")) {
+        const inventory = state.inventory.find(
+          (entry) => entry.productId === Number(params[0]),
+        );
+        return [inventory ? [{ Inventory_ID: inventory.inventoryId }] : []];
+      }
+      if (query.startsWith("UPDATE Inventory SET")) {
+        const productId = Number(params.at(-1));
+        const inventory = state.inventory.find((entry) => entry.productId === productId);
+        if (!inventory) return [{ affectedRows: 0 }];
+        if (/unit = \?/i.test(query)) inventory.unit = String(params[0]);
+        return [{ affectedRows: 1 }];
+      }
+      if (query.startsWith("SELECT p.*, m.Category_Name AS category")) {
+        const product = state.products.find((entry) => entry.id === Number(params[0]));
+        const inventory = state.inventory.find(
+          (entry) => entry.productId === Number(params[0]),
+        );
+        return [product ? [{
+          ...product,
+          category: "Meals",
+          unit: inventory?.unit || "piece",
+          remainingStock: inventory?.stock || 0,
+          manual_override: 0,
+          manual_status: "Available",
+        }] : []];
       }
       if (query.startsWith("DELETE FROM menu_item_ingredients")) {
         state.ingredients = state.ingredients.filter(
@@ -134,6 +170,9 @@ mockModule("../utils/productItemType", {
     return value || fallback;
   },
   async assertProductsMatchItemType() {},
+  async ensureProductsItemTypeSchema() {
+    return true;
+  },
 });
 
 const router = require("./productRoutes");
@@ -240,6 +279,28 @@ function validProduct(overrides = {}) {
     assert.equal(rejected.body.code, "DIRECT_STOCK_UPDATE_NOT_ALLOWED");
     assert.deepEqual(rejected.body.fields, [field]);
   }
+
+  reset();
+  state.products.push({
+    id: 7,
+    name: "Chicken Bowl",
+    price: 99.5,
+    quantity: 0,
+    item_type: "menu_item",
+  });
+  state.menu.push({ productId: 7, name: "Chicken Bowl" });
+  state.inventory.push({ inventoryId: 1, productId: 7, stock: 0, unit: "piece" });
+  const { cache, buildProductCacheKey } = require("../services/cacheService");
+  const cacheKey = buildProductCacheKey({
+    itemType: "menu_item",
+    includeRawMaterials: false,
+  });
+  await cache.set(cacheKey, [{ id: 7, unit: "piece" }], 45_000);
+  const unitUpdate = await invokeUpdate({ unit: "kg" });
+  assert.equal(unitUpdate.statusCode, 200);
+  assert.equal(unitUpdate.body.unit, "kg");
+  assert.equal(state.inventory[0].unit, "kg");
+  assert.equal(await cache.get(cacheKey), null);
 
   console.log("Product data-entry transaction tests passed");
 })().catch((error) => {
