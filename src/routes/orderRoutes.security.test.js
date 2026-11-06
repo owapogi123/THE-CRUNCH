@@ -307,7 +307,11 @@ function assertRejectedBeforePersistence(result) {
   resetState();
   const exact = await invokeOrder({
     token: cashierToken,
-    body: { ...baseStaffBody, cash_tendered: 100 },
+    body: {
+      ...baseStaffBody,
+      cash_tendered: 100,
+      order_note: "Extra spicy please",
+    },
   });
   assert.equal(exact.statusCode, 200);
   assert.equal(state.receipts[0].cashTendered, 100);
@@ -316,6 +320,16 @@ function assertRejectedBeforePersistence(result) {
     state.receipts[0].cashierName,
     "Cashier One",
     "receipt snapshots must preserve the authenticated cashier's database name",
+  );
+  assert.equal(
+    state.receipts[0].soldToName,
+    null,
+    "walk-in receipt Sold To must remain blank when no customer name is supplied",
+  );
+  assert.equal(
+    state.receipts[0].orderNote,
+    "Extra spicy please",
+    "cashier notes must be snapshotted as order notes",
   );
   assert.equal("customerTin" in state.receipts[0], false);
   assert.equal("customerAddress" in state.receipts[0], false);
@@ -684,6 +698,7 @@ function assertRejectedBeforePersistence(result) {
       payment_method: "cash_on_pickup",
       payment_status: "Pending Payment",
       customer_name: "Spoofed Receipt Name",
+      order_note: "Extra spicy please",
     },
   });
   assert.equal(online.statusCode, 200);
@@ -700,6 +715,11 @@ function assertRejectedBeforePersistence(result) {
     state.receipts[0].soldToName,
     "Customer",
     "online receipts must snapshot the persisted registration name instead of a body value",
+  );
+  assert.equal(
+    state.receipts[0].orderNote,
+    "Extra spicy please",
+    "online order notes must remain separate from the registered customer name",
   );
 
   resetState();
