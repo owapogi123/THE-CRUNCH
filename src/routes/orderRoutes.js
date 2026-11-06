@@ -363,7 +363,7 @@ function buildCustomerReceiptNote(paymentStatus) {
   return "Your payment has been verified. We are preparing your order.";
 }
 
-async function requireSalesReportReceiptAccess(req, res, next) {
+async function requireSalesReportAccess(req, res, next) {
   const role = normalizeRole(req.user?.role);
   if (isSuperuserRole(role)) return next();
   try {
@@ -454,7 +454,7 @@ async function ensureLegacyCashierRow(conn, cashierId) {
 // ─── ROUTES (specific paths MUST come before /:id wildcards) ──────────────────
 
 // GET /orders — list all orders for dashboard
-router.get("/", requireCookViewAccess, async (req, res) => {
+router.get("/", requireCookViewAccess, requireSalesReportAccess, async (req, res) => {
   try {
     const [orders] = await db.query(
       `SELECT
@@ -1100,7 +1100,7 @@ router.get("/shift", requireCookViewAccess, async (req, res) => {
 router.get(
   "/:id/receipt",
   requireCookViewAccess,
-  requireSalesReportReceiptAccess,
+  requireSalesReportAccess,
   async (req, res) => {
     try {
       const orderId = Number(req.params.id);

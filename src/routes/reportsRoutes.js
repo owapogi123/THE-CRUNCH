@@ -15,6 +15,62 @@ async function reportTypeColumn() {
   return "NULL";
 }
 
+function buildInventoryReportItems({
+  movementRows = [],
+  receivedRows = [],
+  stockRows = [],
+  periodDays,
+}) {
+  const stockMap = new Map(
+    stockRows.map((row) => [String(row.product_id), Number(row.remaining) || 0]),
+  );
+  const itemsByProduct = new Map();
+
+  function ensureItem(row) {
+    const key = String(row.product_id);
+    if (!itemsByProduct.has(key)) {
+      itemsByProduct.set(key, {
+        product_id: row.product_id,
+        product_name: row.product_name || "Unknown",
+        category: row.category || "Uncategorized",
+        unit: row.unit || "piece",
+        received: 0,
+        withdrawn: 0,
+        returned: 0,
+        wasted: 0,
+        remaining: stockMap.get(key) ?? 0,
+      });
+    }
+    return itemsByProduct.get(key);
+  }
+
+  for (const row of movementRows) {
+    const item = ensureItem(row);
+    item.withdrawn += Number(row.withdrawn) || 0;
+    item.returned += Number(row.returned) || 0;
+    item.wasted += Number(row.wasted) || 0;
+  }
+
+  for (const row of receivedRows) {
+    const item = ensureItem(row);
+    item.received += Number(row.received) || 0;
+    if (item.product_name === "Unknown" && row.product_name) {
+      item.product_name = row.product_name;
+    }
+    if (item.category === "Uncategorized" && row.category) {
+      item.category = row.category;
+    }
+    if (item.unit === "piece" && row.unit) {
+      item.unit = row.unit;
+    }
+  }
+
+  return [...itemsByProduct.values()].map((item) => ({
+    ...item,
+    consumptionRate: item.withdrawn / periodDays,
+  }));
+}
+
 // GET /api/reports
 router.get("/", requireInventoryManagerAccess, async (req, res) => {
   try {
@@ -57,13 +113,14 @@ router.get("/weekly", requireInventoryManagerAccess, async (req, res) => {
         m.Product_ID                                                       AS product_id,
         COALESCE(m.Product_Name, 'Unknown')                                AS product_name,
         COALESCE(m.Category_Name, 'Uncategorized')                         AS category,
-        COALESCE(bu.unit, 'piece')                                         AS unit,
-        COALESCE(SUM(CASE WHEN LOWER(ss.Type) IN ('initial','supplementary') THEN ss.Quantity ELSE 0 END), 0) AS withdrawn,
-        COALESCE(SUM(CASE WHEN LOWER(ss.Type) = 'return'   THEN ss.Quantity ELSE 0 END), 0) AS returned,
-        COALESCE(SUM(CASE WHEN LOWER(ss.Type) = 'spoilage' THEN ss.Quantity ELSE 0 END), 0) AS wasted
+        COALESCE(NULLIF(TRIM(i.unit), ''), bu.unit, 'piece')                AS unit,
+        COALESCE(SUM(CASE WHEN LOWER(TRIM(ss.Type)) IN ('stock out','initial','supplementary') THEN ss.Quantity ELSE 0 END), 0) AS withdrawn,
+        COALESCE(SUM(CASE WHEN LOWER(TRIM(ss.Type)) = 'return'   THEN ss.Quantity ELSE 0 END), 0) AS returned,
+        COALESCE(SUM(CASE WHEN LOWER(TRIM(ss.Type)) = 'spoilage' THEN ss.Quantity ELSE 0 END), 0) AS wasted
       FROM Stock_Status ss
       JOIN Menu m ON m.Product_ID = ss.Product_ID
       LEFT JOIN products p ON p.id = m.Product_ID
+      LEFT JOIN Inventory i ON i.Product_ID = ss.Product_ID
       LEFT JOIN (
         SELECT product_id, MAX(unit) AS unit
         FROM batches
@@ -71,20 +128,24 @@ router.get("/weekly", requireInventoryManagerAccess, async (req, res) => {
       ) bu ON bu.product_id = ss.Product_ID
       WHERE DATE(ss.Status_Date) >= ? AND DATE(ss.Status_Date) < ?
         AND ${itemTypeExpr} = ?
-      GROUP BY m.Product_ID, m.Product_Name, m.Category_Name, bu.unit`,
+      GROUP BY m.Product_ID, m.Product_Name, m.Category_Name, i.unit, bu.unit`,
       [startStr, endStr, STOCK_ITEM],
     );
 
     const [receivedRows] = await db.query(
       `SELECT
         b.product_id,
+        COALESCE(m.Product_Name, p.name, 'Unknown') AS product_name,
+        COALESCE(m.Category_Name, 'Uncategorized') AS category,
+        COALESCE(NULLIF(TRIM(i.unit), ''), MAX(NULLIF(TRIM(b.unit), '')), 'piece') AS unit,
         COALESCE(SUM(b.quantity), 0) AS received
       FROM batches b
       LEFT JOIN products p ON p.id = b.product_id
       LEFT JOIN Menu m ON m.Product_ID = b.product_id
+      LEFT JOIN Inventory i ON i.Product_ID = b.product_id
       WHERE DATE(b.received_date) >= ? AND DATE(b.received_date) < ?
         AND ${itemTypeExpr} = ?
-      GROUP BY b.product_id`,
+      GROUP BY b.product_id, m.Product_Name, p.name, m.Category_Name, i.unit`,
       [startStr, endStr, STOCK_ITEM],
     );
 
@@ -97,25 +158,12 @@ router.get("/weekly", requireInventoryManagerAccess, async (req, res) => {
       [STOCK_ITEM],
     );
 
-    const receivedMap = Object.fromEntries(
-      receivedRows.map((r) => [r.product_id, Number(r.received)]),
-    );
-    const stockMap = Object.fromEntries(
-      stockRows.map((r) => [r.product_id, Number(r.remaining)]),
-    );
-
-    const items = withdrawalRows.map((row) => ({
-      product_id: row.product_id,
-      product_name: row.product_name,
-      category: row.category,
-      unit: row.unit,
-      received: receivedMap[row.product_id] ?? 0,
-      withdrawn: Number(row.withdrawn),
-      returned: Number(row.returned),
-      wasted: Number(row.wasted),
-      remaining: stockMap[row.product_id] ?? 0,
-      consumptionRate: Number(row.withdrawn) / 7,
-    }));
+    const items = buildInventoryReportItems({
+      movementRows: withdrawalRows,
+      receivedRows,
+      stockRows,
+      periodDays: 7,
+    });
 
     res.json({
       period: `Week of ${startStr}`,
@@ -152,13 +200,14 @@ router.get("/monthly", requireInventoryManagerAccess, async (req, res) => {
         m.Product_ID                                                       AS product_id,
         COALESCE(m.Product_Name, 'Unknown')                                AS product_name,
         COALESCE(m.Category_Name, 'Uncategorized')                         AS category,
-        COALESCE(bu.unit, 'piece')                                         AS unit,
-        COALESCE(SUM(CASE WHEN LOWER(ss.Type) IN ('initial','supplementary') THEN ss.Quantity ELSE 0 END), 0) AS withdrawn,
-        COALESCE(SUM(CASE WHEN LOWER(ss.Type) = 'return'   THEN ss.Quantity ELSE 0 END), 0) AS returned,
-        COALESCE(SUM(CASE WHEN LOWER(ss.Type) = 'spoilage' THEN ss.Quantity ELSE 0 END), 0) AS wasted
+        COALESCE(NULLIF(TRIM(i.unit), ''), bu.unit, 'piece')                AS unit,
+        COALESCE(SUM(CASE WHEN LOWER(TRIM(ss.Type)) IN ('stock out','initial','supplementary') THEN ss.Quantity ELSE 0 END), 0) AS withdrawn,
+        COALESCE(SUM(CASE WHEN LOWER(TRIM(ss.Type)) = 'return'   THEN ss.Quantity ELSE 0 END), 0) AS returned,
+        COALESCE(SUM(CASE WHEN LOWER(TRIM(ss.Type)) = 'spoilage' THEN ss.Quantity ELSE 0 END), 0) AS wasted
       FROM Stock_Status ss
       JOIN Menu m ON m.Product_ID = ss.Product_ID
       LEFT JOIN products p ON p.id = m.Product_ID
+      LEFT JOIN Inventory i ON i.Product_ID = ss.Product_ID
       LEFT JOIN (
         SELECT product_id, MAX(unit) AS unit
         FROM batches
@@ -166,20 +215,24 @@ router.get("/monthly", requireInventoryManagerAccess, async (req, res) => {
       ) bu ON bu.product_id = ss.Product_ID
       WHERE DATE(ss.Status_Date) >= ? AND DATE(ss.Status_Date) < ?
         AND ${itemTypeExpr} = ?
-      GROUP BY m.Product_ID, m.Product_Name, m.Category_Name, bu.unit`,
+      GROUP BY m.Product_ID, m.Product_Name, m.Category_Name, i.unit, bu.unit`,
       [startStr, endStr, STOCK_ITEM],
     );
 
     const [receivedRows] = await db.query(
       `SELECT
         b.product_id,
+        COALESCE(m.Product_Name, p.name, 'Unknown') AS product_name,
+        COALESCE(m.Category_Name, 'Uncategorized') AS category,
+        COALESCE(NULLIF(TRIM(i.unit), ''), MAX(NULLIF(TRIM(b.unit), '')), 'piece') AS unit,
         COALESCE(SUM(b.quantity), 0) AS received
       FROM batches b
       LEFT JOIN products p ON p.id = b.product_id
       LEFT JOIN Menu m ON m.Product_ID = b.product_id
+      LEFT JOIN Inventory i ON i.Product_ID = b.product_id
       WHERE DATE(b.received_date) >= ? AND DATE(b.received_date) < ?
         AND ${itemTypeExpr} = ?
-      GROUP BY b.product_id`,
+      GROUP BY b.product_id, m.Product_Name, p.name, m.Category_Name, i.unit`,
       [startStr, endStr, STOCK_ITEM],
     );
 
@@ -192,30 +245,17 @@ router.get("/monthly", requireInventoryManagerAccess, async (req, res) => {
       [STOCK_ITEM],
     );
 
-    const receivedMap = Object.fromEntries(
-      receivedRows.map((r) => [r.product_id, Number(r.received)]),
-    );
-    const stockMap = Object.fromEntries(
-      stockRows.map((r) => [r.product_id, Number(r.remaining)]),
-    );
-
     const monthName = startDate.toLocaleString("default", {
       month: "long",
       year: "numeric",
     });
 
-    const items = withdrawalRows.map((row) => ({
-      product_id: row.product_id,
-      product_name: row.product_name,
-      category: row.category,
-      unit: row.unit,
-      received: receivedMap[row.product_id] ?? 0,
-      withdrawn: Number(row.withdrawn),
-      returned: Number(row.returned),
-      wasted: Number(row.wasted),
-      remaining: stockMap[row.product_id] ?? 0,
-      consumptionRate: Number(row.withdrawn) / daysInMonth,
-    }));
+    const items = buildInventoryReportItems({
+      movementRows: withdrawalRows,
+      receivedRows,
+      stockRows,
+      periodDays: daysInMonth,
+    });
 
     res.json({
       period: monthName,
@@ -233,3 +273,4 @@ router.get("/monthly", requireInventoryManagerAccess, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.buildInventoryReportItems = buildInventoryReportItems;
