@@ -120,10 +120,37 @@ try {
     cashTendered: 100,
     change: 0,
   });
+  assert.deepEqual(validateCashTender(0, 0), {
+    cashTendered: 0,
+    change: 0,
+  });
   assert.deepEqual(validateCashTender(150, 100), {
     cashTendered: 150,
     change: 50,
   });
+  assert.deepEqual(validateCashTender(999, 10), {
+    cashTendered: 999,
+    change: 989,
+  });
+  assert.deepEqual(validateCashTender(1500, 10), {
+    cashTendered: 1500,
+    change: 1490,
+  });
+  assert.deepEqual(validateCashTender(100000, 10), {
+    cashTendered: 100000,
+    change: 99990,
+  });
+  assert.deepEqual(validateCashTender("10.50", 10.25), {
+    cashTendered: 10.5,
+    change: 0.25,
+  });
+  for (const invalidTender of [100000.01, "10.555", -1, "not-a-number", Infinity]) {
+    assert.throws(
+      () => validateCashTender(invalidTender, 10),
+      (error) => error?.statusCode === 400,
+      String(invalidTender),
+    );
+  }
 
   const routeSource = fs.readFileSync(
     path.join(__dirname, "..", "routes", "orderRoutes.js"),

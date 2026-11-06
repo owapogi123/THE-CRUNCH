@@ -304,6 +304,20 @@ function assertRejectedBeforePersistence(result) {
   assert.equal(state.commits, 0);
   assert.equal(state.rollbacks, 1);
 
+  for (const invalidCashTendered of [100000.01, "10.555", -1, "not-a-number"]) {
+    resetState();
+    const invalidCash = await invokeOrder({
+      token: cashierToken,
+      body: { ...baseStaffBody, cash_tendered: invalidCashTendered },
+    });
+    assert.equal(invalidCash.statusCode, 400);
+    assert.equal(state.writes.length, 0);
+    assert.equal(state.receipts.length, 0);
+    assert.equal(state.deductions, 0);
+    assert.equal(state.commits, 0);
+    assert.equal(state.rollbacks, 1);
+  }
+
   resetState();
   const exact = await invokeOrder({
     token: cashierToken,
@@ -342,6 +356,15 @@ function assertRejectedBeforePersistence(result) {
     1,
     "paid onsite order creation must deduct stock before commit",
   );
+
+  resetState();
+  const maximumCash = await invokeOrder({
+    token: cashierToken,
+    body: { ...baseStaffBody, cash_tendered: 100000 },
+  });
+  assert.equal(maximumCash.statusCode, 200);
+  assert.equal(state.receipts[0].cashTendered, 100000);
+  assert.equal(state.receipts[0].changeAmount, 99900);
 
   resetState();
   const onsiteStockError = new Error(

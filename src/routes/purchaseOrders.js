@@ -30,7 +30,34 @@ function toNumber(value, fallback = 0) {
 
 const PURCHASE_ORDER_NAME_MAX_LENGTH = 100;
 const PURCHASE_ORDER_NUMBER_MAX_DIGITS = 20;
-const PURCHASE_ORDER_QUANTITY_MAX = 999;
+const PURCHASE_ORDER_QUANTITY_MAX_CENTS = 100_000 * 100;
+const PURCHASE_ORDER_RECEIPT_NUMBER_MAX_LENGTH = 25;
+const PURCHASE_ORDER_RECEIPT_NUMBER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 /-]*$/;
+
+function parsePurchaseOrderQuantity(value, { allowZero = true } = {}) {
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  if (typeof value === "number" && !Number.isFinite(value)) return null;
+
+  const raw = String(value).trim();
+  if (!/^\d+(?:\.\d{1,2})?$/.test(raw)) return null;
+
+  const [wholePart, decimalPart = ""] = raw.split(".");
+  const cents =
+    (BigInt(wholePart) * 100n) +
+    BigInt(decimalPart.padEnd(2, "0"));
+  if (
+    cents > BigInt(PURCHASE_ORDER_QUANTITY_MAX_CENTS) ||
+    (!allowZero && cents === 0n)
+  ) {
+    return null;
+  }
+
+  const safeCents = Number(cents);
+  return {
+    cents: safeCents,
+    sqlValue: `${Math.floor(safeCents / 100)}.${String(safeCents % 100).padStart(2, "0")}`,
+  };
+}
 
 function hasValidNumericLength(value, maxDigits = PURCHASE_ORDER_NUMBER_MAX_DIGITS) {
   const digitsOnly = String(value ?? "").replace(/\D/g, "");
@@ -60,17 +87,13 @@ function validateDraftItems(items) {
         "Purchase order item name must not exceed 100 characters",
       );
     }
-    const rawQuantity = String(item.quantity ?? "").trim();
-    const quantity = toNumber(rawQuantity, Number.NaN);
-    if (
-      !/^\d+$/.test(rawQuantity) ||
-      !Number.isInteger(quantity) ||
-      quantity < 1 ||
-      quantity > PURCHASE_ORDER_QUANTITY_MAX
-    ) {
+    const quantity = parsePurchaseOrderQuantity(item.quantity, {
+      allowZero: false,
+    });
+    if (!quantity) {
       throwPurchaseOrderError(
         400,
-        "Purchase order item quantity must be a whole number from 1 to 999",
+        "Purchase order item quantity must be from 1 to 100,000 with up to two decimal places",
       );
     }
     const rawUnitCost = item.unitCost ?? item.unit_cost;
@@ -94,7 +117,7 @@ function validateDraftItems(items) {
         "Purchase order item unit is required and must come from inventory",
       );
     }
-    return { ...item, name, quantity, unitCost, unit };
+    return { ...item, name, quantity: quantity.sqlValue, unitCost, unit };
   });
 }
 
@@ -632,6 +655,7 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: "At least one item is required" });
   }
+  const validatedItems = [];
   for (const item of items) {
     const safeName = String(item?.name ?? "").trim();
     if (!safeName) {
@@ -644,17 +668,12 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
         error: "Purchase order item name must not exceed 100 characters",
       });
     }
-    const rawQuantity = String(item.quantity ?? "").trim();
-    const safeQuantity = toNumber(rawQuantity, Number.NaN);
-    if (
-      !/^\d+$/.test(rawQuantity) ||
-      !Number.isFinite(safeQuantity) ||
-      !Number.isInteger(safeQuantity) ||
-      safeQuantity < 1 ||
-      safeQuantity > PURCHASE_ORDER_QUANTITY_MAX
-    ) {
+    const safeQuantity = parsePurchaseOrderQuantity(item.quantity, {
+      allowZero: false,
+    });
+    if (!safeQuantity) {
       return res.status(400).json({
-        error: "Purchase order item quantity must be a whole number from 1 to 999",
+        error: "Purchase order item quantity must be from 1 to 100,000 with up to two decimal places",
       });
     }
     const submittedUnitCost = item.unitCost ?? item.unit_cost;
@@ -682,6 +701,12 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
         error: "Purchase order item unit is required and must come from inventory",
       });
     }
+    validatedItems.push({
+      ...item,
+      name: safeName,
+      quantity: safeQuantity.sqlValue,
+      unit: String(item.unit).trim(),
+    });
   }
 
   if (!PURCHASE_ORDER_STATUSES.includes(status)) {
@@ -703,7 +728,7 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
     await conn.beginTransaction();
 
     const resolvedItems = [];
-    for (const item of items) {
+    for (const item of validatedItems) {
       const product = await resolveStockProduct(conn, item, itemTypeExpr);
       const unitError = getUnitCompatibilityError(
         item.unit,
@@ -755,7 +780,7 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
           item.name.trim(),
           (item.category || "").trim(),
           (item.unit || "").trim(),
-          toNumber(item.quantity),
+          item.quantity,
           toNumber(item.unitCost ?? item.unit_cost, 0),
           toDateString(item.expectedExpiryDate ?? item.expected_expiry_date) ||
             null,
@@ -893,6 +918,19 @@ router.patch("/:id/receive", requireInventoryManagerAccess, async (req, res) => 
     itemReceivedQuantities = {},
   } = req.body;
 
+  const normalizedReceiptNo = receiptNo == null ? "" : String(receiptNo).trim();
+  if (
+    normalizedReceiptNo &&
+    (
+      normalizedReceiptNo.length > PURCHASE_ORDER_RECEIPT_NUMBER_MAX_LENGTH ||
+      !PURCHASE_ORDER_RECEIPT_NUMBER_PATTERN.test(normalizedReceiptNo)
+    )
+  ) {
+    return res.status(400).json({
+      error: "Receipt number must be 25 characters or fewer and use only letters, numbers, spaces, hyphens, or slashes",
+    });
+  }
+
   const currentDateTime = new Date();
   const today = getBusinessDateParts(currentDateTime).businessDate;
   const receivedDateProvided = hasProvidedValue(receivedDate);
@@ -950,38 +988,51 @@ router.patch("/:id/receive", requireInventoryManagerAccess, async (req, res) => 
       throwPurchaseOrderError(422, "Purchase order has no items to receive");
     }
 
-    const invalidItem = items.find((item) => {
-      const quantity = toNumber(item.quantity, Number.NaN);
-      return (
-        !Number.isFinite(quantity) ||
-        !Number.isInteger(quantity) ||
-        quantity < 1 ||
-        quantity > PURCHASE_ORDER_QUANTITY_MAX
-      );
-    });
+    const invalidItem = items.find(
+      (item) => !parsePurchaseOrderQuantity(item.quantity, { allowZero: false }),
+    );
     if (invalidItem) {
       throwPurchaseOrderError(
         400,
-        "Purchase order contains an item quantity outside the allowed whole-number range of 1 to 999",
+        "Purchase order contains an item quantity outside the allowed range of 0.01 to 100,000.00",
       );
     }
 
     const receivePlan = [];
     const receivedItemNames = [];
-    let totalReceivedQuantity = 0;
+    let totalReceivedCents = 0;
 
     for (const item of items) {
-      const rawReceivedQuantity = Object.prototype.hasOwnProperty.call(itemReceivedQuantities, item.item_id)
-        ? String(itemReceivedQuantities[item.item_id]).trim()
-        : String(item.quantity).trim();
-      const qty = Number(rawReceivedQuantity);
-      if (!/^\d+$/.test(rawReceivedQuantity) || !Number.isInteger(qty) || qty < 0 || qty > PURCHASE_ORDER_QUANTITY_MAX) {
-        throwPurchaseOrderError(400, `Actual received quantity for "${item.name}" must be a whole number from 0 to 999`);
+      const rawReceivedQuantity = Object.prototype.hasOwnProperty.call(
+        itemReceivedQuantities,
+        item.item_id,
+      )
+        ? itemReceivedQuantities[item.item_id]
+        : item.quantity;
+      const orderedQuantity = parsePurchaseOrderQuantity(item.quantity, {
+        allowZero: false,
+      });
+      const receivedQuantity = parsePurchaseOrderQuantity(rawReceivedQuantity);
+      if (!receivedQuantity) {
+        throwPurchaseOrderError(
+          400,
+          `Actual received quantity for "${item.name}" must be from 0 to 100,000 with up to two decimal places`,
+        );
       }
-      totalReceivedQuantity += qty;
+      if (receivedQuantity.cents > orderedQuantity.cents) {
+        throwPurchaseOrderError(
+          400,
+          `Actual received quantity for "${item.name}" cannot exceed the ordered quantity`,
+        );
+      }
+      totalReceivedCents += receivedQuantity.cents;
 
-      if (qty === 0) {
-        receivePlan.push({ item, qty, skipStock: true });
+      if (receivedQuantity.cents === 0) {
+        receivePlan.push({
+          item,
+          qty: receivedQuantity.sqlValue,
+          skipStock: true,
+        });
         continue;
       }
       const product = await resolveStockProduct(conn, item, itemTypeExpr, {
@@ -1064,7 +1115,7 @@ router.patch("/:id/receive", requireInventoryManagerAccess, async (req, res) => 
       receivePlan.push({
         item,
         productId: product.product_id,
-        qty,
+        qty: receivedQuantity.sqlValue,
         unit,
         shelfLifeMonths,
         shelfLifeDays,
@@ -1074,7 +1125,7 @@ router.patch("/:id/receive", requireInventoryManagerAccess, async (req, res) => 
       });
     }
 
-    if (totalReceivedQuantity <= 0) {
+    if (totalReceivedCents <= 0) {
       throwPurchaseOrderError(400, "At least one purchase-order item must have an actual received quantity greater than zero");
     }
 
@@ -1153,7 +1204,7 @@ router.patch("/:id/receive", requireInventoryManagerAccess, async (req, res) => 
       `UPDATE purchase_orders
           SET status = 'Received', receipt_no = ?, received_by = ?, received_date = ?
         WHERE po_id = ? AND status = 'Ordered'`,
-      [receiptNo ? String(receiptNo).trim() : null, receivedBy, recDate, poId],
+      [normalizedReceiptNo || null, receivedBy, recDate, poId],
     );
     if (statusUpdate.affectedRows !== 1) {
       throwPurchaseOrderError(
@@ -1186,7 +1237,7 @@ router.patch("/:id/receive", requireInventoryManagerAccess, async (req, res) => 
     await logSupplierHistory({
       supplier_name: existing.supplier, // ← directly from PO, always correct
       action: "Batch Received",
-      details: `PO: ${poId} | Receipt: ${receiptNo ? String(receiptNo).trim() : "N/A"} | Actual receipt date: ${recDate} | Received by: ${receivedBy} | Items: ${receivedItemNames.join(", ") || "none"}`,
+      details: `PO: ${poId} | Receipt: ${normalizedReceiptNo || "N/A"} | Actual receipt date: ${recDate} | Received by: ${receivedBy} | Items: ${receivedItemNames.join(", ") || "none"}`,
       performed_by: receivedBy,
     });
 

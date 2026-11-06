@@ -148,7 +148,7 @@ function createConnection() {
         return [[{ name: "Raw Material", date_tracking_type: "none" }]];
       }
       if (q.startsWith("INSERT INTO batches")) {
-        state.batches.push({ product_id: params[0], quantity: params[1], unit: params[3] });
+        state.batches.push({ product_id: params[0], quantity: Number(params[1]), unit: params[3] });
         return [{ insertId: state.batches.length, affectedRows: 1 }];
       }
       if (q.startsWith("INSERT INTO purchase_orders")) {
@@ -374,6 +374,32 @@ async function invoke(
   assert.equal(state.notifications.length, 1);
   assert.equal(state.notifications[0].params[0], "purchase_order:PO-0001:created");
 
+  for (const quantity of [999, 1500, "10.50", 100000]) {
+    reset("Draft");
+    const quantityBoundary = await invoke(createHandlers, {
+      body: {
+        supplier: "Supplier",
+        items: [{ productId: 7, name: "Flour", unit: "kg", quantity }],
+      },
+    });
+    assert.equal(quantityBoundary.statusCode, 201, `quantity ${quantity}`);
+    assert.equal(quantityBoundary.body.items[0].quantity, Number(quantity));
+    assert.equal(state.inventoryAdds, 0);
+  }
+
+  for (const quantity of [0, -1, "not-a-number", "10.555", "100000.01"]) {
+    reset("Draft");
+    const invalidQuantity = await invoke(createHandlers, {
+      body: {
+        supplier: "Supplier",
+        items: [{ productId: 7, name: "Flour", unit: "kg", quantity }],
+      },
+    });
+    assert.equal(invalidQuantity.statusCode, 400, String(quantity));
+    assert.equal(state.connections, 0);
+    assert.equal(state.inventoryAdds, 0);
+  }
+
   reset("Draft");
   const createdWithExpectedDelivery = await invoke(createHandlers, {
     body: {
@@ -398,7 +424,7 @@ async function invoke(
           productId: 7,
           name: "Flour",
           unit: "kg",
-          quantity: 4,
+          quantity: "10.50",
           unitCost: 25,
         },
       ],
@@ -408,7 +434,7 @@ async function invoke(
   assert.equal(edited.body.status, "Draft");
   assert.equal(edited.body.supplier, "Updated Supplier");
   assert.equal(edited.body.items.length, 1);
-  assert.equal(edited.body.items[0].quantity, 4);
+  assert.equal(edited.body.items[0].quantity, 10.5);
   assert.equal(
     state.po.delivery_date,
     "2026-10-24",
@@ -487,6 +513,82 @@ async function invoke(
   assert.equal(state.batches[0].quantity, 1);
   assert.equal(state.items[0].received_quantity, 1);
   assert.equal(partialDelivery.body.items[0].receivedQuantity, 1);
+
+  reset("Ordered");
+  state.items.push({ ...state.items[0], item_id: 2 });
+  const zeroLinePartialDelivery = await invoke(receiveHandlers, {
+    body: {
+      receivedBy: "Manager",
+      itemReceivedQuantities: { 1: 0, 2: 1 },
+    },
+  });
+  assert.equal(zeroLinePartialDelivery.statusCode, 200);
+  assert.equal(state.items[0].received_quantity, 0);
+  assert.equal(state.items[1].received_quantity, 1);
+  assert.equal(state.inventoryAdds, 1);
+
+  for (const quantity of [999, 1500, 100000, "10.50"]) {
+    reset("Ordered");
+    state.items[0].quantity = quantity;
+    const acceptedQuantity = await invoke(receiveHandlers, {
+      body: {
+        receivedBy: "Manager",
+        itemReceivedQuantities: { 1: quantity },
+      },
+    });
+    assert.equal(acceptedQuantity.statusCode, 200, `quantity ${quantity}`);
+    assert.equal(state.inventoryAdds, Number(quantity), `quantity ${quantity}`);
+    assert.equal(state.items[0].received_quantity, Number(quantity));
+  }
+
+  for (const invalidQuantity of ["100000.01", "10.555", -1, "not-a-number"]) {
+    reset("Ordered");
+    state.items[0].quantity = 100000;
+    const rejectedQuantity = await invoke(receiveHandlers, {
+      body: {
+        receivedBy: "Manager",
+        itemReceivedQuantities: { 1: invalidQuantity },
+      },
+    });
+    assert.equal(rejectedQuantity.statusCode, 400, String(invalidQuantity));
+    assert.equal(state.po.status, "Ordered");
+    assert.equal(state.inventoryAdds, 0);
+    assert.equal(state.batches.length, 0);
+    assert.equal(state.rollbacks, 1);
+  }
+
+  reset("Ordered");
+  state.items[0].quantity = 10;
+  const exceedsOrderedQuantity = await invoke(receiveHandlers, {
+    body: {
+      receivedBy: "Manager",
+      itemReceivedQuantities: { 1: "10.01" },
+    },
+  });
+  assert.equal(exceedsOrderedQuantity.statusCode, 400);
+  assert.match(exceedsOrderedQuantity.body.error, /cannot exceed the ordered quantity/i);
+  assert.equal(state.inventoryAdds, 0);
+  assert.equal(state.po.status, "Ordered");
+
+  reset("Ordered");
+  const receiptAtLimit = `DR-2026/${"1".repeat(17)}`;
+  assert.equal(receiptAtLimit.length, 25);
+  const acceptedReceipt = await invoke(receiveHandlers, {
+    body: { receivedBy: "Manager", receiptNo: receiptAtLimit },
+  });
+  assert.equal(acceptedReceipt.statusCode, 200);
+  assert.equal(state.po.receipt_no, receiptAtLimit);
+
+  for (const invalidReceipt of ["A".repeat(26), "INVALID#RECEIPT"]) {
+    reset("Ordered");
+    const rejectedReceipt = await invoke(receiveHandlers, {
+      body: { receivedBy: "Manager", receiptNo: invalidReceipt },
+    });
+    assert.equal(rejectedReceipt.statusCode, 400, invalidReceipt);
+    assert.equal(state.connections, 0);
+    assert.equal(state.inventoryAdds, 0);
+    assert.equal(state.po.status, "Ordered");
+  }
 
   reset("Ordered");
   const futureReceivedDate = await invoke(receiveHandlers, {

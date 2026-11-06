@@ -1374,12 +1374,9 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
       String(table_number ?? tableNumber ?? table_id ?? tableId ?? "").trim() || null;
     const submittedOrderNote =
       String(order_note || orderNote || "").trim().slice(0, 2000) || null;
-    const tenderedCandidate = Number(cash_tendered ?? cashTendered);
     const submittedCashTendered =
-      normalizedPaymentMethod === "cash" &&
-      Number.isFinite(tenderedCandidate) &&
-      tenderedCandidate >= 0
-        ? tenderedCandidate
+      normalizedPaymentMethod === "cash" && isStaffOrderActor
+        ? cash_tendered ?? cashTendered
         : null;
     // Online ownership is derived only from the verified JWT. A legacy
     // customerUserId body field is accepted but deliberately ignored.
@@ -1661,9 +1658,7 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
 
     let snapshotCashTendered =
       normalizedPaymentMethod === "cash" ? submittedCashTendered : null;
-    let snapshotChange = snapshotCashTendered === null
-      ? null
-      : Math.max(0, snapshotCashTendered - billingTotals.grandTotal);
+    let snapshotChange = null;
     if (normalizedPaymentMethod === "cash" && resolvedCashierId != null) {
       const cashSettlement = validateCashTender(
         snapshotCashTendered,
