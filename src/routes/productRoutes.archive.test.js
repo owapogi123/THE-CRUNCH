@@ -74,6 +74,7 @@ mockModule("../services/productSchemaService", {
 const router = require("./productRoutes");
 const { loadAuthoritativeOrderItems } = require("../services/orderItemService");
 const { resolveProductAvailabilityStatus } = require("../utils/menuAvailability");
+const { cache, PRODUCT_CACHE_PREFIX } = require("../services/cacheService");
 
 function routeHandler(path, method) {
   const layer = router.stack.find(
@@ -117,9 +118,12 @@ async function invoke(handler, id = 13) {
   assert.equal(state.deleted, false);
   assert.equal(state.historicalRows, 4);
 
+  const productCacheKey = `${PRODUCT_CACHE_PREFIX}archive-lifecycle-test`;
+  await cache.set(productCacheKey, [{ id: 13, availability_status: "Available" }], 60_000);
   const archived = await invoke(archive);
   assert.equal(archived.statusCode, 200);
   assert.equal(state.product.availability_status, "Hidden");
+  assert.equal(await cache.get(productCacheKey), null, "archiving must invalidate cached product responses");
   assert.equal(state.historicalRows, 4, "archiving must preserve history");
   assert.equal(
     resolveProductAvailabilityStatus(
@@ -153,9 +157,11 @@ async function invoke(handler, id = 13) {
     "the final order API inventory path must reject archived products",
   );
 
+  await cache.set(productCacheKey, [{ id: 13, availability_status: "Hidden" }], 60_000);
   const restored = await invoke(restore);
   assert.equal(restored.statusCode, 200);
   assert.equal(state.product.availability_status, "Available");
+  assert.equal(await cache.get(productCacheKey), null, "restoring must invalidate cached product responses");
   assert.equal(
     resolveProductAvailabilityStatus(
       { item_type: "menu_item", availability_status: "Available" },
