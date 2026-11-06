@@ -9,11 +9,6 @@ const {
   createCheckoutContextToken,
   verifyCheckoutAttributes,
 } = require("./paymongoCheckoutService");
-const {
-  claimBypassCheckout,
-  issueBypassCheckout,
-  verifyBypassCheckout,
-} = require("./paymongoMode");
 
 const cartA = [{ product_id: 1, qty: 2 }];
 const cartB = [{ product_id: 1, qty: 3 }];
@@ -24,7 +19,8 @@ test("checkout creation reloads authoritative items instead of using frontend pr
     "utf8",
   );
   assert.match(source, /loadAuthoritativeOrderItems\(db, items\)/);
-  assert.match(source, /calculateBillingTotals\(authoritativeItems, billingSettings\)/);
+  assert.match(source, /calculateBillingTotals\(subtotal, configuration\.billingSettings\)/);
+  assert.match(source, /createOrLoadCheckoutIntent\(db,/);
   assert.doesNotMatch(source, /const \{[^}]*\btotal\b[^}]*\} = req\.body/);
   assert.doesNotMatch(source, /item\.price\s*\|\|\s*req\.body/);
 });
@@ -39,7 +35,10 @@ function paidAttributes({ customerUserId = 21, items = cartA, amount = 10000 } =
         expectedAmountCentavos: amount,
       }),
     },
-    payments: [{ id: "pay_test", attributes: { status: "paid", amount } }],
+    payments: [{
+      id: "pay_test",
+      attributes: { status: "paid", amount, currency: "PHP" },
+    }],
   };
 }
 
@@ -63,6 +62,19 @@ test("an unpaid checkout is not accepted as paid", () => {
     expectedAmountCentavos: 10000,
   });
   assert.equal(result.paid, false);
+});
+
+test("a cancelled or expired checkout is not accepted as paid", () => {
+  const attributes = paidAttributes();
+  attributes.status = "expired";
+  attributes.payments = [];
+  const result = verifyCheckoutAttributes("cs_cancelled", attributes, {
+    customerUserId: 21,
+    items: cartA,
+    expectedAmountCentavos: 10000,
+  });
+  assert.equal(result.paid, false);
+  assert.equal(result.status, "expired");
 });
 
 test("a low-value checkout cannot authorize a higher-value order", () => {
@@ -111,45 +123,35 @@ test("provider-reported paid amount must equal the signed amount", () => {
   );
 });
 
-test("PAYMONGO_ENABLED=false bypass remains customer/cart bound and single-use", () => {
-  const originalEnabled = process.env.PAYMONGO_ENABLED;
-  process.env.PAYMONGO_ENABLED = "false";
-  try {
-    const checkout = issueBypassCheckout({ customerUserId: 21, items: cartA });
-    assert.equal(
-      verifyBypassCheckout(checkout.checkoutSessionId, {
-        customerUserId: 21,
-        items: cartA,
-      }).paid,
-      true,
-    );
-    assert.throws(
-      () => verifyBypassCheckout(checkout.checkoutSessionId, {
-        customerUserId: 22,
-        items: cartA,
-      }),
-      (error) => error?.statusCode === 403,
-    );
-    assert.throws(
-      () => verifyBypassCheckout(checkout.checkoutSessionId, {
-        customerUserId: 21,
-        items: cartB,
-      }),
-      (error) => error?.statusCode === 400,
-    );
-    claimBypassCheckout(checkout.checkoutSessionId, {
+test("provider-reported paid currency must be PHP", () => {
+  const attributes = paidAttributes();
+  attributes.payments[0].attributes.currency = "USD";
+  assert.throws(
+    () => verifyCheckoutAttributes("cs_currency", attributes, {
       customerUserId: 21,
       items: cartA,
-    });
-    assert.throws(
-      () => claimBypassCheckout(checkout.checkoutSessionId, {
-        customerUserId: 21,
-        items: cartA,
-      }),
-      (error) => error?.statusCode === 409,
-    );
-  } finally {
-    if (originalEnabled === undefined) delete process.env.PAYMONGO_ENABLED;
-    else process.env.PAYMONGO_ENABLED = originalEnabled;
-  }
+      expectedAmountCentavos: 10000,
+    }),
+    (error) => error?.statusCode === 409,
+  );
+});
+
+test("application checkout routes contain no paid development bypass", () => {
+  const routeSource = fs.readFileSync(
+    path.join(__dirname, "..", "routes", "paymongoRoutes.js"),
+    "utf8",
+  );
+  const orderSource = fs.readFileSync(
+    path.join(__dirname, "..", "routes", "orderRoutes.js"),
+    "utf8",
+  );
+  const modeSource = fs.readFileSync(
+    path.join(__dirname, "paymongoMode.js"),
+    "utf8",
+  );
+  assert.doesNotMatch(routeSource, /issueBypassCheckout|verifyBypassCheckout/);
+  assert.doesNotMatch(orderSource, /BypassCheckout|bypassed/);
+  assert.match(routeSource, /Idempotency-Key/);
+  assert.match(routeSource, /reference_number/);
+  assert.match(modeSource, /PAYMONGO_ENABLED\s*\?\?\s*"false"/);
 });

@@ -7,7 +7,7 @@ const { isPayMongoEnabled } = require("./paymongoMode");
 const CHECKOUT_CONTEXT_PURPOSE = "paymongo_checkout";
 const CHECKOUT_CONTEXT_ISSUER = "the-crunch-pos";
 const CHECKOUT_CONTEXT_AUDIENCE = "paymongo-checkout";
-const CHECKOUT_CONTEXT_TTL_SECONDS = 30 * 60;
+const CHECKOUT_CONTEXT_TTL_SECONDS = 24 * 60 * 60;
 
 const fetchFn = (...args) =>
   (typeof fetch === "function"
@@ -44,6 +44,8 @@ function createCheckoutContextToken({
   customerUserId,
   items,
   expectedAmountCentavos,
+  intentId = null,
+  checkoutRequestId = null,
 }) {
   const userId = Number(customerUserId);
   const amount = Number(expectedAmountCentavos);
@@ -59,6 +61,8 @@ function createCheckoutContextToken({
       purpose: CHECKOUT_CONTEXT_PURPOSE,
       itemsHash: fingerprintItems(items),
       expectedAmountCentavos: amount,
+      ...(intentId ? { intentId: String(intentId) } : {}),
+      ...(checkoutRequestId ? { checkoutRequestId: String(checkoutRequestId) } : {}),
       nonce: crypto.randomUUID(),
     },
     getJwtSecret(),
@@ -135,6 +139,26 @@ function getPaidAmountCentavos(attributes) {
     : null;
 }
 
+function getPaidCurrency(attributes) {
+  const paidPayments = Array.isArray(attributes?.payments)
+    ? attributes.payments.filter((payment) =>
+        ["paid", "completed"].includes(getPaymentStatus(payment)),
+      )
+    : [];
+  const currencies = paidPayments
+    .map((payment) =>
+      String(payment?.attributes?.currency ?? payment?.currency ?? "")
+        .trim()
+        .toUpperCase(),
+    )
+    .filter(Boolean);
+  if (currencies.length > 0 && currencies.every((currency) => currency === currencies[0])) {
+    return currencies[0];
+  }
+  const checkoutCurrency = String(attributes?.currency || "").trim().toUpperCase();
+  return currencies.length === 0 ? checkoutCurrency || null : null;
+}
+
 function getPaymentReference(attributes, checkoutSessionId) {
   return (
     attributes?.reference_number ||
@@ -146,7 +170,7 @@ function getPaymentReference(attributes, checkoutSessionId) {
 function verifyCheckoutAttributes(
   checkoutSessionId,
   attributes,
-  { customerUserId, items, expectedAmountCentavos } = {},
+  { customerUserId, items, expectedAmountCentavos, intentId } = {},
 ) {
   const metadata = attributes?.metadata || {};
   const claims = verifyCheckoutContextToken(
@@ -165,6 +189,9 @@ function verifyCheckoutAttributes(
   }
   if (items !== undefined && claims.itemsHash !== fingerprintItems(items)) {
     throw createCheckoutError("Checkout does not match the submitted cart", 409);
+  }
+  if (intentId !== undefined && String(claims.intentId || "") !== String(intentId)) {
+    throw createCheckoutError("Checkout does not match the persisted intent", 409);
   }
 
   const boundAmount = Number(claims.expectedAmountCentavos);
@@ -187,14 +214,60 @@ function verifyCheckoutAttributes(
       409,
     );
   }
+  if (paid && getPaidCurrency(attributes) !== "PHP") {
+    throw createCheckoutError("Paid checkout currency must be PHP", 409);
+  }
 
   return {
     checkoutSessionId,
+    intentId: claims.intentId || null,
+    checkoutRequestId: claims.checkoutRequestId || null,
     expectedAmountCentavos: boundAmount,
+    currency: paid ? "PHP" : null,
     paid,
     status: paid ? "paid" : attributes?.status || "active",
     paymentReference: getPaymentReference(attributes, checkoutSessionId),
     checkoutUrl: attributes?.checkout_url || null,
+    livemode: typeof attributes?.livemode === "boolean" ? attributes.livemode : null,
+  };
+}
+
+function verifyPaidWebhookCheckout(checkoutSessionId, attributes) {
+  const metadata = attributes?.metadata || {};
+  const claims = verifyCheckoutContextToken(
+    metadata.payment_context || metadata.paymentContext,
+  );
+  const customerUserId = Number(claims.sub);
+  const expectedAmountCentavos = Number(claims.expectedAmountCentavos);
+  if (!Number.isSafeInteger(customerUserId) || customerUserId <= 0) {
+    throw createCheckoutError("Webhook checkout customer is invalid", 403);
+  }
+  if (!claims.itemsHash || !Number.isSafeInteger(expectedAmountCentavos) || expectedAmountCentavos <= 0) {
+    throw createCheckoutError("Webhook checkout context is invalid", 403);
+  }
+  if (!hasPaidCheckout(attributes)) {
+    throw createCheckoutError("Webhook checkout is not paid", 409);
+  }
+  const paidAmountCentavos = getPaidAmountCentavos(attributes);
+  if (paidAmountCentavos !== expectedAmountCentavos) {
+    throw createCheckoutError(
+      "Webhook paid amount does not match the trusted checkout amount",
+      409,
+    );
+  }
+  const currency = getPaidCurrency(attributes);
+  if (currency !== "PHP") {
+    throw createCheckoutError("Webhook paid currency must be PHP", 409);
+  }
+  return {
+    checkoutSessionId: String(checkoutSessionId || "").trim(),
+    intentId: claims.intentId || null,
+    checkoutRequestId: claims.checkoutRequestId || null,
+    customerUserId,
+    expectedAmountCentavos,
+    paidAmountCentavos,
+    currency,
+    paymentReference: getPaymentReference(attributes, checkoutSessionId),
   };
 }
 
@@ -260,8 +333,10 @@ module.exports = {
   createCheckoutContextToken,
   fingerprintItems,
   getPaidAmountCentavos,
+  getPaidCurrency,
   hasPaidCheckout,
   payMongoRequest,
   verifyCheckoutAttributes,
+  verifyPaidWebhookCheckout,
   verifyPayMongoCheckoutSession,
 };

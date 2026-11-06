@@ -1,5 +1,7 @@
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
+const bcrypt = require("bcryptjs");
+const db = require("../config/db");
 const { getJwtSecret } = require("./jwtConfig");
 
 const APPROVAL_PURPOSE = "discount_authorization";
@@ -32,9 +34,32 @@ function hashSecret(value) {
   return crypto.createHash("sha256").update(String(value)).digest();
 }
 
-function verifyAuthorizationCode(candidate) {
-  const expected = getConfiguredAuthorizationCode();
+async function getStoredAuthorizationHash() {
+  const [rows] = await db.query(
+    `SELECT settings_json
+       FROM system_settings
+      WHERE setting_key = 'discount_authorization'
+      LIMIT 1`,
+  );
+  if (!rows.length || !rows[0].settings_json) return null;
+  try {
+    const parsed = typeof rows[0].settings_json === "string"
+      ? JSON.parse(rows[0].settings_json)
+      : rows[0].settings_json;
+    return String(parsed?.passwordHash || "").trim() || null;
+  } catch {
+    throw createAuthorizationError("Discount authorization is unavailable", 503);
+  }
+}
+
+async function verifyAuthorizationCode(candidate) {
   const provided = String(candidate || "");
+  const storedHash = await getStoredAuthorizationHash();
+  if (storedHash) return bcrypt.compare(provided, storedHash);
+
+  // Compatibility path for installations that have not configured the new
+  // administrator-managed password yet. Once a DB hash exists it wins.
+  const expected = getConfiguredAuthorizationCode();
   return crypto.timingSafeEqual(hashSecret(provided), hashSecret(expected));
 }
 
@@ -172,6 +197,7 @@ module.exports = {
   buildOrderFingerprint,
   claimDiscountApproval,
   issueDiscountApproval,
+  getStoredAuthorizationHash,
   releaseDiscountApproval,
   resetConsumedApprovalsForTests,
   verifyAuthorizationCode,

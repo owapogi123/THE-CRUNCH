@@ -358,6 +358,7 @@ router.get("/", requireCookViewAccess, async (req, res) => {
          bexp.nearestExpiry                                                      AS expiryDate,
          brm.nearestUsableUntil                                                  AS usableUntil,
          brm.shelfLifeDays                                                       AS shelfLifeDays,
+         brm.shelfLifeMonths                                                     AS shelfLifeMonths,
          brm.shelfLifeHours                                                      AS shelfLifeHours,
          i.Product_ID                                                            AS id,
          COALESCE(m.Product_Name, i.Item_Purchased, 'Unnamed Product')          AS name,
@@ -436,6 +437,7 @@ router.get("/", requireCookViewAccess, async (req, res) => {
        LEFT JOIN (
          SELECT product_id,
                 MIN(usable_until) AS nearestUsableUntil,
+                MAX(COALESCE(shelf_life_months, 0)) AS shelfLifeMonths,
                 MAX(COALESCE(shelf_life_days, 0)) AS shelfLifeDays,
                 MAX(COALESCE(shelf_life_hours, 0)) AS shelfLifeHours
          FROM batches

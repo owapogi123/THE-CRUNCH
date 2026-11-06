@@ -2,6 +2,9 @@
 
 const assert = require("node:assert/strict");
 
+process.env.PAYMONGO_SECRET_KEY = "sk_test_app-health-only";
+process.env.PAYMONGO_WEBHOOK_SECRET = "webhook-app-health-only";
+
 let databaseAvailable = true;
 const dbModuleId = require.resolve("./config/db");
 require.cache[dbModuleId] = {
@@ -93,6 +96,16 @@ const app = require("./app");
       protectedError.headers.get("access-control-allow-origin"),
       "http://localhost:5173",
     );
+
+    const forgedWebhook = await fetch(`${baseUrl}/api/paymongo/webhook`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Paymongo-Signature": `t=${Math.floor(Date.now() / 1000)},te=${"0".repeat(64)},li=`,
+      },
+      body: JSON.stringify({ data: { id: "evt_forged" } }),
+    });
+    assert.equal(forgedWebhook.status, 401);
 
     const notFound = await fetch(`${baseUrl}/api/not-a-real-route`, {
       headers: { Origin: "http://localhost:5173" },

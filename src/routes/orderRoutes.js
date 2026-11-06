@@ -56,16 +56,15 @@ const {
   verifyDiscountApproval,
 } = require("../services/discountAuthorizationService");
 const {
-  claimBypassCheckout,
-  consumeBypassCheckout,
-  isBypassCheckoutId,
-  isPayMongoEnabled,
-  releaseBypassCheckout,
-  verifyBypassCheckout,
-} = require("../services/paymongoMode");
-const {
   verifyPayMongoCheckoutSession: verifyBoundPayMongoCheckoutSession,
 } = require("../services/paymongoCheckoutService");
+const {
+  finalizePayMongoCheckoutIntent,
+} = require("../services/paymongoOrderFinalizationService");
+const {
+  calculateBillingTotals,
+  loadCashierOrderConfiguration,
+} = require("../services/orderConfigurationService");
 const paymongoRoutes = require("./paymongoRoutes");
 const { validateStoredProofUrl } = require("./uploadProofRoutes");
 const {
@@ -364,98 +363,6 @@ function buildCustomerReceiptNote(paymentStatus) {
   return "Your payment has been verified. We are preparing your order.";
 }
 
-async function loadBillingSettings(connection = db) {
-  try {
-    const [rows] = await connection.query(
-      `SELECT settings_json
-         FROM system_settings
-        WHERE setting_key = 'restaurant_settings'
-        LIMIT 1`,
-    );
-    if (!rows.length || !rows[0].settings_json) {
-      return { taxRate: 0, serviceCharge: 0 };
-    }
-    const parsed = JSON.parse(rows[0].settings_json);
-    return {
-      taxRate: Math.max(0, Number(parsed?.taxRate ?? 0) || 0),
-      serviceCharge: Math.max(0, Number(parsed?.serviceCharge ?? 0) || 0),
-    };
-  } catch {
-    return { taxRate: 0, serviceCharge: 0 };
-  }
-}
-
-async function loadCashierOrderConfiguration(connection, discountName, discountId) {
-  const normalizedName = String(discountName || "").trim();
-  const normalizedDiscountId = Number(discountId);
-  const hasDiscountId =
-    Number.isSafeInteger(normalizedDiscountId) && normalizedDiscountId > 0;
-  const [rows] = await connection.query(
-    `SELECT
-       settings.settings_json,
-       discount.discount_id,
-       discount.name AS discount_name,
-       discount.percentage AS discount_percentage
-     FROM (SELECT 1 AS singleton) anchor
-     LEFT JOIN system_settings settings
-       ON settings.setting_key = 'restaurant_settings'
-     LEFT JOIN (
-        SELECT discount_id, name, percentage
-       FROM discount_types
-        WHERE (
-          (? IS NOT NULL AND discount_id = ?)
-          OR (? IS NULL AND LOWER(name) = LOWER(?))
-        )
-         AND is_active = TRUE
-       LIMIT 1
-     ) discount ON TRUE`,
-    [
-      hasDiscountId ? normalizedDiscountId : null,
-      hasDiscountId ? normalizedDiscountId : null,
-      hasDiscountId ? normalizedDiscountId : null,
-      normalizedName,
-    ],
-  );
-  let parsedSettings = {};
-  try {
-    parsedSettings = rows[0]?.settings_json
-      ? JSON.parse(rows[0].settings_json)
-      : {};
-  } catch {
-    parsedSettings = {};
-  }
-  return {
-    billingSettings: {
-      taxRate: Math.max(0, Number(parsedSettings?.taxRate ?? 0) || 0),
-      serviceCharge: Math.max(
-        0,
-        Number(parsedSettings?.serviceCharge ?? 0) || 0,
-      ),
-    },
-    receiptSettings: {
-      restaurantName:
-        String(parsedSettings?.restaurantName || "").trim() || "The Crunch",
-      tagline: String(parsedSettings?.tagline || "").trim(),
-      email: String(parsedSettings?.email || "").trim(),
-      phone: String(parsedSettings?.phone || "").trim(),
-      address: String(parsedSettings?.address || "").trim(),
-      currency: String(parsedSettings?.currency || "").trim() || "PHP",
-      timezone:
-        String(parsedSettings?.timezone || "").trim() || "Asia/Manila",
-    },
-    discount: rows[0]?.discount_name
-      ? {
-          discountId: Number(rows[0].discount_id),
-          discountName: String(rows[0].discount_name),
-          discountRate: Math.max(
-            0,
-            Number(rows[0].discount_percentage || 0) || 0,
-          ),
-        }
-      : { discountId: null, discountName: "", discountRate: 0 },
-  };
-}
-
 async function requireSalesReportReceiptAccess(req, res, next) {
   const role = normalizeRole(req.user?.role);
   if (isSuperuserRole(role)) return next();
@@ -475,42 +382,10 @@ async function requireSalesReportReceiptAccess(req, res, next) {
   }
 }
 
-function calculateBillingTotals(subtotal, settings, discountRate = 0) {
-  const safeSubtotal = Math.max(0, Number(subtotal || 0));
-  const safeDiscountRate = Math.max(0, Number(discountRate || 0));
-  const discountAmount = safeSubtotal * (safeDiscountRate / 100);
-  const taxAmount = safeSubtotal * (Number(settings.taxRate || 0) / 100);
-  const serviceChargeAmount =
-    safeSubtotal * (Number(settings.serviceCharge || 0) / 100);
-  const grandTotal =
-    safeSubtotal - discountAmount + taxAmount + serviceChargeAmount;
-  return {
-    subtotal: safeSubtotal,
-    discountAmount,
-    taxAmount,
-    serviceChargeAmount,
-    grandTotal,
-  };
-}
-
 async function verifyPayMongoCheckoutSession(checkoutSessionId, context = {}) {
   const normalizedId = String(checkoutSessionId || "").trim();
   if (!normalizedId) {
     return { paid: false, status: "missing", paymentReference: null };
-  }
-
-  if (!isPayMongoEnabled()) {
-    return context.claimBypass
-      ? claimBypassCheckout(normalizedId, context)
-      : verifyBypassCheckout(normalizedId, context);
-  }
-
-  if (isBypassCheckoutId(normalizedId)) {
-    const error = new Error(
-      "Local test payment cannot be used while PayMongo is enabled",
-    );
-    error.statusCode = 403;
-    throw error;
   }
 
   return verifyBoundPayMongoCheckoutSession(normalizedId, context);
@@ -520,16 +395,18 @@ async function verifyPayMongoCheckoutSession(checkoutSessionId, context = {}) {
 async function ensureLegacyCashierContext(conn, cashierId) {
   const normalizedCashierId = Number(cashierId);
   if (!Number.isFinite(normalizedCashierId) || normalizedCashierId <= 0) {
-    return { cashierId: null, recordedByAdminId: null };
+    return { cashierId: null, recordedByAdminId: null, cashierName: null };
   }
 
   const [cashierRows] = await conn.query(
     `SELECT
        cashier.Cashier_ID AS cashierId,
-       admin.Admin_ID AS recordedByAdminId
+       admin.Admin_ID AS recordedByAdminId,
+       staff_user.username AS cashierName
      FROM (SELECT ? AS requestedId) requested
      LEFT JOIN Cashier cashier ON cashier.Cashier_ID = requested.requestedId
-     LEFT JOIN Admin admin ON admin.Admin_ID = requested.requestedId`,
+     LEFT JOIN Admin admin ON admin.Admin_ID = requested.requestedId
+     LEFT JOIN users staff_user ON staff_user.id = requested.requestedId`,
     [normalizedCashierId],
   );
   if (cashierRows[0]?.cashierId != null) {
@@ -538,6 +415,7 @@ async function ensureLegacyCashierContext(conn, cashierId) {
       recordedByAdminId: cashierRows[0].recordedByAdminId == null
         ? null
         : normalizedCashierId,
+      cashierName: String(cashierRows[0].cashierName || "").trim() || null,
     };
   }
 
@@ -550,7 +428,7 @@ async function ensureLegacyCashierContext(conn, cashierId) {
     [normalizedCashierId],
   );
   if (userRows.length === 0) {
-    return { cashierId: null, recordedByAdminId: null };
+    return { cashierId: null, recordedByAdminId: null, cashierName: null };
   }
 
   await conn.query(
@@ -564,6 +442,7 @@ async function ensureLegacyCashierContext(conn, cashierId) {
     recordedByAdminId: cashierRows[0]?.recordedByAdminId == null
       ? null
       : normalizedCashierId,
+    cashierName: String(userRows[0].username || "").trim() || null,
   };
 }
 
@@ -661,7 +540,16 @@ router.get("/queue", requireCookViewAccess, async (req, res) => {
          o.timerUpdatedAt AS timerUpdatedAt,
          p.Payment_Status AS paymentRecordStatus,
          oi.Quantity  AS quantity,
-         m.Product_Name AS productName
+         m.Product_Name AS productName,
+         (SELECT snapshot.order_note
+            FROM receipt_snapshots snapshot
+           WHERE snapshot.order_id = o.Order_ID
+           LIMIT 1) AS orderNote,
+         (SELECT snapshot_item.item_note
+            FROM receipt_snapshot_items snapshot_item
+           WHERE snapshot_item.order_id = o.Order_ID
+             AND snapshot_item.original_product_id = oi.Product_ID
+           LIMIT 1) AS itemNote
        FROM orders o
        LEFT JOIN order_item oi ON oi.Order_ID = o.Order_ID
        LEFT JOIN Menu m        ON m.Product_ID = oi.Product_ID
@@ -708,6 +596,7 @@ router.get("/queue", requireCookViewAccess, async (req, res) => {
             Number(r.customerUserId) > 0 &&
             normalizedOrderType === "take-out",
           items: [],
+          orderNote: r.orderNote ? String(r.orderNote) : null,
           currentStatus: normalizedStatus,
           paymentStatus: normalizePaymentStatus(
             r.paymentStatus || r.paymentRecordStatus || "Pending"
@@ -738,6 +627,7 @@ router.get("/queue", requireCookViewAccess, async (req, res) => {
         grouped[r.id].items.push({
           quantity: Number(r.quantity) || 0,
           name: r.productName,
+          note: r.itemNote ? String(r.itemNote) : null,
         });
       }
     }
@@ -1308,7 +1198,7 @@ router.post(
         });
       }
 
-      if (!verifyAuthorizationCode(authorizationCode)) {
+      if (!(await verifyAuthorizationCode(authorizationCode))) {
         return res.status(403).json({ message: "Discount authorization failed" });
       }
 
@@ -1345,8 +1235,6 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
   let conn;
   let txStarted = false;
   let orderCommitted = false;
-  let bypassSessionToClaim = null;
-  let claimedBypassSessionId = null;
   let claimedDiscountApprovalId = null;
   let payMongoVerification = null;
   let authoritativeItems = [];
@@ -1506,6 +1394,31 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
     }
     const isOnlinePickupOrder =
       resolvedCustomerUserId && resolvedCashierId == null && finalOrderType === "take-out";
+    if (isOnlinePickupOrder && normalizedPaymentMethod === "gcash") {
+      const checkoutToFinalize = submittedCheckoutSessionId ||
+        (/^cs_[A-Za-z0-9_-]+$/.test(submittedPaymentReference || "")
+          ? submittedPaymentReference
+          : null);
+      if (!checkoutToFinalize) {
+        return res.status(400).json({
+          message: "Online pickup orders require a PayMongo checkout session",
+        });
+      }
+      try {
+        const finalized = await finalizePayMongoCheckoutIntent({
+          checkoutSessionId: checkoutToFinalize,
+          customerUserId: resolvedCustomerUserId,
+          items: validatedItems,
+        });
+        orderOutcome = "success";
+        return res.json(finalized);
+      } catch (error) {
+        // Sessions created before checkout-intent deployment retain the legacy
+        // browser-return path. Every new persisted intent must use the shared
+        // finalizer so browser and webhook races remain idempotent.
+        if (error?.code !== "PAYMONGO_INTENT_NOT_FOUND") throw error;
+      }
+    }
     const storedPaymentMethod = getStoredPaymentMethod(
       normalizedPaymentMethod,
       { isOnlinePickupOrder },
@@ -1575,9 +1488,6 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
       if (!payMongoVerification.paid) {
         return res.status(400).json({ message: "Online pickup orders must be paid after backend verification" });
       }
-      if (payMongoVerification.bypassed) {
-        bypassSessionToClaim = payMongoVerification.checkoutSessionId;
-      }
       effectivePaymentStatus = "Paid";
       effectivePaymentReference = payMongoVerification.paymentReference || checkoutToVerify;
     } else if (
@@ -1630,15 +1540,6 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
       } else if (!effectivePaymentReference) {
         return res.status(400).json({ message: "Online pickup orders require a verified payment reference" });
       }
-    }
-
-    if (bypassSessionToClaim) {
-      const claimedBypass = claimBypassCheckout(bypassSessionToClaim, {
-        customerUserId: resolvedCustomerUserId,
-        items: validatedItems,
-      });
-      claimedBypassSessionId = claimedBypass.checkoutSessionId;
-      effectivePaymentReference = claimedBypass.paymentReference;
     }
 
     conn = await runOrderStage(req, "acquire connection", () => db.getConnection());
@@ -1732,7 +1633,7 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
     if (
       isOnlinePickupOrder &&
       normalizedPaymentMethod === "gcash" &&
-      !payMongoVerification?.bypassed
+      payMongoVerification
     ) {
       const authoritativeAmountCentavos = Math.round(billingTotals.grandTotal * 100);
       if (
@@ -1871,6 +1772,13 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
         cashTendered: snapshotCashTendered,
         changeAmount: snapshotChange,
         customerType: submittedCustomerType,
+        // Customer registration persists the Full Name field in users.username;
+        // the navbar reads the same field. Never trust a body-supplied name for
+        // an online receipt because it could differ from the registered value.
+        soldToName: isOnlineCustomerActor
+          ? String(onlineCustomerProfile?.username || "").trim() || null
+          : submittedCustomerName,
+        cashierName: isStaffOrderActor ? cashierContext.cashierName : null,
         tableNumber: finalOrderType === "dine-in" ? submittedTableNumber : null,
         orderNote: submittedOrderNote,
         currency: configuration.receiptSettings.currency,
@@ -1885,7 +1793,7 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
     );
 
     const deductedStockAtCreation =
-      isStaffOrderActor && isPaidPaymentStatus(effectivePaymentStatus);
+      isPaidPaymentStatus(effectivePaymentStatus);
     if (deductedStockAtCreation) {
       await runOrderStage(
         req,
@@ -1911,14 +1819,11 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
       paymentChanged: true,
       inventoryChanged: deductedStockAtCreation,
     });
-    if (claimedBypassSessionId) {
-      consumeBypassCheckout(claimedBypassSessionId);
-      claimedBypassSessionId = null;
-    }
-
     if (isOnlinePickupOrder) {
       const receiptEmail = submittedCustomerEmail || String(onlineCustomerProfile?.email || "").trim().toLowerCase();
-      const receiptCustomerName = submittedCustomerName || String(onlineCustomerProfile?.username || "").trim() || "Customer";
+      const receiptCustomerName = isOnlineCustomerActor
+        ? String(onlineCustomerProfile?.username || "").trim()
+        : submittedCustomerName || "Customer";
 
       if (receiptEmail) {
         try {
@@ -1966,10 +1871,6 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
       claimedDiscountApprovalId = null;
     }
     finishOrderTransactionTiming(req);
-    if (claimedBypassSessionId) {
-      releaseBypassCheckout(claimedBypassSessionId);
-      claimedBypassSessionId = null;
-    }
     console.error("POST /orders error:", JSON.stringify({
       message: err.message,
       code: err.code,

@@ -13,6 +13,10 @@ const purchaseOrderDeliveryDateNullable = require("./migrations/2026-11-01_purch
 const thirdPartyReferenceReuse = require("./migrations/2026-11-03_third-party-reference-reuse");
 const orderInventoryDeductionSnapshots = require("./migrations/2026-11-04_order-inventory-deduction-snapshots");
 const passwordResetDigestWidth = require("./migrations/2026-11-05_password-reset-digest-width");
+const poReceiptQuantitiesAndShelfLifeMonths = require("./migrations/2026-11-06_po-receipt-quantities-and-shelf-life-months");
+const receiptCustomerIdentity = require("./migrations/2026-11-06_receipt-customer-identity");
+const paymongoCheckoutIntents = require("./migrations/2026-11-06_paymongo-checkout-intents");
+const paymongoWebhookEvents = require("./migrations/2026-11-06_paymongo-webhook-events");
 
 const MIGRATIONS = [
   deploymentSchemaAlignment,
@@ -21,6 +25,10 @@ const MIGRATIONS = [
   thirdPartyReferenceReuse,
   orderInventoryDeductionSnapshots,
   passwordResetDigestWidth,
+  poReceiptQuantitiesAndShelfLifeMonths,
+  receiptCustomerIdentity,
+  paymongoCheckoutIntents,
+  paymongoWebhookEvents,
 ];
 const LOCK_NAME = "the_crunch_schema_migrations";
 

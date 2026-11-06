@@ -193,6 +193,11 @@ function createConnection() {
         state.inventoryAdds += Number(params[0]);
         return [{ affectedRows: 1 }];
       }
+      if (q.startsWith("UPDATE purchase_order_items SET received_quantity")) {
+        const item = state.items.find((entry) => Number(entry.item_id) === Number(params[1]));
+        if (item) item.received_quantity = Number(params[0]);
+        return [{ affectedRows: item ? 1 : 0 }];
+      }
       if (q.startsWith("UPDATE Menu SET Stock")) {
         state.product.menu_stock += Number(params[0]);
         return [{ affectedRows: 1 }];
@@ -366,7 +371,8 @@ async function invoke(
   assert.equal(state.items[0].unit_cost, 0);
   assert.equal(state.inventoryAdds, 0);
   assert.equal(state.batches.length, 0);
-  assert.equal(state.notifications.length, 0);
+  assert.equal(state.notifications.length, 1);
+  assert.equal(state.notifications[0].params[0], "purchase_order:PO-0001:created");
 
   reset("Draft");
   const createdWithExpectedDelivery = await invoke(createHandlers, {
@@ -435,7 +441,8 @@ async function invoke(
   const ordered = await invoke(statusHandlers, { body: { status: "Ordered" } });
   assert.equal(ordered.statusCode, 200);
   assert.equal(state.po.status, "Ordered");
-  assert.equal(state.notifications.length, 0);
+  assert.equal(state.notifications.length, 1);
+  assert.equal(state.notifications[0].params[0], "purchase_order:PO-0001:ordered");
 
   const genericReceive = await invoke(statusHandlers, { body: { status: "Received" } });
   assert.equal(genericReceive.statusCode, 409);
@@ -445,7 +452,8 @@ async function invoke(
   const cancelled = await invoke(cancelHandlers);
   assert.equal(cancelled.statusCode, 200);
   assert.equal(state.po.status, "Cancelled");
-  assert.equal(state.notifications.length, 0);
+  assert.equal(state.notifications.length, 1);
+  assert.equal(state.notifications[0].params[0], "purchase_order:PO-0001:cancelled");
 
   reset("Received");
   const receivedCancel = await invoke(cancelHandlers);
@@ -466,6 +474,19 @@ async function invoke(
   assert.equal(invalidReceivedDate.statusCode, 400);
   assert.equal(state.inventoryAdds, 0);
   assert.equal(state.connections, 0);
+
+  reset("Ordered");
+  const partialDelivery = await invoke(receiveHandlers, {
+    body: {
+      receivedBy: "Manager",
+      itemReceivedQuantities: { 1: 1 },
+    },
+  });
+  assert.equal(partialDelivery.statusCode, 200);
+  assert.equal(state.inventoryAdds, 1, "inventory must use actual received quantity");
+  assert.equal(state.batches[0].quantity, 1);
+  assert.equal(state.items[0].received_quantity, 1);
+  assert.equal(partialDelivery.body.items[0].receivedQuantity, 1);
 
   reset("Ordered");
   const futureReceivedDate = await invoke(receiveHandlers, {

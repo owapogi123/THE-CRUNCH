@@ -92,6 +92,8 @@ function createExistingSchemaDb({ nullBatchCount = 0 } = {}) {
 
       if (/FROM information_schema\.COLUMNS/i.test(normalized)) {
         if (String(params[0]).toLowerCase() === "inventory") return [[]];
+        if (String(params[0]).toLowerCase() === "purchase_order_items") return [[]];
+        if (/LOWER\(TABLE_NAME\) = 'receipt_snapshots'/i.test(normalized)) return [[]];
         if (String(params[0]).toLowerCase() === "batches") {
           return [[{
             COLUMN_TYPE: "int",
@@ -184,6 +186,12 @@ function createExistingSchemaDb({ nullBatchCount = 0 } = {}) {
       }
       if (/^CREATE TABLE IF NOT EXISTS order_inventory_deductions/i.test(normalized)) {
         hasOrderInventoryDeductions = true;
+        return [{ affectedRows: 0 }];
+      }
+      if (/^CREATE TABLE IF NOT EXISTS paymongo_webhook_events/i.test(normalized)) {
+        return [{ affectedRows: 0 }];
+      }
+      if (/^CREATE TABLE IF NOT EXISTS paymongo_checkout_intents/i.test(normalized)) {
         return [{ affectedRows: 0 }];
       }
       if (/^ALTER TABLE `users` MODIFY COLUMN `password_reset_code` VARCHAR\(64\) NULL/i.test(normalized)) {

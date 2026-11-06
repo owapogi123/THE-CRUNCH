@@ -14,6 +14,7 @@ const router = express.Router();
 
 const SIGNUP_FIELD_MAX_LENGTH = 50;
 const PASSWORD_RESET_CODE_TTL_MS = 10 * 60 * 1000;
+const PASSWORD_RESET_AUTHORIZATION_TTL_MS = 5 * 60 * 1000;
 const PASSWORD_RESET_REQUEST_WINDOW_MS = 15 * 60 * 1000;
 const PASSWORD_RESET_REQUESTS_PER_EMAIL = 3;
 const PASSWORD_RESET_REQUESTS_PER_IP = 15;
@@ -44,6 +45,16 @@ function getPasswordResetDigest(email, code) {
   return crypto
     .createHmac("sha256", secret)
     .update(`${normalizeEmail(email)}:${String(code || "").trim()}`)
+    .digest("hex");
+}
+
+function getPasswordResetAuthorizationDigest(email, token) {
+  const secret = String(
+    process.env.PASSWORD_RESET_TOKEN_SECRET || getJwtSecret(),
+  );
+  return crypto
+    .createHmac("sha256", secret)
+    .update(`authorization:${normalizeEmail(email)}:${String(token || "").trim()}`)
     .digest("hex");
 }
 
@@ -720,15 +731,94 @@ router.post("/forgot-password", async (req, res) => {
   }
 });
 
-router.post("/reset-password", async (req, res) => {
+router.post("/verify-password-reset-otp", async (req, res) => {
   try {
     await ensurePasswordResetColumns();
     const email = normalizeEmail(req.body?.email);
     const code = String(req.body?.code || "").trim();
+    const invalidMessage = "Invalid or expired reset code";
+
+    if (!email || !/^\d{6}$/.test(code)) {
+      return res.status(400).json({ message: invalidMessage });
+    }
+
+    const rateLimit = checkPasswordResetRateLimits(req, email, "attempt");
+    if (!rateLimit.allowed) {
+      res.set("Retry-After", String(rateLimit.retryAfterSeconds));
+      return res.status(429).json({
+        message: "Too many verification attempts. Please wait and request a new code.",
+      });
+    }
+
+    const [rows] = await db.query(
+      `SELECT id, password_reset_code, password_reset_expires
+         FROM users
+        WHERE email = ?
+        LIMIT 1`,
+      [email],
+    );
+    const user = rows[0];
+    if (!user || !passwordResetCodeMatches(user.password_reset_code, email, code)) {
+      return res.status(400).json({ message: invalidMessage });
+    }
+
+    const expiresAt = user.password_reset_expires
+      ? new Date(user.password_reset_expires)
+      : null;
+    if (!expiresAt || Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() < Date.now()) {
+      return res.status(400).json({ message: invalidMessage });
+    }
+
+    const resetAuthorization = crypto.randomBytes(32).toString("hex");
+    const authorizationDigest = getPasswordResetAuthorizationDigest(
+      email,
+      resetAuthorization,
+    );
+    const authorizationExpires = new Date(
+      Date.now() + PASSWORD_RESET_AUTHORIZATION_TTL_MS,
+    );
+    const [updated] = await db.query(
+      `UPDATE users
+       SET password_reset_code = ?,
+           password_reset_expires = ?
+       WHERE id = ?
+         AND password_reset_code = ?
+         AND password_reset_expires >= CURRENT_TIMESTAMP`,
+      [
+        authorizationDigest,
+        authorizationExpires,
+        user.id,
+        user.password_reset_code,
+      ],
+    );
+    if (Number(updated?.affectedRows || 0) !== 1) {
+      return res.status(400).json({ message: invalidMessage });
+    }
+
+    return res.json({
+      message: "Reset code verified",
+      resetAuthorization,
+      expiresInSeconds: Math.floor(PASSWORD_RESET_AUTHORIZATION_TTL_MS / 1000),
+    });
+  } catch (error) {
+    console.error("Password reset OTP verification failed");
+    return res.status(500).json({
+      message: "Unable to verify the reset code. Please request a new code.",
+    });
+  }
+});
+
+router.post("/reset-password", async (req, res) => {
+  try {
+    await ensurePasswordResetColumns();
+    const email = normalizeEmail(req.body?.email);
+    const resetAuthorization = String(
+      req.body?.resetAuthorization || "",
+    ).trim();
     const newPassword = String(req.body?.newPassword || "");
     const invalidMessage = "Invalid or expired reset code";
 
-    if (!email || !/^\d{6}$/.test(code) || !newPassword) {
+    if (!email || !/^[a-f0-9]{64}$/i.test(resetAuthorization) || !newPassword) {
       return res.status(400).json({
         message: invalidMessage,
       });
@@ -761,7 +851,11 @@ router.post("/reset-password", async (req, res) => {
     }
 
     const user = rows[0];
-    if (!passwordResetCodeMatches(user.password_reset_code, email, code)) {
+    const submittedAuthorizationDigest = getPasswordResetAuthorizationDigest(
+      email,
+      resetAuthorization,
+    );
+    if (!safeStringEqual(user.password_reset_code, submittedAuthorizationDigest)) {
       return res.status(400).json({ message: invalidMessage });
     }
 
@@ -814,8 +908,10 @@ router.post("/logout", (req, res) => {
 
 module.exports = router;
 module.exports.recoveryPolicy = {
+  PASSWORD_RESET_AUTHORIZATION_TTL_MS,
   PASSWORD_RESET_CODE_TTL_MS,
   consumePasswordResetRateLimit,
+  getPasswordResetAuthorizationDigest,
   getPasswordResetDigest,
   passwordResetCodeMatches,
   resetRateLimitsForTests: () => passwordResetRateLimits.clear(),

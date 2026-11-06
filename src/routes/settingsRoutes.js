@@ -1,4 +1,5 @@
 const router = require("express").Router();
+const bcrypt = require("bcryptjs");
 const db = require("../config/db");
 const { SUPERUSER_ROLE, normalizeRole } = require("../middleware/roleAccess");
 const { requireCookViewAccess } = require("../middleware/cookViewAccess");
@@ -29,6 +30,21 @@ const EMPTY_DELIVERY_PLATFORM_LINKS = Object.freeze({
   grabfoodUrl: null,
   foodpandaUrl: null,
 });
+const DISCOUNT_AUTHORIZATION_KEY = "discount_authorization";
+const discountPasswordAttempts = new Map();
+
+function checkDiscountPasswordRateLimit(userId) {
+  const now = Date.now();
+  const key = String(userId);
+  const current = discountPasswordAttempts.get(key) || { count: 0, resetAt: now + 15 * 60 * 1000 };
+  if (current.resetAt <= now) {
+    current.count = 0;
+    current.resetAt = now + 15 * 60 * 1000;
+  }
+  current.count += 1;
+  discountPasswordAttempts.set(key, current);
+  return current.count <= 5;
+}
 
 function enforceSuperuserPermissions(permissions) {
   for (const permissionKey of VALID_PERMISSION_KEYS) {
@@ -349,6 +365,8 @@ function sanitizeSettingsPayload(payload) {
     email: normalizeString(source.email),
     phone: normalizeString(source.phone),
     address: normalizeString(source.address),
+    businessTin: normalizeString(source.businessTin),
+    businessRegistrationDetails: normalizeString(source.businessRegistrationDetails),
     currency: "PHP",
     timezone: "Asia/Manila",
     openTime: normalizeString(source.openTime, "08:00"),
@@ -370,7 +388,7 @@ function sanitizeSettingsPayload(payload) {
     },
     queueManagement: normalizeBoolean(source.queueManagement, false),
     maxTableCapacity: String(source.maxTableCapacity ?? ""),
-    requireTableNumber: normalizeBoolean(source.requireTableNumber, true),
+    requireTableNumber: false,
     allowSplitBills: normalizeBoolean(source.allowSplitBills, false),
     enableLoyaltyPoints: normalizeBoolean(source.enableLoyaltyPoints, false),
     defaultLowStockThreshold: normalizeNonNegativeNumericString(
@@ -477,6 +495,53 @@ router.put(
           ? error.message
           : "Failed to save delivery platform links",
       });
+    }
+  },
+);
+
+router.put(
+  "/discount-password",
+  requireAdministratorAccess,
+  async (req, res) => {
+    try {
+      const userId = Number(req.user?.userId);
+      if (!Number.isSafeInteger(userId) || userId <= 0) {
+        return res.status(401).json({ message: "Invalid authenticated user" });
+      }
+      if (!checkDiscountPasswordRateLimit(userId)) {
+        return res.status(429).json({ message: "Too many password update attempts. Try again later." });
+      }
+
+      const currentAdminPassword = String(req.body?.currentAdminPassword || "");
+      const newPassword = String(req.body?.newPassword || "");
+      const confirmPassword = String(req.body?.confirmPassword || "");
+      if (!currentAdminPassword || newPassword.length < 8 || newPassword.length > 72) {
+        return res.status(400).json({ message: "Enter your current password and a new password of 8 to 72 characters." });
+      }
+      if (newPassword !== confirmPassword) {
+        return res.status(400).json({ message: "New password confirmation does not match." });
+      }
+
+      const [users] = await db.query(
+        `SELECT password_hash FROM users WHERE id = ? LIMIT 1`,
+        [userId],
+      );
+      if (!users.length || !(await bcrypt.compare(currentAdminPassword, users[0].password_hash))) {
+        return res.status(403).json({ message: "Current administrator password is incorrect." });
+      }
+
+      const passwordHash = await bcrypt.hash(newPassword, 12);
+      await db.query(
+        `INSERT INTO system_settings (setting_key, settings_json)
+         VALUES (?, ?)
+         ON DUPLICATE KEY UPDATE settings_json = VALUES(settings_json)`,
+        [DISCOUNT_AUTHORIZATION_KEY, JSON.stringify({ passwordHash, updatedAt: new Date().toISOString(), updatedBy: userId })],
+      );
+      discountPasswordAttempts.delete(String(userId));
+      res.json({ message: "Discount authorization password updated." });
+    } catch (error) {
+      console.error("PUT /api/settings/discount-password error:", error);
+      res.status(500).json({ message: "Failed to update discount authorization password" });
     }
   },
 );

@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const path = require("path");
 const db = require("./config/db");
+const paymongoRoutes = require("./routes/paymongoRoutes");
 
 const app = express();
 const allowedOrigins = [
@@ -37,6 +38,11 @@ app.use(
       "ngrok-skip-browser-warning",
     ],
   }),
+);
+app.post(
+  "/api/paymongo/webhook",
+  express.raw({ type: "application/json", limit: "1mb" }),
+  paymongoRoutes.webhookHandler,
 );
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
@@ -91,7 +97,6 @@ const paymentQrRoutes = require("./routes/paymentQrRoutes");
 app.use("/api/payment-qr", paymentQrRoutes);
 const contentRoutes = require("./routes/contentRoutes");
 app.use("/api", contentRoutes);
-const paymongoRoutes = require("./routes/paymongoRoutes");
 app.use("/api/paymongo", paymongoRoutes);
 
 // Authenticated, lightweight application invalidation stream.

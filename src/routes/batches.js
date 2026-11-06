@@ -25,7 +25,7 @@ const BATCH_SCHEMA_CONTRACT = {
   batches: [
     "batch_id", "product_id", "delivery_batch_id", "quantity",
     "remaining_qty", "unit", "received_date", "expiry_date",
-    "shelf_life_days", "shelf_life_hours", "usable_until", "status",
+    "shelf_life_months", "shelf_life_days", "shelf_life_hours", "usable_until", "status",
     "returned_qty", "notes", "created_at", "updated_at",
   ],
 };

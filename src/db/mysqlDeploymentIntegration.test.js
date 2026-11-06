@@ -21,6 +21,8 @@ const ALLOWED_TABLES = new Set([
   "order_inventory_deductions",
   "order_item",
   "orders",
+  "paymongo_checkout_intents",
+  "paymongo_webhook_events",
   "products",
   "schema_migrations",
   "stock_status",
@@ -173,6 +175,8 @@ async function applyPendingMigrations(pool) {
   const migrations = [
     require("./migrations/2026-11-03_third-party-reference-reuse"),
     require("./migrations/2026-11-04_order-inventory-deduction-snapshots"),
+    require("./migrations/2026-11-06_paymongo-checkout-intents"),
+    require("./migrations/2026-11-06_paymongo-webhook-events"),
   ];
   const [rows] = await pool.query("SELECT version FROM schema_migrations");
   const applied = new Set(rows.map((row) => String(row.version)));
@@ -193,6 +197,8 @@ async function testMigrations(pool) {
   const migrationModules = [
     require("./migrations/2026-11-03_third-party-reference-reuse"),
     require("./migrations/2026-11-04_order-inventory-deduction-snapshots"),
+    require("./migrations/2026-11-06_paymongo-checkout-intents"),
+    require("./migrations/2026-11-06_paymongo-webhook-events"),
   ];
   for (const migration of migrationModules) {
     await migration.up(pool, { log: { log() {} } });
@@ -206,6 +212,8 @@ async function testMigrations(pool) {
     [
       "2026-11-03_third-party-reference-reuse",
       "2026-11-04_order-inventory-deduction-snapshots",
+      "2026-11-06_paymongo-checkout-intents",
+      "2026-11-06_paymongo-webhook-events",
     ],
   );
 
@@ -227,6 +235,24 @@ async function testMigrations(pool) {
         AND COLUMN_NAME = 'quantity'`,
   );
   assert.equal(String(quantityColumn.columnType).toLowerCase(), "decimal(14,4)");
+
+  const [[itemsJsonColumn]] = await pool.query(
+    `SELECT DATA_TYPE AS dataType
+       FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'paymongo_checkout_intents'
+        AND COLUMN_NAME = 'items_json'`,
+  );
+  assert.equal(String(itemsJsonColumn.dataType).toLowerCase(), "json");
+  const [intentIndexes] = await pool.query("SHOW INDEX FROM paymongo_checkout_intents");
+  assert.equal(
+    intentIndexes.some(
+      (row) =>
+        row.Key_name === "uq_paymongo_intents_checkout_session" &&
+        Number(row.Non_unique) === 0,
+    ),
+    true,
+  );
 
   const [foreignKeys] = await pool.query(
     `SELECT REFERENCED_TABLE_NAME AS referencedTable,

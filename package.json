@@ -10,10 +10,10 @@
     "db:migrate": "node src/db/migrate.js",
     "db:reset": "node src/db/setup.js --reset",
     "test:db-config": "node src/config/databaseEnvironment.test.js",
-    "test:schema": "node src/services/schemaCompatibilityService.test.js && node src/db/migrations/deploymentSchemaAlignment.test.js && node src/db/migrations/inventoryChangeNotificationCategory.test.js && node src/db/migrations/purchaseOrderDeliveryDateNullable.test.js && node src/db/migrations/thirdPartyReferenceReuse.test.js && node src/db/migrations/orderInventoryDeductionSnapshots.test.js && node src/db/migrations/passwordResetDigestWidth.test.js && node src/services/initialDataService.test.js && node src/db/freshSetupContract.test.js",
+    "test:schema": "node src/services/schemaCompatibilityService.test.js && node src/db/migrations/deploymentSchemaAlignment.test.js && node src/db/migrations/inventoryChangeNotificationCategory.test.js && node src/db/migrations/purchaseOrderDeliveryDateNullable.test.js && node src/db/migrations/thirdPartyReferenceReuse.test.js && node src/db/migrations/orderInventoryDeductionSnapshots.test.js && node src/db/migrations/passwordResetDigestWidth.test.js && node src/db/migrations/poReceiptQuantitiesAndShelfLifeMonths.test.js && node src/db/migrations/receiptCustomerIdentity.test.js && node src/db/migrations/paymongoCheckoutIntents.test.js && node src/db/migrations/paymongoWebhookEvents.test.js && node src/services/initialDataService.test.js && node src/db/freshSetupContract.test.js",
     "test:deployment": "node src/deploymentConfig.test.js && node src/appHealth.test.js && npm run test:db-config && npm run test:schema && npm run test:product-images",
     "test:order-identifiers": "node scripts/testOrderIdentifiers.js",
-    "test:receipt-snapshots": "node scripts/testReceiptSnapshots.js",
+    "test:receipt-snapshots": "node src/services/receiptSnapshotService.test.js && node scripts/testReceiptSnapshots.js",
     "test:financial": "node src/services/financialStatus.test.js",
     "test:refund-policy": "node src/services/refundEligibility.test.js && node src/routes/orderSettlementAuthorization.test.js && node src/routes/orderRefundConcurrency.test.js && node src/routes/refundRequestRoutes.test.js",
     "test:purchase-orders": "node src/services/purchaseOrderPolicy.test.js && node src/routes/purchaseOrders.test.js && node src/middleware/productCacheInvalidation.test.js",
@@ -33,7 +33,7 @@
     "test:account-recovery": "node src/services/otpDeliveryService.test.js && node src/routes/authRecoverySecurity.test.js",
     "test:product-images": "node src/routes/uploadProductImageRoutes.test.js",
     "test:operational-auth": "node src/routes/operationalReadAuthorization.test.js",
-    "test:blockers": "node src/services/jwtConfig.test.js && node src/services/paymongoCheckoutService.test.js && node src/services/paymentReferencePolicy.test.js && node src/routes/mutationAuthorization.test.js && node src/routes/operationalReadAuthorization.test.js && node src/routes/staffQueueAuthorization.test.js && node src/services/orderSecurity.test.js && node src/routes/orderRoutes.security.test.js && node src/routes/orderSettlementAuthorization.test.js && node src/routes/refundRequestRoutes.test.js && node src/services/refundRequestEvents.test.js && node src/routes/settingsPermissions.test.js && node src/routes/settingsDeliveryLinks.test.js && node src/routes/userRoutes.myAccount.test.js"
+    "test:blockers": "node src/services/jwtConfig.test.js && node src/services/paymongoCheckoutService.test.js && node src/services/paymongoWebhookService.test.js && node src/services/paymongoOrderFinalizationService.test.js && node src/services/paymentReferencePolicy.test.js && node src/routes/mutationAuthorization.test.js && node src/routes/operationalReadAuthorization.test.js && node src/routes/staffQueueAuthorization.test.js && node src/services/orderSecurity.test.js && node src/routes/orderRoutes.security.test.js && node src/routes/orderSettlementAuthorization.test.js && node src/routes/refundRequestRoutes.test.js && node src/services/refundRequestEvents.test.js && node src/routes/settingsPermissions.test.js && node src/routes/settingsDeliveryLinks.test.js && node src/routes/userRoutes.myAccount.test.js"
   },
   "dependencies": {
     "@babel/parser": "^7.29.0",

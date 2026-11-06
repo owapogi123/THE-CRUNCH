@@ -121,6 +121,8 @@ async function setup(options = {}) {
       "DROP TABLE IF EXISTS Receipt;",
       "DROP TABLE IF EXISTS payments;",
       "DROP TABLE IF EXISTS Payments;",
+      "DROP TABLE IF EXISTS paymongo_webhook_events;",
+      "DROP TABLE IF EXISTS paymongo_checkout_intents;",
       "DROP TABLE IF EXISTS order_item;",
       "DROP TABLE IF EXISTS Order_Item;",
       "DROP TABLE IF EXISTS order_inventory_deductions;",
@@ -339,6 +341,7 @@ CREATE TABLE IF NOT EXISTS batches (
     unit VARCHAR(50),
     received_date DATE NOT NULL,
     expiry_date DATE NULL,
+    shelf_life_months INT DEFAULT NULL,
     shelf_life_days INT DEFAULT NULL,
     shelf_life_hours INT DEFAULT NULL,
     usable_until DATETIME DEFAULT NULL,
@@ -457,6 +460,58 @@ CREATE TABLE IF NOT EXISTS payments (
     FOREIGN KEY (ProcessBy) REFERENCES Cashier(Cashier_ID)
 );
 
+CREATE TABLE IF NOT EXISTS paymongo_checkout_intents (
+    intent_id CHAR(36) NOT NULL PRIMARY KEY,
+    checkout_request_id CHAR(36) NOT NULL,
+    customer_user_id INT NOT NULL,
+    items_json JSON NOT NULL,
+    subtotal DECIMAL(12,2) NOT NULL,
+    tax_rate DECIMAL(9,4) NOT NULL DEFAULT 0,
+    tax_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+    service_charge_rate DECIMAL(9,4) NOT NULL DEFAULT 0,
+    service_charge_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+    total_amount DECIMAL(12,2) NOT NULL,
+    amount_centavos BIGINT UNSIGNED NOT NULL,
+    currency CHAR(3) NOT NULL DEFAULT 'PHP',
+    order_type VARCHAR(20) NOT NULL DEFAULT 'take-out',
+    customer_type VARCHAR(100) NULL,
+    order_note TEXT NULL,
+    payment_context_token TEXT NOT NULL,
+    checkout_session_id VARCHAR(100) NULL,
+    checkout_url VARCHAR(2048) NULL,
+    payment_reference VARCHAR(255) NULL,
+    provider_status VARCHAR(50) NULL,
+    livemode TINYINT(1) NULL,
+    status VARCHAR(40) NOT NULL DEFAULT 'pending_session',
+    verified_at DATETIME NULL,
+    finalized_order_id INT NULL,
+    finalized_at DATETIME NULL,
+    finalization_attempts INT UNSIGNED NOT NULL DEFAULT 0,
+    reconciliation_code VARCHAR(100) NULL,
+    reconciliation_message VARCHAR(500) NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_paymongo_intents_checkout_request (checkout_request_id),
+    UNIQUE KEY uq_paymongo_intents_checkout_session (checkout_session_id),
+    INDEX idx_paymongo_intents_customer_status (customer_user_id, status),
+    INDEX idx_paymongo_intents_finalized_order (finalized_order_id)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS paymongo_webhook_events (
+    event_id VARCHAR(100) NOT NULL PRIMARY KEY,
+    event_type VARCHAR(100) NOT NULL,
+    checkout_session_id VARCHAR(100) NOT NULL,
+    customer_user_id INT NOT NULL,
+    payment_reference VARCHAR(255) NOT NULL,
+    expected_amount_centavos BIGINT UNSIGNED NOT NULL,
+    paid_amount_centavos BIGINT UNSIGNED NOT NULL,
+    currency CHAR(3) NOT NULL,
+    livemode TINYINT(1) NOT NULL,
+    provider_created_at BIGINT UNSIGNED NULL,
+    received_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_paymongo_webhook_checkout_session (checkout_session_id)
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS Receipt (
     Receipt_ID INT AUTO_INCREMENT PRIMARY KEY,
     Order_ID INT,
@@ -485,6 +540,8 @@ CREATE TABLE IF NOT EXISTS receipt_snapshots (
     cash_tendered DECIMAL(12,2) NULL,
     change_amount DECIMAL(12,2) NULL,
     customer_type VARCHAR(100) NULL,
+    sold_to_name VARCHAR(150) NULL,
+    cashier_name VARCHAR(150) NULL,
     table_number VARCHAR(50) NULL,
     order_note TEXT NULL,
     currency VARCHAR(12) NOT NULL,
@@ -600,6 +657,7 @@ CREATE TABLE IF NOT EXISTS purchase_order_items (
     category VARCHAR(100) DEFAULT '',
     unit VARCHAR(50) DEFAULT '',
     quantity DECIMAL(10,2) NOT NULL DEFAULT 0,
+    received_quantity DECIMAL(10,2) DEFAULT NULL,
     unit_cost DECIMAL(10,2) NOT NULL DEFAULT 0,
     expected_expiry_date DATE DEFAULT NULL,
     FOREIGN KEY (po_id) REFERENCES purchase_orders(po_id) ON DELETE CASCADE,
@@ -1264,6 +1322,24 @@ END
       "expected_expiry_date",
       "`expected_expiry_date` DATE DEFAULT NULL",
     );
+    await ensureColumn(
+      connection,
+      "purchase_order_items",
+      "received_quantity",
+      "`received_quantity` DECIMAL(10,2) DEFAULT NULL",
+    );
+    await ensureColumn(
+      connection,
+      "batches",
+      "shelf_life_months",
+      "`shelf_life_months` INT DEFAULT NULL",
+    );
+    for (const [columnName, definition] of [
+      ["sold_to_name", "`sold_to_name` VARCHAR(150) NULL"],
+      ["cashier_name", "`cashier_name` VARCHAR(150) NULL"],
+    ]) {
+      await ensureColumn(connection, "receipt_snapshots", columnName, definition);
+    }
 
     await ensureColumn(
       connection,

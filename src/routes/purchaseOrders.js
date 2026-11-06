@@ -106,9 +106,6 @@ async function createPurchaseOrderNotification(
   connection,
   { poId, event, actorUserId, supplier, status, deliveryDate },
 ) {
-  if (event !== "received") {
-    return { notificationId: null, created: false };
-  }
   const eventLabels = {
     created: "created",
     ordered: "sent to supplier",
@@ -122,9 +119,9 @@ async function createPurchaseOrderNotification(
     eventType: `purchase_order.${event}`,
     entityId: poId,
     audience: STAFF_NOTIFICATION_AUDIENCES.BOTH,
-    // Receipt is a business event for both approved roles, including the
-    // authenticated receiver. A null actor prevents the per-user feed filter
-    // from hiding it from that receiver.
+    // PO lifecycle events are business notifications for both approved roles,
+    // including the authenticated actor. A null actor prevents the per-user
+    // feed filter from hiding an Administrator's own action.
     actorUserId: null,
     title: `Purchase order ${eventLabel} · ${poId}`,
     message: `${supplier || "Supplier"} · Status: ${status}`,
@@ -246,14 +243,26 @@ async function resolveInventoryCategoryTracking(connOrDb, categoryValue) {
   };
 }
 
-function computeUsableUntil(baseValue, shelfLifeDays, shelfLifeHours) {
+function computeUsableUntil(baseValue, shelfLifeMonths, shelfLifeDays, shelfLifeHours) {
   const base = new Date(baseValue);
   if (isNaN(base.getTime())) return null;
+  const months = toPositiveIntegerOrNull(shelfLifeMonths) || 0;
   const days = toPositiveIntegerOrNull(shelfLifeDays) || 0;
   const hours = toPositiveIntegerOrNull(shelfLifeHours) || 0;
-  if (days <= 0 && hours <= 0) return null;
+  if (months <= 0 && days <= 0 && hours <= 0) return null;
 
   const usableUntil = new Date(base.getTime());
+  if (months > 0) {
+    const originalDay = usableUntil.getDate();
+    usableUntil.setDate(1);
+    usableUntil.setMonth(usableUntil.getMonth() + months);
+    const lastDayOfTargetMonth = new Date(
+      usableUntil.getFullYear(),
+      usableUntil.getMonth() + 1,
+      0,
+    ).getDate();
+    usableUntil.setDate(Math.min(originalDay, lastDayOfTargetMonth));
+  }
   usableUntil.setDate(usableUntil.getDate() + days);
   usableUntil.setHours(usableUntil.getHours() + hours);
   return toSqlDateTime(usableUntil);
@@ -390,6 +399,7 @@ function shapePO(row, items = []) {
       category: i.category || "",
       unit: i.unit || "",
       quantity: toNumber(i.quantity),
+      receivedQuantity: i.received_quantity == null ? null : toNumber(i.received_quantity),
       unitCost: toNumber(i.unit_cost),
       expectedExpiryDate: toDateString(i.expected_expiry_date) || undefined,
     })),
@@ -880,6 +890,7 @@ router.patch("/:id/receive", requireInventoryManagerAccess, async (req, res) => 
     receivedDate,
     itemExpiryDates = {},
     itemShelfLife = {},
+    itemReceivedQuantities = {},
   } = req.body;
 
   const currentDateTime = new Date();
@@ -957,9 +968,22 @@ router.patch("/:id/receive", requireInventoryManagerAccess, async (req, res) => 
 
     const receivePlan = [];
     const receivedItemNames = [];
+    let totalReceivedQuantity = 0;
 
     for (const item of items) {
-      const qty = toNumber(item.quantity);
+      const rawReceivedQuantity = Object.prototype.hasOwnProperty.call(itemReceivedQuantities, item.item_id)
+        ? String(itemReceivedQuantities[item.item_id]).trim()
+        : String(item.quantity).trim();
+      const qty = Number(rawReceivedQuantity);
+      if (!/^\d+$/.test(rawReceivedQuantity) || !Number.isInteger(qty) || qty < 0 || qty > PURCHASE_ORDER_QUANTITY_MAX) {
+        throwPurchaseOrderError(400, `Actual received quantity for "${item.name}" must be a whole number from 0 to 999`);
+      }
+      totalReceivedQuantity += qty;
+
+      if (qty === 0) {
+        receivePlan.push({ item, qty, skipStock: true });
+        continue;
+      }
       const product = await resolveStockProduct(conn, item, itemTypeExpr, {
         lock: true,
       });
@@ -983,6 +1007,9 @@ router.patch("/:id/receive", requireInventoryManagerAccess, async (req, res) => 
       }
       const unit = product.inventory_unit || String(item.unit).trim();
       const shelfLifeInput = itemShelfLife?.[item.item_id] || {};
+      const shelfLifeMonths = toPositiveIntegerOrNull(
+        shelfLifeInput.shelfLifeMonths,
+      );
       const shelfLifeDays = toPositiveIntegerOrNull(
         shelfLifeInput.shelfLifeDays,
       );
@@ -998,7 +1025,7 @@ router.patch("/:id/receive", requireInventoryManagerAccess, async (req, res) => 
         ? toDateString(itemExpiryDates?.[item.item_id])
         : null;
       const usableUntil = usesShelfLife
-        ? computeUsableUntil(safeReceivedAt, shelfLifeDays, shelfLifeHours)
+        ? computeUsableUntil(safeReceivedAt, shelfLifeMonths, shelfLifeDays, shelfLifeHours)
         : null;
 
       if (usesShelfLife && !usableUntil) {
@@ -1039,6 +1066,7 @@ router.patch("/:id/receive", requireInventoryManagerAccess, async (req, res) => 
         productId: product.product_id,
         qty,
         unit,
+        shelfLifeMonths,
         shelfLifeDays,
         shelfLifeHours,
         itemExpiryDate,
@@ -1046,12 +1074,24 @@ router.patch("/:id/receive", requireInventoryManagerAccess, async (req, res) => 
       });
     }
 
+    if (totalReceivedQuantity <= 0) {
+      throwPurchaseOrderError(400, "At least one purchase-order item must have an actual received quantity greater than zero");
+    }
+
     for (const plan of receivePlan) {
+      await conn.query(
+        `UPDATE purchase_order_items
+            SET received_quantity = ?
+          WHERE item_id = ? AND po_id = ?`,
+        [plan.qty, plan.item.item_id, poId],
+      );
+      if (plan.skipStock) continue;
       const {
         item,
         productId,
         qty,
         unit,
+        shelfLifeMonths,
         shelfLifeDays,
         shelfLifeHours,
         itemExpiryDate,
@@ -1060,8 +1100,8 @@ router.patch("/:id/receive", requireInventoryManagerAccess, async (req, res) => 
 
       await conn.query(
         `INSERT INTO batches
-           (product_id, quantity, remaining_qty, unit, received_date, expiry_date, shelf_life_days, shelf_life_hours, usable_until, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (product_id, quantity, remaining_qty, unit, received_date, expiry_date, shelf_life_months, shelf_life_days, shelf_life_hours, usable_until, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           productId,
           qty,
@@ -1069,6 +1109,7 @@ router.patch("/:id/receive", requireInventoryManagerAccess, async (req, res) => 
           unit,
           recDate,
           itemExpiryDate || null,
+          shelfLifeMonths,
           shelfLifeDays,
           shelfLifeHours,
           usableUntil,

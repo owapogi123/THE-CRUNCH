@@ -3,7 +3,6 @@ const jwt = require("jsonwebtoken");
 
 process.env.JWT_SECRET = "order-route-test-secret";
 process.env.DISCOUNT_AUTH_CODE = "test-only-discount-code";
-process.env.PAYMONGO_ENABLED = "false";
 const validProofUrl = "/api/upload-proof/1793664000000-00000000-0000-4000-8000-000000000003.png";
 
 const state = {
@@ -73,7 +72,11 @@ const connection = {
       }]];
     }
     if (normalizedSql.includes("FROM (SELECT ? AS requestedId) requested")) {
-      return [[{ cashierId: Number(params[0]), recordedByAdminId: Number(params[0]) }]];
+      return [[{
+        cashierId: Number(params[0]),
+        recordedByAdminId: Number(params[0]),
+        cashierName: "Cashier One",
+      }]];
     }
     if (normalizedSql.startsWith("INSERT INTO orders")) {
       return [{ insertId: 700 + state.commits }];
@@ -170,6 +173,23 @@ mockModule("./uploadProofRoutes", {
     throw error;
   },
 });
+mockModule("../services/paymongoCheckoutService", {
+  async verifyPayMongoCheckoutSession(checkoutSessionId, context) {
+    if (checkoutSessionId !== "cs_verified_sandbox") {
+      const error = new Error("Checkout session is invalid or unpaid");
+      error.statusCode = 400;
+      throw error;
+    }
+    return {
+      checkoutSessionId,
+      expectedAmountCentavos: 10000,
+      paid: true,
+      status: "paid",
+      paymentReference: "pay_verified_sandbox",
+      customerUserId: context.customerUserId,
+    };
+  },
+});
 
 const router = require("./orderRoutes");
 const createLayer = router.stack.find(
@@ -216,7 +236,6 @@ async function invokeHandlers(handlers, { token, body }) {
 
 const invokeOrder = (request) => invokeHandlers(createHandlers, request);
 const invokeAuthorization = (request) => invokeHandlers(authorizationHandlers, request);
-const { issueBypassCheckout } = require("../services/paymongoMode");
 
 const cashierToken = jwt.sign(
   { userId: 10, role: "cashier" },
@@ -293,6 +312,15 @@ function assertRejectedBeforePersistence(result) {
   assert.equal(exact.statusCode, 200);
   assert.equal(state.receipts[0].cashTendered, 100);
   assert.equal(state.receipts[0].changeAmount, 0);
+  assert.equal(
+    state.receipts[0].cashierName,
+    "Cashier One",
+    "receipt snapshots must preserve the authenticated cashier's database name",
+  );
+  assert.equal("customerTin" in state.receipts[0], false);
+  assert.equal("customerAddress" in state.receipts[0], false);
+  assert.equal("merchantTin" in state.receipts[0], false);
+  assert.equal("merchantRegistrationDetails" in state.receipts[0], false);
   const exactOrderWrite = state.writes.find((write) => write.sql.startsWith("INSERT INTO orders"));
   assert.equal(exactOrderWrite.params[2], 10, "JWT cashier ID must override the body value");
   assert.equal(
@@ -655,6 +683,7 @@ function assertRejectedBeforePersistence(result) {
       order_type: "take-out",
       payment_method: "cash_on_pickup",
       payment_status: "Pending Payment",
+      customer_name: "Spoofed Receipt Name",
     },
   });
   assert.equal(online.statusCode, 200);
@@ -667,6 +696,11 @@ function assertRejectedBeforePersistence(result) {
     "JWT customer ID must override a forged body customerUserId",
   );
   assert.equal(state.deductions, 0);
+  assert.equal(
+    state.receipts[0].soldToName,
+    "Customer",
+    "online receipts must snapshot the persisted registration name instead of a body value",
+  );
 
   resetState();
   const forgedPaidCashOrder = await invokeOrder({
@@ -724,29 +758,25 @@ function assertRejectedBeforePersistence(result) {
   assertRejectedBeforePersistence(fakeReference);
 
   resetState();
-  const verifiedCheckout = issueBypassCheckout({
-    customerUserId: 20,
-    items: baseCustomerBody.items,
-  });
   const verifiedOnlineOrder = await invokeOrder({
     token: customerToken,
     body: {
       ...baseCustomerBody,
       payment_method: "gcash",
-      checkout_session_id: verifiedCheckout.checkoutSessionId,
+      checkout_session_id: "cs_verified_sandbox",
       payment_status: "Pending",
       payment_reference: "FORGED-REFERENCE-IGNORED",
     },
   });
   assert.equal(verifiedOnlineOrder.statusCode, 200);
   const verifiedOnlineWrite = state.writes.find((write) => write.sql.startsWith("INSERT INTO orders"));
-  assert.equal(verifiedOnlineWrite.params[6], verifiedCheckout.paymentReference);
+  assert.equal(verifiedOnlineWrite.params[6], "pay_verified_sandbox");
   assert.equal(verifiedOnlineWrite.params[7], "Paid");
   assert.equal(state.receipts[0].amountPaid, 100);
   assert.equal(
     state.deductions,
-    0,
-    "verified online submission must wait for Cashier acceptance before deducting stock",
+    1,
+    "verified paid online submission must deduct stock before Cashier review",
   );
 
   console.log("Order route security integration tests passed");

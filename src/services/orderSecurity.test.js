@@ -1,6 +1,9 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const db = require("../config/db");
+const originalDbQuery = db.query;
+db.query = async () => [[]];
 const {
   claimDiscountApproval,
   issueDiscountApproval,
@@ -24,14 +27,15 @@ function expectAuthorizationFailure(callback) {
   assert.throws(callback, (error) => error?.statusCode === 403);
 }
 
+(async () => {
 try {
   resetConsumedApprovalsForTests();
 
-  assert.equal(verifyAuthorizationCode("test-only-discount-code"), true);
-  assert.equal(verifyAuthorizationCode("wrong-code"), false);
+  assert.equal(await verifyAuthorizationCode("test-only-discount-code"), true);
+  assert.equal(await verifyAuthorizationCode("wrong-code"), false);
   delete process.env.DISCOUNT_AUTH_CODE;
-  assert.throws(
-    () => verifyAuthorizationCode("anything"),
+  await assert.rejects(
+    verifyAuthorizationCode("anything"),
     (error) => error?.statusCode === 503,
   );
   process.env.DISCOUNT_AUTH_CODE = "test-only-discount-code";
@@ -176,4 +180,9 @@ try {
   else process.env.DISCOUNT_AUTH_CODE = previousAuthorizationCode;
   if (previousJwtSecret === undefined) delete process.env.JWT_SECRET;
   else process.env.JWT_SECRET = previousJwtSecret;
+  db.query = originalDbQuery;
 }
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
