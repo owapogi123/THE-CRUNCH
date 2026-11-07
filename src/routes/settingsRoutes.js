@@ -6,6 +6,9 @@ const { requireCookViewAccess } = require("../middleware/cookViewAccess");
 const { requireAdministratorAccess } = require("../middleware/staffAccess");
 const { invalidateProductCache } = require("../services/cacheService");
 const {
+  isProtectedMenuCategorySystemKey,
+} = require("../services/systemMenuCategoryService");
+const {
   DEFAULT_PERMISSION_ROLE_LOCKS,
   DEFAULT_RESTAURANT_SETTINGS,
   DEFAULT_ROLE_PERMISSIONS,
@@ -275,7 +278,7 @@ async function deleteUnusedCategory(req, res, definition) {
     transactionStarted = true;
 
     const [categoryRows] = await connection.query(
-      `SELECT name
+      `SELECT name${definition.systemKeyColumn ? ", system_key" : ""}
        FROM ${definition.tableName}
        WHERE category_id = ?
        FOR UPDATE`,
@@ -288,6 +291,17 @@ async function deleteUnusedCategory(req, res, definition) {
     }
 
     const categoryName = String(categoryRows[0].name);
+    if (
+      definition.systemKeyColumn &&
+      isProtectedMenuCategorySystemKey(categoryRows[0].system_key)
+    ) {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(409).json({
+        code: "SYSTEM_CATEGORY_PROTECTED",
+        message: `${categoryName} is a built-in system category and cannot be deleted.`,
+      });
+    }
     const [assignments] = await connection.query(
       `SELECT m.Product_ID
        FROM Menu m
@@ -344,6 +358,7 @@ const MENU_CATEGORY_DELETION = Object.freeze({
   singularAssignment: "menu product is",
   pluralAssignment: "menu products are",
   pluralReassignment: "those products",
+  systemKeyColumn: true,
 });
 
 const INVENTORY_CATEGORY_DELETION = Object.freeze({
@@ -1017,6 +1032,7 @@ router.get("/menu-categories", async (req, res) => {
       `SELECT
          category_id,
          name,
+         system_key,
          display_order,
          is_active,
          created_at,
@@ -1070,6 +1086,7 @@ router.post("/menu-categories", requireAdministratorAccess, async (req, res) => 
       `SELECT
          category_id,
          name,
+         system_key,
          display_order,
          is_active,
          created_at,
@@ -1108,7 +1125,7 @@ router.patch("/menu-categories/:id", requireAdministratorAccess, async (req, res
     transactionStarted = true;
 
     const [currentRows] = await connection.query(
-      `SELECT name
+      `SELECT name, system_key
        FROM menu_categories
        WHERE category_id = ?
        FOR UPDATE`,
@@ -1120,6 +1137,22 @@ router.patch("/menu-categories/:id", requireAdministratorAccess, async (req, res
       return res.status(404).json({ message: "Menu category not found" });
     }
     const previousName = currentRows[0].name;
+    const protectedCategory = isProtectedMenuCategorySystemKey(
+      currentRows[0].system_key,
+    );
+    if (
+      protectedCategory &&
+      (Object.prototype.hasOwnProperty.call(req.body, "name") ||
+        (Object.prototype.hasOwnProperty.call(req.body, "is_active") &&
+          !normalizeBoolean(req.body.is_active, true)))
+    ) {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(409).json({
+        code: "SYSTEM_CATEGORY_PROTECTED",
+        message: `${previousName} is a built-in system category and cannot be renamed or disabled.`,
+      });
+    }
     let nextName = null;
 
     if (Object.prototype.hasOwnProperty.call(req.body, "name")) {
@@ -1182,6 +1215,7 @@ router.patch("/menu-categories/:id", requireAdministratorAccess, async (req, res
       `SELECT
          category_id,
          name,
+         system_key,
          display_order,
          is_active,
          created_at,

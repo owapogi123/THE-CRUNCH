@@ -61,12 +61,14 @@ const EXPECTED_INDEXES = [
   "kitchen_usage_reports|uniq_kitchen_usage_report_date|1|report_date",
   "menu|primary|1|product_id", "menu|category_id|0|category_id",
   "menu_categories|primary|1|category_id", "menu_categories|name|1|name",
+  "menu_categories|uq_menu_categories_system_key|1|system_key",
   "menu_item_ingredients|primary|1|menu_ingredient_id",
   "menu_item_ingredients|uniq_menu_ingredient|1|menu_product_id,product_id",
   "menu_item_ingredients|fk_menu_item_ingredients_product|0|product_id",
   "order_daily_counters|primary|1|business_date,counter_scope",
   "order_inventory_deductions|primary|1|order_id,product_id",
   "order_item|primary|1|order_item_id", "order_item|order_id|0|order_id",
+  "order_item|idx_order_item_selected_flavor|0|selected_flavor_product_id",
   "order_item|product_id|0|product_id", "order_tracking|primary|1|tracking_id",
   "order_tracking|order_id|0|order_id", "orders|primary|1|order_id",
   "orders|idx_orders_payment_reference|0|payment_reference",
@@ -140,6 +142,19 @@ const EXPECTED_FOREIGN_KEYS = [
 ];
 
 const CRITICAL_COLUMNS = {
+  menu_categories: {
+    category_id: ["int", false], system_key: ["varchar(64)", true],
+  },
+  order_item: {
+    order_item_id: ["int", false],
+    selected_flavor_product_id: ["int", true],
+    selected_flavor_name: ["varchar(255)", true],
+  },
+  receipt_snapshot_items: {
+    receipt_item_id: ["bigint", false],
+    selected_flavor_product_id: ["int", true],
+    selected_flavor_name: ["varchar(255)", true],
+  },
   products: {
     id: ["int", false], item_type: ["varchar(20)", false],
     quantity: ["decimal(14,4)", true], image: ["longtext", true],

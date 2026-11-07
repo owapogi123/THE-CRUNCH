@@ -117,7 +117,7 @@ function createReadOnlyFakeDb({
 
 (async () => {
   assert.equal(EXPECTED_TABLES.length, 49);
-  assert.equal(EXPECTED_INDEXES.length, 106);
+  assert.equal(EXPECTED_INDEXES.length, 108);
   assert.equal(EXPECTED_FOREIGN_KEYS.length, 33);
   assert.equal(Object.keys(EXPECTED_TRIGGERS).length, 2);
 
@@ -130,7 +130,7 @@ function createReadOnlyFakeDb({
   const db = createReadOnlyFakeDb();
   const result = await verifySchemaCompatibility(db, "thecrunch_updated_local");
   assert.equal(result.tableCount, 49);
-  assert.equal(result.indexCount, 106);
+  assert.equal(result.indexCount, 108);
   assert.equal(result.foreignKeyCount, 33);
   assert.equal(result.triggerCount, 2);
   assert.equal(result.orphanCount, 0);

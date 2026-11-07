@@ -432,6 +432,9 @@ CREATE TABLE IF NOT EXISTS order_item (
     Product_ID INT,
     Quantity INT NOT NULL,
     Subtotal DECIMAL(10,2),
+    selected_flavor_product_id INT NULL,
+    selected_flavor_name VARCHAR(255) NULL,
+    INDEX idx_order_item_selected_flavor (selected_flavor_product_id),
     FOREIGN KEY (Order_ID) REFERENCES orders(Order_ID),
     FOREIGN KEY (Product_ID) REFERENCES Menu(Product_ID)
 );
@@ -560,7 +563,9 @@ CREATE TABLE IF NOT EXISTS receipt_snapshot_items (
     receipt_item_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     order_id INT NOT NULL,
     original_product_id INT NULL,
+    selected_flavor_product_id INT NULL,
     product_name VARCHAR(255) NOT NULL,
+    selected_flavor_name VARCHAR(255) NULL,
     unit_price DECIMAL(12,2) NOT NULL,
     quantity INT NOT NULL,
     line_subtotal DECIMAL(12,2) NOT NULL,
@@ -764,6 +769,7 @@ CREATE TABLE IF NOT EXISTS inventory_units (
 CREATE TABLE IF NOT EXISTS menu_categories (
     category_id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(100) NOT NULL UNIQUE,
+    system_key VARCHAR(64) NULL UNIQUE,
     display_order INT NOT NULL DEFAULT 0,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -798,6 +804,16 @@ CREATE TABLE IF NOT EXISTS role_permissions (
 
     await connection.query(createStatements);
     log.log("Tables created.");
+
+    // Existing development databases reach the seed block before migrations.
+    // Add the discriminator now so the idempotent built-in category seed works
+    // for both fresh and already-created schemas.
+    await ensureColumn(
+      connection,
+      "menu_categories",
+      "system_key",
+      "`system_key` VARCHAR(64) NULL AFTER `name`",
+    );
 
     await ensureColumn(
       connection,
@@ -872,22 +888,31 @@ CREATE TABLE IF NOT EXISTS role_permissions (
       );
     }
 
-    for (const [name, displayOrder] of [
-      ["Menu Food", 1],
+    for (const [name, displayOrder, systemKey] of [
+      ["Menu Food", 1, "menu_food"],
       ["Beverages", 2],
       ["Desserts", 3],
       ["Combo Meals", 4],
       ["Snacks", 5],
       ["Promotional Items", 6],
+      ["Chicken Flavors", 7, "chicken_flavors"],
     ]) {
       await connection.query(
-        `INSERT INTO menu_categories (name, display_order, is_active)
-         SELECT ?, ?, TRUE
+        `INSERT INTO menu_categories (name, system_key, display_order, is_active)
+         SELECT ?, ?, ?, TRUE
          WHERE NOT EXISTS (
            SELECT 1 FROM menu_categories WHERE LOWER(name) = LOWER(?)
          )`,
-        [name, displayOrder, name],
+        [name, systemKey || null, displayOrder, name],
       );
+      if (systemKey) {
+        await connection.query(
+          `UPDATE menu_categories
+              SET system_key = ?, is_active = TRUE
+            WHERE LOWER(name) = LOWER(?)`,
+          [systemKey, name],
+        );
+      }
     }
 
     for (const [name, percentage] of [

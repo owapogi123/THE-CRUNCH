@@ -21,12 +21,21 @@ function parsePositiveInteger(value, fieldLabel) {
   return numeric;
 }
 
+function parseOptionalPositiveInteger(value, fieldLabel) {
+  if (value === null || value === undefined || value === "") return null;
+  return parsePositiveInteger(value, fieldLabel);
+}
+
+function getOrderItemIdentity(productId, selectedFlavorProductId = null) {
+  return `${Number(productId)}:${selectedFlavorProductId == null ? "" : Number(selectedFlavorProductId)}`;
+}
+
 function normalizeOrderItems(items) {
   if (!Array.isArray(items) || items.length === 0) {
     throw createOrderItemError("Order items are required");
   }
 
-  const quantitiesByProduct = new Map();
+  const quantitiesBySelection = new Map();
   for (const item of items) {
     const productId = parsePositiveInteger(
       item?.product_id ?? item?.productId ?? item?.id,
@@ -36,22 +45,35 @@ function normalizeOrderItems(items) {
       item?.qty ?? item?.quantity,
       `Quantity for product ${productId}`,
     );
+    const selectedFlavorProductId = parseOptionalPositiveInteger(
+      item?.selected_flavor_product_id ??
+        item?.selectedFlavorProductId ??
+        item?.flavor_product_id,
+      `Selected flavor product ID for product ${productId}`,
+    );
+    if (selectedFlavorProductId === productId) {
+      throw createOrderItemError(
+        `Product ${productId} cannot select itself as a chicken flavor`,
+      );
+    }
+    const identity = getOrderItemIdentity(productId, selectedFlavorProductId);
     const combinedQuantity =
-      Number(quantitiesByProduct.get(productId) || 0) + quantity;
+      Number(quantitiesBySelection.get(identity)?.qty || 0) + quantity;
     if (combinedQuantity > MAX_ORDER_ITEM_QUANTITY) {
       throw createOrderItemError(
         `Quantity for product ${productId} must not exceed ${MAX_ORDER_ITEM_QUANTITY}`,
       );
     }
-    quantitiesByProduct.set(productId, combinedQuantity);
+    quantitiesBySelection.set(identity, {
+      product_id: productId,
+      qty: combinedQuantity,
+      ...(selectedFlavorProductId == null
+        ? {}
+        : { selected_flavor_product_id: selectedFlavorProductId }),
+    });
   }
 
-  return Array.from(quantitiesByProduct.entries()).map(
-    ([productId, quantity]) => ({
-      product_id: productId,
-      qty: quantity,
-    }),
-  );
+  return Array.from(quantitiesBySelection.values());
 }
 
 async function loadAuthoritativeOrderItems(connection, items) {
@@ -106,6 +128,7 @@ async function loadAuthoritativeOrderItems(connection, items) {
 
 module.exports = {
   MAX_ORDER_ITEM_QUANTITY,
+  getOrderItemIdentity,
   loadAuthoritativeOrderItems,
   normalizeOrderItems,
 };

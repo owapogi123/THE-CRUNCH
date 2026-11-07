@@ -17,6 +17,7 @@ const poReceiptQuantitiesAndShelfLifeMonths = require("./migrations/2026-11-06_p
 const receiptCustomerIdentity = require("./migrations/2026-11-06_receipt-customer-identity");
 const paymongoCheckoutIntents = require("./migrations/2026-11-06_paymongo-checkout-intents");
 const paymongoWebhookEvents = require("./migrations/2026-11-06_paymongo-webhook-events");
+const chickenFlavorSelection = require("./migrations/2026-11-07_chicken-flavor-selection");
 
 const MIGRATIONS = [
   deploymentSchemaAlignment,
@@ -29,6 +30,7 @@ const MIGRATIONS = [
   receiptCustomerIdentity,
   paymongoCheckoutIntents,
   paymongoWebhookEvents,
+  chickenFlavorSelection,
 ];
 const LOCK_NAME = "the_crunch_schema_migrations";
 

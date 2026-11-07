@@ -389,6 +389,7 @@ router.get("/", (req, res) => runWithDbQueryTiming(async (queryTiming) => {
                 p.*,
                 ${itemTypeExpr} AS item_type,
                 m.Category_Name AS category,
+                mc.system_key AS category_system_key,
                 m.Promo AS inventoryPromo,
                 COALESCE(NULLIF(TRIM(i.unit), ''), 'piece') AS unit,
                 COALESCE(i.Stock, 0) AS stock,
@@ -401,6 +402,8 @@ router.get("/", (req, res) => runWithDbQueryTiming(async (queryTiming) => {
                 COALESCE(m.manual_status, 'Available') AS manual_status
              FROM products p
              LEFT JOIN Menu m ON m.Product_ID = p.id
+             LEFT JOIN menu_categories mc
+               ON LOWER(TRIM(mc.name)) = LOWER(TRIM(m.Category_Name))
              LEFT JOIN Inventory i ON i.Product_ID = p.id
                  ${whereClause}`,
                 values,
@@ -1256,6 +1259,7 @@ router.delete("/:id", requireInventoryManagerAccess, async (req, res) => {
                EXISTS(SELECT 1 FROM batches WHERE product_id = ? LIMIT 1) AS has_storage_batches,
                EXISTS(SELECT 1 FROM kitchen_batches WHERE product_id = ? LIMIT 1) AS has_kitchen_batches,
                EXISTS(SELECT 1 FROM order_item WHERE Product_ID = ? LIMIT 1) AS has_order_items,
+               EXISTS(SELECT 1 FROM order_item WHERE selected_flavor_product_id = ? LIMIT 1) AS has_flavor_order_items,
                EXISTS(SELECT 1 FROM purchase_order_items WHERE product_id = ? LIMIT 1) AS has_purchase_order_items,
                EXISTS(SELECT 1 FROM Stock_Status WHERE Product_ID = ? LIMIT 1) AS has_stock_history,
                EXISTS(SELECT 1 FROM receipt_snapshot_items WHERE original_product_id = ? LIMIT 1) AS has_receipt_history,
@@ -1269,7 +1273,7 @@ router.delete("/:id", requireInventoryManagerAccess, async (req, res) => {
                    WHERE menu_product_id = ? OR product_id = ?
                    LIMIT 1
                ) AS has_ingredient_link`,
-            Array(13).fill(productId),
+            Array(14).fill(productId),
         );
         if (Object.values(history || {}).some((value) => Number(value) !== 0)) {
             await conn.rollback();

@@ -93,6 +93,9 @@ function createExistingSchemaDb({ nullBatchCount = 0 } = {}) {
       if (/FROM information_schema\.COLUMNS/i.test(normalized)) {
         if (String(params[0]).toLowerCase() === "inventory") return [[]];
         if (String(params[0]).toLowerCase() === "purchase_order_items") return [[]];
+        if (["menu_categories", "order_item", "receipt_snapshot_items"].includes(
+          String(params[0]).toLowerCase(),
+        )) return [[]];
         if (/LOWER\(TABLE_NAME\) = 'receipt_snapshots'/i.test(normalized)) return [[]];
         if (String(params[0]).toLowerCase() === "batches") {
           return [[{
@@ -198,7 +201,7 @@ function createExistingSchemaDb({ nullBatchCount = 0 } = {}) {
         passwordResetCodeLength = 64;
         return [{ affectedRows: 0 }];
       }
-      if (/^(ALTER TABLE|INSERT INTO products)/i.test(normalized)) {
+      if (/^(ALTER TABLE|INSERT INTO products|INSERT INTO menu_categories|UPDATE menu_categories)/i.test(normalized)) {
         return [{ affectedRows: 0 }];
       }
       throw new Error(`Unexpected migration query: ${normalized}`);

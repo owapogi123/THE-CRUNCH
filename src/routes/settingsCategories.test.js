@@ -15,6 +15,13 @@ const categoryTables = {
     { category_id: 1, name: "Snack", display_order: 1, is_active: 1 },
     { category_id: 2, name: "Drinks", display_order: 2, is_active: 1 },
     { category_id: 3, name: "Seasonal", display_order: 3, is_active: 1 },
+    {
+      category_id: 4,
+      name: "Chicken Flavors",
+      system_key: "chicken_flavors",
+      display_order: 4,
+      is_active: 1,
+    },
   ],
   inventory_categories: [
     {
@@ -78,7 +85,7 @@ const connection = {
         ? "menu_categories"
         : null;
 
-    if (normalized.startsWith("SELECT name FROM") && normalized.endsWith("FOR UPDATE")) {
+    if (normalized.startsWith("SELECT name") && normalized.endsWith("FOR UPDATE")) {
       return [[cloneRow(rowFor(tableName, params[0]))].filter(Boolean)];
     }
     if (normalized.startsWith("SELECT category_id FROM") && normalized.includes("category_id <> ?")) {
@@ -269,6 +276,24 @@ async function deleteCategory(baseUrl, path, role = "administrator") {
       "cashier",
     );
     assert.equal(unauthorized.status, 403);
+
+    const protectedRename = await patchCategory(
+      baseUrl,
+      "menu-categories/4",
+      { name: "Sauce Choices" },
+    );
+    assert.equal(protectedRename.status, 409);
+    assert.equal((await protectedRename.json()).code, "SYSTEM_CATEGORY_PROTECTED");
+    const protectedDisable = await patchCategory(
+      baseUrl,
+      "menu-categories/4",
+      { is_active: false },
+    );
+    assert.equal(protectedDisable.status, 409);
+    assert.equal(Number(rowFor("menu_categories", 4).is_active), 1);
+    const protectedDelete = await deleteCategory(baseUrl, "menu-categories/4");
+    assert.equal(protectedDelete.status, 409);
+    assert.equal((await protectedDelete.json()).code, "SYSTEM_CATEGORY_PROTECTED");
 
     const menuRename = await patchCategory(baseUrl, "menu-categories/1", {
       name: "Snacks",

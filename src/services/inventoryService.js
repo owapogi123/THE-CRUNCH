@@ -10,6 +10,11 @@ const {
   getProductItemTypeExpression,
 } = require("../utils/productItemType");
 const { normalizeOrderItems } = require("./orderItemService");
+const {
+  CHICKEN_FLAVORS_SYSTEM_KEY,
+  MENU_FOOD_SYSTEM_KEY,
+  normalizeSystemKey,
+} = require("./systemMenuCategoryService");
 
 function normalizePaymentStatus(value) {
   const v = String(value || "").toLowerCase().trim();
@@ -272,11 +277,27 @@ async function getOrderIngredientDeductions(
      FROM order_item oi
      LEFT JOIN Menu m ON m.Product_ID = oi.Product_ID
      LEFT JOIN products p ON p.id = oi.Product_ID
-     WHERE oi.Order_ID = ?`,
-    [orderId],
+     WHERE oi.Order_ID = ?
+     UNION ALL
+     SELECT
+       oi.selected_flavor_product_id AS productId,
+       oi.Quantity AS quantity,
+       COALESCE(oi.selected_flavor_name, m.Product_Name, p.name,
+         CONCAT('Product #', oi.selected_flavor_product_id)) AS product_name,
+       COALESCE(m.manual_override, 0) AS manual_override,
+       COALESCE(m.manual_status, 'Available') AS manual_status,
+       ${orderedItemTypeExpr} AS item_type
+     FROM order_item oi
+     LEFT JOIN Menu m ON m.Product_ID = oi.selected_flavor_product_id
+     LEFT JOIN products p ON p.id = oi.selected_flavor_product_id
+     WHERE oi.Order_ID = ?
+       AND oi.selected_flavor_product_id IS NOT NULL`,
+    [orderId, orderId],
   );
 
-  return buildStockRequirements(items, connection, { enforceAutoRecipe });
+  return buildStockRequirements(items, connection, {
+    enforceAutoRecipe,
+  });
 }
 
 async function lockAndValidateStockRequirements(connection, deductions) {
@@ -330,9 +351,24 @@ async function lockAndValidateStockRequirements(connection, deductions) {
   }
 }
 
-async function prepareOrderItemsAndStock(connection, items) {
-  const normalizedItems = normalizeOrderItems(items);
-  const productIds = normalizedItems.map((item) => item.product_id);
+async function prepareOrderItemsAndStock(
+  connection,
+  items,
+  { requireChickenFlavorForMenuFood = false } = {},
+) {
+  const requestedItems = normalizeOrderItems(items);
+  const recipeItems = requestedItems.flatMap((item, selectionIndex) => [
+    { ...item, selectionIndex, selectionRole: "base" },
+    ...(item.selected_flavor_product_id
+      ? [{
+          product_id: item.selected_flavor_product_id,
+          qty: item.qty,
+          selectionIndex,
+          selectionRole: "flavor",
+        }]
+      : []),
+  ]);
+  const productIds = [...new Set(recipeItems.map((item) => item.product_id))];
   await ensureProductsItemTypeSchema(connection);
 
   await connection.query(
@@ -364,6 +400,7 @@ async function prepareOrderItemsAndStock(connection, items) {
        p.availability_status AS availabilityStatus,
        COALESCE(m.manual_override, 0) AS manualOverride,
        COALESCE(m.manual_status, 'Available') AS manualStatus,
+       mc.system_key AS categorySystemKey,
        ${orderedItemTypeExpr} AS itemType,
        mi.product_id AS ingredientProductId,
        mi.quantity_required AS ingredientQuantityRequired,
@@ -377,6 +414,8 @@ async function prepareOrderItemsAndStock(connection, items) {
        COALESCE(inventory.Stock, 0) AS availableStock
      FROM products p
      LEFT JOIN Menu m ON m.Product_ID = p.id
+     LEFT JOIN menu_categories mc
+       ON LOWER(TRIM(mc.name)) = LOWER(TRIM(m.Category_Name))
      LEFT JOIN menu_item_ingredients mi ON mi.menu_product_id = p.id
      LEFT JOIN products target_product
        ON target_product.id = COALESCE(mi.product_id, p.id)
@@ -399,7 +438,7 @@ async function prepareOrderItemsAndStock(connection, items) {
   }
 
   const deductions = new Map();
-  const authoritativeItems = normalizedItems.map((item) => {
+  const preparedRecipeItems = recipeItems.map((item) => {
     const productRows = rowsByProduct.get(item.product_id) ?? [];
     if (productRows.length === 0) {
       const error = new Error(`Unknown product_id ${item.product_id}`);
@@ -407,6 +446,29 @@ async function prepareOrderItemsAndStock(connection, items) {
       throw error;
     }
     const product = productRows[0];
+    const categorySystemKey = normalizeSystemKey(product.categorySystemKey);
+    if (
+      item.selectionRole === "flavor" &&
+      categorySystemKey !== CHICKEN_FLAVORS_SYSTEM_KEY
+    ) {
+      const error = new Error(
+        `Product ${item.product_id} is not an eligible chicken flavor.`,
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+    if (
+      item.selectionRole === "base" &&
+      requireChickenFlavorForMenuFood &&
+      categorySystemKey === MENU_FOOD_SYSTEM_KEY &&
+      !item.selected_flavor_product_id
+    ) {
+      const error = new Error(
+        `Choose one chicken flavor for "${product.productName}" before checkout.`,
+      );
+      error.statusCode = 400;
+      throw error;
+    }
     if (
       String(product.availabilityStatus || "")
         .trim()
@@ -492,6 +554,34 @@ async function prepareOrderItemsAndStock(connection, items) {
       name: String(product.productName || `Product #${item.product_id}`),
       price,
       subtotal: price * item.qty,
+      selectionIndex: item.selectionIndex,
+      selectionRole: item.selectionRole,
+    };
+  });
+
+  const authoritativeItems = requestedItems.map((item, selectionIndex) => {
+    const base = preparedRecipeItems.find(
+      (prepared) =>
+        prepared.selectionIndex === selectionIndex &&
+        prepared.selectionRole === "base",
+    );
+    const flavor = preparedRecipeItems.find(
+      (prepared) =>
+        prepared.selectionIndex === selectionIndex &&
+        prepared.selectionRole === "flavor",
+    );
+    return {
+      product_id: base.product_id,
+      qty: base.qty,
+      name: base.name,
+      price: base.price,
+      subtotal: base.subtotal,
+      ...(flavor
+        ? {
+            selected_flavor_product_id: flavor.product_id,
+            selected_flavor_name: flavor.name,
+          }
+        : {}),
     };
   });
 
@@ -1013,6 +1103,7 @@ module.exports = {
   deductStockForOrder,
   deductStockForPaidOrder,
   deductPrevalidatedStockForPaidOrder,
+  getOrderIngredientDeductions,
   prepareOrderItemsAndStock,
   restoreStockForRefundedOrder,
   validateStockForOrderItems,

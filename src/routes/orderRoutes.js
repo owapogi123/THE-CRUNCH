@@ -15,6 +15,7 @@ const {
   restoreStockForRefundedOrder,
 } = require("../services/inventoryService");
 const {
+  getOrderItemIdentity,
   normalizeOrderItems,
 } = require("../services/orderItemService");
 const {
@@ -482,6 +483,8 @@ router.get("/", requireCookViewAccess, requireSalesReportAccess, async (req, res
          oi.Product_ID     AS productId,
          oi.Quantity       AS quantity,
          oi.Subtotal       AS subtotal,
+         oi.selected_flavor_product_id AS selectedFlavorProductId,
+         oi.selected_flavor_name AS selectedFlavorName,
          COALESCE(m.Product_Name, pr.name) AS productName,
          COALESCE(m.Price,        pr.price) AS price,
          COALESCE(u.username, c.UserName) AS cashierName,
@@ -541,6 +544,8 @@ router.get("/queue", requireCookViewAccess, async (req, res) => {
          p.Payment_Status AS paymentRecordStatus,
          oi.Quantity  AS quantity,
          m.Product_Name AS productName,
+         oi.selected_flavor_product_id AS selectedFlavorProductId,
+         oi.selected_flavor_name AS selectedFlavorName,
          (SELECT snapshot.order_note
             FROM receipt_snapshots snapshot
            WHERE snapshot.order_id = o.Order_ID
@@ -549,6 +554,7 @@ router.get("/queue", requireCookViewAccess, async (req, res) => {
             FROM receipt_snapshot_items snapshot_item
            WHERE snapshot_item.order_id = o.Order_ID
              AND snapshot_item.original_product_id = oi.Product_ID
+             AND snapshot_item.selected_flavor_product_id <=> oi.selected_flavor_product_id
            LIMIT 1) AS itemNote
        FROM orders o
        LEFT JOIN order_item oi ON oi.Order_ID = o.Order_ID
@@ -627,6 +633,11 @@ router.get("/queue", requireCookViewAccess, async (req, res) => {
         grouped[r.id].items.push({
           quantity: Number(r.quantity) || 0,
           name: r.productName,
+          selectedFlavorProductId:
+            r.selectedFlavorProductId == null
+              ? null
+              : Number(r.selectedFlavorProductId),
+          selectedFlavorName: r.selectedFlavorName || null,
           note: r.itemNote ? String(r.itemNote) : null,
         });
       }
@@ -683,7 +694,9 @@ router.get("/new-online", requireCookViewAccess, async (req, res) => {
            LIMIT 1
          ) AS paymentRecordStatus,
          oi.Quantity       AS quantity,
-         COALESCE(m.Product_Name, pr.name) AS productName
+         COALESCE(m.Product_Name, pr.name) AS productName,
+         oi.selected_flavor_product_id AS selectedFlavorProductId,
+         oi.selected_flavor_name AS selectedFlavorName
        FROM orders o
        LEFT JOIN order_item oi ON oi.Order_ID  = o.Order_ID
        LEFT JOIN Menu      m  ON m.Product_ID  = oi.Product_ID
@@ -714,6 +727,8 @@ router.get("/new-online", requireCookViewAccess, async (req, res) => {
         grouped[r.id].items.push({
           name: r.productName,
           quantity: Number(r.quantity) || 0,
+          selectedFlavorProductId: r.selectedFlavorProductId == null ? null : Number(r.selectedFlavorProductId),
+          selectedFlavorName: r.selectedFlavorName || null,
         });
       }
     }
@@ -750,7 +765,9 @@ router.get("/ready-pickup", requireCookViewAccess, async (req, res) => {
          o.handoverTimestamp AS handoverTimestamp,
          o.riderName       AS riderName,
          oi.Quantity       AS quantity,
-         COALESCE(m.Product_Name, pr.name) AS productName
+         COALESCE(m.Product_Name, pr.name) AS productName,
+         oi.selected_flavor_product_id AS selectedFlavorProductId,
+         oi.selected_flavor_name AS selectedFlavorName
        FROM orders o
        LEFT JOIN order_item oi ON oi.Order_ID  = o.Order_ID
        LEFT JOIN Menu      m  ON m.Product_ID  = oi.Product_ID
@@ -784,6 +801,8 @@ router.get("/ready-pickup", requireCookViewAccess, async (req, res) => {
         grouped[r.id].items.push({
           name: r.productName,
           quantity: Number(r.quantity) || 0,
+          selectedFlavorProductId: r.selectedFlavorProductId == null ? null : Number(r.selectedFlavorProductId),
+          selectedFlavorName: r.selectedFlavorName || null,
         });
       }
     }
@@ -825,7 +844,9 @@ router.get("/delivery-handover", requireCookViewAccess, async (req, res) => {
          o.handoverTimestamp AS handoverTimestamp,
          o.riderName         AS riderName,
          oi.Quantity         AS quantity,
-         COALESCE(m.Product_Name, pr.name) AS productName
+         COALESCE(m.Product_Name, pr.name) AS productName,
+         oi.selected_flavor_product_id AS selectedFlavorProductId,
+         oi.selected_flavor_name AS selectedFlavorName
        FROM orders o
        LEFT JOIN order_item oi ON oi.Order_ID  = o.Order_ID
        LEFT JOIN Menu      m  ON m.Product_ID  = oi.Product_ID
@@ -861,6 +882,8 @@ router.get("/delivery-handover", requireCookViewAccess, async (req, res) => {
         grouped[r.id].items.push({
           name: r.productName,
           quantity: Number(r.quantity) || 0,
+          selectedFlavorProductId: r.selectedFlavorProductId == null ? null : Number(r.selectedFlavorProductId),
+          selectedFlavorName: r.selectedFlavorName || null,
         });
       }
     }
@@ -906,7 +929,9 @@ router.get("/customer/:customerUserId", requireAuthenticatedUser, async (req, re
          o.payment_method AS storedPaymentMethod,
          p.Payment_Type AS paymentMethod,
          oi.Quantity AS quantity,
-         COALESCE(m.Product_Name, pr.name) AS productName
+         COALESCE(m.Product_Name, pr.name) AS productName,
+         oi.selected_flavor_product_id AS selectedFlavorProductId,
+         oi.selected_flavor_name AS selectedFlavorName
        FROM orders o
        LEFT JOIN order_item oi ON oi.Order_ID = o.Order_ID
        LEFT JOIN Menu m ON m.Product_ID = oi.Product_ID
@@ -951,6 +976,8 @@ router.get("/customer/:customerUserId", requireAuthenticatedUser, async (req, re
         grouped[row.id].items.push({
           name: row.productName,
           quantity: Number(row.quantity) || 0,
+          selectedFlavorProductId: row.selectedFlavorProductId == null ? null : Number(row.selectedFlavorProductId),
+          selectedFlavorName: row.selectedFlavorName || null,
         });
       }
     }
@@ -1017,6 +1044,8 @@ router.get("/shift", requireCookViewAccess, async (req, res) => {
            NULLIF(TRIM(product.name), ''),
            CONCAT('Product #', order_item.Product_ID)
          ) AS productName,
+         COALESCE(snapshot_item.selected_flavor_product_id, order_item.selected_flavor_product_id) AS selectedFlavorProductId,
+         COALESCE(snapshot_item.selected_flavor_name, order_item.selected_flavor_name) AS selectedFlavorName,
          COALESCE(snapshot_item.quantity, order_item.Quantity) AS quantity,
          CASE
            WHEN snapshot_item.receipt_item_id IS NOT NULL THEN snapshot_item.unit_price
@@ -1082,6 +1111,8 @@ router.get("/shift", requireCookViewAccess, async (req, res) => {
           name: row.productName || "Historical product name unavailable",
           quantity: Number(row.quantity) || 0,
           price: Number(row.price) || 0,
+          selectedFlavorProductId: row.selectedFlavorProductId == null ? null : Number(row.selectedFlavorProductId),
+          selectedFlavorName: row.selectedFlavorName || null,
         });
       }
     }
@@ -1593,11 +1624,18 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
     const stockPlan = await runOrderStage(
       req,
       "load items and lock stock",
-      () => prepareOrderItemsAndStock(conn, validatedItems),
+      () => prepareOrderItemsAndStock(conn, validatedItems, {
+        requireChickenFlavorForMenuFood: isStaffOrderActor,
+      }),
     );
     authoritativeItems = stockPlan.authoritativeItems.map((item) => ({
       ...item,
-      note: itemNotesByProduct.get(item.product_id) || null,
+      note: itemNotesByProduct.get(
+        getOrderItemIdentity(
+          item.product_id,
+          item.selected_flavor_product_id ?? null,
+        ),
+      ) || null,
     }));
     const subtotalAmount = authoritativeItems.reduce(
       (sum, item) => sum + item.subtotal,
@@ -1714,16 +1752,20 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
     const orderId = orderResult.insertId;
 
     const itemValuesSql = authoritativeItems
-      .map(() => "(?, ?, ?, ?)")
+      .map(() => "(?, ?, ?, ?, ?, ?)")
       .join(", ");
     const itemValues = authoritativeItems.flatMap((item) => [
       orderId,
       item.product_id,
       item.qty,
       item.subtotal,
+      item.selected_flavor_product_id ?? null,
+      item.selected_flavor_name ?? null,
     ]);
     await runOrderStage(req, "insert order items", () => conn.query(
-      `INSERT INTO order_item (Order_ID, Product_ID, Quantity, Subtotal)
+      `INSERT INTO order_item
+         (Order_ID, Product_ID, Quantity, Subtotal,
+          selected_flavor_product_id, selected_flavor_name)
        VALUES ${itemValuesSql}`,
       itemValues,
     ));

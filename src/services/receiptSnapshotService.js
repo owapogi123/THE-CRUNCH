@@ -2,6 +2,7 @@ const {
   formatOrderNumber,
   formatTransactionId,
 } = require("./orderIdentifierService");
+const { getOrderItemIdentity } = require("./orderItemService");
 
 const MAX_NOTE_LENGTH = 2000;
 
@@ -27,12 +28,21 @@ function collectOrderItemNotes(items) {
   const notes = new Map();
   for (const item of Array.isArray(items) ? items : []) {
     const productId = Number(item?.product_id ?? item?.productId ?? item?.id);
+    const selectedFlavorProductId = Number(
+      item?.selected_flavor_product_id ?? item?.selectedFlavorProductId,
+    );
     const note = cleanText(item?.note ?? item?.notes ?? item?.modifier);
     if (!Number.isSafeInteger(productId) || productId <= 0 || !note) continue;
-    const existing = notes.get(productId);
-    if (!existing) notes.set(productId, note);
+    const identity = getOrderItemIdentity(
+      productId,
+      Number.isSafeInteger(selectedFlavorProductId) && selectedFlavorProductId > 0
+        ? selectedFlavorProductId
+        : null,
+    );
+    const existing = notes.get(identity);
+    if (!existing) notes.set(identity, note);
     else if (!existing.split("; ").includes(note)) {
-      notes.set(productId, `${existing}; ${note}`.slice(0, MAX_NOTE_LENGTH));
+      notes.set(identity, `${existing}; ${note}`.slice(0, MAX_NOTE_LENGTH));
     }
   }
   return notes;
@@ -53,6 +63,12 @@ function snapshotDtoFromValues(values) {
       unitPrice: money(item.unitPrice ?? item.price),
       subtotal: money(item.subtotal),
       note: cleanText(item.note),
+      selectedFlavorProductId:
+        numeric(item.selectedFlavorProductId ?? item.selected_flavor_product_id),
+      selectedFlavorName: cleanText(
+        item.selectedFlavorName ?? item.selected_flavor_name,
+        255,
+      ),
     })),
     subtotal: money(values.subtotal),
     discount: {
@@ -151,11 +167,15 @@ async function createReceiptSnapshot(connection, values) {
   if (!Array.isArray(values.items) || values.items.length === 0) {
     throw new Error("A receipt snapshot requires at least one item");
   }
-  const itemPlaceholders = values.items.map(() => "(?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
+  const itemPlaceholders = values.items
+    .map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .join(", ");
   const itemParameters = values.items.flatMap((item, index) => [
     values.orderId,
     item.product_id,
+    item.selected_flavor_product_id ?? null,
     String(item.name || `Product #${item.product_id}`).slice(0, 255),
+    cleanText(item.selected_flavor_name, 255),
     money(item.price),
     Number(item.qty),
     money(item.subtotal),
@@ -164,8 +184,8 @@ async function createReceiptSnapshot(connection, values) {
   ]);
   await connection.query(
     `INSERT INTO receipt_snapshot_items
-       (order_id, original_product_id, product_name, unit_price, quantity,
-        line_subtotal, item_note, sort_order)
+       (order_id, original_product_id, selected_flavor_product_id, product_name,
+        selected_flavor_name, unit_price, quantity, line_subtotal, item_note, sort_order)
      VALUES ${itemPlaceholders}`,
     itemParameters,
   );
@@ -191,6 +211,8 @@ function snapshotDtoFromRows(rows) {
         unitPrice: row.unitPrice,
         subtotal: row.lineSubtotal,
         note: row.itemNote,
+        selectedFlavorProductId: row.selectedFlavorProductId,
+        selectedFlavorName: row.selectedFlavorName,
       })),
     subtotal: header.subtotal,
     discountName: header.discountName,
@@ -257,6 +279,8 @@ async function loadSnapshotReceipt(connection, orderId) {
        o.payment_status AS currentPaymentStatus,
        i.receipt_item_id AS receiptItemId,
        i.product_name AS productName,
+       i.selected_flavor_product_id AS selectedFlavorProductId,
+       i.selected_flavor_name AS selectedFlavorName,
        i.unit_price AS unitPrice,
        i.quantity,
        i.line_subtotal AS lineSubtotal,
@@ -286,6 +310,8 @@ async function loadLegacyReceipt(connection, orderId) {
        oi.Order_Item_ID AS orderItemId,
        oi.Quantity AS quantity,
        oi.Subtotal AS lineSubtotal,
+       oi.selected_flavor_product_id AS selectedFlavorProductId,
+       oi.selected_flavor_name AS selectedFlavorName,
        COALESCE(NULLIF(TRIM(m.Product_Name), ''), NULLIF(TRIM(pr.name), '')) AS currentProductName
      FROM orders o
      LEFT JOIN order_item oi ON oi.Order_ID = o.Order_ID
@@ -321,6 +347,8 @@ async function loadLegacyReceipt(connection, orderId) {
             : null,
         subtotal: lineSubtotal,
         note: null,
+        selectedFlavorProductId: row.selectedFlavorProductId,
+        selectedFlavorName: cleanText(row.selectedFlavorName, 255),
       };
     });
   const supportedSubtotal = items.length > 0 && items.every((item) => item.subtotal !== null)

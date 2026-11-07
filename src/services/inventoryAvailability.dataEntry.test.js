@@ -53,6 +53,39 @@ function productRow(overrides = {}) {
   assert.equal(valid.authoritativeItems[0].subtotal, 198);
   assert.equal(valid.deductions.get(21).requiredQty, 4);
 
+  const mealWithFlavor = await prepareOrderItemsAndStock(
+    connectionFor([
+      productRow({ categorySystemKey: "menu_food" }),
+      productRow({
+        productId: 30,
+        productName: "Dynamic Test Flavor",
+        currentPrice: 15,
+        categorySystemKey: "chicken_flavors",
+        ingredientQuantityRequired: 0.5,
+      }),
+    ]),
+    [{ product_id: 7, qty: 2, selected_flavor_product_id: 30 }],
+    { requireChickenFlavorForMenuFood: true },
+  );
+  assert.equal(mealWithFlavor.authoritativeItems.length, 1);
+  assert.equal(mealWithFlavor.authoritativeItems[0].subtotal, 198);
+  assert.equal(mealWithFlavor.authoritativeItems[0].selected_flavor_product_id, 30);
+  assert.equal(mealWithFlavor.authoritativeItems[0].selected_flavor_name, "Dynamic Test Flavor");
+  assert.equal(
+    mealWithFlavor.deductions.get(21).requiredQty,
+    5,
+    "base and flavor recipes sharing an ingredient must be summed once",
+  );
+
+  await assert.rejects(
+    () => prepareOrderItemsAndStock(
+      connectionFor([productRow({ categorySystemKey: "menu_food" })]),
+      [{ product_id: 7, qty: 1 }],
+      { requireChickenFlavorForMenuFood: true },
+    ),
+    /Choose one chicken flavor/i,
+  );
+
   const sharedDecimalIngredient = await prepareOrderItemsAndStock(
     connectionFor([
       productRow({ ingredientQuantityRequired: 0.1255 }),
