@@ -13,6 +13,9 @@ const allowedOrigins = [
   "https://the-crunch.pages.dev",
   "https://thecrunch.site",
   "https://www.thecrunch.site",
+  // Authorized Vercel preview deployments (do not allow arbitrary *.vercel.app).
+  "https://the-crunch-2mt1rxxrd-jaycii0007s-projects.vercel.app",
+  "https://the-crunch-ojek6fmq7-jaycii0007s-projects.vercel.app",
 ];
 
 // Middleware
@@ -141,7 +144,10 @@ const readinessHandler = async (_req, res) => {
     res.json({ status: "ready", database: "reachable" });
   } catch (error) {
     console.error("Database readiness check failed:", {
-      code: error && (error.code || error.name) ? error.code || error.name : "UNKNOWN_ERROR",
+      code:
+        error && (error.code || error.name)
+          ? error.code || error.name
+          : "UNKNOWN_ERROR",
     });
     res.status(503).json({ status: "unavailable", database: "unreachable" });
   }
