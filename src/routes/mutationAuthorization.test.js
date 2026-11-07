@@ -21,10 +21,10 @@ const routeCases = [
   [require("./settingsRoutes"), "put", "/permissions", "administrator", "permission writes"],
   [require("./settingsRoutes"), "post", "/inventory-categories", "administrator", "category writes"],
   [require("./settingsRoutes"), "patch", "/inventory-categories/:id", "administrator", "inventory category updates"],
-  [require("./settingsRoutes"), "delete", "/inventory-categories/:id", "administrator", "inventory category deactivation"],
+  [require("./settingsRoutes"), "delete", "/inventory-categories/:id", "administrator", "inventory category deletion"],
   [require("./settingsRoutes"), "post", "/menu-categories", "administrator", "menu category writes"],
   [require("./settingsRoutes"), "patch", "/menu-categories/:id", "administrator", "menu category updates"],
-  [require("./settingsRoutes"), "delete", "/menu-categories/:id", "administrator", "menu category deactivation"],
+  [require("./settingsRoutes"), "delete", "/menu-categories/:id", "administrator", "menu category deletion"],
   [require("./settingsRoutes"), "post", "/discount-types", "administrator", "discount writes"],
   [require("./settingsRoutes"), "post", "/inventory-units", "administrator", "unit writes"],
 ];

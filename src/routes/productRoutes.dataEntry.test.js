@@ -8,6 +8,7 @@ const state = {
   commits: 0,
   rollbacks: 0,
   failInventoryInsert: false,
+  categoryExists: true,
 };
 
 function reset() {
@@ -18,6 +19,7 @@ function reset() {
   state.commits = 0;
   state.rollbacks = 0;
   state.failInventoryInsert = false;
+  state.categoryExists = true;
 }
 
 function snapshot() {
@@ -69,6 +71,12 @@ function connection() {
       if (query.startsWith("SELECT item_type, price, name, quantity FROM products")) {
         const product = state.products.find((entry) => entry.id === Number(params[0]));
         return [product ? [product] : []];
+      }
+      if (
+        query.startsWith("SELECT category_id FROM menu_categories") ||
+        query.startsWith("SELECT category_id FROM inventory_categories")
+      ) {
+        return [state.categoryExists ? [{ category_id: 1 }] : []];
       }
       if (query.startsWith("INSERT INTO products")) {
         const id = state.products.length + 1;
@@ -242,6 +250,14 @@ function validProduct(overrides = {}) {
   assert.equal(state.products.length, 1);
   assert.equal(state.menu.length, 1);
   assert.equal(state.inventory.length, 1);
+
+  reset();
+  state.categoryExists = false;
+  const deletedCategory = await invoke(validProduct());
+  assert.equal(deletedCategory.statusCode, 409);
+  assert.match(deletedCategory.body.message, /no longer exists/i);
+  assert.equal(state.rollbacks, 1);
+  assert.equal(state.products.length, 0);
 
   reset();
   state.failInventoryInsert = true;

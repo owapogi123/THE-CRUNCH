@@ -81,6 +81,34 @@ function normalizeProductCategory(value, { required = false } = {}) {
     return normalized;
 }
 
+async function lockConfiguredCategoryForAssignment(
+    connection,
+    categoryName,
+    itemType,
+) {
+    const normalizedName = String(categoryName ?? "").trim();
+    if (!normalizedName) return;
+    const tableName = itemType === MENU_ITEM
+        ? "menu_categories"
+        : "inventory_categories";
+    const label = itemType === MENU_ITEM ? "Menu" : "Inventory";
+    const [rows] = await connection.query(
+        `SELECT category_id
+         FROM ${tableName}
+         WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))
+         LIMIT 1
+         LOCK IN SHARE MODE`,
+        [normalizedName],
+    );
+    if (rows.length === 0) {
+        const error = new Error(
+            `${label} category "${normalizedName}" no longer exists. Refresh the category list and choose another category.`,
+        );
+        error.statusCode = 409;
+        throw error;
+    }
+}
+
 function normalizeInventoryUnit(value) {
     const normalized = String(value ?? "").trim();
     if (!normalized) {
@@ -583,6 +611,11 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
 
         conn = await db.getConnection();
         await conn.beginTransaction();
+        await lockConfiguredCategoryForAssignment(
+            conn,
+            normalizedProductCategory,
+            normalizedItemType,
+        );
         await assertUniqueProductName(conn, normalizedName);
 
         const [result] = await conn.query(
@@ -766,6 +799,7 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
         const productValues = [];
         const menuFields = [];
         const menuValues = [];
+        let normalizedCategoryForLock = null;
         const inventoryFields = [];
         const inventoryValues = [];
 
@@ -951,6 +985,7 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
             });
             menuFields.push("Category_Name = ?");
             menuValues.push(normalizedProductCategory);
+            normalizedCategoryForLock = normalizedProductCategory;
         }
 
         if (
@@ -964,6 +999,14 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
 
         conn = await db.getConnection();
         await conn.beginTransaction();
+
+        if (category !== undefined) {
+            await lockConfiguredCategoryForAssignment(
+                conn,
+                normalizedCategoryForLock,
+                effectiveTargetItemType,
+            );
+        }
 
         if (name !== undefined) {
             await assertUniqueProductName(conn, productValues[0], productId);

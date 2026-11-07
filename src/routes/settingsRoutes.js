@@ -251,6 +251,111 @@ function categoryErrorStatus(error) {
   return isCategoryValidationError(error) ? 400 : 500;
 }
 
+function parseStoredSettings(rows) {
+  if (!rows?.length || !rows[0]?.settings_json) return {};
+  try {
+    const parsed = JSON.parse(rows[0].settings_json);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function deleteUnusedCategory(req, res, definition) {
+  let connection;
+  let transactionStarted = false;
+  try {
+    const categoryId = Number(req.params.id);
+    if (!Number.isSafeInteger(categoryId) || categoryId <= 0) {
+      return res.status(400).json({ message: "Invalid category id" });
+    }
+
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    transactionStarted = true;
+
+    const [categoryRows] = await connection.query(
+      `SELECT name
+       FROM ${definition.tableName}
+       WHERE category_id = ?
+       FOR UPDATE`,
+      [categoryId],
+    );
+    if (categoryRows.length === 0) {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(404).json({ message: `${definition.label} not found` });
+    }
+
+    const categoryName = String(categoryRows[0].name);
+    const [assignments] = await connection.query(
+      `SELECT m.Product_ID
+       FROM Menu m
+       INNER JOIN products p ON p.id = m.Product_ID
+       WHERE LOWER(TRIM(COALESCE(m.Category_Name, ''))) = LOWER(TRIM(?))
+         AND LOWER(TRIM(COALESCE(p.item_type, ''))) = ?
+       FOR UPDATE`,
+      [categoryName, definition.itemType],
+    );
+
+    if (assignments.length > 0) {
+      await connection.rollback();
+      transactionStarted = false;
+      const count = assignments.length;
+      const recordLabel = count === 1
+        ? definition.singularAssignment
+        : definition.pluralAssignment;
+      return res.status(409).json({
+        code: "CATEGORY_IN_USE",
+        dependency_count: count,
+        message: `Cannot delete ${categoryName} because ${count} ${recordLabel} assigned to this category. Reassign ${count === 1 ? "it" : definition.pluralReassignment} before deleting.`,
+      });
+    }
+
+    const [result] = await connection.query(
+      `DELETE FROM ${definition.tableName} WHERE category_id = ?`,
+      [categoryId],
+    );
+    if (result.affectedRows !== 1) {
+      throw new Error(`Failed to delete ${definition.label.toLowerCase()}`);
+    }
+
+    await connection.commit();
+    transactionStarted = false;
+    await invalidateProductCache(`${definition.label.toLowerCase()} deleted`);
+    return res.json({ success: true, category_id: categoryId, name: categoryName });
+  } catch (error) {
+    if (connection && transactionStarted) await connection.rollback();
+    console.error(`DELETE /api/settings/${definition.routeLabel}/:id error:`, error);
+    return res.status(500).json({
+      message: `Failed to delete ${definition.label.toLowerCase()}`,
+      error: error.message,
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+}
+
+const MENU_CATEGORY_DELETION = Object.freeze({
+  tableName: "menu_categories",
+  itemType: "menu_item",
+  label: "Menu category",
+  routeLabel: "menu-categories",
+  singularAssignment: "menu product is",
+  pluralAssignment: "menu products are",
+  pluralReassignment: "those products",
+});
+
+const INVENTORY_CATEGORY_DELETION = Object.freeze({
+  tableName: "inventory_categories",
+  itemType: "stock_item",
+  label: "Inventory category",
+  routeLabel: "inventory-categories",
+  singularAssignment: "inventory material is",
+  pluralAssignment: "inventory materials are",
+  pluralReassignment: "those materials",
+});
+
 function normalizeOptionalString(value) {
   const normalized = String(value ?? "").trim();
   return normalized || null;
@@ -599,7 +704,15 @@ router.get("/", async (_req, res) => {
 
 router.post("/", requireAdministratorAccess, async (req, res) => {
   try {
-    const sanitized = sanitizeSettingsPayload(req.body);
+    const [rows] = await db.query(
+      `SELECT settings_json
+       FROM system_settings
+       WHERE setting_key = 'restaurant_settings'
+       LIMIT 1`,
+    );
+    const current = parseStoredSettings(rows);
+    const incoming = req.body && typeof req.body === "object" ? req.body : {};
+    const sanitized = sanitizeSettingsPayload({ ...current, ...incoming });
     await db.query(
       `INSERT INTO system_settings (setting_key, settings_json)
        VALUES ('restaurant_settings', ?)
@@ -1097,32 +1210,9 @@ router.patch("/menu-categories/:id", requireAdministratorAccess, async (req, res
   }
 });
 
-router.delete("/menu-categories/:id", requireAdministratorAccess, async (req, res) => {
-  try {
-    const categoryId = Number(req.params.id);
-    if (!Number.isFinite(categoryId) || categoryId <= 0) {
-      return res.status(400).json({ message: "Invalid category id" });
-    }
-
-    const [result] = await db.query(
-      `UPDATE menu_categories
-       SET is_active = FALSE
-       WHERE category_id = ?`,
-      [categoryId],
-    );
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: "Menu category not found" });
-    }
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error("DELETE /api/settings/menu-categories/:id error:", error);
-    res.status(500).json({
-      message: "Failed to disable menu category",
-      error: error.message,
-    });
-  }
-});
+router.delete("/menu-categories/:id", requireAdministratorAccess, (req, res) =>
+  deleteUnusedCategory(req, res, MENU_CATEGORY_DELETION),
+);
 
 router.get("/discount-types", async (req, res) => {
   try {
@@ -1260,33 +1350,9 @@ router.patch("/discount-types/:id", requireAdministratorAccess, async (req, res)
   }
 });
 
-router.delete("/inventory-categories/:id", requireAdministratorAccess, async (req, res) => {
-  try {
-    const categoryId = Number(req.params.id);
-    if (!Number.isFinite(categoryId) || categoryId <= 0) {
-      return res.status(400).json({ message: "Invalid category id" });
-    }
-
-    const [result] = await db.query(
-      `UPDATE inventory_categories
-       SET is_active = FALSE
-       WHERE category_id = ?`,
-      [categoryId],
-    );
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: "Category not found" });
-    }
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error("DELETE /api/settings/inventory-categories/:id error:", error);
-    res.status(500).json({
-      message: "Failed to disable inventory category",
-      error: error.message,
-    });
-  }
-});
+router.delete("/inventory-categories/:id", requireAdministratorAccess, (req, res) =>
+  deleteUnusedCategory(req, res, INVENTORY_CATEGORY_DELETION),
+);
 
 router.get("/inventory-units", async (req, res) => {
   try {
