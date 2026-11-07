@@ -73,8 +73,8 @@ function productRow(overrides = {}) {
   assert.equal(mealWithFlavor.authoritativeItems[0].selected_flavor_name, "Dynamic Test Flavor");
   assert.equal(
     mealWithFlavor.deductions.get(21).requiredQty,
-    5,
-    "base and flavor recipes sharing an ingredient must be summed once",
+    4,
+    "selection-only flavor recipes must not change the base meal deduction",
   );
 
   await assert.rejects(

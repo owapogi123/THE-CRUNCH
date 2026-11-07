@@ -277,22 +277,8 @@ async function getOrderIngredientDeductions(
      FROM order_item oi
      LEFT JOIN Menu m ON m.Product_ID = oi.Product_ID
      LEFT JOIN products p ON p.id = oi.Product_ID
-     WHERE oi.Order_ID = ?
-     UNION ALL
-     SELECT
-       oi.selected_flavor_product_id AS productId,
-       oi.Quantity AS quantity,
-       COALESCE(oi.selected_flavor_name, m.Product_Name, p.name,
-         CONCAT('Product #', oi.selected_flavor_product_id)) AS product_name,
-       COALESCE(m.manual_override, 0) AS manual_override,
-       COALESCE(m.manual_status, 'Available') AS manual_status,
-       ${orderedItemTypeExpr} AS item_type
-     FROM order_item oi
-     LEFT JOIN Menu m ON m.Product_ID = oi.selected_flavor_product_id
-     LEFT JOIN products p ON p.id = oi.selected_flavor_product_id
-     WHERE oi.Order_ID = ?
-       AND oi.selected_flavor_product_id IS NOT NULL`,
-    [orderId, orderId],
+     WHERE oi.Order_ID = ?`,
+    [orderId],
   );
 
   return buildStockRequirements(items, connection, {
@@ -369,6 +355,11 @@ async function prepareOrderItemsAndStock(
       : []),
   ]);
   const productIds = [...new Set(recipeItems.map((item) => item.product_id))];
+  const baseProductIds = [...new Set(
+    recipeItems
+      .filter((item) => item.selectionRole === "base")
+      .map((item) => item.product_id),
+  )];
   await ensureProductsItemTypeSchema(connection);
 
   await connection.query(
@@ -383,7 +374,7 @@ async function prepareOrderItemsAndStock(
          ON inventory.Product_ID = target.Product_ID
       WHERE ordered_menu.Product_ID IN (?)
         AND inventory.Product_ID IS NULL`,
-    [productIds],
+    [baseProductIds],
   );
 
   const orderedItemTypeExpr = getProductItemTypeExpression(true, "p", "m");
@@ -479,6 +470,17 @@ async function prepareOrderItemsAndStock(
       );
       error.statusCode = 409;
       throw error;
+    }
+    if (item.selectionRole === "flavor") {
+      return {
+        product_id: item.product_id,
+        qty: item.qty,
+        name: String(product.productName || `Product #${item.product_id}`),
+        price: 0,
+        subtotal: 0,
+        selectionIndex: item.selectionIndex,
+        selectionRole: item.selectionRole,
+      };
     }
     const price = Number(product.currentPrice);
     if (!Number.isFinite(price) || price < 0) {

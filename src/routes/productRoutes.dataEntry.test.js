@@ -9,6 +9,7 @@ const state = {
   rollbacks: 0,
   failInventoryInsert: false,
   categoryExists: true,
+  categorySystemKey: null,
 };
 
 function reset() {
@@ -20,6 +21,7 @@ function reset() {
   state.rollbacks = 0;
   state.failInventoryInsert = false;
   state.categoryExists = true;
+  state.categorySystemKey = null;
 }
 
 function snapshot() {
@@ -68,9 +70,12 @@ function connection() {
           ),
         ];
       }
-      if (query.startsWith("SELECT item_type, price, name, quantity FROM products")) {
+      if (query.startsWith("SELECT p.item_type AS item_type, p.price, p.name, p.quantity")) {
         const product = state.products.find((entry) => entry.id === Number(params[0]));
         return [product ? [product] : []];
+      }
+      if (query.startsWith("SELECT system_key FROM menu_categories")) {
+        return [[{ system_key: state.categorySystemKey }]];
       }
       if (
         query.startsWith("SELECT category_id FROM menu_categories") ||
@@ -80,7 +85,7 @@ function connection() {
       }
       if (query.startsWith("INSERT INTO products")) {
         const id = state.products.length + 1;
-        state.products.push({ id, name: params[0] });
+        state.products.push({ id, name: params[0], price: params[1] });
         return [{ insertId: id, affectedRows: 1 }];
       }
       if (query.startsWith("UPDATE products SET menu_code")) {
@@ -250,6 +255,18 @@ function validProduct(overrides = {}) {
   assert.equal(state.products.length, 1);
   assert.equal(state.menu.length, 1);
   assert.equal(state.inventory.length, 1);
+
+  reset();
+  state.categorySystemKey = "chicken_flavors";
+  const flavor = await invoke({
+    name: "Selection Only Flavor",
+    item_type: "menu_item",
+    category: "Chicken Flavors",
+  });
+  assert.equal(flavor.statusCode, 201);
+  assert.equal(state.products[0].price, 0);
+  assert.equal(state.inventory.length, 0);
+  assert.equal(state.ingredients.length, 0);
 
   reset();
   state.categoryExists = false;

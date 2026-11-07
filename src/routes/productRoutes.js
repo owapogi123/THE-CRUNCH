@@ -35,6 +35,10 @@ const {
     directStockUpdateResponse,
     findDirectStockQuantityFields,
 } = require("../utils/stockMutationPolicy");
+const {
+    CHICKEN_FLAVORS_SYSTEM_KEY,
+    normalizeSystemKey,
+} = require("../services/systemMenuCategoryService");
 
 const PRODUCT_NAME_MAX_LENGTH = 100;
 const PRODUCT_DESCRIPTION_MAX_LENGTH = 100;
@@ -107,6 +111,19 @@ async function lockConfiguredCategoryForAssignment(
         error.statusCode = 409;
         throw error;
     }
+}
+
+async function getMenuCategorySystemKey(database, categoryName) {
+    const normalizedName = String(categoryName ?? "").trim();
+    if (!normalizedName) return "";
+    const [rows] = await database.query(
+        `SELECT system_key
+           FROM menu_categories
+          WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))
+          LIMIT 1`,
+        [normalizedName],
+    );
+    return normalizeSystemKey(rows[0]?.system_key);
 }
 
 function normalizeInventoryUnit(value) {
@@ -480,21 +497,13 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
             unit,
         } = req.body;
 
-        const normalizedAvailabilityStatus = normalizeAvailabilityStatus(
+        let normalizedAvailabilityStatus = normalizeAvailabilityStatus(
             availability_status,
         );
         const normalizedImage = normalizeProductImageValue(image);
-        const normalizedIngredients = normalizeMenuIngredients(ingredients);
+        let normalizedIngredients = normalizeMenuIngredients(ingredients);
         const normalizedItemType = parseItemTypeInput(item_type, STOCK_ITEM);
-        if (normalizedIngredients !== null) {
-            await assertProductsMatchItemType(
-                db,
-                normalizedIngredients.map((ingredient) => ingredient.productId),
-                STOCK_ITEM,
-                "Ingredient",
-            );
-        }
-        const manualOverrideState = deriveManualOverrideState({
+        let manualOverrideState = deriveManualOverrideState({
             manual_override,
             manual_status,
             override_mode,
@@ -513,28 +522,46 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
         const normalizedProductCategory = normalizeProductCategory(category, {
             required: normalizedItemType === MENU_ITEM,
         });
+        const isChickenFlavor =
+            normalizedItemType === MENU_ITEM &&
+            (await getMenuCategorySystemKey(db, normalizedProductCategory)) ===
+                CHICKEN_FLAVORS_SYSTEM_KEY;
+        if (isChickenFlavor) {
+            normalizedIngredients = null;
+            normalizedAvailabilityStatus = "Available";
+            manualOverrideState = { manualOverride: 0, manualStatus: "Available" };
+        } else if (normalizedIngredients !== null) {
+            await assertProductsMatchItemType(
+                db,
+                normalizedIngredients.map((ingredient) => ingredient.productId),
+                STOCK_ITEM,
+                "Ingredient",
+            );
+        }
         const normalizedUnit = normalizeInventoryUnit(unit);
-        const normalizedPromo = normalizePromoValues(
-            is_promotional,
-            promo_price,
-            promo_label,
-        );
+        const normalizedPromo = isChickenFlavor
+            ? { isPromotional: 0, promoPrice: null, promoLabel: null }
+            : normalizePromoValues(is_promotional, promo_price, promo_label);
         const safePriceInput =
             price === undefined || price === null || price === ""
                 ? 0
                 : Number(price);
-        const safePrice = normalizeCurrencyAmount(safePriceInput);
+        const safePrice = isChickenFlavor
+            ? 0
+            : normalizeCurrencyAmount(safePriceInput);
         const safeQuantityInput =
             quantity === undefined || quantity === null || quantity === ""
                 ? 0
                 : Number(quantity);
-        const safeQuantity = normalizeInventoryQuantity(safeQuantityInput);
+        const safeQuantity = isChickenFlavor
+            ? 0
+            : normalizeInventoryQuantity(safeQuantityInput);
         if (safeQuantity > 0) {
             return res
                 .status(400)
                 .json(directStockUpdateResponse(["quantity"]));
         }
-        if (normalizedItemType === MENU_ITEM && safePrice < 1) {
+        if (normalizedItemType === MENU_ITEM && !isChickenFlavor && safePrice < 1) {
             return res.status(400).json({ message: "Price must be at least \u20B11." });
         }
         if (
@@ -663,8 +690,9 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
             ]
         );
 
-        await conn.query(
-            `INSERT INTO Inventory (
+        if (!isChickenFlavor) {
+            await conn.query(
+                `INSERT INTO Inventory (
                 Product_ID,
                 Quantity,
                 Stock,
@@ -698,8 +726,9 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
                 lowStockThreshold,
                 criticalStockThreshold,
                 normalizedUnit,
-            ],
-        );
+                ],
+            );
+        }
 
         if (normalizedIngredients !== null) {
             await replaceMenuIngredients(conn, newId, normalizedIngredients);
@@ -765,11 +794,17 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
         }
 
         const hasItemTypeColumn = await ensureProductSchema(db);
-        const itemTypeSelect = hasItemTypeColumn ? "item_type" : "NULL AS item_type";
+        const itemTypeSelect = hasItemTypeColumn
+            ? "p.item_type AS item_type"
+            : "NULL AS item_type";
         const [[existingProduct]] = await db.query(
-            `SELECT ${itemTypeSelect}, price, name, quantity
-             FROM products
-             WHERE id = ?
+            `SELECT ${itemTypeSelect}, p.price, p.name, p.quantity,
+                    m.Category_Name AS category, mc.system_key AS category_system_key
+             FROM products p
+             LEFT JOIN Menu m ON m.Product_ID = p.id
+             LEFT JOIN menu_categories mc
+               ON LOWER(TRIM(mc.name)) = LOWER(TRIM(m.Category_Name))
+             WHERE p.id = ?
              LIMIT 1`,
             [productId],
         );
@@ -798,6 +833,17 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
             unit,
         } = req.body;
 
+        const effectiveTargetItemType = parseItemTypeInput(
+            item_type,
+            normalizeItemType(existingProduct.item_type, MENU_ITEM),
+        );
+        const targetCategorySystemKey = category !== undefined
+            ? await getMenuCategorySystemKey(db, category)
+            : normalizeSystemKey(existingProduct.category_system_key);
+        const isChickenFlavor =
+            effectiveTargetItemType === MENU_ITEM &&
+            targetCategorySystemKey === CHICKEN_FLAVORS_SYSTEM_KEY;
+
         const productFields = [];
         const productValues = [];
         const menuFields = [];
@@ -821,13 +867,13 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
             inventoryValues.push(safeName);
         }
 
-        if (unit !== undefined) {
+        if (unit !== undefined && !isChickenFlavor) {
             inventoryFields.push("unit = ?");
             inventoryValues.push(normalizeInventoryUnit(unit));
         }
 
-        if (price !== undefined) {
-            const safePrice = normalizeCurrencyAmount(price);
+        if (price !== undefined || isChickenFlavor) {
+            const safePrice = isChickenFlavor ? 0 : normalizeCurrencyAmount(price);
             productFields.push("price = ?");
             productValues.push(safePrice);
             menuFields.push("Price = ?");
@@ -906,17 +952,19 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
             productValues.push(normalizedImage);
         }
 
-        if (availability_status !== undefined) {
+        if (availability_status !== undefined && !isChickenFlavor) {
             productFields.push("availability_status = ?");
             productValues.push(normalizeAvailabilityStatus(availability_status));
         }
 
-        const manualOverrideState = deriveManualOverrideState({
-            manual_override,
-            manual_status,
-            override_mode,
-            availability_status,
-        });
+        const manualOverrideState = isChickenFlavor
+            ? { manualOverride: 0, manualStatus: "Available" }
+            : deriveManualOverrideState({
+                manual_override,
+                manual_status,
+                override_mode,
+                availability_status,
+            });
         if (manualOverrideState) {
             menuFields.push("manual_override = ?");
             menuValues.push(manualOverrideState.manualOverride);
@@ -924,17 +972,15 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
             menuValues.push(manualOverrideState.manualStatus);
         }
 
-        const normalizedIngredients = normalizeMenuIngredients(ingredients);
-        const effectiveTargetItemType = parseItemTypeInput(
-            item_type,
-            normalizeItemType(existingProduct.item_type, MENU_ITEM),
-        );
+        const normalizedIngredients = isChickenFlavor
+            ? null
+            : normalizeMenuIngredients(ingredients);
         const effectivePrice =
             price !== undefined ? Number(price) : Number(existingProduct.price ?? 0);
         if (!Number.isFinite(effectivePrice) || effectivePrice < 0) {
             return res.status(400).json({ message: "Invalid price value" });
         }
-        if (effectiveTargetItemType === MENU_ITEM && effectivePrice < 1) {
+        if (effectiveTargetItemType === MENU_ITEM && !isChickenFlavor && effectivePrice < 1) {
             return res.status(400).json({ message: "Price must be at least \u20B11." });
         }
         if (normalizedIngredients !== null) {
@@ -960,11 +1006,9 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
             promo_price !== undefined ||
             promo_label !== undefined
         ) {
-            const normalizedPromo = normalizePromoValues(
-                is_promotional,
-                promo_price,
-                promo_label,
-            );
+            const normalizedPromo = isChickenFlavor
+                ? { isPromotional: 0, promoPrice: null, promoLabel: null }
+                : normalizePromoValues(is_promotional, promo_price, promo_label);
             if (
                 normalizedPromo.promoPrice !== null &&
                 (!Number.isFinite(Number(normalizedPromo.promoPrice)) ||

@@ -39,7 +39,6 @@ const { getOrderIngredientDeductions } = require("./inventoryService");
         orderItemQueryCount += 1;
         return [[
           { productId: 10, quantity: 2, product_name: "2PCS Meal", item_type: "menu_item" },
-          { productId: 20, quantity: 2, product_name: "Dynamic Flavor", item_type: "menu_item" },
         ]];
       }
       throw new Error(`Unexpected query: ${sql}`);
@@ -50,11 +49,11 @@ const { getOrderIngredientDeductions } = require("./inventoryService");
     enforceAutoRecipe: true,
   });
   assert.equal(orderItemQueryCount, 1, "meal and flavor rows must be loaded in one deduction plan");
-  assert.equal(deductions.get(100).requiredQty, 5, "shared chicken must be aggregated, not overwritten or double-posted");
+  assert.equal(deductions.get(100).requiredQty, 4, "the base meal recipe must remain intact");
   assert.equal(deductions.get(101).requiredQty, 2);
-  assert.equal(deductions.get(102).requiredQty, 0.5);
-  assert.equal(deductions.size, 3);
-  console.log("Chicken meal-plus-flavor paid-order deduction tests passed");
+  assert.equal(deductions.has(102), false, "flavor recipe ingredients must not be deducted");
+  assert.equal(deductions.size, 2);
+  console.log("Selection-only chicken flavor deduction tests passed");
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;
