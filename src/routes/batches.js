@@ -23,18 +23,40 @@ const {
 // storage and all shelf-life fields; kitchen storage provenance stays nullable.
 const BATCH_SCHEMA_CONTRACT = {
   batches: [
-    "batch_id", "product_id", "delivery_batch_id", "quantity",
-    "remaining_qty", "unit", "received_date", "expiry_date",
-    "shelf_life_months", "shelf_life_days", "shelf_life_hours", "usable_until", "status",
-    "returned_qty", "notes", "created_at", "updated_at",
+    "batch_id",
+    "product_id",
+    "delivery_batch_id",
+    "quantity",
+    "remaining_qty",
+    "unit",
+    "received_date",
+    "expiry_date",
+    "shelf_life_months",
+    "shelf_life_days",
+    "shelf_life_hours",
+    "usable_until",
+    "status",
+    "returned_qty",
+    "notes",
+    "created_at",
+    "updated_at",
   ],
 };
 
 const KITCHEN_BATCH_SCHEMA_CONTRACT = {
   kitchen_batches: [
-    "kitchen_batch_id", "storage_batch_id", "product_id", "withdrawn_qty",
-    "used_qty", "returned_qty", "unit", "expiry_date", "withdrawn_at",
-    "status", "created_at", "updated_at",
+    "kitchen_batch_id",
+    "storage_batch_id",
+    "product_id",
+    "withdrawn_qty",
+    "used_qty",
+    "returned_qty",
+    "unit",
+    "expiry_date",
+    "withdrawn_at",
+    "status",
+    "created_at",
+    "updated_at",
   ],
 };
 
@@ -58,7 +80,11 @@ function toNumber(value, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
-async function getKitchenBatchById(conn, kitchenBatchId, { lock = false } = {}) {
+async function getKitchenBatchById(
+  conn,
+  kitchenBatchId,
+  { lock = false } = {},
+) {
   const [rows] = await conn.query(
     `SELECT
        kb.kitchen_batch_id,
@@ -166,13 +192,16 @@ router.get("/kitchen", requireInventoryManagerAccess, async (_req, res) => {
   }
 });
 
-router.get("/kitchen/today", requireInventoryManagerAccess, async (_req, res) => {
-  try {
-    await ensureBatchesTable();
-    await ensureKitchenBatchesTable();
+router.get(
+  "/kitchen/today",
+  requireInventoryManagerAccess,
+  async (_req, res) => {
+    try {
+      await ensureBatchesTable();
+      await ensureKitchenBatchesTable();
 
-    const [rows] = await db.query(
-      `SELECT
+      const [rows] = await db.query(
+        `SELECT
          kb.kitchen_batch_id,
          kb.storage_batch_id,
          kb.product_id,
@@ -189,14 +218,15 @@ router.get("/kitchen/today", requireInventoryManagerAccess, async (_req, res) =>
        LEFT JOIN Menu m ON m.Product_ID = kb.product_id
        WHERE DATE(kb.withdrawn_at) = CURDATE()
        ORDER BY kb.withdrawn_at DESC, kb.kitchen_batch_id DESC`,
-    );
+      );
 
-    res.json(rows);
-  } catch (err) {
-    console.error("Error fetching today's kitchen batches:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
+      res.json(rows);
+    } catch (err) {
+      console.error("Error fetching today's kitchen batches:", err);
+      res.status(500).json({ error: err.message });
+    }
+  },
+);
 
 router.post("/kitchen", requireKitchenInventoryAccess, async (req, res) => {
   const { product_id, quantity, storage_batch_id } = req.body;
@@ -290,173 +320,189 @@ router.post("/kitchen", requireKitchenInventoryAccess, async (req, res) => {
   }
 });
 
-router.patch("/kitchen/:kitchen_batch_id/supplement", requireKitchenInventoryAccess, async (req, res) => {
-  const kitchenBatchId = toNumber(req.params.kitchen_batch_id);
-  const qty = toNumber(req.body.qty);
-  const storageBatchId =
-    req.body.storage_batch_id == null
-      ? null
-      : toNumber(req.body.storage_batch_id);
+router.patch(
+  "/kitchen/:kitchen_batch_id/supplement",
+  requireKitchenInventoryAccess,
+  async (req, res) => {
+    const kitchenBatchId = toNumber(req.params.kitchen_batch_id);
+    const qty = toNumber(req.body.qty);
+    const storageBatchId =
+      req.body.storage_batch_id == null
+        ? null
+        : toNumber(req.body.storage_batch_id);
 
-  if (!kitchenBatchId || qty <= 0) {
-    return res
-      .status(400)
-      .json({ error: "kitchen_batch_id and qty are required" });
-  }
-  if (req.body.storage_batch_id != null && !storageBatchId) {
-    return res.status(400).json({ error: "Invalid storage_batch_id" });
-  }
-
-  let conn;
-  try {
-    await ensureBatchesTable();
-    await ensureKitchenBatchesTable();
-
-    conn = await db.getConnection();
-    await conn.beginTransaction();
-
-    const existing = await getKitchenBatchById(conn, kitchenBatchId, {
-      lock: true,
-    });
-    if (!existing) {
-      await conn.rollback();
-      return res.status(404).json({ error: "Kitchen batch not found" });
+    if (!kitchenBatchId || qty <= 0) {
+      return res
+        .status(400)
+        .json({ error: "kitchen_batch_id and qty are required" });
+    }
+    if (req.body.storage_batch_id != null && !storageBatchId) {
+      return res.status(400).json({ error: "Invalid storage_batch_id" });
     }
 
-    let nextStorageBatchId = existing.storage_batch_id;
-    let nextUnit = existing.unit;
-    let nextExpiryDate = existing.expiry_date;
+    let conn;
+    try {
+      await ensureBatchesTable();
+      await ensureKitchenBatchesTable();
 
-    if (storageBatchId) {
-      const [storageRows] = await conn.query(
-        `SELECT batch_id, product_id, unit, expiry_date
+      conn = await db.getConnection();
+      await conn.beginTransaction();
+
+      const existing = await getKitchenBatchById(conn, kitchenBatchId, {
+        lock: true,
+      });
+      if (!existing) {
+        await conn.rollback();
+        return res.status(404).json({ error: "Kitchen batch not found" });
+      }
+
+      let nextStorageBatchId = existing.storage_batch_id;
+      let nextUnit = existing.unit;
+      let nextExpiryDate = existing.expiry_date;
+
+      if (storageBatchId) {
+        const [storageRows] = await conn.query(
+          `SELECT batch_id, product_id, unit, expiry_date
          FROM batches
          WHERE batch_id = ?
            AND product_id = ?
          LIMIT 1`,
-        [storageBatchId, existing.product_id],
-      );
+          [storageBatchId, existing.product_id],
+        );
 
-      if (storageRows.length > 0) {
-        nextStorageBatchId = storageRows[0].batch_id;
-        nextUnit = storageRows[0].unit || nextUnit;
-        nextExpiryDate = storageRows[0].expiry_date || nextExpiryDate;
-      } else {
-        await conn.rollback();
-        return res.status(409).json({
-          error: "storage_batch_id must reference a batch for the same product",
-        });
+        if (storageRows.length > 0) {
+          nextStorageBatchId = storageRows[0].batch_id;
+          nextUnit = storageRows[0].unit || nextUnit;
+          nextExpiryDate = storageRows[0].expiry_date || nextExpiryDate;
+        } else {
+          await conn.rollback();
+          return res.status(409).json({
+            error:
+              "storage_batch_id must reference a batch for the same product",
+          });
+        }
       }
-    }
 
-    await conn.query(
-      `UPDATE kitchen_batches
+      await conn.query(
+        `UPDATE kitchen_batches
        SET withdrawn_qty = COALESCE(withdrawn_qty, 0) + ?,
            storage_batch_id = ?,
            unit = ?,
            expiry_date = ?,
            status = 'active'
        WHERE kitchen_batch_id = ?`,
-      [qty, nextStorageBatchId, nextUnit, nextExpiryDate, kitchenBatchId],
-    );
+        [qty, nextStorageBatchId, nextUnit, nextExpiryDate, kitchenBatchId],
+      );
 
-    const updated = await getKitchenBatchById(conn, kitchenBatchId);
-    await conn.commit();
-    res.json(updated);
-  } catch (err) {
-    if (conn) await conn.rollback();
-    console.error("Error supplementing kitchen batch:", err);
-    res.status(500).json({ error: err.message });
-  } finally {
-    if (conn) conn.release();
-  }
-});
+      const updated = await getKitchenBatchById(conn, kitchenBatchId);
+      await conn.commit();
+      res.json(updated);
+    } catch (err) {
+      if (conn) await conn.rollback();
+      console.error("Error supplementing kitchen batch:", err);
+      res.status(500).json({ error: err.message });
+    } finally {
+      if (conn) conn.release();
+    }
+  },
+);
 
-router.patch("/kitchen/:kitchen_batch_id/return", requireKitchenInventoryAccess, async (req, res) => {
-  const kitchenBatchId = toNumber(req.params.kitchen_batch_id);
-  const requestedQty =
-    req.body && req.body.qty !== undefined ? toNumber(req.body.qty) : null;
-  const recordedBy =
-    req.body && req.body.recorded_by !== undefined ? req.body.recorded_by : null;
+router.patch(
+  "/kitchen/:kitchen_batch_id/return",
+  requireKitchenInventoryAccess,
+  async (req, res) => {
+    const kitchenBatchId = toNumber(req.params.kitchen_batch_id);
+    const requestedQty =
+      req.body && req.body.qty !== undefined ? toNumber(req.body.qty) : null;
+    const recordedBy =
+      req.body && req.body.recorded_by !== undefined
+        ? req.body.recorded_by
+        : null;
 
-  if (!kitchenBatchId) {
-    return res.status(400).json({ error: "Invalid kitchen_batch_id" });
-  }
-
-  let conn;
-  try {
-    await ensureBatchesTable();
-    await ensureKitchenBatchesTable();
-
-    conn = await db.getConnection();
-    await conn.beginTransaction();
-
-    const existing = await getKitchenBatchById(conn, kitchenBatchId, {
-      lock: true,
-    });
-    if (!existing) {
-      await conn.rollback();
-      return res.status(404).json({ error: "Kitchen batch not found" });
+    if (!kitchenBatchId) {
+      return res.status(400).json({ error: "Invalid kitchen_batch_id" });
     }
 
-    const remainingUnused = +(
-      toNumber(existing.withdrawn_qty) -
-      toNumber(existing.used_qty) -
-      toNumber(existing.returned_qty)
-    ).toFixed(2);
+    let conn;
+    try {
+      await ensureBatchesTable();
+      await ensureKitchenBatchesTable();
 
-    const qty =
-      requestedQty == null || requestedQty <= 0 ? remainingUnused : requestedQty;
+      conn = await db.getConnection();
+      await conn.beginTransaction();
 
-    if (qty <= 0) {
-      await conn.rollback();
-      return res.status(400).json({ error: "No unused quantity left to return" });
-    }
-
-    if (qty > remainingUnused) {
-      await conn.rollback();
-      return res.status(400).json({
-        error: `Return quantity exceeds unused amount (${remainingUnused})`,
+      const existing = await getKitchenBatchById(conn, kitchenBatchId, {
+        lock: true,
       });
-    }
+      if (!existing) {
+        await conn.rollback();
+        return res.status(404).json({ error: "Kitchen batch not found" });
+      }
 
-    let targetStorageBatchId = existing.storage_batch_id;
+      const remainingUnused = +(
+        toNumber(existing.withdrawn_qty) -
+        toNumber(existing.used_qty) -
+        toNumber(existing.returned_qty)
+      ).toFixed(2);
 
-    if (!targetStorageBatchId) {
-      const [fallbackRows] = await conn.query(
-        `SELECT batch_id
+      const qty =
+        requestedQty == null || requestedQty <= 0
+          ? remainingUnused
+          : requestedQty;
+
+      if (qty <= 0) {
+        await conn.rollback();
+        return res
+          .status(400)
+          .json({ error: "No unused quantity left to return" });
+      }
+
+      if (qty > remainingUnused) {
+        await conn.rollback();
+        return res.status(400).json({
+          error: `Return quantity exceeds unused amount (${remainingUnused})`,
+        });
+      }
+
+      let targetStorageBatchId = existing.storage_batch_id;
+
+      if (!targetStorageBatchId) {
+        const [fallbackRows] = await conn.query(
+          `SELECT batch_id
          FROM batches
          WHERE product_id = ?
          ORDER BY updated_at DESC, batch_id DESC
          LIMIT 1`,
-        [existing.product_id],
-      );
+          [existing.product_id],
+        );
 
-      if (!fallbackRows.length) {
-        await conn.rollback();
-        return res.status(404).json({ error: "No storage batch found for return" });
+        if (!fallbackRows.length) {
+          await conn.rollback();
+          return res
+            .status(404)
+            .json({ error: "No storage batch found for return" });
+        }
+
+        targetStorageBatchId = fallbackRows[0].batch_id;
       }
 
-      targetStorageBatchId = fallbackRows[0].batch_id;
-    }
-
-    const [matchingStorageRows] = await conn.query(
-      `SELECT batch_id
+      const [matchingStorageRows] = await conn.query(
+        `SELECT batch_id
        FROM batches
        WHERE batch_id = ?
          AND product_id = ?
        LIMIT 1`,
-      [targetStorageBatchId, existing.product_id],
-    );
-    if (matchingStorageRows.length === 0) {
-      await conn.rollback();
-      return res.status(409).json({
-        error: "Kitchen batch source must belong to the same product",
-      });
-    }
+        [targetStorageBatchId, existing.product_id],
+      );
+      if (matchingStorageRows.length === 0) {
+        await conn.rollback();
+        return res.status(409).json({
+          error: "Kitchen batch source must belong to the same product",
+        });
+      }
 
-    await conn.query(
-      `UPDATE batches
+      await conn.query(
+        `UPDATE batches
        SET remaining_qty = COALESCE(remaining_qty, 0) + ?,
            returned_qty = COALESCE(returned_qty, 0) + ?,
            status = CASE
@@ -464,206 +510,225 @@ router.patch("/kitchen/:kitchen_batch_id/return", requireKitchenInventoryAccess,
              ELSE status
            END
        WHERE batch_id = ?`,
-      [qty, qty, qty, targetStorageBatchId],
-    );
+        [qty, qty, qty, targetStorageBatchId],
+      );
 
-    await conn.query(
-      `INSERT INTO Stock_Status (Product_ID, Type, Quantity, Status_Date, RecordedBy)
+      await conn.query(
+        `INSERT INTO Stock_Status (Product_ID, Type, Quantity, Status_Date, RecordedBy)
        VALUES (?, 'return', ?, NOW(), ?)`,
-      [
-        existing.product_id,
-        qty,
-        Number.isInteger(recordedBy) ? recordedBy : null,
-      ],
-    );
+        [
+          existing.product_id,
+          qty,
+          Number.isInteger(recordedBy) ? recordedBy : null,
+        ],
+      );
 
-    const [inventoryUpdate] = await conn.query(
-      `UPDATE Inventory
+      const [inventoryUpdate] = await conn.query(
+        `UPDATE Inventory
        SET Stock = COALESCE(Stock, 0) + ?,
            Daily_Withdrawn = GREATEST(COALESCE(Daily_Withdrawn, 0) - ?, 0),
            Returned = COALESCE(Returned, 0) + ?,
            Last_Update = NOW()
        WHERE Product_ID = ?`,
-      [qty, qty, qty, existing.product_id],
-    );
+        [qty, qty, qty, existing.product_id],
+      );
 
-    const [menuUpdate] = await conn.query(
-      `UPDATE Menu
+      const [menuUpdate] = await conn.query(
+        `UPDATE Menu
        SET Stock = COALESCE(Stock, 0) + ?
        WHERE Product_ID = ?`,
-      [qty, existing.product_id],
-    );
+        [qty, existing.product_id],
+      );
 
-    const [productUpdate] = await conn.query(
-      `UPDATE products
+      const [productUpdate] = await conn.query(
+        `UPDATE products
        SET quantity = COALESCE(quantity, 0) + ?
        WHERE id = ?`,
-      [qty, existing.product_id],
-    );
+        [qty, existing.product_id],
+      );
 
-    if (
-      inventoryUpdate.affectedRows !== 1 ||
-      menuUpdate.affectedRows !== 1 ||
-      productUpdate.affectedRows !== 1
-    ) {
-      throw new Error("Inventory mirrors are incomplete; kitchen return was rolled back");
-    }
+      if (
+        inventoryUpdate.affectedRows !== 1 ||
+        menuUpdate.affectedRows !== 1 ||
+        productUpdate.affectedRows !== 1
+      ) {
+        throw new Error(
+          "Inventory mirrors are incomplete; kitchen return was rolled back",
+        );
+      }
 
-    const nextReturnedQty = +(toNumber(existing.returned_qty) + qty).toFixed(2);
-    const nextUsedQty = toNumber(existing.used_qty);
-    const nextStatus =
-      nextUsedQty + nextReturnedQty >= toNumber(existing.withdrawn_qty)
-        ? "reconciled"
-        : "active";
+      const nextReturnedQty = +(toNumber(existing.returned_qty) + qty).toFixed(
+        2,
+      );
+      const nextUsedQty = toNumber(existing.used_qty);
+      const nextStatus =
+        nextUsedQty + nextReturnedQty >= toNumber(existing.withdrawn_qty)
+          ? "reconciled"
+          : "active";
 
-    await conn.query(
-      `UPDATE kitchen_batches
+      await conn.query(
+        `UPDATE kitchen_batches
        SET storage_batch_id = ?,
            returned_qty = ?,
            status = ?
        WHERE kitchen_batch_id = ?`,
-      [targetStorageBatchId, nextReturnedQty, nextStatus, kitchenBatchId],
-    );
+        [targetStorageBatchId, nextReturnedQty, nextStatus, kitchenBatchId],
+      );
 
-    const updated = await getKitchenBatchById(conn, kitchenBatchId);
-    await conn.commit();
-    res.json(updated);
-  } catch (err) {
-    if (conn) await conn.rollback();
-    console.error("Error returning kitchen batch stock:", err);
-    res.status(500).json({ error: err.message });
-  } finally {
-    if (conn) conn.release();
-  }
-});
+      const updated = await getKitchenBatchById(conn, kitchenBatchId);
+      await conn.commit();
+      res.json(updated);
+    } catch (err) {
+      if (conn) await conn.rollback();
+      console.error("Error returning kitchen batch stock:", err);
+      res.status(500).json({ error: err.message });
+    } finally {
+      if (conn) conn.release();
+    }
+  },
+);
 
-router.patch("/kitchen/:kitchen_batch_id/reconcile", requireKitchenInventoryAccess, async (req, res) => {
-  const kitchenBatchId = toNumber(req.params.kitchen_batch_id);
+router.patch(
+  "/kitchen/:kitchen_batch_id/reconcile",
+  requireKitchenInventoryAccess,
+  async (req, res) => {
+    const kitchenBatchId = toNumber(req.params.kitchen_batch_id);
 
-  if (!kitchenBatchId) {
-    return res.status(400).json({ error: "Invalid kitchen_batch_id" });
-  }
-
-  let conn;
-  try {
-    await ensureBatchesTable();
-    await ensureKitchenBatchesTable();
-
-    conn = await db.getConnection();
-    await conn.beginTransaction();
-
-    const existing = await getKitchenBatchById(conn, kitchenBatchId, {
-      lock: true,
-    });
-    if (!existing) {
-      await conn.rollback();
-      return res.status(404).json({ error: "Kitchen batch not found" });
+    if (!kitchenBatchId) {
+      return res.status(400).json({ error: "Invalid kitchen_batch_id" });
     }
 
-    const requestedUsedQty =
-      req.body && req.body.used_qty !== undefined
-        ? toNumber(req.body.used_qty)
-        : null;
+    let conn;
+    try {
+      await ensureBatchesTable();
+      await ensureKitchenBatchesTable();
 
-    const requestedReturnedQty =
-      req.body && req.body.returned_qty !== undefined
-        ? toNumber(req.body.returned_qty)
-        : null;
+      conn = await db.getConnection();
+      await conn.beginTransaction();
 
-    let nextReturnedQty = toNumber(existing.returned_qty);
-    if (requestedReturnedQty != null && requestedReturnedQty >= 0) {
-      nextReturnedQty = requestedReturnedQty;
-    }
-
-    let nextUsedQty =
-      requestedUsedQty != null && requestedUsedQty >= 0
-        ? requestedUsedQty
-        : +(toNumber(existing.withdrawn_qty) - nextReturnedQty).toFixed(2);
-
-    if (nextUsedQty < 0) nextUsedQty = 0;
-
-    if (nextUsedQty + nextReturnedQty > toNumber(existing.withdrawn_qty)) {
-      await conn.rollback();
-      return res.status(400).json({
-        error: "used_qty and returned_qty cannot exceed withdrawn_qty",
+      const existing = await getKitchenBatchById(conn, kitchenBatchId, {
+        lock: true,
       });
-    }
+      if (!existing) {
+        await conn.rollback();
+        return res.status(404).json({ error: "Kitchen batch not found" });
+      }
 
-    await conn.query(
-      `UPDATE kitchen_batches
+      const requestedUsedQty =
+        req.body && req.body.used_qty !== undefined
+          ? toNumber(req.body.used_qty)
+          : null;
+
+      const requestedReturnedQty =
+        req.body && req.body.returned_qty !== undefined
+          ? toNumber(req.body.returned_qty)
+          : null;
+
+      let nextReturnedQty = toNumber(existing.returned_qty);
+      if (requestedReturnedQty != null && requestedReturnedQty >= 0) {
+        nextReturnedQty = requestedReturnedQty;
+      }
+
+      let nextUsedQty =
+        requestedUsedQty != null && requestedUsedQty >= 0
+          ? requestedUsedQty
+          : +(toNumber(existing.withdrawn_qty) - nextReturnedQty).toFixed(2);
+
+      if (nextUsedQty < 0) nextUsedQty = 0;
+
+      if (nextUsedQty + nextReturnedQty > toNumber(existing.withdrawn_qty)) {
+        await conn.rollback();
+        return res.status(400).json({
+          error: "used_qty and returned_qty cannot exceed withdrawn_qty",
+        });
+      }
+
+      await conn.query(
+        `UPDATE kitchen_batches
        SET used_qty = ?,
            returned_qty = ?,
            status = 'reconciled'
        WHERE kitchen_batch_id = ?`,
-      [nextUsedQty, nextReturnedQty, kitchenBatchId],
-    );
+        [nextUsedQty, nextReturnedQty, kitchenBatchId],
+      );
 
-    const updated = await getKitchenBatchById(conn, kitchenBatchId);
-    await conn.commit();
-    res.json(updated);
-  } catch (err) {
-    if (conn) await conn.rollback();
-    console.error("Error reconciling kitchen batch:", err);
-    res.status(500).json({ error: err.message });
-  } finally {
-    if (conn) conn.release();
-  }
-});
+      const updated = await getKitchenBatchById(conn, kitchenBatchId);
+      await conn.commit();
+      res.json(updated);
+    } catch (err) {
+      if (conn) await conn.rollback();
+      console.error("Error reconciling kitchen batch:", err);
+      res.status(500).json({ error: err.message });
+    } finally {
+      if (conn) conn.release();
+    }
+  },
+);
 
 // GET all batches for a product
-router.get("/product/:product_id", requireInventoryManagerAccess, async (req, res) => {
-  try {
-    await ensureBatchesTable();
-    const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
-    const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p");
+router.get(
+  "/product/:product_id",
+  requireInventoryManagerAccess,
+  async (req, res) => {
+    try {
+      await ensureBatchesTable();
+      const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+      const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p");
 
-    const productId = toNumber(req.params.product_id);
-    if (!Number.isFinite(productId) || productId <= 0) {
-      return res.status(400).json({ error: "Invalid product_id" });
-    }
+      const productId = toNumber(req.params.product_id);
+      if (!Number.isFinite(productId) || productId <= 0) {
+        return res.status(400).json({ error: "Invalid product_id" });
+      }
 
-    const [rows] = await db.query(
-      `SELECT b.*, p.name AS product_name
+      const [rows] = await db.query(
+        `SELECT b.*, p.name AS product_name
        FROM batches b
        JOIN products p ON b.product_id = p.id
+       LEFT JOIN Menu m ON m.Product_ID = p.id
        WHERE b.product_id = ?
          AND ${itemTypeExpr} = ?
        ORDER BY b.received_date ASC`,
-      [productId, STOCK_ITEM],
-    );
+        [productId, STOCK_ITEM],
+      );
 
-    res.json(rows);
-  } catch (err) {
-    console.error("Error fetching product batches:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
+      res.json(rows);
+    } catch (err) {
+      console.error("Error fetching product batches:", err);
+      res.status(500).json({ error: err.message });
+    }
+  },
+);
 
 // GET yesterday's returned batches
-router.get("/returned/yesterday", requireInventoryManagerAccess, async (_req, res) => {
-  try {
-    await ensureBatchesTable();
-    const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
-    const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p");
+router.get(
+  "/returned/yesterday",
+  requireInventoryManagerAccess,
+  async (_req, res) => {
+    try {
+      await ensureBatchesTable();
+      const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+      const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p");
 
-    const [rows] = await db.query(
-      `SELECT b.*, p.name AS product_name
+      const [rows] = await db.query(
+        `SELECT b.*, p.name AS product_name
        FROM batches b
        JOIN products p ON b.product_id = p.id
+       LEFT JOIN Menu m ON m.Product_ID = p.id
        WHERE b.status = 'returned'
          AND ${itemTypeExpr} = ?
          AND b.returned_qty > 0
          AND DATE(b.updated_at) = CURDATE() - INTERVAL 1 DAY
        ORDER BY b.received_date ASC`,
-      [STOCK_ITEM],
-    );
+        [STOCK_ITEM],
+      );
 
-    res.json(rows);
-  } catch (err) {
-    console.error("Error fetching yesterday returns:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
+      res.json(rows);
+    } catch (err) {
+      console.error("Error fetching yesterday returns:", err);
+      res.status(500).json({ error: err.message });
+    }
+  },
+);
 
 // GET all active batches (FIFO source)
 router.get("/active", requireInventoryManagerAccess, async (_req, res) => {
@@ -728,7 +793,8 @@ router.post("/default", requireInventoryManagerAccess, async (req, res) => {
     if (!mirrorRows[0]?.menu_id || !mirrorRows[0]?.inventory_id) {
       await conn.rollback();
       return res.status(409).json({
-        error: "Product inventory mirrors are incomplete; run the approved repair migration first",
+        error:
+          "Product inventory mirrors are incomplete; run the approved repair migration first",
       });
     }
 
@@ -948,7 +1014,9 @@ router.post("/withdraw", requireInventoryManagerAccess, async (req, res) => {
       menuUpdate.affectedRows !== 1 ||
       productUpdate.affectedRows !== 1
     ) {
-      throw new Error("Inventory mirrors are incomplete; withdrawal was rolled back");
+      throw new Error(
+        "Inventory mirrors are incomplete; withdrawal was rolled back",
+      );
     }
 
     await conn.commit();
@@ -976,18 +1044,10 @@ router.put("/:batch_id", requireInventoryManagerAccess, async (req, res) => {
 
   const directStockFields = findDirectStockQuantityFields(req.body);
   if (directStockFields.length > 0) {
-    return res
-      .status(400)
-      .json(directStockUpdateResponse(directStockFields));
+    return res.status(400).json(directStockUpdateResponse(directStockFields));
   }
 
-  const {
-    unit,
-    received_date,
-    expiry_date,
-    status,
-    notes,
-  } = req.body;
+  const { unit, received_date, expiry_date, status, notes } = req.body;
 
   let conn;
   try {
@@ -1151,7 +1211,9 @@ router.post("/return", requireInventoryManagerAccess, async (req, res) => {
       menuUpdate.affectedRows !== 1 ||
       productUpdate.affectedRows !== 1
     ) {
-      throw new Error("Inventory mirrors are incomplete; batch return was rolled back");
+      throw new Error(
+        "Inventory mirrors are incomplete; batch return was rolled back",
+      );
     }
 
     await conn.commit();
