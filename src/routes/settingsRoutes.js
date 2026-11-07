@@ -4,6 +4,7 @@ const db = require("../config/db");
 const { SUPERUSER_ROLE, normalizeRole } = require("../middleware/roleAccess");
 const { requireCookViewAccess } = require("../middleware/cookViewAccess");
 const { requireAdministratorAccess } = require("../middleware/staffAccess");
+const { invalidateProductCache } = require("../services/cacheService");
 const {
   DEFAULT_PERMISSION_ROLE_LOCKS,
   DEFAULT_RESTAURANT_SETTINGS,
@@ -226,6 +227,28 @@ function normalizeName(value, fieldName) {
     throw new Error(`${fieldName} is required`);
   }
   return normalized;
+}
+
+function normalizeCategoryName(value, fieldName) {
+  const normalized = normalizeName(value, fieldName);
+  if (normalized.length > 100) {
+    throw new Error(`${fieldName} must not exceed 100 characters`);
+  }
+  if (/\p{Cc}/u.test(normalized)) {
+    throw new Error(`${fieldName} contains invalid characters`);
+  }
+  return normalized;
+}
+
+function isCategoryValidationError(error) {
+  return /(?:required|must not exceed|invalid characters)/i.test(
+    String(error?.message || ""),
+  );
+}
+
+function categoryErrorStatus(error) {
+  if (error?.code === "ER_DUP_ENTRY") return 409;
+  return isCategoryValidationError(error) ? 400 : 500;
 }
 
 function normalizeOptionalString(value) {
@@ -694,7 +717,7 @@ router.get("/inventory-categories", async (req, res) => {
 
 router.post("/inventory-categories", requireAdministratorAccess, async (req, res) => {
   try {
-    const name = normalizeName(req.body?.name, "Category name");
+    const name = normalizeCategoryName(req.body?.name, "Category name");
     const dateTrackingType = normalizeEnum(
       req.body?.date_tracking_type,
       ["none", "expiry", "shelf_life"],
@@ -739,9 +762,11 @@ router.post("/inventory-categories", requireAdministratorAccess, async (req, res
     res.status(201).json(rows[0]);
   } catch (error) {
     console.error("POST /api/settings/inventory-categories error:", error);
-    res.status(error.message?.includes("required") ? 400 : 500).json({
-      message: error.message?.includes("required")
+    res.status(categoryErrorStatus(error)).json({
+      message: isCategoryValidationError(error)
         ? error.message
+        : error?.code === "ER_DUP_ENTRY"
+          ? "Category already exists"
         : "Failed to create inventory category",
       error: error.message,
     });
@@ -749,6 +774,8 @@ router.post("/inventory-categories", requireAdministratorAccess, async (req, res
 });
 
 router.patch("/inventory-categories/:id", requireAdministratorAccess, async (req, res) => {
+  let connection;
+  let transactionStarted = false;
   try {
     const categoryId = Number(req.params.id);
     if (!Number.isFinite(categoryId) || categoryId <= 0) {
@@ -757,10 +784,28 @@ router.patch("/inventory-categories/:id", requireAdministratorAccess, async (req
 
     const updates = [];
     const values = [];
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    transactionStarted = true;
+
+    const [currentRows] = await connection.query(
+      `SELECT name
+       FROM inventory_categories
+       WHERE category_id = ?
+       FOR UPDATE`,
+      [categoryId],
+    );
+    if (currentRows.length === 0) {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(404).json({ message: "Category not found" });
+    }
+    const previousName = currentRows[0].name;
+    let nextName = null;
 
     if (Object.prototype.hasOwnProperty.call(req.body, "name")) {
-      const name = normalizeName(req.body?.name, "Category name");
-      const [duplicate] = await db.query(
+      const name = normalizeCategoryName(req.body?.name, "Category name");
+      const [duplicate] = await connection.query(
         `SELECT category_id
          FROM inventory_categories
          WHERE LOWER(name) = LOWER(?) AND category_id <> ?
@@ -768,10 +813,13 @@ router.patch("/inventory-categories/:id", requireAdministratorAccess, async (req
         [name, categoryId],
       );
       if (duplicate.length > 0) {
+        await connection.rollback();
+        transactionStarted = false;
         return res.status(409).json({ message: "Category already exists" });
       }
       updates.push("name = ?");
       values.push(name);
+      nextName = name;
     }
 
     if (Object.prototype.hasOwnProperty.call(req.body, "date_tracking_type")) {
@@ -792,22 +840,31 @@ router.patch("/inventory-categories/:id", requireAdministratorAccess, async (req
     }
 
     if (updates.length === 0) {
+      await connection.rollback();
+      transactionStarted = false;
       return res.status(400).json({ message: "No updates provided" });
     }
 
     values.push(categoryId);
-    const [result] = await db.query(
+    const [result] = await connection.query(
       `UPDATE inventory_categories
        SET ${updates.join(", ")}
        WHERE category_id = ?`,
       values,
     );
 
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: "Category not found" });
+    if (nextName !== null && nextName !== previousName) {
+      await connection.query(
+        `UPDATE Menu m
+         INNER JOIN products p ON p.id = m.Product_ID
+         SET m.Category_Name = ?
+         WHERE LOWER(TRIM(COALESCE(m.Category_Name, ''))) = LOWER(TRIM(?))
+           AND LOWER(TRIM(COALESCE(p.item_type, ''))) = 'stock_item'`,
+        [nextName, previousName],
+      );
     }
 
-    const [rows] = await db.query(
+    const [rows] = await connection.query(
       `SELECT
          category_id,
          name,
@@ -820,15 +877,23 @@ router.patch("/inventory-categories/:id", requireAdministratorAccess, async (req
        WHERE category_id = ?`,
       [categoryId],
     );
+    await connection.commit();
+    transactionStarted = false;
+    await invalidateProductCache("inventory category updated");
     res.json(rows[0]);
   } catch (error) {
+    if (connection && transactionStarted) await connection.rollback();
     console.error("PATCH /api/settings/inventory-categories/:id error:", error);
-    res.status(error.message?.includes("required") ? 400 : 500).json({
-      message: error.message?.includes("required")
+    res.status(categoryErrorStatus(error)).json({
+      message: isCategoryValidationError(error)
         ? error.message
+        : error?.code === "ER_DUP_ENTRY"
+          ? "Category already exists"
         : "Failed to update inventory category",
       error: error.message,
     });
+  } finally {
+    if (connection) connection.release();
   }
 });
 
@@ -859,7 +924,7 @@ router.get("/menu-categories", async (req, res) => {
 
 router.post("/menu-categories", requireAdministratorAccess, async (req, res) => {
   try {
-    const name = normalizeName(req.body?.name, "Menu category name");
+    const name = normalizeCategoryName(req.body?.name, "Menu category name");
     const displayOrder = Object.prototype.hasOwnProperty.call(
       req.body || {},
       "display_order",
@@ -903,9 +968,11 @@ router.post("/menu-categories", requireAdministratorAccess, async (req, res) => 
     res.status(201).json(rows[0]);
   } catch (error) {
     console.error("POST /api/settings/menu-categories error:", error);
-    res.status(error.message?.includes("required") ? 400 : 500).json({
-      message: error.message?.includes("required")
+    res.status(categoryErrorStatus(error)).json({
+      message: isCategoryValidationError(error)
         ? error.message
+        : error?.code === "ER_DUP_ENTRY"
+          ? "Menu category already exists"
         : "Failed to create menu category",
       error: error.message,
     });
@@ -913,6 +980,8 @@ router.post("/menu-categories", requireAdministratorAccess, async (req, res) => 
 });
 
 router.patch("/menu-categories/:id", requireAdministratorAccess, async (req, res) => {
+  let connection;
+  let transactionStarted = false;
   try {
     const categoryId = Number(req.params.id);
     if (!Number.isFinite(categoryId) || categoryId <= 0) {
@@ -921,10 +990,28 @@ router.patch("/menu-categories/:id", requireAdministratorAccess, async (req, res
 
     const updates = [];
     const values = [];
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    transactionStarted = true;
+
+    const [currentRows] = await connection.query(
+      `SELECT name
+       FROM menu_categories
+       WHERE category_id = ?
+       FOR UPDATE`,
+      [categoryId],
+    );
+    if (currentRows.length === 0) {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(404).json({ message: "Menu category not found" });
+    }
+    const previousName = currentRows[0].name;
+    let nextName = null;
 
     if (Object.prototype.hasOwnProperty.call(req.body, "name")) {
-      const name = normalizeName(req.body?.name, "Menu category name");
-      const [duplicate] = await db.query(
+      const name = normalizeCategoryName(req.body?.name, "Menu category name");
+      const [duplicate] = await connection.query(
         `SELECT category_id
            FROM menu_categories
           WHERE LOWER(name) = LOWER(?) AND category_id <> ?
@@ -932,10 +1019,13 @@ router.patch("/menu-categories/:id", requireAdministratorAccess, async (req, res
         [name, categoryId],
       );
       if (duplicate.length > 0) {
+        await connection.rollback();
+        transactionStarted = false;
         return res.status(409).json({ message: "Menu category already exists" });
       }
       updates.push("name = ?");
       values.push(name);
+      nextName = name;
     }
 
     if (Object.prototype.hasOwnProperty.call(req.body, "display_order")) {
@@ -951,22 +1041,31 @@ router.patch("/menu-categories/:id", requireAdministratorAccess, async (req, res
     }
 
     if (updates.length === 0) {
+      await connection.rollback();
+      transactionStarted = false;
       return res.status(400).json({ message: "No updates provided" });
     }
 
     values.push(categoryId);
-    const [result] = await db.query(
+    const [result] = await connection.query(
       `UPDATE menu_categories
           SET ${updates.join(", ")}
         WHERE category_id = ?`,
       values,
     );
 
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: "Menu category not found" });
+    if (nextName !== null && nextName !== previousName) {
+      await connection.query(
+        `UPDATE Menu m
+         INNER JOIN products p ON p.id = m.Product_ID
+         SET m.Category_Name = ?
+         WHERE LOWER(TRIM(COALESCE(m.Category_Name, ''))) = LOWER(TRIM(?))
+           AND LOWER(TRIM(COALESCE(p.item_type, ''))) = 'menu_item'`,
+        [nextName, previousName],
+      );
     }
 
-    const [rows] = await db.query(
+    const [rows] = await connection.query(
       `SELECT
          category_id,
          name,
@@ -978,13 +1077,48 @@ router.patch("/menu-categories/:id", requireAdministratorAccess, async (req, res
        WHERE category_id = ?`,
       [categoryId],
     );
+    await connection.commit();
+    transactionStarted = false;
+    await invalidateProductCache("menu category updated");
     res.json(rows[0]);
   } catch (error) {
+    if (connection && transactionStarted) await connection.rollback();
     console.error("PATCH /api/settings/menu-categories/:id error:", error);
-    res.status(error.message?.includes("required") ? 400 : 500).json({
-      message: error.message?.includes("required")
+    res.status(categoryErrorStatus(error)).json({
+      message: isCategoryValidationError(error)
         ? error.message
+        : error?.code === "ER_DUP_ENTRY"
+          ? "Menu category already exists"
         : "Failed to update menu category",
+      error: error.message,
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
+router.delete("/menu-categories/:id", requireAdministratorAccess, async (req, res) => {
+  try {
+    const categoryId = Number(req.params.id);
+    if (!Number.isFinite(categoryId) || categoryId <= 0) {
+      return res.status(400).json({ message: "Invalid category id" });
+    }
+
+    const [result] = await db.query(
+      `UPDATE menu_categories
+       SET is_active = FALSE
+       WHERE category_id = ?`,
+      [categoryId],
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Menu category not found" });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error("DELETE /api/settings/menu-categories/:id error:", error);
+    res.status(500).json({
+      message: "Failed to disable menu category",
       error: error.message,
     });
   }
