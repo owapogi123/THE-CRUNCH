@@ -844,6 +844,16 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
             effectiveTargetItemType === MENU_ITEM &&
             targetCategorySystemKey === CHICKEN_FLAVORS_SYSTEM_KEY;
 
+        if (
+            effectiveTargetItemType === MENU_ITEM &&
+            availability_status !== undefined &&
+            normalizeAvailabilityStatus(availability_status) === "Hidden"
+        ) {
+            return res.status(409).json({
+                message: "Use the dedicated archive endpoint to hide a menu item.",
+            });
+        }
+
         const productFields = [];
         const productValues = [];
         const menuFields = [];
@@ -854,9 +864,7 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
 
         if (name !== undefined) {
             const safeName = normalizeProductName(name, {
-                stockOnly:
-                    normalizeItemType(existingProduct.item_type, MENU_ITEM) ===
-                    STOCK_ITEM,
+                stockOnly: effectiveTargetItemType === STOCK_ITEM,
             });
             await assertUniqueProductName(db, safeName, productId);
             productFields.push("name = ?");
@@ -1080,8 +1088,7 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
             );
         }
 
-        if (inventoryFields.length > 0) {
-            inventoryFields.push("Last_Update = NOW()");
+        if (effectiveTargetItemType === STOCK_ITEM || inventoryFields.length > 0) {
             const [[existingInventory]] = await conn.query(
                 `SELECT Inventory_ID
                  FROM Inventory
@@ -1094,9 +1101,7 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
                 const fallbackItemPurchased =
                     name !== undefined
                         ? normalizeProductName(name, {
-                              stockOnly:
-                                  normalizeItemType(existingProduct.item_type, MENU_ITEM) ===
-                                  STOCK_ITEM,
+                              stockOnly: effectiveTargetItemType === STOCK_ITEM,
                           })
                         : String(existingProduct.name ?? "").trim() || "Unnamed Product";
                 const fallbackUnit =
@@ -1145,10 +1150,13 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
                     ],
                 );
             }
-            await conn.query(
-                `UPDATE Inventory SET ${inventoryFields.join(", ")} WHERE Product_ID = ?`,
-                [...inventoryValues, productId],
-            );
+            if (inventoryFields.length > 0) {
+                inventoryFields.push("Last_Update = NOW()");
+                await conn.query(
+                    `UPDATE Inventory SET ${inventoryFields.join(", ")} WHERE Product_ID = ?`,
+                    [...inventoryValues, productId],
+                );
+            }
         }
 
         if (normalizedIngredients !== null) {
@@ -1228,6 +1236,8 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
 });
 
 async function setMenuItemArchiveState(req, res, archived) {
+    let conn;
+    let transactionStarted = false;
     try {
         await ensureProductSchema(db);
         const productId = Number(req.params.id);
@@ -1236,29 +1246,39 @@ async function setMenuItemArchiveState(req, res, archived) {
         }
 
         const itemTypeExpr = getProductItemTypeExpression(true, "p", "m");
-        const [rows] = await db.query(
+        conn = await db.getConnection();
+        await conn.beginTransaction();
+        transactionStarted = true;
+        const [rows] = await conn.query(
             `SELECT p.id, p.name, p.availability_status, ${itemTypeExpr} AS item_type
                FROM products p
                LEFT JOIN Menu m ON m.Product_ID = p.id
               WHERE p.id = ?
-              LIMIT 1`,
+              LIMIT 1
+              FOR UPDATE`,
             [productId],
         );
         const product = rows[0];
         if (!product) {
+            await conn.rollback();
+            transactionStarted = false;
             return res.status(404).json({ message: "Product not found" });
         }
         if (normalizeItemType(product.item_type, STOCK_ITEM) !== MENU_ITEM) {
+            await conn.rollback();
+            transactionStarted = false;
             return res.status(400).json({
                 message: "Only menu items can be archived from Menu Management.",
             });
         }
 
         const nextStatus = archived ? "Hidden" : "Available";
-        await db.query(
+        await conn.query(
             "UPDATE products SET availability_status = ? WHERE id = ?",
             [nextStatus, productId],
         );
+        await conn.commit();
+        transactionStarted = false;
         await invalidateProductCache(archived ? "product archived" : "product restored");
         return res.json({
             id: productId,
@@ -1269,11 +1289,14 @@ async function setMenuItemArchiveState(req, res, archived) {
                 : "Menu item restored. Live ingredient and stock availability still applies.",
         });
     } catch (err) {
+        if (conn && transactionStarted) await conn.rollback();
         console.error(
             `${archived ? "ARCHIVE" : "RESTORE"} /products/:id error:`,
             err,
         );
         return res.status(500).json({ message: "DB error", error: err.message });
+    } finally {
+        if (conn) conn.release();
     }
 }
 
@@ -1298,6 +1321,18 @@ router.delete("/:id", requireInventoryManagerAccess, async (req, res) => {
         conn = await db.getConnection();
         await conn.beginTransaction();
 
+        const [[lockedProduct]] = await conn.query(
+            `SELECT id, item_type
+               FROM products
+              WHERE id = ?
+              FOR UPDATE`,
+            [productId],
+        );
+        if (!lockedProduct) {
+            await conn.rollback();
+            return res.status(404).json({ message: "Product not found" });
+        }
+
         const [[history]] = await conn.query(
             `SELECT
                EXISTS(SELECT 1 FROM batches WHERE product_id = ? LIMIT 1) AS has_storage_batches,
@@ -1321,9 +1356,11 @@ router.delete("/:id", requireInventoryManagerAccess, async (req, res) => {
         );
         if (Object.values(history || {}).some((value) => Number(value) !== 0)) {
             await conn.rollback();
+            const canArchive =
+                normalizeItemType(lockedProduct.item_type, STOCK_ITEM) === MENU_ITEM;
             return res.status(409).json({
                 code: "PRODUCT_HAS_PROTECTED_HISTORY",
-                canArchive: true,
+                canArchive,
                 productId,
                 message: "Products with historical records or active relationships cannot be hard deleted.",
             });
@@ -1351,7 +1388,6 @@ router.delete("/:id", requireInventoryManagerAccess, async (req, res) => {
         if (err && err.code === "ER_ROW_IS_REFERENCED_2") {
             return res.status(409).json({
                 code: "PRODUCT_HAS_PROTECTED_HISTORY",
-                canArchive: true,
                 message: "Product cannot be deleted because historical records reference it.",
             });
         }

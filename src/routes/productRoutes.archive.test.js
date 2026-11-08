@@ -38,6 +38,9 @@ async function query(sql, params = []) {
     state.product.availability_status = params[0];
     return [{ affectedRows: 1 }];
   }
+  if (/^SELECT id, item_type FROM products/i.test(normalized)) {
+    return [state.product ? [{ id: state.product.id, item_type: state.product.item_type }] : []];
+  }
   if (/^SELECT EXISTS\(SELECT 1 FROM batches/i.test(normalized)) {
     return [[state.history ? { has_order_items: 1 } : { has_order_items: 0 }]];
   }

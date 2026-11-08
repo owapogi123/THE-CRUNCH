@@ -91,6 +91,13 @@ function connection() {
       if (query.startsWith("UPDATE products SET menu_code")) {
         return [{ affectedRows: 1 }];
       }
+      if (query.startsWith("UPDATE products SET")) {
+        const productId = Number(params.at(-1));
+        const product = state.products.find((entry) => entry.id === productId);
+        if (!product) return [{ affectedRows: 0 }];
+        if (/item_type = \?/i.test(query)) product.item_type = String(params[0]);
+        return [{ affectedRows: 1 }];
+      }
       if (query.startsWith("INSERT INTO Menu")) {
         state.menu.push({ productId: params[0], name: params[1] });
         return [{ affectedRows: 1 }];
@@ -334,6 +341,34 @@ function validProduct(overrides = {}) {
   assert.equal(unitUpdate.body.unit, "kg");
   assert.equal(state.inventory[0].unit, "kg");
   assert.equal(await cache.get(cacheKey), null);
+
+  reset();
+  state.products.push({
+    id: 7,
+    name: "Coke",
+    price: 45,
+    quantity: 0,
+    item_type: "menu_item",
+  });
+  state.menu.push({ productId: 7, name: "Coke" });
+  const reclassified = await invokeUpdate({ item_type: "stock_item" });
+  assert.equal(reclassified.statusCode, 200);
+  assert.equal(state.products[0].item_type, "stock_item");
+  assert.equal(state.inventory.length, 1, "stock reclassification must create the missing Inventory mirror");
+  assert.equal(state.inventory[0].productId, 7);
+
+  reset();
+  state.products.push({
+    id: 7,
+    name: "Restored Meal",
+    price: 99,
+    quantity: 0,
+    item_type: "menu_item",
+  });
+  state.menu.push({ productId: 7, name: "Restored Meal" });
+  const genericHide = await invokeUpdate({ availability_status: "Hidden" });
+  assert.equal(genericHide.statusCode, 409);
+  assert.match(genericHide.body.message, /archive endpoint/i);
 
   console.log("Product data-entry transaction tests passed");
 })().catch((error) => {

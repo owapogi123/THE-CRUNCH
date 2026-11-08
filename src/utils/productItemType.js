@@ -66,7 +66,10 @@ async function syncMenuRowsIntoProducts(connection) {
   );
 }
 
-async function backfillProductsItemType(connection) {
+async function backfillProductsItemType(connection, overwriteExisting = false) {
+  const whereClause = overwriteExisting
+    ? ""
+    : `WHERE LOWER(TRIM(COALESCE(p.item_type, ''))) NOT IN ('${STOCK_ITEM}', '${MENU_ITEM}')`;
   await connection.query(
     `UPDATE products p
      LEFT JOIN Menu m ON m.Product_ID = p.id
@@ -77,7 +80,8 @@ async function backfillProductsItemType(connection) {
             THEN LOWER(TRIM(p.item_type))
           ELSE '${STOCK_ITEM}'
         END`,
-     )}`,
+     )}
+     ${whereClause}`,
   );
 }
 
@@ -97,7 +101,9 @@ async function initializeProductsItemTypeSchema(connection) {
     }
 
     await syncMenuRowsIntoProducts(connection);
-    await backfillProductsItemType(connection);
+    // When the column is first introduced, classify all legacy rows once. On
+    // later startups, preserve explicit administrator corrections.
+    await backfillProductsItemType(connection, !hasItemTypeColumn);
 
     schemaReady = true;
     return true;
