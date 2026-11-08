@@ -31,7 +31,6 @@ const {
 } = require("../services/receiptSnapshotService");
 const {
   canCancelPersistedOrders,
-  canRefundPersistedOrders,
   canUpdateOrderPaymentStatus,
   isSuperuserRole,
   normalizeRole,
@@ -46,7 +45,9 @@ const {
 } = require("../services/applicationEvents");
 const { validateCashTender } = require("../services/cashValidationService");
 const { getSettlementEligibility } = require("../services/refundEligibility");
-const { updateStaffNotificationStatus } = require("../services/staffNotificationService");
+const {
+  updateStaffNotificationStatus,
+} = require("../services/staffNotificationService");
 const { getActivePaymentQr } = require("../services/paymentQrService");
 const {
   APPROVAL_TTL_SECONDS,
@@ -56,6 +57,9 @@ const {
   verifyAuthorizationCode,
   verifyDiscountApproval,
 } = require("../services/discountAuthorizationService");
+const {
+  verifyRefundAuthorizationPassword,
+} = require("../services/refundAuthorizationService");
 const {
   verifyPayMongoCheckoutSession: verifyBoundPayMongoCheckoutSession,
 } = require("../services/paymongoCheckoutService");
@@ -111,27 +115,30 @@ function logOrderTiming(req, outcome) {
       !slowest || query.durationMs > slowest.durationMs ? query : slowest,
     null,
   );
-  console.info("[TIMING ORDER]", JSON.stringify({
-    outcome,
-    totalMs: Number(
-      (Number(process.hrtime.bigint() - timing.startedAt) / 1e6).toFixed(1),
-    ),
-    dbStatementCount: queries.length,
-    dbTotalMs: Number(
-      queries.reduce((sum, query) => sum + query.durationMs, 0).toFixed(1),
-    ),
-    slowestQuery: slowestQuery
-      ? {
-          operation: slowestQuery.operation,
-          sql: slowestQuery.sql,
-          durationMs: Number(slowestQuery.durationMs.toFixed(1)),
-        }
-      : null,
-    stages: timing.stages.map((stage) => ({
-      name: stage.name,
-      durationMs: Number(stage.durationMs.toFixed(1)),
-    })),
-  }));
+  console.info(
+    "[TIMING ORDER]",
+    JSON.stringify({
+      outcome,
+      totalMs: Number(
+        (Number(process.hrtime.bigint() - timing.startedAt) / 1e6).toFixed(1),
+      ),
+      dbStatementCount: queries.length,
+      dbTotalMs: Number(
+        queries.reduce((sum, query) => sum + query.durationMs, 0).toFixed(1),
+      ),
+      slowestQuery: slowestQuery
+        ? {
+            operation: slowestQuery.operation,
+            sql: slowestQuery.sql,
+            durationMs: Number(slowestQuery.durationMs.toFixed(1)),
+          }
+        : null,
+      stages: timing.stages.map((stage) => ({
+        name: stage.name,
+        durationMs: Number(stage.durationMs.toFixed(1)),
+      })),
+    }),
+  );
 }
 
 function startOrderTransactionTiming(req) {
@@ -175,7 +182,9 @@ function getPublicOrderIdentifiers(row) {
 }
 
 function normalizePaymentMethod(value) {
-  const v = String(value || "").toLowerCase().trim();
+  const v = String(value || "")
+    .toLowerCase()
+    .trim();
   if (!v) return "cash";
   if (v === "cash on pickup" || v === "cash_on_pickup") return "cash_on_pickup";
   if (
@@ -195,9 +204,7 @@ function normalizePaymentMethod(value) {
 }
 
 function isThirdPartyDeliveryMethod(value) {
-  return ["grabfood", "foodpanda"].includes(
-    normalizePaymentMethod(value),
-  );
+  return ["grabfood", "foodpanda"].includes(normalizePaymentMethod(value));
 }
 
 const MAX_PLATFORM_REFERENCE_LENGTH = 255;
@@ -251,7 +258,9 @@ const PAYMENT_PROOF_DIR = path.resolve(
 );
 
 function normalizeKitchenStatus(value) {
-  const v = String(value || "").toLowerCase().trim();
+  const v = String(value || "")
+    .toLowerCase()
+    .trim();
   if (!v) return "Queued";
   if (v === "pending" || v === "queued") return "Queued";
   if (v === "preparing" || v === "in progress") return "Preparing";
@@ -318,7 +327,9 @@ function requireCashierOrderActor(req, res, next) {
 }
 
 function normalizePaymentStatus(value) {
-  const v = String(value || "").toLowerCase().trim();
+  const v = String(value || "")
+    .toLowerCase()
+    .trim();
   if (v === "paid" || v === "completed") return "Paid";
   if (v === "pending verification") return "Pending Verification";
   if (v === "pending payment") return "Pending Payment";
@@ -335,9 +346,7 @@ function getCustomerTrackingStatus(rawStatus, paymentStatus) {
   const normalizedStatus = normalizeKitchenStatus(rawStatus);
   const normalizedPaymentStatus = normalizePaymentStatus(paymentStatus);
 
-  if (
-    normalizedStatus === "Completed"
-  ) {
+  if (normalizedStatus === "Completed") {
     return "Completed";
   }
 
@@ -413,9 +422,8 @@ async function ensureLegacyCashierContext(conn, cashierId) {
   if (cashierRows[0]?.cashierId != null) {
     return {
       cashierId: normalizedCashierId,
-      recordedByAdminId: cashierRows[0].recordedByAdminId == null
-        ? null
-        : normalizedCashierId,
+      recordedByAdminId:
+        cashierRows[0].recordedByAdminId == null ? null : normalizedCashierId,
       cashierName: String(cashierRows[0].cashierName || "").trim() || null,
     };
   }
@@ -435,14 +443,17 @@ async function ensureLegacyCashierContext(conn, cashierId) {
   await conn.query(
     `INSERT INTO Cashier (Cashier_ID, UserName, Password)
      VALUES (?, ?, ?)`,
-    [normalizedCashierId, userRows[0].username || `staff-${normalizedCashierId}`, ""],
+    [
+      normalizedCashierId,
+      userRows[0].username || `staff-${normalizedCashierId}`,
+      "",
+    ],
   );
 
   return {
     cashierId: normalizedCashierId,
-    recordedByAdminId: cashierRows[0]?.recordedByAdminId == null
-      ? null
-      : normalizedCashierId,
+    recordedByAdminId:
+      cashierRows[0]?.recordedByAdminId == null ? null : normalizedCashierId,
     cashierName: String(userRows[0].username || "").trim() || null,
   };
 }
@@ -455,10 +466,14 @@ async function ensureLegacyCashierRow(conn, cashierId) {
 // ─── ROUTES (specific paths MUST come before /:id wildcards) ──────────────────
 
 // GET /orders — list all orders for dashboard
-router.get("/", requireCookViewAccess, requireSalesReportAccess, async (req, res) => {
-  try {
-    const [orders] = await db.query(
-      `SELECT
+router.get(
+  "/",
+  requireCookViewAccess,
+  requireSalesReportAccess,
+  async (req, res) => {
+    try {
+      const [orders] = await db.query(
+        `SELECT
          o.Order_ID        AS id,
          o.Total_Amount    AS total,
          o.Status          AS status,
@@ -505,19 +520,20 @@ router.get("/", requireCookViewAccess, requireSalesReportAccess, async (req, res
            FROM payments
            GROUP BY Order_ID
          ) latest ON latest.maxPaymentId = p1.Payment_ID
-       ) p ON p.Order_ID = o.Order_ID`
-    );
-    res.json(
-      orders.map((row) => {
-        const { orderNumberValue: _orderNumberValue, ...publicRow } = row;
-        return { ...publicRow, ...getPublicOrderIdentifiers(row) };
-      }),
-    );
-  } catch (err) {
-    console.error("GET /orders error:", err.message);
-    res.status(500).json({ message: "DB error", error: err.message });
-  }
-});
+       ) p ON p.Order_ID = o.Order_ID`,
+      );
+      res.json(
+        orders.map((row) => {
+          const { orderNumberValue: _orderNumberValue, ...publicRow } = row;
+          return { ...publicRow, ...getPublicOrderIdentifiers(row) };
+        }),
+      );
+    } catch (err) {
+      console.error("GET /orders error:", err.message);
+      res.status(500).json({ message: "DB error", error: err.message });
+    }
+  },
+);
 
 // GET /orders/queue — kitchen/order queue view
 router.get("/queue", requireCookViewAccess, async (req, res) => {
@@ -575,14 +591,16 @@ router.get("/queue", requireCookViewAccess, async (req, res) => {
            WHERE pending_refund.order_id = o.Order_ID
              AND pending_refund.status = 'Pending'
          )
-       ORDER BY o.Order_ID ASC`
+       ORDER BY o.Order_ID ASC`,
     );
 
     const grouped = {};
     for (const r of rows) {
       const normalizedStatus = normalizeKitchenStatus(r.status);
-      const estimatedPrepMinutes =
-        Math.max(Number(r.estimatedPrepMinutes) || DEFAULT_ESTIMATED_PREP_MINUTES, 1);
+      const estimatedPrepMinutes = Math.max(
+        Number(r.estimatedPrepMinutes) || DEFAULT_ESTIMATED_PREP_MINUTES,
+        1,
+      );
       const dueAt = r.dueAt ? new Date(r.dueAt) : null;
       const overdue =
         normalizedStatus === "Preparing" &&
@@ -599,13 +617,12 @@ router.get("/queue", requireCookViewAccess, async (req, res) => {
           status: normalizedOrderType,
           orderType: normalizedOrderType,
           isOnlinePickup:
-            Number(r.customerUserId) > 0 &&
-            normalizedOrderType === "take-out",
+            Number(r.customerUserId) > 0 && normalizedOrderType === "take-out",
           items: [],
           orderNote: r.orderNote ? String(r.orderNote) : null,
           currentStatus: normalizedStatus,
           paymentStatus: normalizePaymentStatus(
-            r.paymentStatus || r.paymentRecordStatus || "Pending"
+            r.paymentStatus || r.paymentRecordStatus || "Pending",
           ),
           isPreparing: isPreparingStatus(normalizedStatus),
           isReady: isReadyStatus(normalizedStatus),
@@ -616,9 +633,7 @@ router.get("/queue", requireCookViewAccess, async (req, res) => {
             ? new Date(r.prepStartedAt).getTime()
             : undefined,
           readyAt: r.readyAt ? new Date(r.readyAt).getTime() : undefined,
-          startedAt: r.startedAt
-            ? new Date(r.startedAt).getTime()
-            : undefined,
+          startedAt: r.startedAt ? new Date(r.startedAt).getTime() : undefined,
           estimatedPrepMinutes,
           dueAt: dueAt ? dueAt.getTime() : undefined,
           overdue,
@@ -646,21 +661,21 @@ router.get("/queue", requireCookViewAccess, async (req, res) => {
     const sorted = Object.values(grouped)
       .filter((order) => isPaidPaymentStatus(order.paymentStatus))
       .sort((a, b) => {
-      const getPriority = (order) => {
-        if (order.isPreparing && order.overdue) return 0;
-        if (order.isPreparing) return 1;
-        if (!order.isPreparing && !order.isReady) return 2;
-        if (order.isReady) return 3;
-        return 4;
-      };
-      const aPriority = getPriority(a);
-      const bPriority = getPriority(b);
-      if (aPriority !== bPriority) return aPriority - bPriority;
-      const aBase = a.prepStartedAt || a.queuedAt || a.createdAt || 0;
-      const bBase = b.prepStartedAt || b.queuedAt || b.createdAt || 0;
-      if (aBase !== bBase) return aBase - bBase;
-      return Number(a.id) - Number(b.id);
-    });
+        const getPriority = (order) => {
+          if (order.isPreparing && order.overdue) return 0;
+          if (order.isPreparing) return 1;
+          if (!order.isPreparing && !order.isReady) return 2;
+          if (order.isReady) return 3;
+          return 4;
+        };
+        const aPriority = getPriority(a);
+        const bPriority = getPriority(b);
+        if (aPriority !== bPriority) return aPriority - bPriority;
+        const aBase = a.prepStartedAt || a.queuedAt || a.createdAt || 0;
+        const bBase = b.prepStartedAt || b.queuedAt || b.createdAt || 0;
+        if (aBase !== bBase) return aBase - bBase;
+        return Number(a.id) - Number(b.id);
+      });
 
     res.json(sorted);
   } catch (err) {
@@ -717,7 +732,7 @@ router.get("/new-online", requireCookViewAccess, async (req, res) => {
           orderType: normalizeOrderType(r.orderType),
           trackingStatus: r.status || "Awaiting Cashier Review",
           paymentStatus: normalizePaymentStatus(
-            r.paymentStatus || r.paymentRecordStatus || "Pending"
+            r.paymentStatus || r.paymentRecordStatus || "Pending",
           ),
           paymentMethod: r.paymentMethod || null,
           items: [],
@@ -727,7 +742,10 @@ router.get("/new-online", requireCookViewAccess, async (req, res) => {
         grouped[r.id].items.push({
           name: r.productName,
           quantity: Number(r.quantity) || 0,
-          selectedFlavorProductId: r.selectedFlavorProductId == null ? null : Number(r.selectedFlavorProductId),
+          selectedFlavorProductId:
+            r.selectedFlavorProductId == null
+              ? null
+              : Number(r.selectedFlavorProductId),
           selectedFlavorName: r.selectedFlavorName || null,
         });
       }
@@ -775,7 +793,7 @@ router.get("/ready-pickup", requireCookViewAccess, async (req, res) => {
        WHERE o.customer_user_id IS NOT NULL
          AND LOWER(COALESCE(o.Order_Type, '')) IN ('take-out', 'takeout')
          AND LOWER(COALESCE(o.Status, '')) = 'ready for pickup'
-       ORDER BY o.Order_ID DESC`
+       ORDER BY o.Order_ID DESC`,
     );
 
     const grouped = {};
@@ -789,7 +807,7 @@ router.get("/ready-pickup", requireCookViewAccess, async (req, res) => {
           orderType: normalizeOrderType(r.orderType),
           trackingStatus: r.status || "Ready for Pickup",
           paymentStatus: normalizePaymentStatus(
-            r.paymentStatus || r.paymentRecordStatus || "Pending"
+            r.paymentStatus || r.paymentRecordStatus || "Pending",
           ),
           paymentMethod: r.paymentMethod || null,
           handoverTimestamp: r.handoverTimestamp,
@@ -801,7 +819,10 @@ router.get("/ready-pickup", requireCookViewAccess, async (req, res) => {
         grouped[r.id].items.push({
           name: r.productName,
           quantity: Number(r.quantity) || 0,
-          selectedFlavorProductId: r.selectedFlavorProductId == null ? null : Number(r.selectedFlavorProductId),
+          selectedFlavorProductId:
+            r.selectedFlavorProductId == null
+              ? null
+              : Number(r.selectedFlavorProductId),
           selectedFlavorName: r.selectedFlavorName || null,
         });
       }
@@ -809,8 +830,8 @@ router.get("/ready-pickup", requireCookViewAccess, async (req, res) => {
 
     res.json(
       Object.values(grouped).filter((order) =>
-        isPaidPaymentStatus(order.paymentStatus)
-      )
+        isPaidPaymentStatus(order.paymentStatus),
+      ),
     );
   } catch (err) {
     console.error("GET /orders/ready-pickup error:", err.message);
@@ -855,7 +876,7 @@ router.get("/delivery-handover", requireCookViewAccess, async (req, res) => {
          AND LOWER(COALESCE(o.Order_Type, '')) = 'delivery'
          AND LOWER(COALESCE(o.Status, '')) IN ('ready', 'ready for pickup')
          AND COALESCE(o.handoverTimestamp, NULL) IS NULL
-       ORDER BY o.Order_ID DESC`
+       ORDER BY o.Order_ID DESC`,
     );
 
     const grouped = {};
@@ -882,7 +903,10 @@ router.get("/delivery-handover", requireCookViewAccess, async (req, res) => {
         grouped[r.id].items.push({
           name: r.productName,
           quantity: Number(r.quantity) || 0,
-          selectedFlavorProductId: r.selectedFlavorProductId == null ? null : Number(r.selectedFlavorProductId),
+          selectedFlavorProductId:
+            r.selectedFlavorProductId == null
+              ? null
+              : Number(r.selectedFlavorProductId),
           selectedFlavorName: r.selectedFlavorName || null,
         });
       }
@@ -896,26 +920,29 @@ router.get("/delivery-handover", requireCookViewAccess, async (req, res) => {
 });
 
 // GET /orders/customer/:customerUserId — customer tracking + history
-router.get("/customer/:customerUserId", requireAuthenticatedUser, async (req, res) => {
-  try {
-    const customerUserId = Number(req.params.customerUserId);
-    if (!Number.isFinite(customerUserId) || customerUserId <= 0) {
-      return res.status(400).json({ message: "Invalid customer user id" });
-    }
+router.get(
+  "/customer/:customerUserId",
+  requireAuthenticatedUser,
+  async (req, res) => {
+    try {
+      const customerUserId = Number(req.params.customerUserId);
+      if (!Number.isFinite(customerUserId) || customerUserId <= 0) {
+        return res.status(400).json({ message: "Invalid customer user id" });
+      }
 
-    const requesterUserId = Number(req.user?.userId);
-    const requesterRole = String(req.user?.role || "").toLowerCase();
-    const canAccess =
-      requesterUserId === customerUserId || requesterRole === "administrator";
+      const requesterUserId = Number(req.user?.userId);
+      const requesterRole = String(req.user?.role || "").toLowerCase();
+      const canAccess =
+        requesterUserId === customerUserId || requesterRole === "administrator";
 
-    if (!canAccess) {
-      return res.status(403).json({
-        message: "You can only access your own order history",
-      });
-    }
+      if (!canAccess) {
+        return res.status(403).json({
+          message: "You can only access your own order history",
+        });
+      }
 
-    const [rows] = await db.query(
-      `SELECT
+      const [rows] = await db.query(
+        `SELECT
          o.Order_ID AS id,
          o.Total_Amount AS total,
          o.Status AS status,
@@ -947,65 +974,70 @@ router.get("/customer/:customerUserId", requireAuthenticatedUser, async (req, re
        ) p ON p.Order_ID = o.Order_ID
        WHERE o.customer_user_id = ?
        ORDER BY o.Order_ID DESC`,
-      [customerUserId]
-    );
+        [customerUserId],
+      );
 
-    const grouped = {};
-    for (const row of rows) {
-      if (!grouped[row.id]) {
-        const trackingStatus = getCustomerTrackingStatus(
-          row.status,
-          row.paymentStatus,
+      const grouped = {};
+      for (const row of rows) {
+        if (!grouped[row.id]) {
+          const trackingStatus = getCustomerTrackingStatus(
+            row.status,
+            row.paymentStatus,
+          );
+          grouped[row.id] = {
+            id: row.id,
+            ...getPublicOrderIdentifiers(row),
+            total: Number(row.total) || 0,
+            createdAt: row.createdAt,
+            orderType: normalizeOrderType(row.orderType),
+            rawStatus: row.status,
+            trackingStatus,
+            paymentReference: row.paymentReference || null,
+            paymentStatus: normalizePaymentStatus(row.paymentStatus || null),
+            paymentMethod:
+              row.storedPaymentMethod || row.paymentMethod || "GCash",
+            items: [],
+          };
+        }
+
+        if (row.productName) {
+          grouped[row.id].items.push({
+            name: row.productName,
+            quantity: Number(row.quantity) || 0,
+            selectedFlavorProductId:
+              row.selectedFlavorProductId == null
+                ? null
+                : Number(row.selectedFlavorProductId),
+            selectedFlavorName: row.selectedFlavorName || null,
+          });
+        }
+      }
+
+      const allOrders = Object.values(grouped);
+      const activeOrders = allOrders.filter((order) => {
+        const status = normalizeKitchenStatus(order.rawStatus);
+        return (
+          status !== "Completed" &&
+          status !== "Cancelled" &&
+          status !== "Refunded"
         );
-        grouped[row.id] = {
-          id: row.id,
-          ...getPublicOrderIdentifiers(row),
-          total: Number(row.total) || 0,
-          createdAt: row.createdAt,
-          orderType: normalizeOrderType(row.orderType),
-          rawStatus: row.status,
-          trackingStatus,
-          paymentReference: row.paymentReference || null,
-          paymentStatus: normalizePaymentStatus(row.paymentStatus || null),
-          paymentMethod: row.storedPaymentMethod || row.paymentMethod || "GCash",
-          items: [],
-        };
-      }
+      });
+      const historyOrders = allOrders.filter((order) => {
+        const status = normalizeKitchenStatus(order.rawStatus);
+        return (
+          status === "Completed" ||
+          status === "Cancelled" ||
+          status === "Refunded"
+        );
+      });
 
-      if (row.productName) {
-        grouped[row.id].items.push({
-          name: row.productName,
-          quantity: Number(row.quantity) || 0,
-          selectedFlavorProductId: row.selectedFlavorProductId == null ? null : Number(row.selectedFlavorProductId),
-          selectedFlavorName: row.selectedFlavorName || null,
-        });
-      }
+      res.json({ activeOrders, historyOrders });
+    } catch (err) {
+      console.error("GET /orders/customer/:customerUserId error:", err.message);
+      res.status(500).json({ message: "DB error", error: err.message });
     }
-
-    const allOrders = Object.values(grouped);
-    const activeOrders = allOrders.filter((order) => {
-      const status = normalizeKitchenStatus(order.rawStatus);
-      return (
-        status !== "Completed" &&
-        status !== "Cancelled" &&
-        status !== "Refunded"
-      );
-    });
-    const historyOrders = allOrders.filter((order) => {
-      const status = normalizeKitchenStatus(order.rawStatus);
-      return (
-        status === "Completed" ||
-        status === "Cancelled" ||
-        status === "Refunded"
-      );
-    });
-
-    res.json({ activeOrders, historyOrders });
-  } catch (err) {
-    console.error("GET /orders/customer/:customerUserId error:", err.message);
-    res.status(500).json({ message: "DB error", error: err.message });
-  }
-});
+  },
+);
 
 // New payment-proof uploads use the validated multipart /api/upload-proof route.
 // GET /orders/shift — today's transactions for the authenticated cashier.
@@ -1017,7 +1049,9 @@ router.get("/shift", requireCookViewAccess, async (req, res) => {
       return res.status(401).json({ message: "Invalid authenticated user" });
     }
     if (requesterRole !== "cashier" && !isSuperuserRole(requesterRole)) {
-      return res.status(403).json({ message: "Cashier history access required" });
+      return res
+        .status(403)
+        .json({ message: "Cashier history access required" });
     }
 
     const { businessDate } = getBusinessDateParts(new Date());
@@ -1100,7 +1134,8 @@ router.get("/shift", requireCookViewAccess, async (req, res) => {
           prepStartedAt: row.prepStartedAt || null,
           startedAt: row.startedAt || null,
           readyAt: row.readyAt || null,
-          refundRequestId: row.refundRequestId == null ? null : Number(row.refundRequestId),
+          refundRequestId:
+            row.refundRequestId == null ? null : Number(row.refundRequestId),
           refundRequestStatus: row.refundRequestStatus || null,
           items: [],
         });
@@ -1111,7 +1146,10 @@ router.get("/shift", requireCookViewAccess, async (req, res) => {
           name: row.productName || "Historical product name unavailable",
           quantity: Number(row.quantity) || 0,
           price: Number(row.price) || 0,
-          selectedFlavorProductId: row.selectedFlavorProductId == null ? null : Number(row.selectedFlavorProductId),
+          selectedFlavorProductId:
+            row.selectedFlavorProductId == null
+              ? null
+              : Number(row.selectedFlavorProductId),
           selectedFlavorName: row.selectedFlavorName || null,
         });
       }
@@ -1154,33 +1192,40 @@ router.get(
 router.post("/payment-proofs", requirePaymentProofUploadAccess, (_req, res) =>
   res.status(410).json({
     code: "LEGACY_PAYMENT_PROOF_UPLOAD_RETIRED",
-    message: "This legacy payment-proof uploader is retired. Use POST /api/upload-proof.",
+    message:
+      "This legacy payment-proof uploader is retired. Use POST /api/upload-proof.",
   }),
 );
 
 // GET /orders/payment-proofs/:filename — serve cashier onsite e-payment proof image
-router.get("/payment-proofs/:filename", requireCookViewAccess, async (req, res) => {
-  try {
-    const requested = decodeURIComponent(String(req.params.filename || ""));
-    const safeFilename = path.basename(requested);
-    if (!safeFilename || safeFilename !== requested) {
-      return res.status(400).json({ message: "Invalid payment proof filename" });
-    }
+router.get(
+  "/payment-proofs/:filename",
+  requireCookViewAccess,
+  async (req, res) => {
+    try {
+      const requested = decodeURIComponent(String(req.params.filename || ""));
+      const safeFilename = path.basename(requested);
+      if (!safeFilename || safeFilename !== requested) {
+        return res
+          .status(400)
+          .json({ message: "Invalid payment proof filename" });
+      }
 
-    const absolutePath = path.join(PAYMENT_PROOF_DIR, safeFilename);
-    await fs.access(absolutePath);
-    res.type(getPaymentProofContentType(path.extname(safeFilename)));
-    return res.sendFile(absolutePath);
-  } catch (err) {
-    if (err && err.code === "ENOENT") {
-      return res.status(404).json({ message: "Payment proof not found" });
+      const absolutePath = path.join(PAYMENT_PROOF_DIR, safeFilename);
+      await fs.access(absolutePath);
+      res.type(getPaymentProofContentType(path.extname(safeFilename)));
+      return res.sendFile(absolutePath);
+    } catch (err) {
+      if (err && err.code === "ENOENT") {
+        return res.status(404).json({ message: "Payment proof not found" });
+      }
+      console.error("GET /orders/payment-proofs/:filename error:", err.message);
+      return res.status(500).json({
+        message: err.message || "Failed to load payment proof",
+      });
     }
-    console.error("GET /orders/payment-proofs/:filename error:", err.message);
-    return res.status(500).json({
-      message: err.message || "Failed to load payment proof",
-    });
-  }
-});
+  },
+);
 
 // POST /orders/paymongo/checkout — create GCash checkout session
 router.post(
@@ -1230,7 +1275,9 @@ router.post(
       }
 
       if (!(await verifyAuthorizationCode(authorizationCode))) {
-        return res.status(403).json({ message: "Discount authorization failed" });
+        return res
+          .status(403)
+          .json({ message: "Discount authorization failed" });
       }
 
       const approvalToken = issueDiscountApproval({
@@ -1262,580 +1309,661 @@ router.post(
 );
 
 // POST /orders — place a new authenticated cashier or online customer order.
-router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, res) => {
-  let conn;
-  let txStarted = false;
-  let orderCommitted = false;
-  let claimedDiscountApprovalId = null;
-  let payMongoVerification = null;
-  let authoritativeItems = [];
-  let receiptDto = null;
-  let orderOutcome = "failed";
-  let paymentReferenceLockName = null;
-  try {
-    const {
-      items,
-      total,
-      customerId,
-      orderType,
-      order_type,
-      paymentMethod,
-      payment_method,
-      checkoutSessionId,
-      checkout_session_id,
-      paymentReference,
-      payment_reference,
-      paymentStatus,
-      payment_status,
-      proofImageUrl,
-      proof_image_url,
-      paymentQrVersion,
-      payment_qr_version,
-      customerName,
-      customer_name,
-      customerEmail,
-      customer_email,
-      customerType,
-      customer_type,
-      discountName,
-      discount_name,
-      discountId,
-      discount_id,
-      discountRate,
-      discount_rate,
-      discountAuthorization,
-      discount_authorization,
-      cashTendered,
-      cash_tendered,
-      tableId,
-      table_id,
-      tableNumber,
-      table_number,
-      orderNote,
-      order_note,
-    } = req.body;
+router.post(
+  "/",
+  withOrderRequestTiming,
+  requireAuthenticatedUser,
+  async (req, res) => {
+    let conn;
+    let txStarted = false;
+    let orderCommitted = false;
+    let claimedDiscountApprovalId = null;
+    let payMongoVerification = null;
+    let authoritativeItems = [];
+    let receiptDto = null;
+    let orderOutcome = "failed";
+    let paymentReferenceLockName = null;
+    try {
+      const {
+        items,
+        total,
+        customerId,
+        orderType,
+        order_type,
+        paymentMethod,
+        payment_method,
+        checkoutSessionId,
+        checkout_session_id,
+        paymentReference,
+        payment_reference,
+        paymentStatus,
+        payment_status,
+        proofImageUrl,
+        proof_image_url,
+        paymentQrVersion,
+        payment_qr_version,
+        customerName,
+        customer_name,
+        customerEmail,
+        customer_email,
+        customerType,
+        customer_type,
+        discountName,
+        discount_name,
+        discountId,
+        discount_id,
+        discountRate,
+        discount_rate,
+        discountAuthorization,
+        discount_authorization,
+        cashTendered,
+        cash_tendered,
+        tableId,
+        table_id,
+        tableNumber,
+        table_number,
+        orderNote,
+        order_note,
+      } = req.body;
 
-    const actorRole = normalizeRole(req.user?.role);
-    const isStaffOrderActor = actorRole === "cashier" || isSuperuserRole(actorRole);
-    const isOnlineCustomerActor = actorRole === "customer" || actorRole === "user";
-    if (!isStaffOrderActor && !isOnlineCustomerActor) {
-      return res.status(403).json({ message: "Order access denied" });
-    }
+      const actorRole = normalizeRole(req.user?.role);
+      const isStaffOrderActor =
+        actorRole === "cashier" || isSuperuserRole(actorRole);
+      const isOnlineCustomerActor =
+        actorRole === "customer" || actorRole === "user";
+      if (!isStaffOrderActor && !isOnlineCustomerActor) {
+        return res.status(403).json({ message: "Order access denied" });
+      }
 
-    // Staff identity is always derived from the verified JWT. Body-supplied
-    // cashier IDs are intentionally ignored and never persisted.
-    const resolvedCashierId = isStaffOrderActor
-      ? Number(req.user.userId)
-      : null;
-    if (
-      isStaffOrderActor &&
-      (!Number.isSafeInteger(resolvedCashierId) || resolvedCashierId <= 0)
-    ) {
-      return res.status(401).json({ message: "Invalid authenticated staff user" });
-    }
-
-    if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ message: "Order items are required" });
-    }
-    const itemNotesByProduct = collectOrderItemNotes(items);
-    const validatedItems = normalizeOrderItems(items);
-
-    const finalOrderType = normalizeOrderType(order_type || orderType);
-    const normalizedPaymentMethod = normalizePaymentMethod(
-      payment_method || paymentMethod || "cash"
-    );
-    if (isOnlineCustomerActor && finalOrderType !== "take-out") {
-      return res.status(400).json({
-        message: "Online customer orders must use take-out",
-      });
-    }
-    if (
-      isOnlineCustomerActor &&
-      normalizedPaymentMethod !== "gcash" &&
-      normalizedPaymentMethod !== "cash" &&
-      normalizedPaymentMethod !== "cash_on_pickup"
-    ) {
-      return res.status(400).json({
-        message: "Online pickup orders must use GCash or cash payment",
-      });
-    }
-    const submittedPaymentReference = String(payment_reference || paymentReference || "").trim() || null;
-    if (normalizedPaymentMethod === "other") {
-      return res.status(400).json({
-        message: "Other Platform is no longer available for new orders. Choose GrabFood or Foodpanda.",
-      });
-    }
-    const isThirdPartyDelivery = isThirdPartyDeliveryMethod(normalizedPaymentMethod);
-    if (finalOrderType === "delivery" && !isThirdPartyDelivery) {
-      return res.status(400).json({
-        message: "Delivery orders require GrabFood or Foodpanda as the platform",
-      });
-    }
-    if (finalOrderType !== "delivery" && isThirdPartyDelivery) {
-      return res.status(400).json({
-        message: "Third-party platform payments are only valid for delivery orders",
-      });
-    }
-    const thirdPartyReferenceError = isThirdPartyDelivery
-      ? getThirdPartyReferenceError(
-          normalizedPaymentMethod,
-          submittedPaymentReference,
-        )
-      : null;
-    if (thirdPartyReferenceError) {
-      return res.status(400).json({
-        message: thirdPartyReferenceError,
-      });
-    }
-    const submittedCheckoutSessionId = String(
-      checkout_session_id || checkoutSessionId || ""
-    ).trim() || null;
-    const submittedProofImageUrl =
-      String(proof_image_url || proofImageUrl || "").trim() || null;
-    let effectiveProofImageUrl = isStaffOrderActor && normalizedPaymentMethod !== "gcash_onsite"
-      ? submittedProofImageUrl
-      : null;
-    const submittedCustomerName =
-      String(customer_name || customerName || "").trim() || null;
-    const submittedCustomerEmail =
-      String(customer_email || customerEmail || "").trim().toLowerCase() || null;
-    const submittedCustomerType =
-      String(customer_type || customerType || "").trim() || null;
-    const submittedTableNumber =
-      String(table_number ?? tableNumber ?? table_id ?? tableId ?? "").trim() || null;
-    const submittedOrderNote =
-      String(order_note || orderNote || "").trim().slice(0, 2000) || null;
-    const submittedCashTendered =
-      normalizedPaymentMethod === "cash" && isStaffOrderActor
-        ? cash_tendered ?? cashTendered
+      // Staff identity is always derived from the verified JWT. Body-supplied
+      // cashier IDs are intentionally ignored and never persisted.
+      const resolvedCashierId = isStaffOrderActor
+        ? Number(req.user.userId)
         : null;
-    // Online ownership is derived only from the verified JWT. A legacy
-    // customerUserId body field is accepted but deliberately ignored.
-    const resolvedCustomerUserId = isOnlineCustomerActor
-      ? Number(req.user.userId)
-      : null;
-    if (
-      isOnlineCustomerActor &&
-      (!Number.isSafeInteger(resolvedCustomerUserId) || resolvedCustomerUserId <= 0)
-    ) {
-      return res.status(401).json({ message: "Invalid authenticated customer" });
-    }
-    const isOnlinePickupOrder =
-      resolvedCustomerUserId && resolvedCashierId == null && finalOrderType === "take-out";
-    if (isOnlinePickupOrder && normalizedPaymentMethod === "gcash") {
-      const checkoutToFinalize = submittedCheckoutSessionId ||
-        (/^cs_[A-Za-z0-9_-]+$/.test(submittedPaymentReference || "")
-          ? submittedPaymentReference
-          : null);
-      if (!checkoutToFinalize) {
-        return res.status(400).json({
-          message: "Online pickup orders require a PayMongo checkout session",
-        });
+      if (
+        isStaffOrderActor &&
+        (!Number.isSafeInteger(resolvedCashierId) || resolvedCashierId <= 0)
+      ) {
+        return res
+          .status(401)
+          .json({ message: "Invalid authenticated staff user" });
       }
-      try {
-        const finalized = await finalizePayMongoCheckoutIntent({
-          checkoutSessionId: checkoutToFinalize,
-          customerUserId: resolvedCustomerUserId,
-          items: validatedItems,
-        });
-        orderOutcome = "success";
-        return res.json(finalized);
-      } catch (error) {
-        // Sessions created before checkout-intent deployment retain the legacy
-        // browser-return path. Every new persisted intent must use the shared
-        // finalizer so browser and webhook races remain idempotent.
-        if (error?.code !== "PAYMONGO_INTENT_NOT_FOUND") throw error;
-      }
-    }
-    const storedPaymentMethod = getStoredPaymentMethod(
-      normalizedPaymentMethod,
-      { isOnlinePickupOrder },
-    );
-    let effectivePaymentReference = submittedPaymentReference;
-    let effectivePaymentStatus = "Pending";
-    let verifiedBy = null;
-    let verifiedAt = null;
-    let initialStatus =
-      resolvedCustomerUserId && resolvedCashierId == null && finalOrderType === "take-out"
-        ? "Awaiting Cashier Review"
-        : "Pending";
 
-    if (resolvedCashierId != null) {
-      if (normalizedPaymentMethod === "cash") {
-        effectivePaymentStatus = "Paid";
-      } else if (normalizedPaymentMethod === "gcash_onsite") {
-        if (!/^POS-GCASH-[0-9a-f-]{36}$/i.test(submittedPaymentReference || "")) {
+      if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ message: "Order items are required" });
+      }
+      const itemNotesByProduct = collectOrderItemNotes(items);
+      const validatedItems = normalizeOrderItems(items);
+
+      const finalOrderType = normalizeOrderType(order_type || orderType);
+      const normalizedPaymentMethod = normalizePaymentMethod(
+        payment_method || paymentMethod || "cash",
+      );
+      if (isOnlineCustomerActor && finalOrderType !== "take-out") {
+        return res.status(400).json({
+          message: "Online customer orders must use take-out",
+        });
+      }
+      if (
+        isOnlineCustomerActor &&
+        normalizedPaymentMethod !== "gcash" &&
+        normalizedPaymentMethod !== "cash" &&
+        normalizedPaymentMethod !== "cash_on_pickup"
+      ) {
+        return res.status(400).json({
+          message: "Online pickup orders must use GCash or cash payment",
+        });
+      }
+      const submittedPaymentReference =
+        String(payment_reference || paymentReference || "").trim() || null;
+      if (normalizedPaymentMethod === "other") {
+        return res.status(400).json({
+          message:
+            "Other Platform is no longer available for new orders. Choose GrabFood or Foodpanda.",
+        });
+      }
+      const isThirdPartyDelivery = isThirdPartyDeliveryMethod(
+        normalizedPaymentMethod,
+      );
+      if (finalOrderType === "delivery" && !isThirdPartyDelivery) {
+        return res.status(400).json({
+          message:
+            "Delivery orders require GrabFood or Foodpanda as the platform",
+        });
+      }
+      if (finalOrderType !== "delivery" && isThirdPartyDelivery) {
+        return res.status(400).json({
+          message:
+            "Third-party platform payments are only valid for delivery orders",
+        });
+      }
+      const thirdPartyReferenceError = isThirdPartyDelivery
+        ? getThirdPartyReferenceError(
+            normalizedPaymentMethod,
+            submittedPaymentReference,
+          )
+        : null;
+      if (thirdPartyReferenceError) {
+        return res.status(400).json({
+          message: thirdPartyReferenceError,
+        });
+      }
+      const submittedCheckoutSessionId =
+        String(checkout_session_id || checkoutSessionId || "").trim() || null;
+      const submittedProofImageUrl =
+        String(proof_image_url || proofImageUrl || "").trim() || null;
+      let effectiveProofImageUrl =
+        isStaffOrderActor && normalizedPaymentMethod !== "gcash_onsite"
+          ? submittedProofImageUrl
+          : null;
+      const submittedCustomerName =
+        String(customer_name || customerName || "").trim() || null;
+      const submittedCustomerEmail =
+        String(customer_email || customerEmail || "")
+          .trim()
+          .toLowerCase() || null;
+      const submittedCustomerType =
+        String(customer_type || customerType || "").trim() || null;
+      const submittedTableNumber =
+        String(
+          table_number ?? tableNumber ?? table_id ?? tableId ?? "",
+        ).trim() || null;
+      const submittedOrderNote =
+        String(order_note || orderNote || "")
+          .trim()
+          .slice(0, 2000) || null;
+      const submittedCashTendered =
+        normalizedPaymentMethod === "cash" && isStaffOrderActor
+          ? (cash_tendered ?? cashTendered)
+          : null;
+      // Online ownership is derived only from the verified JWT. A legacy
+      // customerUserId body field is accepted but deliberately ignored.
+      const resolvedCustomerUserId = isOnlineCustomerActor
+        ? Number(req.user.userId)
+        : null;
+      if (
+        isOnlineCustomerActor &&
+        (!Number.isSafeInteger(resolvedCustomerUserId) ||
+          resolvedCustomerUserId <= 0)
+      ) {
+        return res
+          .status(401)
+          .json({ message: "Invalid authenticated customer" });
+      }
+      const isOnlinePickupOrder =
+        resolvedCustomerUserId &&
+        resolvedCashierId == null &&
+        finalOrderType === "take-out";
+      if (isOnlinePickupOrder && normalizedPaymentMethod === "gcash") {
+        const checkoutToFinalize =
+          submittedCheckoutSessionId ||
+          (/^cs_[A-Za-z0-9_-]+$/.test(submittedPaymentReference || "")
+            ? submittedPaymentReference
+            : null);
+        if (!checkoutToFinalize) {
           return res.status(400).json({
-            message: "Onsite GCash confirmation requires a valid checkout request id",
-          });
-        }
-        const activePaymentQr = await getActivePaymentQr(db);
-        if (!activePaymentQr) {
-          return res.status(409).json({
-            message: "GCash QR payment is not configured. Ask an Administrator to upload it in Settings.",
-          });
-        }
-        const submittedQrVersion = String(
-          payment_qr_version || paymentQrVersion || "",
-        ).trim();
-        if (!submittedQrVersion || submittedQrVersion !== String(activePaymentQr.updatedAt || "")) {
-          return res.status(409).json({
-            message: "The GCash QR image changed. Reopen checkout before confirming payment.",
-          });
-        }
-        if (!submittedProofImageUrl) {
-          return res.status(400).json({
-            message: "Payment proof is required before confirming onsite GCash payment",
+            message: "Online pickup orders require a PayMongo checkout session",
           });
         }
         try {
-          effectiveProofImageUrl = await validateStoredProofUrl(submittedProofImageUrl);
-        } catch (proofError) {
-          return res.status(proofError.statusCode || 400).json({
-            message: proofError.message || "Payment proof URL is invalid",
+          const finalized = await finalizePayMongoCheckoutIntent({
+            checkoutSessionId: checkoutToFinalize,
+            customerUserId: resolvedCustomerUserId,
+            items: validatedItems,
+          });
+          orderOutcome = "success";
+          return res.json(finalized);
+        } catch (error) {
+          // Sessions created before checkout-intent deployment retain the legacy
+          // browser-return path. Every new persisted intent must use the shared
+          // finalizer so browser and webhook races remain idempotent.
+          if (error?.code !== "PAYMONGO_INTENT_NOT_FOUND") throw error;
+        }
+      }
+      const storedPaymentMethod = getStoredPaymentMethod(
+        normalizedPaymentMethod,
+        { isOnlinePickupOrder },
+      );
+      let effectivePaymentReference = submittedPaymentReference;
+      let effectivePaymentStatus = "Pending";
+      let verifiedBy = null;
+      let verifiedAt = null;
+      let initialStatus =
+        resolvedCustomerUserId &&
+        resolvedCashierId == null &&
+        finalOrderType === "take-out"
+          ? "Awaiting Cashier Review"
+          : "Pending";
+
+      if (resolvedCashierId != null) {
+        if (normalizedPaymentMethod === "cash") {
+          effectivePaymentStatus = "Paid";
+        } else if (normalizedPaymentMethod === "gcash_onsite") {
+          if (
+            !/^POS-GCASH-[0-9a-f-]{36}$/i.test(submittedPaymentReference || "")
+          ) {
+            return res.status(400).json({
+              message:
+                "Onsite GCash confirmation requires a valid checkout request id",
+            });
+          }
+          const activePaymentQr = await getActivePaymentQr(db);
+          if (!activePaymentQr) {
+            return res.status(409).json({
+              message:
+                "GCash QR payment is not configured. Ask an Administrator to upload it in Settings.",
+            });
+          }
+          const submittedQrVersion = String(
+            payment_qr_version || paymentQrVersion || "",
+          ).trim();
+          if (
+            !submittedQrVersion ||
+            submittedQrVersion !== String(activePaymentQr.updatedAt || "")
+          ) {
+            return res.status(409).json({
+              message:
+                "The GCash QR image changed. Reopen checkout before confirming payment.",
+            });
+          }
+          if (!submittedProofImageUrl) {
+            return res.status(400).json({
+              message:
+                "Payment proof is required before confirming onsite GCash payment",
+            });
+          }
+          try {
+            effectiveProofImageUrl = await validateStoredProofUrl(
+              submittedProofImageUrl,
+            );
+          } catch (proofError) {
+            return res.status(proofError.statusCode || 400).json({
+              message: proofError.message || "Payment proof URL is invalid",
+            });
+          }
+          effectivePaymentStatus = "Paid";
+          effectivePaymentReference = submittedPaymentReference;
+          verifiedBy = resolvedCashierId;
+          verifiedAt = new Date();
+        } else {
+          effectivePaymentStatus = normalizePaymentStatus(
+            payment_status || paymentStatus || "Paid",
+          );
+        }
+      } else if (isOnlinePickupOrder && normalizedPaymentMethod === "gcash") {
+        const checkoutToVerify =
+          submittedCheckoutSessionId || submittedPaymentReference;
+        if (!checkoutToVerify) {
+          return res.status(400).json({
+            message: "Online pickup orders require a PayMongo checkout session",
+          });
+        }
+        payMongoVerification = await verifyPayMongoCheckoutSession(
+          checkoutToVerify,
+          {
+            customerUserId: resolvedCustomerUserId,
+            items: validatedItems,
+          },
+        );
+        if (!payMongoVerification.paid) {
+          return res.status(400).json({
+            message:
+              "Online pickup orders must be paid after backend verification",
           });
         }
         effectivePaymentStatus = "Paid";
-        effectivePaymentReference = submittedPaymentReference;
-        verifiedBy = resolvedCashierId;
-        verifiedAt = new Date();
+        effectivePaymentReference =
+          payMongoVerification.paymentReference || checkoutToVerify;
+      } else if (
+        isOnlinePickupOrder &&
+        (normalizedPaymentMethod === "cash" ||
+          normalizedPaymentMethod === "cash_on_pickup")
+      ) {
+        effectivePaymentStatus = "Pending Payment";
+        effectivePaymentReference = null;
+        initialStatus = "Awaiting Cashier Review";
       } else {
-        effectivePaymentStatus = normalizePaymentStatus(
-          payment_status || paymentStatus || "Paid"
-        );
+        return res
+          .status(400)
+          .json({ message: "Unsupported customer payment flow" });
       }
-    } else if (isOnlinePickupOrder && normalizedPaymentMethod === "gcash") {
-      const checkoutToVerify = submittedCheckoutSessionId || submittedPaymentReference;
-      if (!checkoutToVerify) {
-        return res.status(400).json({ message: "Online pickup orders require a PayMongo checkout session" });
+
+      if (isOnlinePickupOrder) {
+        initialStatus = "Awaiting Cashier Review";
       }
-      payMongoVerification = await verifyPayMongoCheckoutSession(checkoutToVerify, {
-        customerUserId: resolvedCustomerUserId,
-        items: validatedItems,
-      });
-      if (!payMongoVerification.paid) {
-        return res.status(400).json({ message: "Online pickup orders must be paid after backend verification" });
-      }
-      effectivePaymentStatus = "Paid";
-      effectivePaymentReference = payMongoVerification.paymentReference || checkoutToVerify;
-    } else if (
-      isOnlinePickupOrder &&
-      (normalizedPaymentMethod === "cash" || normalizedPaymentMethod === "cash_on_pickup")
-    ) {
-      effectivePaymentStatus = "Pending Payment";
-      effectivePaymentReference = null;
-      initialStatus = "Awaiting Cashier Review";
-    } else {
-      return res.status(400).json({ message: "Unsupported customer payment flow" });
-    }
 
-    if (isOnlinePickupOrder) {
-      initialStatus = "Awaiting Cashier Review";
-    }
+      let onlineCustomerProfile = null;
 
-    let onlineCustomerProfile = null;
-
-    if (resolvedCustomerUserId && resolvedCashierId == null && finalOrderType === "take-out") {
-      const [customerRows] = await db.query(
-        `SELECT role, email_verified, username, email
+      if (
+        resolvedCustomerUserId &&
+        resolvedCashierId == null &&
+        finalOrderType === "take-out"
+      ) {
+        const [customerRows] = await db.query(
+          `SELECT role, email_verified, username, email
          FROM users
          WHERE id = ?
          LIMIT 1`,
-        [resolvedCustomerUserId],
-      );
+          [resolvedCustomerUserId],
+        );
 
-      if (customerRows.length === 0) {
-        return res.status(404).json({ message: "Customer account not found" });
+        if (customerRows.length === 0) {
+          return res
+            .status(404)
+            .json({ message: "Customer account not found" });
+        }
+
+        const customer = customerRows[0];
+        onlineCustomerProfile = customer;
+        if (
+          String(customer.role || "")
+            .trim()
+            .toLowerCase() === "customer" &&
+          Number(customer.email_verified) !== 1
+        ) {
+          return res.status(403).json({
+            message: "Please verify your email before placing an order.",
+          });
+        }
+
+        if (
+          normalizedPaymentMethod !== "gcash" &&
+          normalizedPaymentMethod !== "cash" &&
+          normalizedPaymentMethod !== "cash_on_pickup"
+        ) {
+          return res.status(400).json({
+            message: "Online pickup orders must use GCash or cash payment",
+          });
+        }
+
+        if (normalizedPaymentMethod !== "gcash") {
+          // Cash on pickup is allowed, but remains blocked from the cook queue until payment is confirmed.
+        } else if (!effectivePaymentReference) {
+          return res.status(400).json({
+            message:
+              "Online pickup orders require a verified payment reference",
+          });
+        }
       }
 
-      const customer = customerRows[0];
-      onlineCustomerProfile = customer;
+      conn = await runOrderStage(req, "acquire connection", () =>
+        db.getConnection(),
+      );
+      startOrderTransactionTiming(req);
+      await runOrderStage(req, "begin transaction", () =>
+        conn.beginTransaction(),
+      );
+      txStarted = true;
+      if (effectivePaymentReference && !isThirdPartyDelivery) {
+        const lockName = getProtectedPaymentReferenceLockName(
+          effectivePaymentReference,
+        );
+        const [[lockRow]] = await runOrderStage(
+          req,
+          "lock payment reference",
+          () => conn.query("SELECT GET_LOCK(?, 10) AS acquired", [lockName]),
+        );
+        if (Number(lockRow?.acquired) !== 1) {
+          const lockError = new Error(
+            "Payment confirmation is already being processed; please retry",
+          );
+          lockError.statusCode = 409;
+          throw lockError;
+        }
+        paymentReferenceLockName = lockName;
+        const existingReference = await runOrderStage(
+          req,
+          "check payment reference",
+          () => findProtectedPaymentReference(conn, effectivePaymentReference),
+        );
+        if (existingReference) {
+          const duplicateReferenceError = new Error(
+            "This payment has already been used to place an order",
+          );
+          duplicateReferenceError.statusCode = 409;
+          throw duplicateReferenceError;
+        }
+      }
+      const requestedDiscountName =
+        discount_name || discountName || customer_type || customerType || "";
+      const requestedDiscountId = Number(discount_id ?? discountId);
+      const configuration = await runOrderStage(
+        req,
+        "load billing and discount configuration",
+        () =>
+          loadCashierOrderConfiguration(
+            conn,
+            resolvedCashierId != null && !isOnlinePickupOrder
+              ? requestedDiscountName
+              : "",
+            resolvedCashierId != null && !isOnlinePickupOrder
+              ? requestedDiscountId
+              : null,
+          ),
+      );
+      const billingSettings = configuration.billingSettings;
+      const stockPlan = await runOrderStage(
+        req,
+        "load items and lock stock",
+        () =>
+          prepareOrderItemsAndStock(conn, validatedItems, {
+            requireChickenFlavorForMenuFood: isStaffOrderActor,
+          }),
+      );
+      authoritativeItems = stockPlan.authoritativeItems.map((item) => ({
+        ...item,
+        note:
+          itemNotesByProduct.get(
+            getOrderItemIdentity(
+              item.product_id,
+              item.selected_flavor_product_id ?? null,
+            ),
+          ) || null,
+      }));
+      const subtotalAmount = authoritativeItems.reduce(
+        (sum, item) => sum + item.subtotal,
+        0,
+      );
+      const appliedDiscount =
+        resolvedCashierId != null && !isOnlinePickupOrder
+          ? configuration.discount
+          : { discountId: null, discountName: "", discountRate: 0 };
+      const billingTotals = calculateBillingTotals(
+        subtotalAmount,
+        billingSettings,
+        appliedDiscount.discountRate,
+      );
+
       if (
-        String(customer.role || "").trim().toLowerCase() === "customer" &&
-        Number(customer.email_verified) !== 1
+        resolvedCashierId != null &&
+        normalizedPaymentMethod === "gcash_onsite"
       ) {
-        return res.status(403).json({
-          message: "Please verify your email before placing an order.",
+        const submittedGrandTotal = Number(total);
+        if (
+          !Number.isFinite(submittedGrandTotal) ||
+          Math.abs(submittedGrandTotal - billingTotals.grandTotal) > 0.009
+        ) {
+          const amountError = new Error(
+            "GCash amount changed during checkout. Reopen the payment QR and confirm the updated total.",
+          );
+          amountError.statusCode = 409;
+          throw amountError;
+        }
+      }
+
+      if (
+        isOnlinePickupOrder &&
+        normalizedPaymentMethod === "gcash" &&
+        payMongoVerification
+      ) {
+        const authoritativeAmountCentavos = Math.round(
+          billingTotals.grandTotal * 100,
+        );
+        if (
+          !Number.isSafeInteger(payMongoVerification?.expectedAmountCentavos) ||
+          payMongoVerification.expectedAmountCentavos !==
+            authoritativeAmountCentavos
+        ) {
+          const amountError = new Error(
+            "Paid checkout amount does not match the authoritative order total",
+          );
+          amountError.statusCode = 409;
+          throw amountError;
+        }
+      }
+
+      let verifiedDiscountApproval = null;
+      if (appliedDiscount.discountRate > 0) {
+        verifiedDiscountApproval = verifyDiscountApproval({
+          token: discount_authorization || discountAuthorization,
+          userId: resolvedCashierId,
+          discountId: appliedDiscount.discountId,
+          discountRate: appliedDiscount.discountRate,
+          items: validatedItems,
         });
       }
 
-      if (normalizedPaymentMethod !== "gcash" && normalizedPaymentMethod !== "cash" && normalizedPaymentMethod !== "cash_on_pickup") {
-        return res.status(400).json({ message: "Online pickup orders must use GCash or cash payment" });
+      let snapshotCashTendered =
+        normalizedPaymentMethod === "cash" ? submittedCashTendered : null;
+      let snapshotChange = null;
+      if (normalizedPaymentMethod === "cash" && resolvedCashierId != null) {
+        const cashSettlement = validateCashTender(
+          snapshotCashTendered,
+          billingTotals.grandTotal,
+        );
+        snapshotCashTendered = cashSettlement.cashTendered;
+        snapshotChange = cashSettlement.change;
       }
-
-      if (normalizedPaymentMethod !== "gcash") {
-        // Cash on pickup is allowed, but remains blocked from the cook queue until payment is confirmed.
-      } else if (!effectivePaymentReference) {
-        return res.status(400).json({ message: "Online pickup orders require a verified payment reference" });
-      }
-    }
-
-    conn = await runOrderStage(req, "acquire connection", () => db.getConnection());
-    startOrderTransactionTiming(req);
-    await runOrderStage(req, "begin transaction", () => conn.beginTransaction());
-    txStarted = true;
-    if (effectivePaymentReference && !isThirdPartyDelivery) {
-      const lockName = getProtectedPaymentReferenceLockName(
-        effectivePaymentReference,
+      const cashierContext = await runOrderStage(req, "resolve cashier", () =>
+        ensureLegacyCashierContext(conn, resolvedCashierId),
       );
-      const [[lockRow]] = await runOrderStage(
+      const persistedCashierId = cashierContext.cashierId;
+
+      if (verifiedDiscountApproval) {
+        claimDiscountApproval(verifiedDiscountApproval);
+        claimedDiscountApprovalId = verifiedDiscountApproval.approvalId;
+      }
+      const identifiers = await runOrderStage(
         req,
-        "lock payment reference",
-        () => conn.query("SELECT GET_LOCK(?, 10) AS acquired", [lockName]),
+        "allocate order identifiers",
+        () => allocateOrderIdentifiers(conn, finalOrderType),
       );
-      if (Number(lockRow?.acquired) !== 1) {
-        const lockError = new Error(
-          "Payment confirmation is already being processed; please retry",
-        );
-        lockError.statusCode = 409;
-        throw lockError;
-      }
-      paymentReferenceLockName = lockName;
-      const existingReference = await runOrderStage(
-        req,
-        "check payment reference",
-        () => findProtectedPaymentReference(conn, effectivePaymentReference),
-      );
-      if (existingReference) {
-        const duplicateReferenceError = new Error(
-          "This payment has already been used to place an order",
-        );
-        duplicateReferenceError.statusCode = 409;
-        throw duplicateReferenceError;
-      }
-    }
-    const requestedDiscountName =
-      discount_name || discountName || customer_type || customerType || "";
-    const requestedDiscountId = Number(discount_id ?? discountId);
-    const configuration = await runOrderStage(
-      req,
-      "load billing and discount configuration",
-      () => loadCashierOrderConfiguration(
-        conn,
-        resolvedCashierId != null && !isOnlinePickupOrder
-          ? requestedDiscountName
-          : "",
-        resolvedCashierId != null && !isOnlinePickupOrder
-          ? requestedDiscountId
-          : null,
-      ),
-    );
-    const billingSettings = configuration.billingSettings;
-    const stockPlan = await runOrderStage(
-      req,
-      "load items and lock stock",
-      () => prepareOrderItemsAndStock(conn, validatedItems, {
-        requireChickenFlavorForMenuFood: isStaffOrderActor,
-      }),
-    );
-    authoritativeItems = stockPlan.authoritativeItems.map((item) => ({
-      ...item,
-      note: itemNotesByProduct.get(
-        getOrderItemIdentity(
-          item.product_id,
-          item.selected_flavor_product_id ?? null,
-        ),
-      ) || null,
-    }));
-    const subtotalAmount = authoritativeItems.reduce(
-      (sum, item) => sum + item.subtotal,
-      0,
-    );
-    const appliedDiscount =
-      resolvedCashierId != null && !isOnlinePickupOrder
-        ? configuration.discount
-        : { discountId: null, discountName: "", discountRate: 0 };
-    const billingTotals = calculateBillingTotals(
-      subtotalAmount,
-      billingSettings,
-      appliedDiscount.discountRate,
-    );
 
-    if (resolvedCashierId != null && normalizedPaymentMethod === "gcash_onsite") {
-      const submittedGrandTotal = Number(total);
-      if (
-        !Number.isFinite(submittedGrandTotal) ||
-        Math.abs(submittedGrandTotal - billingTotals.grandTotal) > 0.009
-      ) {
-        const amountError = new Error(
-          "GCash amount changed during checkout. Reopen the payment QR and confirm the updated total.",
-        );
-        amountError.statusCode = 409;
-        throw amountError;
-      }
-    }
-
-    if (
-      isOnlinePickupOrder &&
-      normalizedPaymentMethod === "gcash" &&
-      payMongoVerification
-    ) {
-      const authoritativeAmountCentavos = Math.round(billingTotals.grandTotal * 100);
-      if (
-        !Number.isSafeInteger(payMongoVerification?.expectedAmountCentavos) ||
-        payMongoVerification.expectedAmountCentavos !== authoritativeAmountCentavos
-      ) {
-        const amountError = new Error(
-          "Paid checkout amount does not match the authoritative order total",
-        );
-        amountError.statusCode = 409;
-        throw amountError;
-      }
-    }
-
-    let verifiedDiscountApproval = null;
-    if (appliedDiscount.discountRate > 0) {
-      verifiedDiscountApproval = verifyDiscountApproval({
-        token: discount_authorization || discountAuthorization,
-        userId: resolvedCashierId,
-        discountId: appliedDiscount.discountId,
-        discountRate: appliedDiscount.discountRate,
-        items: validatedItems,
-      });
-    }
-
-    let snapshotCashTendered =
-      normalizedPaymentMethod === "cash" ? submittedCashTendered : null;
-    let snapshotChange = null;
-    if (normalizedPaymentMethod === "cash" && resolvedCashierId != null) {
-      const cashSettlement = validateCashTender(
-        snapshotCashTendered,
-        billingTotals.grandTotal,
-      );
-      snapshotCashTendered = cashSettlement.cashTendered;
-      snapshotChange = cashSettlement.change;
-    }
-    const cashierContext = await runOrderStage(
-      req,
-      "resolve cashier",
-      () => ensureLegacyCashierContext(conn, resolvedCashierId),
-    );
-    const persistedCashierId = cashierContext.cashierId;
-
-    if (verifiedDiscountApproval) {
-      claimDiscountApproval(verifiedDiscountApproval);
-      claimedDiscountApprovalId = verifiedDiscountApproval.approvalId;
-    }
-    const identifiers = await runOrderStage(
-      req,
-      "allocate order identifiers",
-      () => allocateOrderIdentifiers(conn, finalOrderType),
-    );
-
-    // Insert the order header
-    const [orderResult] = await runOrderStage(
-      req,
-      "insert order",
-      () => conn.query(
-        `INSERT INTO orders
+      // Insert the order header
+      const [orderResult] = await runOrderStage(req, "insert order", () =>
+        conn.query(
+          `INSERT INTO orders
            (Total_Amount, Customer_ID, Cashier_ID, Order_Type, Status, customer_user_id, payment_reference, payment_status, payment_method, proof_image_url, verified_by, verified_at, transaction_id, order_number, business_date)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          billingTotals.grandTotal,
-          customerId || null,
-          persistedCashierId,
-          finalOrderType,
-          initialStatus,
-          resolvedCustomerUserId,
-          effectivePaymentReference,
-          effectivePaymentStatus,
-          storedPaymentMethod,
-          effectiveProofImageUrl,
-          verifiedBy,
-          verifiedAt,
-          identifiers.transactionId,
-          identifiers.orderNumberValue,
-          identifiers.businessDate,
-        ],
-      ),
-    );
-    const orderId = orderResult.insertId;
+          [
+            billingTotals.grandTotal,
+            customerId || null,
+            persistedCashierId,
+            finalOrderType,
+            initialStatus,
+            resolvedCustomerUserId,
+            effectivePaymentReference,
+            effectivePaymentStatus,
+            storedPaymentMethod,
+            effectiveProofImageUrl,
+            verifiedBy,
+            verifiedAt,
+            identifiers.transactionId,
+            identifiers.orderNumberValue,
+            identifiers.businessDate,
+          ],
+        ),
+      );
+      const orderId = orderResult.insertId;
 
-    const itemValuesSql = authoritativeItems
-      .map(() => "(?, ?, ?, ?, ?, ?)")
-      .join(", ");
-    const itemValues = authoritativeItems.flatMap((item) => [
-      orderId,
-      item.product_id,
-      item.qty,
-      item.subtotal,
-      item.selected_flavor_product_id ?? null,
-      item.selected_flavor_name ?? null,
-    ]);
-    await runOrderStage(req, "insert order items", () => conn.query(
-      `INSERT INTO order_item
+      const itemValuesSql = authoritativeItems
+        .map(() => "(?, ?, ?, ?, ?, ?)")
+        .join(", ");
+      const itemValues = authoritativeItems.flatMap((item) => [
+        orderId,
+        item.product_id,
+        item.qty,
+        item.subtotal,
+        item.selected_flavor_product_id ?? null,
+        item.selected_flavor_name ?? null,
+      ]);
+      await runOrderStage(req, "insert order items", () =>
+        conn.query(
+          `INSERT INTO order_item
          (Order_ID, Product_ID, Quantity, Subtotal,
           selected_flavor_product_id, selected_flavor_name)
        VALUES ${itemValuesSql}`,
-      itemValues,
-    ));
+          itemValues,
+        ),
+      );
 
-    // Insert payment record
-    await runOrderStage(req, "insert payment", () => conn.query(
-      `INSERT INTO payments
+      // Insert payment record
+      await runOrderStage(req, "insert payment", () =>
+        conn.query(
+          `INSERT INTO payments
          (Order_ID, Payment_Type, Payment_Status, ProcessBy)
        VALUES (?, ?, ?, ?)`,
-      [
-        orderId,
-        storedPaymentMethod,
-        isPaidPaymentStatus(effectivePaymentStatus) ? "Completed" : "Pending",
-        persistedCashierId,
-      ],
-    ));
+          [
+            orderId,
+            storedPaymentMethod,
+            isPaidPaymentStatus(effectivePaymentStatus)
+              ? "Completed"
+              : "Pending",
+            persistedCashierId,
+          ],
+        ),
+      );
 
-    receiptDto = await runOrderStage(
-      req,
-      "insert receipt snapshot",
-      () => createReceiptSnapshot(conn, {
-        orderId,
-        transactionId: identifiers.transactionId,
-        orderNumberValue: identifiers.orderNumberValue,
-        orderType: finalOrderType,
-        currentStatus: initialStatus,
-        currentPaymentStatus: effectivePaymentStatus,
-        paymentMethod: storedPaymentMethod,
-        subtotal: billingTotals.subtotal,
-        discountName: appliedDiscount.discountName || null,
-        discountRate: appliedDiscount.discountRate,
-        discountAmount: billingTotals.discountAmount,
-        taxRate: billingSettings.taxRate,
-        taxAmount: billingTotals.taxAmount,
-        serviceChargeRate: billingSettings.serviceCharge,
-        serviceChargeAmount: billingTotals.serviceChargeAmount,
-        total: billingTotals.grandTotal,
-        amountPaid: isPaidPaymentStatus(effectivePaymentStatus)
-          ? billingTotals.grandTotal
-          : 0,
-        cashTendered: snapshotCashTendered,
-        changeAmount: snapshotChange,
-        customerType: submittedCustomerType,
-        // Customer registration persists the Full Name field in users.username;
-        // the navbar reads the same field. Never trust a body-supplied name for
-        // an online receipt because it could differ from the registered value.
-        soldToName: isOnlineCustomerActor
-          ? String(onlineCustomerProfile?.username || "").trim() || null
-          : submittedCustomerName,
-        cashierName: isStaffOrderActor ? cashierContext.cashierName : null,
-        tableNumber: finalOrderType === "dine-in" ? submittedTableNumber : null,
-        orderNote: submittedOrderNote,
-        currency: configuration.receiptSettings.currency,
-        merchantName: configuration.receiptSettings.restaurantName,
-        merchantTagline: configuration.receiptSettings.tagline,
-        merchantEmail: configuration.receiptSettings.email,
-        merchantPhone: configuration.receiptSettings.phone,
-        merchantAddress: configuration.receiptSettings.address,
-        timezone: configuration.receiptSettings.timezone,
-        items: authoritativeItems,
-      }),
-    );
+      receiptDto = await runOrderStage(req, "insert receipt snapshot", () =>
+        createReceiptSnapshot(conn, {
+          orderId,
+          transactionId: identifiers.transactionId,
+          orderNumberValue: identifiers.orderNumberValue,
+          orderType: finalOrderType,
+          currentStatus: initialStatus,
+          currentPaymentStatus: effectivePaymentStatus,
+          paymentMethod: storedPaymentMethod,
+          subtotal: billingTotals.subtotal,
+          discountName: appliedDiscount.discountName || null,
+          discountRate: appliedDiscount.discountRate,
+          discountAmount: billingTotals.discountAmount,
+          taxRate: billingSettings.taxRate,
+          taxAmount: billingTotals.taxAmount,
+          serviceChargeRate: billingSettings.serviceCharge,
+          serviceChargeAmount: billingTotals.serviceChargeAmount,
+          total: billingTotals.grandTotal,
+          amountPaid: isPaidPaymentStatus(effectivePaymentStatus)
+            ? billingTotals.grandTotal
+            : 0,
+          cashTendered: snapshotCashTendered,
+          changeAmount: snapshotChange,
+          customerType: submittedCustomerType,
+          // Customer registration persists the Full Name field in users.username;
+          // the navbar reads the same field. Never trust a body-supplied name for
+          // an online receipt because it could differ from the registered value.
+          soldToName: isOnlineCustomerActor
+            ? String(onlineCustomerProfile?.username || "").trim() || null
+            : submittedCustomerName,
+          cashierName: isStaffOrderActor ? cashierContext.cashierName : null,
+          tableNumber:
+            finalOrderType === "dine-in" ? submittedTableNumber : null,
+          orderNote: submittedOrderNote,
+          currency: configuration.receiptSettings.currency,
+          merchantName: configuration.receiptSettings.restaurantName,
+          merchantTagline: configuration.receiptSettings.tagline,
+          merchantEmail: configuration.receiptSettings.email,
+          merchantPhone: configuration.receiptSettings.phone,
+          merchantAddress: configuration.receiptSettings.address,
+          timezone: configuration.receiptSettings.timezone,
+          items: authoritativeItems,
+        }),
+      );
 
-    const deductedStockAtCreation =
-      isPaidPaymentStatus(effectivePaymentStatus);
-    if (deductedStockAtCreation) {
-      await runOrderStage(
-        req,
-        "deduct stock",
-        () =>
+      const deductedStockAtCreation = isPaidPaymentStatus(
+        effectivePaymentStatus,
+      );
+      if (deductedStockAtCreation) {
+        await runOrderStage(req, "deduct stock", () =>
           deductPrevalidatedStockForPaidOrder(
             orderId,
             effectivePaymentStatus,
@@ -1843,204 +1971,266 @@ router.post("/", withOrderRequestTiming, requireAuthenticatedUser, async (req, r
             cashierContext.recordedByAdminId,
             conn,
           ),
-      );
-    }
+        );
+      }
 
-    await runOrderStage(req, "commit", () => conn.commit());
-    txStarted = false;
-    orderCommitted = true;
-    finishOrderTransactionTiming(req);
-    publishOrderMutation({
-      reason: "order.created",
-      customerUserId: resolvedCustomerUserId,
-      paymentChanged: true,
-      inventoryChanged: deductedStockAtCreation,
-    });
-    if (isOnlinePickupOrder) {
-      const receiptEmail = submittedCustomerEmail || String(onlineCustomerProfile?.email || "").trim().toLowerCase();
-      const receiptCustomerName = isOnlineCustomerActor
-        ? String(onlineCustomerProfile?.username || "").trim()
-        : submittedCustomerName || "Customer";
+      await runOrderStage(req, "commit", () => conn.commit());
+      txStarted = false;
+      orderCommitted = true;
+      finishOrderTransactionTiming(req);
+      publishOrderMutation({
+        reason: "order.created",
+        customerUserId: resolvedCustomerUserId,
+        paymentChanged: true,
+        inventoryChanged: deductedStockAtCreation,
+      });
+      if (isOnlinePickupOrder) {
+        const receiptEmail =
+          submittedCustomerEmail ||
+          String(onlineCustomerProfile?.email || "")
+            .trim()
+            .toLowerCase();
+        const receiptCustomerName = isOnlineCustomerActor
+          ? String(onlineCustomerProfile?.username || "").trim()
+          : submittedCustomerName || "Customer";
 
-      if (receiptEmail) {
-        try {
-          await sendCustomerOrderReceiptEmail({
-            to: receiptEmail,
-            customerName: receiptCustomerName,
-            order: {
-              orderNumber: identifiers.orderNumber,
-              transactionId: identifiers.transactionId,
-              orderType: finalOrderType,
-              paymentMethod: storedPaymentMethod,
-              paymentStatus: effectivePaymentStatus,
-              subtotal: billingTotals.subtotal,
-              taxAmount: billingTotals.taxAmount,
-              serviceChargeAmount: billingTotals.serviceChargeAmount,
-              total: billingTotals.grandTotal,
-              items: authoritativeItems,
-              note: buildCustomerReceiptNote(effectivePaymentStatus),
-            },
-          });
-        } catch (emailError) {
-          console.error(
-            "Customer receipt email failed",
-            emailError && emailError.message ? emailError.message : emailError,
-          );
+        if (receiptEmail) {
+          try {
+            await sendCustomerOrderReceiptEmail({
+              to: receiptEmail,
+              customerName: receiptCustomerName,
+              order: {
+                orderNumber: identifiers.orderNumber,
+                transactionId: identifiers.transactionId,
+                orderType: finalOrderType,
+                paymentMethod: storedPaymentMethod,
+                paymentStatus: effectivePaymentStatus,
+                subtotal: billingTotals.subtotal,
+                taxAmount: billingTotals.taxAmount,
+                serviceChargeAmount: billingTotals.serviceChargeAmount,
+                total: billingTotals.grandTotal,
+                items: authoritativeItems,
+                note: buildCustomerReceiptNote(effectivePaymentStatus),
+              },
+            });
+          } catch (emailError) {
+            console.error(
+              "Customer receipt email failed",
+              emailError && emailError.message
+                ? emailError.message
+                : emailError,
+            );
+          }
         }
       }
-    }
 
-    orderOutcome = "success";
-    res.json({
-      message: "Order placed",
-      orderId,
-      id: orderId,
-      transactionId: identifiers.transactionId,
-      orderNumber: identifiers.orderNumber,
-      businessDate: identifiers.businessDate,
-      trackingStatus: initialStatus,
-      receipt: receiptDto,
-    });
-  } catch (err) {
-    if (conn && txStarted) await conn.rollback();
-    if (claimedDiscountApprovalId && !orderCommitted) {
-      releaseDiscountApproval(claimedDiscountApprovalId);
-      claimedDiscountApprovalId = null;
+      orderOutcome = "success";
+      res.json({
+        message: "Order placed",
+        orderId,
+        id: orderId,
+        transactionId: identifiers.transactionId,
+        orderNumber: identifiers.orderNumber,
+        businessDate: identifiers.businessDate,
+        trackingStatus: initialStatus,
+        receipt: receiptDto,
+      });
+    } catch (err) {
+      if (conn && txStarted) await conn.rollback();
+      if (claimedDiscountApprovalId && !orderCommitted) {
+        releaseDiscountApproval(claimedDiscountApprovalId);
+        claimedDiscountApprovalId = null;
+      }
+      finishOrderTransactionTiming(req);
+      console.error(
+        "POST /orders error:",
+        JSON.stringify(
+          {
+            message: err.message,
+            code: err.code,
+            sqlMessage: err.sqlMessage,
+          },
+          null,
+          2,
+        ),
+      );
+      const duplicateEntry = err?.code === "ER_DUP_ENTRY";
+      const duplicatePaymentReference =
+        duplicateEntry &&
+        /payment_reference/i.test(
+          String(err?.sqlMessage || err?.message || ""),
+        );
+      const duplicateBusinessIdentifier =
+        duplicateEntry && !duplicatePaymentReference;
+      const statusCode = duplicateEntry ? 409 : Number(err?.statusCode);
+      const isClientError = statusCode >= 400 && statusCode < 500;
+      res.status(isClientError ? statusCode : 500).json({
+        message: duplicatePaymentReference
+          ? "This payment has already been used to place an order"
+          : duplicateBusinessIdentifier
+            ? "An order identifier allocation conflict occurred; please retry the order"
+            : isClientError
+              ? err.message
+              : "DB error",
+        error: err.message,
+      });
+    } finally {
+      if (conn && paymentReferenceLockName) {
+        await conn
+          .query("SELECT RELEASE_LOCK(?)", [paymentReferenceLockName])
+          .catch(() => undefined);
+      }
+      if (conn) conn.release();
+      logOrderTiming(req, orderOutcome);
     }
-    finishOrderTransactionTiming(req);
-    console.error("POST /orders error:", JSON.stringify({
-      message: err.message,
-      code: err.code,
-      sqlMessage: err.sqlMessage,
-    }, null, 2));
-    const duplicateEntry = err?.code === "ER_DUP_ENTRY";
-    const duplicatePaymentReference =
-      duplicateEntry && /payment_reference/i.test(String(err?.sqlMessage || err?.message || ""));
-    const duplicateBusinessIdentifier =
-      duplicateEntry && !duplicatePaymentReference;
-    const statusCode = duplicateEntry ? 409 : Number(err?.statusCode);
-    const isClientError = statusCode >= 400 && statusCode < 500;
-    res.status(isClientError ? statusCode : 500).json({
-      message: duplicatePaymentReference
-        ? "This payment has already been used to place an order"
-        : duplicateBusinessIdentifier
-          ? "An order identifier allocation conflict occurred; please retry the order"
-        : isClientError
-          ? err.message
-          : "DB error",
-      error: err.message,
-    });
-  } finally {
-    if (conn && paymentReferenceLockName) {
-      await conn
-        .query("SELECT RELEASE_LOCK(?)", [paymentReferenceLockName])
-        .catch(() => undefined);
-    }
-    if (conn) conn.release();
-    logOrderTiming(req, orderOutcome);
-  }
-});
+  },
+);
 
 // PATCH /orders/:id — update order status
 // ⚠️  Wildcard param routes go LAST so they don't shadow named paths above.
-router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, res) => {
-  let conn;
-  let txStarted = false;
-  try {
-    const { id } = req.params;
-    const requestBody = req.body || {};
-    const {
-      status,
-      startedAt,
-      cashierId,
-      cashier_id,
-      handoverTimestamp,
-      riderName,
-      estimatedPrepMinutes,
-      timerUpdatedBy,
-      paymentStatus,
-      payment_status,
-      completeFromPreparing,
-    } = requestBody;
-    const paymentRelatedFields = Object.keys(requestBody).filter((field) => {
-      const normalizedField = String(field).replace(/[_-]/g, "").toLowerCase();
-      return (
-        normalizedField.startsWith("payment") ||
-        normalizedField.startsWith("proof") ||
-        normalizedField === "verifiedby" ||
-        normalizedField === "verifiedat"
+router.patch(
+  "/:id",
+  withOrderRequestTiming,
+  requireCookViewAccess,
+  async (req, res) => {
+    let conn;
+    let txStarted = false;
+    try {
+      const { id } = req.params;
+      const requestBody = req.body || {};
+      const {
+        status,
+        startedAt,
+        cashierId,
+        cashier_id,
+        handoverTimestamp,
+        riderName,
+        estimatedPrepMinutes,
+        timerUpdatedBy,
+        paymentStatus,
+        payment_status,
+        completeFromPreparing,
+      } = requestBody;
+      const paymentRelatedFields = Object.keys(requestBody).filter((field) => {
+        const normalizedField = String(field)
+          .replace(/[_-]/g, "")
+          .toLowerCase();
+        return (
+          normalizedField.startsWith("payment") ||
+          normalizedField.startsWith("proof") ||
+          normalizedField === "verifiedby" ||
+          normalizedField === "verifiedat"
+        );
+      });
+      const unsupportedPaymentField = paymentRelatedFields.find(
+        (field) => field !== "paymentStatus" && field !== "payment_status",
       );
-    });
-    const unsupportedPaymentField = paymentRelatedFields.find(
-      (field) => field !== "paymentStatus" && field !== "payment_status",
-    );
-    if (unsupportedPaymentField) {
-      return res.status(400).json({
-        message: `${unsupportedPaymentField} cannot be updated through the order status endpoint`,
-      });
-    }
-    const hasPaymentStatusField =
-      Object.prototype.hasOwnProperty.call(requestBody, "paymentStatus") ||
-      Object.prototype.hasOwnProperty.call(requestBody, "payment_status");
-    if (
-      hasPaymentStatusField &&
-      !canUpdateOrderPaymentStatus(req.user?.role)
-    ) {
-      return res.status(403).json({
-        message: "Payment status updates require Cashier or Administrator access",
-      });
-    }
-    const submittedPaymentStatus = payment_status ?? paymentStatus;
-    const hasPaymentStatusUpdate =
-      hasPaymentStatusField &&
-      submittedPaymentStatus !== undefined &&
-      submittedPaymentStatus !== null &&
-      String(submittedPaymentStatus).trim() !== "";
-    if (hasPaymentStatusField && !hasPaymentStatusUpdate) {
-      return res.status(400).json({ message: "Payment status is required" });
-    }
-    const requestedStatus =
-      status === undefined || status === null || String(status).trim() === ""
-        ? null
-        : normalizeKitchenStatus(status);
-    const isPersistedSettlement =
-      requestedStatus === "Cancelled" || requestedStatus === "Refunded";
-    if (requestedStatus === "Cancelled" && !canCancelPersistedOrders(req.user?.role)) {
-      return res.status(403).json({ message: "Order cancellation is not authorized" });
-    }
-    if (requestedStatus === "Refunded" && !canRefundPersistedOrders(req.user?.role)) {
-      return res.status(403).json({ message: "Financial refunds require Administrator access" });
-    }
-
-    const authenticatedActorId = Number(req.user?.userId);
-    if (
-      (isPersistedSettlement || hasPaymentStatusUpdate ||
-        handoverTimestamp !== undefined || riderName !== undefined) &&
-      (!Number.isSafeInteger(authenticatedActorId) || authenticatedActorId <= 0)
-    ) {
-      return res.status(401).json({ message: "Invalid authenticated staff user" });
-    }
-
-    const isHandoverMutation =
-      handoverTimestamp !== undefined || riderName !== undefined;
-    const resolvedCashierId = isPersistedSettlement
-      ? null
-      : hasPaymentStatusUpdate
-        ? authenticatedActorId
-        : isHandoverMutation
+      if (unsupportedPaymentField) {
+        return res.status(400).json({
+          message: `${unsupportedPaymentField} cannot be updated through the order status endpoint`,
+        });
+      }
+      const hasPaymentStatusField =
+        Object.prototype.hasOwnProperty.call(requestBody, "paymentStatus") ||
+        Object.prototype.hasOwnProperty.call(requestBody, "payment_status");
+      if (
+        hasPaymentStatusField &&
+        !canUpdateOrderPaymentStatus(req.user?.role)
+      ) {
+        return res.status(403).json({
+          message:
+            "Payment status updates require Cashier or Administrator access",
+        });
+      }
+      const submittedPaymentStatus = payment_status ?? paymentStatus;
+      const hasPaymentStatusUpdate =
+        hasPaymentStatusField &&
+        submittedPaymentStatus !== undefined &&
+        submittedPaymentStatus !== null &&
+        String(submittedPaymentStatus).trim() !== "";
+      if (hasPaymentStatusField && !hasPaymentStatusUpdate) {
+        return res.status(400).json({ message: "Payment status is required" });
+      }
+      const requestedStatus =
+        status === undefined || status === null || String(status).trim() === ""
           ? null
-        : cashierId ?? cashier_id ?? null;
+          : normalizeKitchenStatus(status);
+      const isPersistedSettlement =
+        requestedStatus === "Cancelled" || requestedStatus === "Refunded";
+      if (
+        requestedStatus === "Cancelled" &&
+        !canCancelPersistedOrders(req.user?.role)
+      ) {
+        return res
+          .status(403)
+          .json({ message: "Order cancellation is not authorized" });
+      }
+      if (requestedStatus === "Refunded") {
+        const refundActorRole = normalizeRole(req.user?.role);
+        if (
+          refundActorRole !== "cashier" &&
+          !isSuperuserRole(refundActorRole)
+        ) {
+          return res.status(403).json({
+            message:
+              "Cashier or Administrator access required to refund an order",
+          });
+        }
+      }
 
-    conn = await db.getConnection();
-    const persistedCashierId = isPersistedSettlement
-      ? null
-      : await ensureLegacyCashierRow(conn, resolvedCashierId);
+      const authenticatedActorId = Number(req.user?.userId);
+      if (
+        (isPersistedSettlement ||
+          hasPaymentStatusUpdate ||
+          handoverTimestamp !== undefined ||
+          riderName !== undefined) &&
+        (!Number.isSafeInteger(authenticatedActorId) ||
+          authenticatedActorId <= 0)
+      ) {
+        return res
+          .status(401)
+          .json({ message: "Invalid authenticated staff user" });
+      }
 
-    await conn.beginTransaction();
-    txStarted = true;
+      // Every financial refund, including administrator refunds, must pass
+      // the separate refund-password check before any database mutation.
+      // This is checked on the backend, never trusted from the cashier UI.
+      if (requestedStatus === "Refunded") {
+        try {
+          await verifyRefundAuthorizationPassword(
+            requestBody.refundAuthorizationPassword ??
+              requestBody.refund_authorization_password,
+            authenticatedActorId,
+          );
+        } catch (error) {
+          const statusCode = Number(error?.statusCode);
+          const expected = statusCode >= 400 && statusCode < 600;
+          return res.status(expected ? statusCode : 500).json({
+            message: expected ? error.message : "Unable to authorize refund",
+          });
+        }
+      }
 
-    const [existingRows] = await conn.query(
-      `SELECT
+      const isHandoverMutation =
+        handoverTimestamp !== undefined || riderName !== undefined;
+      const resolvedCashierId = isPersistedSettlement
+        ? null
+        : hasPaymentStatusUpdate
+          ? authenticatedActorId
+          : isHandoverMutation
+            ? null
+            : (cashierId ?? cashier_id ?? null);
+
+      conn = await db.getConnection();
+      const persistedCashierId = isPersistedSettlement
+        ? null
+        : await ensureLegacyCashierRow(conn, resolvedCashierId);
+
+      await conn.beginTransaction();
+      txStarted = true;
+
+      const [existingRows] = await conn.query(
+        `SELECT
          Status AS status,
          Order_Type AS orderType,
          customer_user_id AS customerUserId,
@@ -2072,427 +2262,464 @@ router.patch("/:id", withOrderRequestTiming, requireCookViewAccess, async (req, 
        WHERE o.Order_ID = ?
        LIMIT 1
        FOR UPDATE`,
-      [id]
-    );
+        [id],
+      );
 
-    if (!existingRows.length) {
-      return res.status(404).json({ message: "Order not found" });
-    }
+      if (!existingRows.length) {
+        return res.status(404).json({ message: "Order not found" });
+      }
 
-    const currentRawStatus = existingRows[0].status;
-    const currentStatus = normalizeKitchenStatus(currentRawStatus);
-    const preparationStartedBeforeUpdate =
-      Boolean(
-        existingRows[0].prepStartedAt ||
-        existingRows[0].startedAt ||
-        existingRows[0].readyAt,
-      ) ||
-      ["Preparing", "Ready for Pickup", "Completed"].includes(currentStatus);
-    const hasPendingRefundRequest = Number(existingRows[0].hasPendingRefundRequest) === 1;
-    const currentOrderType = normalizeOrderType(existingRows[0].orderType);
-    const isOnlinePickupCompletion =
-      Number(existingRows[0].customerUserId) > 0 &&
-      currentOrderType === "take-out";
-    const hasTimerUpdate = estimatedPrepMinutes !== undefined;
-    const hasStatusUpdate = status !== undefined && status !== null && String(status).trim() !== "";
-    const persistedOrderPaymentStatus = normalizePaymentStatus(
-      existingRows[0].paymentStatus
-    );
-    const persistedPaymentRecordStatus = normalizePaymentStatus(
-      existingRows[0].paymentRecordStatus
-    );
-    const effectiveCurrentPaymentStatus =
-      isPaidPaymentStatus(persistedOrderPaymentStatus) ||
-      !isPaidPaymentStatus(persistedPaymentRecordStatus)
-        ? persistedOrderPaymentStatus
-        : persistedPaymentRecordStatus;
-    const nextPaymentStatus = hasPaymentStatusUpdate
-      ? normalizePaymentStatus(submittedPaymentStatus)
-      : effectiveCurrentPaymentStatus;
+      const currentRawStatus = existingRows[0].status;
+      const currentStatus = normalizeKitchenStatus(currentRawStatus);
+      const preparationStartedBeforeUpdate =
+        Boolean(
+          existingRows[0].prepStartedAt ||
+          existingRows[0].startedAt ||
+          existingRows[0].readyAt,
+        ) ||
+        ["Preparing", "Ready for Pickup", "Completed"].includes(currentStatus);
+      const hasPendingRefundRequest =
+        Number(existingRows[0].hasPendingRefundRequest) === 1;
+      const currentOrderType = normalizeOrderType(existingRows[0].orderType);
+      const isOnlinePickupCompletion =
+        Number(existingRows[0].customerUserId) > 0 &&
+        currentOrderType === "take-out";
+      const hasTimerUpdate = estimatedPrepMinutes !== undefined;
+      const hasStatusUpdate =
+        status !== undefined && status !== null && String(status).trim() !== "";
+      const persistedOrderPaymentStatus = normalizePaymentStatus(
+        existingRows[0].paymentStatus,
+      );
+      const persistedPaymentRecordStatus = normalizePaymentStatus(
+        existingRows[0].paymentRecordStatus,
+      );
+      const effectiveCurrentPaymentStatus =
+        isPaidPaymentStatus(persistedOrderPaymentStatus) ||
+        !isPaidPaymentStatus(persistedPaymentRecordStatus)
+          ? persistedOrderPaymentStatus
+          : persistedPaymentRecordStatus;
+      const nextPaymentStatus = hasPaymentStatusUpdate
+        ? normalizePaymentStatus(submittedPaymentStatus)
+        : effectiveCurrentPaymentStatus;
 
-    if (!hasStatusUpdate && !hasTimerUpdate && !hasPaymentStatusUpdate && !startedAt && resolvedCashierId == null && !handoverTimestamp && riderName === undefined) {
-      return res.status(400).json({ message: "No valid fields to update" });
-    }
-
-    if (hasTimerUpdate && !canUpdateTimerForStatus(currentStatus)) {
-      return res.status(400).json({
-        message: "Timer can only be updated while the order is queued or preparing",
-      });
-    }
-
-    if (
-      hasPendingRefundRequest &&
-      (hasTimerUpdate ||
-        (hasStatusUpdate &&
-          requestedStatus !== "Refunded" &&
-          requestedStatus !== "Cancelled"))
-    ) {
-      return res.status(409).json({
-        code: "REFUND_REQUEST_PENDING",
-        message: "Kitchen updates are paused while this refund request is pending administrator review",
-      });
-    }
-
-    const isDeliveryHandover =
-      currentOrderType === "delivery" &&
-      hasStatusUpdate &&
-      requestedStatus === "Completed";
-    if (isHandoverMutation && !isDeliveryHandover) {
-      return res.status(400).json({
-        message: "Rider handover details can only be recorded while completing a delivery order",
-      });
-    }
-    if (isDeliveryHandover && !String(riderName || "").trim()) {
-      return res.status(400).json({ message: "Rider name is required for delivery handover" });
-    }
-
-    let nextStatus = currentStatus;
-    if (hasStatusUpdate) {
-      nextStatus = normalizeKitchenStatus(status);
-      const isAtomicDineInCompletion =
-        completeFromPreparing === true &&
-        currentStatus === "Preparing" &&
-        nextStatus === "Completed" &&
-        currentOrderType !== "delivery" &&
-        !isOnlinePickupCompletion;
       if (
-        !isAtomicDineInCompletion &&
-        !isStrictKitchenTransitionAllowed(currentStatus, nextStatus)
+        !hasStatusUpdate &&
+        !hasTimerUpdate &&
+        !hasPaymentStatusUpdate &&
+        !startedAt &&
+        resolvedCashierId == null &&
+        !handoverTimestamp &&
+        riderName === undefined
       ) {
+        return res.status(400).json({ message: "No valid fields to update" });
+      }
+
+      if (hasTimerUpdate && !canUpdateTimerForStatus(currentStatus)) {
         return res.status(400).json({
-          message: `Invalid order status transition: ${currentStatus} -> ${nextStatus}`,
+          message:
+            "Timer can only be updated while the order is queued or preparing",
         });
       }
-    }
 
-    if (
-      hasPaymentStatusUpdate &&
-      !(
-        isOnlinePickupCompletion &&
-        currentStatus === "Awaiting Cashier Review" &&
-        hasStatusUpdate &&
-        nextStatus === "Queued" &&
-        isPaidPaymentStatus(nextPaymentStatus)
-      )
-    ) {
-      return res.status(400).json({
-        message: "Payment status can only be confirmed as paid during online pickup review",
-      });
-    }
-
-    if (hasStatusUpdate && (nextStatus === "Cancelled" || nextStatus === "Refunded")) {
-      const settlementAction = nextStatus === "Cancelled" ? "cancel" : "refund";
-      const settlementEligibility = getSettlementEligibility(
-        {
-          ...existingRows[0],
-          status: currentStatus,
-          paymentStatus: effectiveCurrentPaymentStatus,
-        },
-        settlementAction,
-      );
-      if (!settlementEligibility.eligible) {
+      if (
+        hasPendingRefundRequest &&
+        (hasTimerUpdate ||
+          (hasStatusUpdate &&
+            requestedStatus !== "Refunded" &&
+            requestedStatus !== "Cancelled"))
+      ) {
         return res.status(409).json({
-          code: "SETTLEMENT_INELIGIBLE",
-          reason: settlementEligibility.code,
-          message: settlementEligibility.message,
+          code: "REFUND_REQUEST_PENDING",
+          message:
+            "Kitchen updates are paused while this refund request is pending administrator review",
         });
       }
-    }
 
-    if (
-      (nextStatus === "Queued" || nextStatus === "Preparing") &&
-      !isPaidPaymentStatus(nextPaymentStatus)
-    ) {
-      return res.status(400).json({
-        message: "Orders cannot move to the cook queue until payment is confirmed as paid",
-      });
-    }
-
-    if (
-      hasStatusUpdate &&
-      nextStatus === "Completed" &&
-      persistedCashierId == null &&
-      isOnlinePickupCompletion
-    ) {
-      return res.status(400).json({
-        message: "Only cashier-confirmed pickup or handover can complete an order",
-      });
-    }
-
-    const fields = [];
-    const values = [];
-    let responsePrepStartedAt = existingRows[0].prepStartedAt
-      ? new Date(existingRows[0].prepStartedAt)
-      : null;
-    let responseReadyAt = existingRows[0].readyAt
-      ? new Date(existingRows[0].readyAt)
-      : null;
-    let responseDueAt = existingRows[0].dueAt
-      ? new Date(existingRows[0].dueAt)
-      : null;
-    let inventoryRestored = null;
-    let refundRequestResolved = false;
-
-    if (hasStatusUpdate) {
-      fields.push("Status = ?");
-      values.push(nextStatus);
-    }
-
-    if (hasStatusUpdate && nextStatus === "Refunded") {
-      fields.push("payment_status = ?");
-      values.push("Refunded");
-    } else if (hasPaymentStatusUpdate) {
-      fields.push("payment_status = ?");
-      values.push(nextPaymentStatus);
-    }
-
-    if (
-      !existingRows[0].queuedAt &&
-      (currentStatus === "Queued" || nextStatus === "Queued" || nextStatus === "Preparing")
-    ) {
-      fields.push("queuedAt = ?");
-      values.push(new Date());
-    }
-
-    if (hasTimerUpdate) {
-      const parsedEstimatedPrepMinutes = Math.max(
-        Number(estimatedPrepMinutes) || DEFAULT_ESTIMATED_PREP_MINUTES,
-        1
-      );
-      fields.push("estimatedPrepMinutes = ?");
-      values.push(parsedEstimatedPrepMinutes);
-      fields.push("timerUpdatedAt = ?");
-      values.push(new Date());
-      fields.push("timerUpdatedBy = ?");
-      values.push(
-        timerUpdatedBy != null && Number.isFinite(Number(timerUpdatedBy))
-          ? Number(timerUpdatedBy)
-          : null
-      );
-
-      if (currentStatus === "Preparing" && existingRows[0].prepStartedAt) {
-        const prepStartedAt = new Date(existingRows[0].prepStartedAt);
-        const nextDueAt = new Date(
-          prepStartedAt.getTime() + parsedEstimatedPrepMinutes * 60 * 1000
-        );
-        fields.push("dueAt = ?");
-        values.push(nextDueAt);
-        responseDueAt = nextDueAt;
+      const isDeliveryHandover =
+        currentOrderType === "delivery" &&
+        hasStatusUpdate &&
+        requestedStatus === "Completed";
+      if (isHandoverMutation && !isDeliveryHandover) {
+        return res.status(400).json({
+          message:
+            "Rider handover details can only be recorded while completing a delivery order",
+        });
+      }
+      if (isDeliveryHandover && !String(riderName || "").trim()) {
+        return res
+          .status(400)
+          .json({ message: "Rider name is required for delivery handover" });
       }
 
-    }
-
-    if (hasStatusUpdate && nextStatus === "Preparing") {
-      const prepStartDate = startedAt ? new Date(startedAt) : new Date();
-      const prepMinutes = Math.max(
-        Number(estimatedPrepMinutes ?? existingRows[0].estimatedPrepMinutes) ||
-          DEFAULT_ESTIMATED_PREP_MINUTES,
-        1
-      );
-      const nextDueAt = new Date(
-        prepStartDate.getTime() + prepMinutes * 60 * 1000
-      );
-      fields.push("prepStartedAt = ?");
-      values.push(prepStartDate);
-      fields.push("startedAt = ?");
-      values.push(prepStartDate);
-      fields.push("readyAt = NULL");
-      fields.push("dueAt = ?");
-      values.push(nextDueAt);
-      responsePrepStartedAt = prepStartDate;
-      responseReadyAt = null;
-      responseDueAt = nextDueAt;
-      if (estimatedPrepMinutes === undefined) {
-        fields.push("estimatedPrepMinutes = ?");
-        values.push(prepMinutes);
-      }
-    }
-
-    if (
-      hasStatusUpdate &&
-      (
-        nextStatus === "Ready for Pickup" ||
-        (
+      let nextStatus = currentStatus;
+      if (hasStatusUpdate) {
+        nextStatus = normalizeKitchenStatus(status);
+        const isAtomicDineInCompletion =
           completeFromPreparing === true &&
           currentStatus === "Preparing" &&
-          nextStatus === "Completed"
+          nextStatus === "Completed" &&
+          currentOrderType !== "delivery" &&
+          !isOnlinePickupCompletion;
+        if (
+          !isAtomicDineInCompletion &&
+          !isStrictKitchenTransitionAllowed(currentStatus, nextStatus)
+        ) {
+          return res.status(400).json({
+            message: `Invalid order status transition: ${currentStatus} -> ${nextStatus}`,
+          });
+        }
+      }
+
+      if (
+        hasPaymentStatusUpdate &&
+        !(
+          isOnlinePickupCompletion &&
+          currentStatus === "Awaiting Cashier Review" &&
+          hasStatusUpdate &&
+          nextStatus === "Queued" &&
+          isPaidPaymentStatus(nextPaymentStatus)
         )
-      )
-    ) {
-      const readyAt = new Date();
-      fields.push("readyAt = ?");
-      values.push(readyAt);
-      responseReadyAt = readyAt;
-    }
-
-    if (persistedCashierId != null) {
-      fields.push("Cashier_ID = ?");
-      values.push(persistedCashierId);
-    }
-
-    if (isDeliveryHandover) {
-      fields.push("handoverTimestamp = ?");
-      values.push(new Date());
-      fields.push("verified_by = ?");
-      values.push(authenticatedActorId);
-    }
-
-    if (riderName !== undefined) {
-      fields.push("riderName = ?");
-      values.push(riderName ? String(riderName).trim() : null);
-    }
-
-    if (!fields.length) {
-      return res.status(400).json({ message: "No valid fields to update" });
-    }
-
-    values.push(id);
-    await conn.query(
-      `UPDATE orders SET ${fields.join(", ")} WHERE Order_ID = ?`,
-      values
-    );
-
-    const isOnlineAcceptance =
-      hasStatusUpdate &&
-      isOnlinePickupCompletion &&
-      currentStatus === "Awaiting Cashier Review" &&
-      nextStatus === "Queued" &&
-      isPaidPaymentStatus(nextPaymentStatus) &&
-      Number(existingRows[0].stockDeducted) === 0;
-
-    if (isOnlineAcceptance) {
-      await deductStockForPaidOrder(id, authenticatedActorId, conn);
-    }
-
-    if (hasStatusUpdate && nextStatus === "Cancelled") {
-      console.info(
-        `[orderRoutes] Recorded unpaid cancellation for order ${id}.`,
-      );
-    }
-
-    if (hasStatusUpdate && nextStatus === "Refunded") {
-      inventoryRestored = await restoreStockForRefundedOrder(
-        id,
-        authenticatedActorId,
-        conn,
-      );
-      console.info(
-        `[orderRoutes] Recorded paid refund for order ${id}.`,
-      );
-
-      const [resolvedRequest] = await conn.query(
-        `UPDATE refund_requests
-         SET status = 'Actioned', reviewed_by_user_id = ?, reviewed_at = CURRENT_TIMESTAMP
-         WHERE order_id = ? AND status = 'Pending'`,
-        [authenticatedActorId, id],
-      );
-      refundRequestResolved = Number(resolvedRequest?.affectedRows || 0) > 0;
-      if (refundRequestResolved) {
-        await updateStaffNotificationStatus(conn, {
-          category: "refund_request",
-          entityId: id,
-          status: "Actioned",
-          message: "Refund request was actioned through the authorized settlement workflow.",
-          resolved: true,
+      ) {
+        return res.status(400).json({
+          message:
+            "Payment status can only be confirmed as paid during online pickup review",
         });
       }
-    }
 
-    if (
-      hasPaymentStatusUpdate ||
-      nextStatus === "Refunded"
-    ) {
-      const paymentRecordStatus =
-        nextStatus === "Refunded"
-          ? "Refunded"
-          : isPaidPaymentStatus(nextPaymentStatus)
-            ? "Completed"
-            : "Pending";
+      if (
+        hasStatusUpdate &&
+        (nextStatus === "Cancelled" || nextStatus === "Refunded")
+      ) {
+        const settlementAction =
+          nextStatus === "Cancelled" ? "cancel" : "refund";
+        const settlementEligibility = getSettlementEligibility(
+          {
+            ...existingRows[0],
+            status: currentStatus,
+            paymentStatus: effectiveCurrentPaymentStatus,
+          },
+          settlementAction,
+        );
+        if (!settlementEligibility.eligible) {
+          return res.status(409).json({
+            code: "SETTLEMENT_INELIGIBLE",
+            reason: settlementEligibility.code,
+            message: settlementEligibility.message,
+          });
+        }
+      }
+
+      if (
+        (nextStatus === "Queued" || nextStatus === "Preparing") &&
+        !isPaidPaymentStatus(nextPaymentStatus)
+      ) {
+        return res.status(400).json({
+          message:
+            "Orders cannot move to the cook queue until payment is confirmed as paid",
+        });
+      }
+
+      if (
+        hasStatusUpdate &&
+        nextStatus === "Completed" &&
+        persistedCashierId == null &&
+        isOnlinePickupCompletion
+      ) {
+        return res.status(400).json({
+          message:
+            "Only cashier-confirmed pickup or handover can complete an order",
+        });
+      }
+
+      const fields = [];
+      const values = [];
+      let responsePrepStartedAt = existingRows[0].prepStartedAt
+        ? new Date(existingRows[0].prepStartedAt)
+        : null;
+      let responseReadyAt = existingRows[0].readyAt
+        ? new Date(existingRows[0].readyAt)
+        : null;
+      let responseDueAt = existingRows[0].dueAt
+        ? new Date(existingRows[0].dueAt)
+        : null;
+      let inventoryRestored = null;
+      let refundRequestResolved = false;
+
+      if (hasStatusUpdate) {
+        fields.push("Status = ?");
+        values.push(nextStatus);
+      }
+
+      if (hasStatusUpdate && nextStatus === "Refunded") {
+        fields.push("payment_status = ?");
+        values.push("Refunded");
+      } else if (hasPaymentStatusUpdate) {
+        fields.push("payment_status = ?");
+        values.push(nextPaymentStatus);
+      }
+
+      if (
+        !existingRows[0].queuedAt &&
+        (currentStatus === "Queued" ||
+          nextStatus === "Queued" ||
+          nextStatus === "Preparing")
+      ) {
+        fields.push("queuedAt = ?");
+        values.push(new Date());
+      }
+
+      if (hasTimerUpdate) {
+        const parsedEstimatedPrepMinutes = Math.max(
+          Number(estimatedPrepMinutes) || DEFAULT_ESTIMATED_PREP_MINUTES,
+          1,
+        );
+        fields.push("estimatedPrepMinutes = ?");
+        values.push(parsedEstimatedPrepMinutes);
+        fields.push("timerUpdatedAt = ?");
+        values.push(new Date());
+        fields.push("timerUpdatedBy = ?");
+        values.push(
+          timerUpdatedBy != null && Number.isFinite(Number(timerUpdatedBy))
+            ? Number(timerUpdatedBy)
+            : null,
+        );
+
+        if (currentStatus === "Preparing" && existingRows[0].prepStartedAt) {
+          const prepStartedAt = new Date(existingRows[0].prepStartedAt);
+          const nextDueAt = new Date(
+            prepStartedAt.getTime() + parsedEstimatedPrepMinutes * 60 * 1000,
+          );
+          fields.push("dueAt = ?");
+          values.push(nextDueAt);
+          responseDueAt = nextDueAt;
+        }
+      }
+
+      if (hasStatusUpdate && nextStatus === "Preparing") {
+        const prepStartDate = startedAt ? new Date(startedAt) : new Date();
+        const prepMinutes = Math.max(
+          Number(
+            estimatedPrepMinutes ?? existingRows[0].estimatedPrepMinutes,
+          ) || DEFAULT_ESTIMATED_PREP_MINUTES,
+          1,
+        );
+        const nextDueAt = new Date(
+          prepStartDate.getTime() + prepMinutes * 60 * 1000,
+        );
+        fields.push("prepStartedAt = ?");
+        values.push(prepStartDate);
+        fields.push("startedAt = ?");
+        values.push(prepStartDate);
+        fields.push("readyAt = NULL");
+        fields.push("dueAt = ?");
+        values.push(nextDueAt);
+        responsePrepStartedAt = prepStartDate;
+        responseReadyAt = null;
+        responseDueAt = nextDueAt;
+        if (estimatedPrepMinutes === undefined) {
+          fields.push("estimatedPrepMinutes = ?");
+          values.push(prepMinutes);
+        }
+      }
+
+      if (
+        hasStatusUpdate &&
+        (nextStatus === "Ready for Pickup" ||
+          (completeFromPreparing === true &&
+            currentStatus === "Preparing" &&
+            nextStatus === "Completed"))
+      ) {
+        const readyAt = new Date();
+        fields.push("readyAt = ?");
+        values.push(readyAt);
+        responseReadyAt = readyAt;
+      }
+
+      if (persistedCashierId != null) {
+        fields.push("Cashier_ID = ?");
+        values.push(persistedCashierId);
+      }
+
+      if (isDeliveryHandover) {
+        fields.push("handoverTimestamp = ?");
+        values.push(new Date());
+        fields.push("verified_by = ?");
+        values.push(authenticatedActorId);
+      }
+
+      if (riderName !== undefined) {
+        fields.push("riderName = ?");
+        values.push(riderName ? String(riderName).trim() : null);
+      }
+
+      if (!fields.length) {
+        return res.status(400).json({ message: "No valid fields to update" });
+      }
+
+      values.push(id);
       await conn.query(
-        "UPDATE payments SET Payment_Status = ? WHERE Order_ID = ?",
-        [paymentRecordStatus, id]
+        `UPDATE orders SET ${fields.join(", ")} WHERE Order_ID = ?`,
+        values,
+      );
+
+      const isOnlineAcceptance =
+        hasStatusUpdate &&
+        isOnlinePickupCompletion &&
+        currentStatus === "Awaiting Cashier Review" &&
+        nextStatus === "Queued" &&
+        isPaidPaymentStatus(nextPaymentStatus) &&
+        Number(existingRows[0].stockDeducted) === 0;
+
+      if (isOnlineAcceptance) {
+        await deductStockForPaidOrder(id, authenticatedActorId, conn);
+      }
+
+      if (hasStatusUpdate && nextStatus === "Cancelled") {
+        console.info(
+          `[orderRoutes] Recorded unpaid cancellation for order ${id}.`,
+        );
+      }
+
+      if (hasStatusUpdate && nextStatus === "Refunded") {
+        inventoryRestored = await restoreStockForRefundedOrder(
+          id,
+          authenticatedActorId,
+          conn,
+        );
+        console.info(
+          `[orderRoutes] Recorded paid refund for order ${id} by staff user ${authenticatedActorId}.`,
+        );
+
+        const [resolvedRequest] = await conn.query(
+          `UPDATE refund_requests
+         SET status = 'Actioned', reviewed_by_user_id = ?, reviewed_at = CURRENT_TIMESTAMP
+         WHERE order_id = ? AND status = 'Pending'`,
+          [authenticatedActorId, id],
+        );
+        refundRequestResolved = Number(resolvedRequest?.affectedRows || 0) > 0;
+        if (refundRequestResolved) {
+          await updateStaffNotificationStatus(conn, {
+            category: "refund_request",
+            entityId: id,
+            status: "Actioned",
+            message:
+              "Refund request was actioned through the authorized settlement workflow.",
+            resolved: true,
+          });
+        }
+      }
+
+      if (hasPaymentStatusUpdate || nextStatus === "Refunded") {
+        const paymentRecordStatus =
+          nextStatus === "Refunded"
+            ? "Refunded"
+            : isPaidPaymentStatus(nextPaymentStatus)
+              ? "Completed"
+              : "Pending";
+        await conn.query(
+          "UPDATE payments SET Payment_Status = ? WHERE Order_ID = ?",
+          [paymentRecordStatus, id],
+        );
+      }
+
+      await conn.commit();
+      txStarted = false;
+
+      publishOrderMutation({
+        reason:
+          nextStatus === "Refunded"
+            ? "order.refunded"
+            : nextStatus === "Cancelled"
+              ? "order.cancelled"
+              : hasStatusUpdate
+                ? "order.status_updated"
+                : hasPaymentStatusUpdate
+                  ? "order.payment_updated"
+                  : "order.updated",
+        customerUserId: existingRows[0].customerUserId,
+        paymentChanged: hasPaymentStatusUpdate || nextStatus === "Refunded",
+        inventoryChanged: isOnlineAcceptance || inventoryRestored === true,
+      });
+      if (refundRequestResolved) {
+        publishRefundRequestMutation?.({ reason: "refund_request.actioned" });
+      }
+
+      res.json({
+        message: "Order updated",
+        id,
+        ...getPublicOrderIdentifiers({ id, ...existingRows[0] }),
+        status: nextStatus,
+        paymentStatus:
+          nextStatus === "Refunded" ? "Refunded" : nextPaymentStatus,
+        estimatedPrepMinutes: hasTimerUpdate
+          ? Math.max(
+              Number(estimatedPrepMinutes) || DEFAULT_ESTIMATED_PREP_MINUTES,
+              1,
+            )
+          : undefined,
+        prepStartedAt: responsePrepStartedAt?.getTime(),
+        readyAt: responseReadyAt?.getTime(),
+        dueAt: responseDueAt?.getTime(),
+        preparationStarted:
+          preparationStartedBeforeUpdate || nextStatus === "Preparing",
+        inventoryRestored,
+      });
+    } catch (err) {
+      if (conn && txStarted) {
+        await conn.rollback();
+        txStarted = false;
+      }
+      console.error(
+        "PATCH /orders/:id error:",
+        JSON.stringify(
+          {
+            message: err.message,
+            code: err.code,
+            sqlMessage: err.sqlMessage,
+          },
+          null,
+          2,
+        ),
+      );
+      const errorMessage = String(err?.message || "Unknown error");
+      const statusCode = Number(err?.statusCode);
+      const hasClientStatus = statusCode >= 400 && statusCode < 500;
+      const matchesKnownClientError =
+        /cannot move to the cook queue until payment is confirmed as paid/i.test(
+          errorMessage,
+        ) ||
+        /insufficient (daily_withdrawn|inventory stock|stock)/i.test(
+          errorMessage,
+        ) ||
+        /must be stock_item/i.test(errorMessage) ||
+        /invalid order status transition/i.test(errorMessage) ||
+        /timer can only be updated/i.test(errorMessage);
+      res
+        .status(
+          hasClientStatus ? statusCode : matchesKnownClientError ? 400 : 500,
+        )
+        .json({
+          message:
+            hasClientStatus || matchesKnownClientError
+              ? errorMessage
+              : "DB error",
+          error: errorMessage,
+          ...(hasClientStatus && /^REFUND_/i.test(String(err?.code || ""))
+            ? { code: err.code }
+            : {}),
+        });
+    } finally {
+      if (conn && txStarted) {
+        await conn.rollback();
+        txStarted = false;
+      }
+      if (conn) conn.release();
+      logOrderTiming(
+        req,
+        res.statusCode >= 400 ? `status-${res.statusCode}` : "status-success",
       );
     }
-
-    await conn.commit();
-    txStarted = false;
-
-    publishOrderMutation({
-      reason:
-        nextStatus === "Refunded"
-          ? "order.refunded"
-          : nextStatus === "Cancelled"
-            ? "order.cancelled"
-          : hasStatusUpdate
-            ? "order.status_updated"
-            : hasPaymentStatusUpdate
-              ? "order.payment_updated"
-              : "order.updated",
-      customerUserId: existingRows[0].customerUserId,
-      paymentChanged:
-        hasPaymentStatusUpdate ||
-        nextStatus === "Refunded",
-      inventoryChanged: isOnlineAcceptance || inventoryRestored === true,
-    });
-    if (refundRequestResolved) {
-      publishRefundRequestMutation?.({ reason: "refund_request.actioned" });
-    }
-
-    res.json({
-      message: "Order updated",
-      id,
-      ...getPublicOrderIdentifiers({ id, ...existingRows[0] }),
-      status: nextStatus,
-      paymentStatus: nextStatus === "Refunded" ? "Refunded" : nextPaymentStatus,
-      estimatedPrepMinutes:
-        hasTimerUpdate
-          ? Math.max(Number(estimatedPrepMinutes) || DEFAULT_ESTIMATED_PREP_MINUTES, 1)
-          : undefined,
-      prepStartedAt: responsePrepStartedAt?.getTime(),
-      readyAt: responseReadyAt?.getTime(),
-      dueAt: responseDueAt?.getTime(),
-      preparationStarted: preparationStartedBeforeUpdate || nextStatus === "Preparing",
-      inventoryRestored,
-    });
-  } catch (err) {
-    if (conn && txStarted) {
-      await conn.rollback();
-      txStarted = false;
-    }
-    console.error("PATCH /orders/:id error:", JSON.stringify({
-      message: err.message,
-      code: err.code,
-      sqlMessage: err.sqlMessage,
-    }, null, 2));
-    const errorMessage = String(err?.message || "Unknown error");
-    const statusCode = Number(err?.statusCode);
-    const hasClientStatus = statusCode >= 400 && statusCode < 500;
-    const matchesKnownClientError =
-      /cannot move to the cook queue until payment is confirmed as paid/i.test(errorMessage) ||
-      /insufficient (daily_withdrawn|inventory stock|stock)/i.test(errorMessage) ||
-      /must be stock_item/i.test(errorMessage) ||
-      /invalid order status transition/i.test(errorMessage) ||
-      /timer can only be updated/i.test(errorMessage);
-    res
-      .status(hasClientStatus ? statusCode : matchesKnownClientError ? 400 : 500)
-      .json({
-        message: hasClientStatus || matchesKnownClientError ? errorMessage : "DB error",
-        error: errorMessage,
-        ...(hasClientStatus && /^REFUND_/i.test(String(err?.code || ""))
-          ? { code: err.code }
-          : {}),
-      });
-  } finally {
-    if (conn && txStarted) {
-      await conn.rollback();
-      txStarted = false;
-    }
-    if (conn) conn.release();
-    logOrderTiming(
-      req,
-      res.statusCode >= 400 ? `status-${res.statusCode}` : "status-success",
-    );
-  }
-});
+  },
+);
 
 module.exports = router;

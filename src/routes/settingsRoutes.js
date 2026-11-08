@@ -15,7 +15,9 @@ const {
 } = require("../services/settingsDefaults");
 
 const VALID_PERMISSION_ROLES = Object.keys(DEFAULT_ROLE_PERMISSIONS);
-const VALID_PERMISSION_KEYS = Object.keys(DEFAULT_ROLE_PERMISSIONS.administrator);
+const VALID_PERMISSION_KEYS = Object.keys(
+  DEFAULT_ROLE_PERMISSIONS.administrator,
+);
 const COOK_VIEW_PERMISSION_ROLES = [
   "administrator",
   "cashier",
@@ -24,29 +26,46 @@ const COOK_VIEW_PERMISSION_ROLES = [
 const DELIVERY_PLATFORM_LINKS_KEY = "delivery_platform_links";
 const DELIVERY_PLATFORM_HOSTS = Object.freeze({
   grabfood: new Set(["r.grab.com", "food.grab.com", "app.grab.com"]),
-  foodpanda: new Set([
-    "foodpanda.go.link",
-    "foodpanda.ph",
-    "www.foodpanda.ph",
-  ]),
+  foodpanda: new Set(["foodpanda.go.link", "foodpanda.ph", "www.foodpanda.ph"]),
 });
 const EMPTY_DELIVERY_PLATFORM_LINKS = Object.freeze({
   grabfoodUrl: null,
   foodpandaUrl: null,
 });
 const DISCOUNT_AUTHORIZATION_KEY = "discount_authorization";
+const REFUND_AUTHORIZATION_KEY = "refund_authorization";
 const discountPasswordAttempts = new Map();
+const refundPasswordUpdateAttempts = new Map();
 
 function checkDiscountPasswordRateLimit(userId) {
   const now = Date.now();
   const key = String(userId);
-  const current = discountPasswordAttempts.get(key) || { count: 0, resetAt: now + 15 * 60 * 1000 };
+  const current = discountPasswordAttempts.get(key) || {
+    count: 0,
+    resetAt: now + 15 * 60 * 1000,
+  };
   if (current.resetAt <= now) {
     current.count = 0;
     current.resetAt = now + 15 * 60 * 1000;
   }
   current.count += 1;
   discountPasswordAttempts.set(key, current);
+  return current.count <= 5;
+}
+
+function checkRefundPasswordUpdateRateLimit(userId) {
+  const now = Date.now();
+  const key = String(userId);
+  const current = refundPasswordUpdateAttempts.get(key) || {
+    count: 0,
+    resetAt: now + 15 * 60 * 1000,
+  };
+  if (current.resetAt <= now) {
+    current.count = 0;
+    current.resetAt = now + 15 * 60 * 1000;
+  }
+  current.count += 1;
+  refundPasswordUpdateAttempts.set(key, current);
   return current.count <= 5;
 }
 
@@ -69,7 +88,11 @@ function enforcePermissionInvariants(permissions) {
 function getRoleSource(source, role) {
   const merged = {};
   for (const [rawRole, value] of Object.entries(source)) {
-    if (normalizeRole(rawRole) !== role || !value || typeof value !== "object") {
+    if (
+      normalizeRole(rawRole) !== role ||
+      !value ||
+      typeof value !== "object"
+    ) {
       continue;
     }
     Object.assign(merged, value);
@@ -105,7 +128,8 @@ function mergePermissionsPayload(currentPermissions, payload) {
   for (const role of VALID_PERMISSION_ROLES) {
     const roleChanges = getRoleSource(source, role);
     for (const permissionKey of VALID_PERMISSION_KEYS) {
-      if (!Object.prototype.hasOwnProperty.call(roleChanges, permissionKey)) continue;
+      if (!Object.prototype.hasOwnProperty.call(roleChanges, permissionKey))
+        continue;
       next[role][permissionKey] = normalizeBoolean(
         roleChanges[permissionKey],
         next[role][permissionKey],
@@ -128,7 +152,10 @@ function normalizePermissionRoleLocks(payload) {
     if (Object.prototype.hasOwnProperty.call(source, role)) {
       savedValue = source[role];
     }
-    next[role] = normalizeBoolean(savedValue, DEFAULT_PERMISSION_ROLE_LOCKS[role]);
+    next[role] = normalizeBoolean(
+      savedValue,
+      DEFAULT_PERMISSION_ROLE_LOCKS[role],
+    );
   }
 
   return next;
@@ -175,8 +202,12 @@ async function loadRolePermissions() {
   const merged = normalizePermissionsPayload(DEFAULT_ROLE_PERMISSIONS);
 
   const orderedRows = [...rows].sort((left, right) => {
-    const leftRole = String(left.role || "").trim().toLowerCase();
-    const rightRole = String(right.role || "").trim().toLowerCase();
+    const leftRole = String(left.role || "")
+      .trim()
+      .toLowerCase();
+    const rightRole = String(right.role || "")
+      .trim()
+      .toLowerCase();
     const leftCanonical = leftRole === normalizeRole(left.role) ? 1 : 0;
     const rightCanonical = rightRole === normalizeRole(right.role) ? 1 : 0;
     return leftCanonical - rightCanonical;
@@ -209,7 +240,11 @@ async function loadRolePermissions() {
   };
 }
 
-function normalizeNumber(value, fieldName, { allowNull = false, min = null } = {}) {
+function normalizeNumber(
+  value,
+  fieldName,
+  { allowNull = false, min = null } = {},
+) {
   if (value === null || value === undefined || value === "") {
     if (allowNull) return null;
     throw new Error(`${fieldName} is required`);
@@ -316,9 +351,10 @@ async function deleteUnusedCategory(req, res, definition) {
       await connection.rollback();
       transactionStarted = false;
       const count = assignments.length;
-      const recordLabel = count === 1
-        ? definition.singularAssignment
-        : definition.pluralAssignment;
+      const recordLabel =
+        count === 1
+          ? definition.singularAssignment
+          : definition.pluralAssignment;
       return res.status(409).json({
         code: "CATEGORY_IN_USE",
         dependency_count: count,
@@ -337,10 +373,17 @@ async function deleteUnusedCategory(req, res, definition) {
     await connection.commit();
     transactionStarted = false;
     await invalidateProductCache(`${definition.label.toLowerCase()} deleted`);
-    return res.json({ success: true, category_id: categoryId, name: categoryName });
+    return res.json({
+      success: true,
+      category_id: categoryId,
+      name: categoryName,
+    });
   } catch (error) {
     if (connection && transactionStarted) await connection.rollback();
-    console.error(`DELETE /api/settings/${definition.routeLabel}/:id error:`, error);
+    console.error(
+      `DELETE /api/settings/${definition.routeLabel}/:id error:`,
+      error,
+    );
     return res.status(500).json({
       message: `Failed to delete ${definition.label.toLowerCase()}`,
       error: error.message,
@@ -392,9 +435,7 @@ function normalizeEnum(value, allowedValues, fieldName, fallback) {
   const normalized = String(value ?? "").trim();
   if (!normalized) return fallback;
   if (!allowedValues.includes(normalized)) {
-    throw new Error(
-      `${fieldName} must be one of: ${allowedValues.join(", ")}`,
-    );
+    throw new Error(`${fieldName} must be one of: ${allowedValues.join(", ")}`);
   }
   return normalized;
 }
@@ -417,7 +458,9 @@ function normalizeNonNegativeNumericString(value, fieldName, fallback = "") {
 function validateDeliveryPlatformUrl(value, platform) {
   const normalized = String(value ?? "").trim();
   if (!normalized) return null;
-  const key = String(platform || "").trim().toLowerCase();
+  const key = String(platform || "")
+    .trim()
+    .toLowerCase();
   const label = key === "grabfood" ? "GrabFood" : "Foodpanda";
   if (normalized.length > 2048) {
     throw new Error(`${label} ordering URL is too long`);
@@ -451,10 +494,7 @@ function sanitizeDeliveryPlatformLinks(payload) {
   const source = payload && typeof payload === "object" ? payload : {};
   return {
     grabfoodUrl: validateDeliveryPlatformUrl(source.grabfoodUrl, "grabfood"),
-    foodpandaUrl: validateDeliveryPlatformUrl(
-      source.foodpandaUrl,
-      "foodpanda",
-    ),
+    foodpandaUrl: validateDeliveryPlatformUrl(source.foodpandaUrl, "foodpanda"),
   };
 }
 
@@ -509,7 +549,9 @@ function sanitizeSettingsPayload(payload) {
     phone: normalizeString(source.phone),
     address: normalizeString(source.address),
     businessTin: normalizeString(source.businessTin),
-    businessRegistrationDetails: normalizeString(source.businessRegistrationDetails),
+    businessRegistrationDetails: normalizeString(
+      source.businessRegistrationDetails,
+    ),
     currency: "PHP",
     timezone: "Asia/Manila",
     openTime: normalizeString(source.openTime, "08:00"),
@@ -582,25 +624,19 @@ function sanitizeSettingsPayload(payload) {
       "toastDuration",
       "4000",
     ),
-    enableConfirmDialogs: normalizeBoolean(
-      source.enableConfirmDialogs,
-      true,
-    ),
-    lowStockAlertsEnabled: normalizeBoolean(
-      source.lowStockAlertsEnabled,
-      true,
-    ),
-    taxRate: normalizeNonNegativeNumericString(
-      source.taxRate ?? "",
-      "taxRate",
-    ),
+    enableConfirmDialogs: normalizeBoolean(source.enableConfirmDialogs, true),
+    lowStockAlertsEnabled: normalizeBoolean(source.lowStockAlertsEnabled, true),
+    taxRate: normalizeNonNegativeNumericString(source.taxRate ?? "", "taxRate"),
     serviceCharge: normalizeNonNegativeNumericString(
       source.serviceCharge ?? "",
       "serviceCharge",
     ),
     receiptFooter: String(source.receiptFooter ?? ""),
     printerEnabled: normalizeBoolean(source.printerEnabled, false),
-    kitchenPrinterEnabled: normalizeBoolean(source.kitchenPrinterEnabled, false),
+    kitchenPrinterEnabled: normalizeBoolean(
+      source.kitchenPrinterEnabled,
+      false,
+    ),
     maintenanceMode: normalizeBoolean(source.maintenanceMode, false),
   };
 }
@@ -615,32 +651,28 @@ router.get("/delivery-links", async (_req, res) => {
   }
 });
 
-router.put(
-  "/delivery-links",
-  requireAdministratorAccess,
-  async (req, res) => {
-    try {
-      const links = sanitizeDeliveryPlatformLinks(req.body);
-      await db.query(
-        `INSERT INTO system_settings (setting_key, settings_json)
+router.put("/delivery-links", requireAdministratorAccess, async (req, res) => {
+  try {
+    const links = sanitizeDeliveryPlatformLinks(req.body);
+    await db.query(
+      `INSERT INTO system_settings (setting_key, settings_json)
          VALUES (?, ?)
          ON DUPLICATE KEY UPDATE settings_json = VALUES(settings_json)`,
-        [DELIVERY_PLATFORM_LINKS_KEY, JSON.stringify(links)],
-      );
-      res.json(links);
-    } catch (error) {
-      const validationError = /ordering URL/i.test(String(error?.message));
-      if (!validationError) {
-        console.error("PUT /api/settings/delivery-links error:", error);
-      }
-      res.status(validationError ? 400 : 500).json({
-        message: validationError
-          ? error.message
-          : "Failed to save delivery platform links",
-      });
+      [DELIVERY_PLATFORM_LINKS_KEY, JSON.stringify(links)],
+    );
+    res.json(links);
+  } catch (error) {
+    const validationError = /ordering URL/i.test(String(error?.message));
+    if (!validationError) {
+      console.error("PUT /api/settings/delivery-links error:", error);
     }
-  },
-);
+    res.status(validationError ? 400 : 500).json({
+      message: validationError
+        ? error.message
+        : "Failed to save delivery platform links",
+    });
+  }
+});
 
 router.put(
   "/discount-password",
@@ -652,25 +684,45 @@ router.put(
         return res.status(401).json({ message: "Invalid authenticated user" });
       }
       if (!checkDiscountPasswordRateLimit(userId)) {
-        return res.status(429).json({ message: "Too many password update attempts. Try again later." });
+        return res
+          .status(429)
+          .json({
+            message: "Too many password update attempts. Try again later.",
+          });
       }
 
       const currentAdminPassword = String(req.body?.currentAdminPassword || "");
       const newPassword = String(req.body?.newPassword || "");
       const confirmPassword = String(req.body?.confirmPassword || "");
-      if (!currentAdminPassword || newPassword.length < 8 || newPassword.length > 72) {
-        return res.status(400).json({ message: "Enter your current password and a new password of 8 to 72 characters." });
+      if (
+        !currentAdminPassword ||
+        newPassword.length < 8 ||
+        newPassword.length > 72
+      ) {
+        return res
+          .status(400)
+          .json({
+            message:
+              "Enter your current password and a new password of 8 to 72 characters.",
+          });
       }
       if (newPassword !== confirmPassword) {
-        return res.status(400).json({ message: "New password confirmation does not match." });
+        return res
+          .status(400)
+          .json({ message: "New password confirmation does not match." });
       }
 
       const [users] = await db.query(
         `SELECT password_hash FROM users WHERE id = ? LIMIT 1`,
         [userId],
       );
-      if (!users.length || !(await bcrypt.compare(currentAdminPassword, users[0].password_hash))) {
-        return res.status(403).json({ message: "Current administrator password is incorrect." });
+      if (
+        !users.length ||
+        !(await bcrypt.compare(currentAdminPassword, users[0].password_hash))
+      ) {
+        return res
+          .status(403)
+          .json({ message: "Current administrator password is incorrect." });
       }
 
       const passwordHash = await bcrypt.hash(newPassword, 12);
@@ -678,16 +730,93 @@ router.put(
         `INSERT INTO system_settings (setting_key, settings_json)
          VALUES (?, ?)
          ON DUPLICATE KEY UPDATE settings_json = VALUES(settings_json)`,
-        [DISCOUNT_AUTHORIZATION_KEY, JSON.stringify({ passwordHash, updatedAt: new Date().toISOString(), updatedBy: userId })],
+        [
+          DISCOUNT_AUTHORIZATION_KEY,
+          JSON.stringify({
+            passwordHash,
+            updatedAt: new Date().toISOString(),
+            updatedBy: userId,
+          }),
+        ],
       );
       discountPasswordAttempts.delete(String(userId));
       res.json({ message: "Discount authorization password updated." });
     } catch (error) {
       console.error("PUT /api/settings/discount-password error:", error);
-      res.status(500).json({ message: "Failed to update discount authorization password" });
+      res
+        .status(500)
+        .json({ message: "Failed to update discount authorization password" });
     }
   },
 );
+
+// Only the Administrator can set the shared refund authorization password.
+// The administrator's own login password is required to make this change.
+router.put("/refund-password", requireAdministratorAccess, async (req, res) => {
+  try {
+    const userId = Number(req.user?.userId);
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      return res.status(401).json({ message: "Invalid authenticated user" });
+    }
+    if (!checkRefundPasswordUpdateRateLimit(userId)) {
+      return res.status(429).json({
+        message: "Too many password update attempts. Try again later.",
+      });
+    }
+
+    const currentAdminPassword = String(req.body?.currentAdminPassword || "");
+    const newPassword = String(req.body?.newPassword || "");
+    const confirmPassword = String(req.body?.confirmPassword || "");
+    const passwordBytes = Buffer.byteLength(newPassword, "utf8");
+
+    if (!currentAdminPassword || passwordBytes < 8 || passwordBytes > 72) {
+      return res.status(400).json({
+        message:
+          "Enter your current administrator password and a new refund password of 8 to 72 bytes.",
+      });
+    }
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({
+        message: "New refund password confirmation does not match.",
+      });
+    }
+
+    const [users] = await db.query(
+      `SELECT password_hash FROM users WHERE id = ? LIMIT 1`,
+      [userId],
+    );
+    if (
+      !users.length ||
+      !(await bcrypt.compare(currentAdminPassword, users[0].password_hash))
+    ) {
+      return res.status(403).json({
+        message: "Current administrator password is incorrect.",
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+    await db.query(
+      `INSERT INTO system_settings (setting_key, settings_json)
+         VALUES (?, ?)
+         ON DUPLICATE KEY UPDATE settings_json = VALUES(settings_json)`,
+      [
+        REFUND_AUTHORIZATION_KEY,
+        JSON.stringify({
+          passwordHash,
+          updatedAt: new Date().toISOString(),
+          updatedBy: userId,
+        }),
+      ],
+    );
+    refundPasswordUpdateAttempts.delete(String(userId));
+    return res.json({ message: "Refund authorization password updated." });
+  } catch (error) {
+    console.error("PUT /api/settings/refund-password error:", error);
+    return res.status(500).json({
+      message: "Failed to update refund authorization password",
+    });
+  }
+});
 
 router.get("/", async (_req, res) => {
   try {
@@ -785,11 +914,7 @@ router.put("/permissions", requireAdministratorAccess, async (req, res) => {
           `INSERT INTO role_permissions (role, permission_key, enabled)
            VALUES (?, ?, ?)
            ON DUPLICATE KEY UPDATE enabled = VALUES(enabled)`,
-          [
-            role,
-            permissionKey,
-            permissions[role][permissionKey] ? 1 : 0,
-          ],
+          [role, permissionKey, permissions[role][permissionKey] ? 1 : 0],
         );
       }
     }
@@ -843,39 +968,42 @@ router.get("/inventory-categories", async (req, res) => {
   }
 });
 
-router.post("/inventory-categories", requireAdministratorAccess, async (req, res) => {
-  try {
-    const name = normalizeCategoryName(req.body?.name, "Category name");
-    const dateTrackingType = normalizeEnum(
-      req.body?.date_tracking_type,
-      ["none", "expiry", "shelf_life"],
-      "date_tracking_type",
-      "none",
-    );
+router.post(
+  "/inventory-categories",
+  requireAdministratorAccess,
+  async (req, res) => {
+    try {
+      const name = normalizeCategoryName(req.body?.name, "Category name");
+      const dateTrackingType = normalizeEnum(
+        req.body?.date_tracking_type,
+        ["none", "expiry", "shelf_life"],
+        "date_tracking_type",
+        "none",
+      );
 
-    const [existing] = await db.query(
-      `SELECT category_id
+      const [existing] = await db.query(
+        `SELECT category_id
        FROM inventory_categories
        WHERE LOWER(name) = LOWER(?)
        LIMIT 1`,
-      [name],
-    );
-    if (existing.length > 0) {
-      return res.status(409).json({ message: "Category already exists" });
-    }
+        [name],
+      );
+      if (existing.length > 0) {
+        return res.status(409).json({ message: "Category already exists" });
+      }
 
-    const [result] = await db.query(
-      `INSERT INTO inventory_categories (
+      const [result] = await db.query(
+        `INSERT INTO inventory_categories (
          name,
          date_tracking_type,
          is_active
        )
        VALUES (?, ?, TRUE)`,
-      [name, dateTrackingType],
-    );
+        [name, dateTrackingType],
+      );
 
-    const [rows] = await db.query(
-      `SELECT
+      const [rows] = await db.query(
+        `SELECT
          category_id,
          name,
          type,
@@ -885,115 +1013,121 @@ router.post("/inventory-categories", requireAdministratorAccess, async (req, res
          updated_at
        FROM inventory_categories
        WHERE category_id = ?`,
-      [result.insertId],
-    );
-    res.status(201).json(rows[0]);
-  } catch (error) {
-    console.error("POST /api/settings/inventory-categories error:", error);
-    res.status(categoryErrorStatus(error)).json({
-      message: isCategoryValidationError(error)
-        ? error.message
-        : error?.code === "ER_DUP_ENTRY"
-          ? "Category already exists"
-        : "Failed to create inventory category",
-      error: error.message,
-    });
-  }
-});
-
-router.patch("/inventory-categories/:id", requireAdministratorAccess, async (req, res) => {
-  let connection;
-  let transactionStarted = false;
-  try {
-    const categoryId = Number(req.params.id);
-    if (!Number.isFinite(categoryId) || categoryId <= 0) {
-      return res.status(400).json({ message: "Invalid category id" });
+        [result.insertId],
+      );
+      res.status(201).json(rows[0]);
+    } catch (error) {
+      console.error("POST /api/settings/inventory-categories error:", error);
+      res.status(categoryErrorStatus(error)).json({
+        message: isCategoryValidationError(error)
+          ? error.message
+          : error?.code === "ER_DUP_ENTRY"
+            ? "Category already exists"
+            : "Failed to create inventory category",
+        error: error.message,
+      });
     }
+  },
+);
 
-    const updates = [];
-    const values = [];
-    connection = await db.getConnection();
-    await connection.beginTransaction();
-    transactionStarted = true;
+router.patch(
+  "/inventory-categories/:id",
+  requireAdministratorAccess,
+  async (req, res) => {
+    let connection;
+    let transactionStarted = false;
+    try {
+      const categoryId = Number(req.params.id);
+      if (!Number.isFinite(categoryId) || categoryId <= 0) {
+        return res.status(400).json({ message: "Invalid category id" });
+      }
 
-    const [currentRows] = await connection.query(
-      `SELECT name
+      const updates = [];
+      const values = [];
+      connection = await db.getConnection();
+      await connection.beginTransaction();
+      transactionStarted = true;
+
+      const [currentRows] = await connection.query(
+        `SELECT name
        FROM inventory_categories
        WHERE category_id = ?
        FOR UPDATE`,
-      [categoryId],
-    );
-    if (currentRows.length === 0) {
-      await connection.rollback();
-      transactionStarted = false;
-      return res.status(404).json({ message: "Category not found" });
-    }
-    const previousName = currentRows[0].name;
-    let nextName = null;
+        [categoryId],
+      );
+      if (currentRows.length === 0) {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(404).json({ message: "Category not found" });
+      }
+      const previousName = currentRows[0].name;
+      let nextName = null;
 
-    if (Object.prototype.hasOwnProperty.call(req.body, "name")) {
-      const name = normalizeCategoryName(req.body?.name, "Category name");
-      const [duplicate] = await connection.query(
-        `SELECT category_id
+      if (Object.prototype.hasOwnProperty.call(req.body, "name")) {
+        const name = normalizeCategoryName(req.body?.name, "Category name");
+        const [duplicate] = await connection.query(
+          `SELECT category_id
          FROM inventory_categories
          WHERE LOWER(name) = LOWER(?) AND category_id <> ?
          LIMIT 1`,
-        [name, categoryId],
-      );
-      if (duplicate.length > 0) {
+          [name, categoryId],
+        );
+        if (duplicate.length > 0) {
+          await connection.rollback();
+          transactionStarted = false;
+          return res.status(409).json({ message: "Category already exists" });
+        }
+        updates.push("name = ?");
+        values.push(name);
+        nextName = name;
+      }
+
+      if (
+        Object.prototype.hasOwnProperty.call(req.body, "date_tracking_type")
+      ) {
+        updates.push("date_tracking_type = ?");
+        values.push(
+          normalizeEnum(
+            req.body.date_tracking_type,
+            ["none", "expiry", "shelf_life"],
+            "date_tracking_type",
+            "none",
+          ),
+        );
+      }
+
+      if (Object.prototype.hasOwnProperty.call(req.body, "is_active")) {
+        updates.push("is_active = ?");
+        values.push(normalizeBoolean(req.body.is_active, true) ? 1 : 0);
+      }
+
+      if (updates.length === 0) {
         await connection.rollback();
         transactionStarted = false;
-        return res.status(409).json({ message: "Category already exists" });
+        return res.status(400).json({ message: "No updates provided" });
       }
-      updates.push("name = ?");
-      values.push(name);
-      nextName = name;
-    }
 
-    if (Object.prototype.hasOwnProperty.call(req.body, "date_tracking_type")) {
-      updates.push("date_tracking_type = ?");
-      values.push(
-        normalizeEnum(
-          req.body.date_tracking_type,
-          ["none", "expiry", "shelf_life"],
-          "date_tracking_type",
-          "none",
-        ),
-      );
-    }
-
-    if (Object.prototype.hasOwnProperty.call(req.body, "is_active")) {
-      updates.push("is_active = ?");
-      values.push(normalizeBoolean(req.body.is_active, true) ? 1 : 0);
-    }
-
-    if (updates.length === 0) {
-      await connection.rollback();
-      transactionStarted = false;
-      return res.status(400).json({ message: "No updates provided" });
-    }
-
-    values.push(categoryId);
-    const [result] = await connection.query(
-      `UPDATE inventory_categories
+      values.push(categoryId);
+      const [result] = await connection.query(
+        `UPDATE inventory_categories
        SET ${updates.join(", ")}
        WHERE category_id = ?`,
-      values,
-    );
+        values,
+      );
 
-    if (nextName !== null && nextName !== previousName) {
-      await connection.query(
-        `UPDATE Menu m
+      if (nextName !== null && nextName !== previousName) {
+        await connection.query(
+          `UPDATE Menu m
          INNER JOIN products p ON p.id = m.Product_ID
          SET m.Category_Name = ?
          WHERE LOWER(TRIM(COALESCE(m.Category_Name, ''))) = LOWER(TRIM(?))
            AND LOWER(TRIM(COALESCE(p.item_type, ''))) = 'stock_item'`,
-        [nextName, previousName],
-      );
-    }
+          [nextName, previousName],
+        );
+      }
 
-    const [rows] = await connection.query(
-      `SELECT
+      const [rows] = await connection.query(
+        `SELECT
          category_id,
          name,
          type,
@@ -1003,27 +1137,31 @@ router.patch("/inventory-categories/:id", requireAdministratorAccess, async (req
          updated_at
        FROM inventory_categories
        WHERE category_id = ?`,
-      [categoryId],
-    );
-    await connection.commit();
-    transactionStarted = false;
-    await invalidateProductCache("inventory category updated");
-    res.json(rows[0]);
-  } catch (error) {
-    if (connection && transactionStarted) await connection.rollback();
-    console.error("PATCH /api/settings/inventory-categories/:id error:", error);
-    res.status(categoryErrorStatus(error)).json({
-      message: isCategoryValidationError(error)
-        ? error.message
-        : error?.code === "ER_DUP_ENTRY"
-          ? "Category already exists"
-        : "Failed to update inventory category",
-      error: error.message,
-    });
-  } finally {
-    if (connection) connection.release();
-  }
-});
+        [categoryId],
+      );
+      await connection.commit();
+      transactionStarted = false;
+      await invalidateProductCache("inventory category updated");
+      res.json(rows[0]);
+    } catch (error) {
+      if (connection && transactionStarted) await connection.rollback();
+      console.error(
+        "PATCH /api/settings/inventory-categories/:id error:",
+        error,
+      );
+      res.status(categoryErrorStatus(error)).json({
+        message: isCategoryValidationError(error)
+          ? error.message
+          : error?.code === "ER_DUP_ENTRY"
+            ? "Category already exists"
+            : "Failed to update inventory category",
+        error: error.message,
+      });
+    } finally {
+      if (connection) connection.release();
+    }
+  },
+);
 
 router.get("/menu-categories", async (req, res) => {
   try {
@@ -1051,39 +1189,44 @@ router.get("/menu-categories", async (req, res) => {
   }
 });
 
-router.post("/menu-categories", requireAdministratorAccess, async (req, res) => {
-  try {
-    const name = normalizeCategoryName(req.body?.name, "Menu category name");
-    const displayOrder = Object.prototype.hasOwnProperty.call(
-      req.body || {},
-      "display_order",
-    )
-      ? normalizeNumber(req.body?.display_order, "display_order", { min: 0 })
-      : 0;
+router.post(
+  "/menu-categories",
+  requireAdministratorAccess,
+  async (req, res) => {
+    try {
+      const name = normalizeCategoryName(req.body?.name, "Menu category name");
+      const displayOrder = Object.prototype.hasOwnProperty.call(
+        req.body || {},
+        "display_order",
+      )
+        ? normalizeNumber(req.body?.display_order, "display_order", { min: 0 })
+        : 0;
 
-    const [existing] = await db.query(
-      `SELECT category_id
+      const [existing] = await db.query(
+        `SELECT category_id
          FROM menu_categories
         WHERE LOWER(name) = LOWER(?)
         LIMIT 1`,
-      [name],
-    );
-    if (existing.length > 0) {
-      return res.status(409).json({ message: "Menu category already exists" });
-    }
+        [name],
+      );
+      if (existing.length > 0) {
+        return res
+          .status(409)
+          .json({ message: "Menu category already exists" });
+      }
 
-    const [result] = await db.query(
-      `INSERT INTO menu_categories (
+      const [result] = await db.query(
+        `INSERT INTO menu_categories (
          name,
          display_order,
          is_active
        )
        VALUES (?, ?, TRUE)`,
-      [name, displayOrder],
-    );
+        [name, displayOrder],
+      );
 
-    const [rows] = await db.query(
-      `SELECT
+      const [rows] = await db.query(
+        `SELECT
          category_id,
          name,
          system_key,
@@ -1093,126 +1236,135 @@ router.post("/menu-categories", requireAdministratorAccess, async (req, res) => 
          updated_at
        FROM menu_categories
        WHERE category_id = ?`,
-      [result.insertId],
-    );
-    res.status(201).json(rows[0]);
-  } catch (error) {
-    console.error("POST /api/settings/menu-categories error:", error);
-    res.status(categoryErrorStatus(error)).json({
-      message: isCategoryValidationError(error)
-        ? error.message
-        : error?.code === "ER_DUP_ENTRY"
-          ? "Menu category already exists"
-        : "Failed to create menu category",
-      error: error.message,
-    });
-  }
-});
-
-router.patch("/menu-categories/:id", requireAdministratorAccess, async (req, res) => {
-  let connection;
-  let transactionStarted = false;
-  try {
-    const categoryId = Number(req.params.id);
-    if (!Number.isFinite(categoryId) || categoryId <= 0) {
-      return res.status(400).json({ message: "Invalid category id" });
+        [result.insertId],
+      );
+      res.status(201).json(rows[0]);
+    } catch (error) {
+      console.error("POST /api/settings/menu-categories error:", error);
+      res.status(categoryErrorStatus(error)).json({
+        message: isCategoryValidationError(error)
+          ? error.message
+          : error?.code === "ER_DUP_ENTRY"
+            ? "Menu category already exists"
+            : "Failed to create menu category",
+        error: error.message,
+      });
     }
+  },
+);
 
-    const updates = [];
-    const values = [];
-    connection = await db.getConnection();
-    await connection.beginTransaction();
-    transactionStarted = true;
+router.patch(
+  "/menu-categories/:id",
+  requireAdministratorAccess,
+  async (req, res) => {
+    let connection;
+    let transactionStarted = false;
+    try {
+      const categoryId = Number(req.params.id);
+      if (!Number.isFinite(categoryId) || categoryId <= 0) {
+        return res.status(400).json({ message: "Invalid category id" });
+      }
 
-    const [currentRows] = await connection.query(
-      `SELECT name, system_key
+      const updates = [];
+      const values = [];
+      connection = await db.getConnection();
+      await connection.beginTransaction();
+      transactionStarted = true;
+
+      const [currentRows] = await connection.query(
+        `SELECT name, system_key
        FROM menu_categories
        WHERE category_id = ?
        FOR UPDATE`,
-      [categoryId],
-    );
-    if (currentRows.length === 0) {
-      await connection.rollback();
-      transactionStarted = false;
-      return res.status(404).json({ message: "Menu category not found" });
-    }
-    const previousName = currentRows[0].name;
-    const protectedCategory = isProtectedMenuCategorySystemKey(
-      currentRows[0].system_key,
-    );
-    if (
-      protectedCategory &&
-      (Object.prototype.hasOwnProperty.call(req.body, "name") ||
-        (Object.prototype.hasOwnProperty.call(req.body, "is_active") &&
-          !normalizeBoolean(req.body.is_active, true)))
-    ) {
-      await connection.rollback();
-      transactionStarted = false;
-      return res.status(409).json({
-        code: "SYSTEM_CATEGORY_PROTECTED",
-        message: `${previousName} is a built-in system category and cannot be renamed or disabled.`,
-      });
-    }
-    let nextName = null;
+        [categoryId],
+      );
+      if (currentRows.length === 0) {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(404).json({ message: "Menu category not found" });
+      }
+      const previousName = currentRows[0].name;
+      const protectedCategory = isProtectedMenuCategorySystemKey(
+        currentRows[0].system_key,
+      );
+      if (
+        protectedCategory &&
+        (Object.prototype.hasOwnProperty.call(req.body, "name") ||
+          (Object.prototype.hasOwnProperty.call(req.body, "is_active") &&
+            !normalizeBoolean(req.body.is_active, true)))
+      ) {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(409).json({
+          code: "SYSTEM_CATEGORY_PROTECTED",
+          message: `${previousName} is a built-in system category and cannot be renamed or disabled.`,
+        });
+      }
+      let nextName = null;
 
-    if (Object.prototype.hasOwnProperty.call(req.body, "name")) {
-      const name = normalizeCategoryName(req.body?.name, "Menu category name");
-      const [duplicate] = await connection.query(
-        `SELECT category_id
+      if (Object.prototype.hasOwnProperty.call(req.body, "name")) {
+        const name = normalizeCategoryName(
+          req.body?.name,
+          "Menu category name",
+        );
+        const [duplicate] = await connection.query(
+          `SELECT category_id
            FROM menu_categories
           WHERE LOWER(name) = LOWER(?) AND category_id <> ?
           LIMIT 1`,
-        [name, categoryId],
-      );
-      if (duplicate.length > 0) {
+          [name, categoryId],
+        );
+        if (duplicate.length > 0) {
+          await connection.rollback();
+          transactionStarted = false;
+          return res
+            .status(409)
+            .json({ message: "Menu category already exists" });
+        }
+        updates.push("name = ?");
+        values.push(name);
+        nextName = name;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(req.body, "display_order")) {
+        updates.push("display_order = ?");
+        values.push(
+          normalizeNumber(req.body.display_order, "display_order", { min: 0 }),
+        );
+      }
+
+      if (Object.prototype.hasOwnProperty.call(req.body, "is_active")) {
+        updates.push("is_active = ?");
+        values.push(normalizeBoolean(req.body.is_active, true) ? 1 : 0);
+      }
+
+      if (updates.length === 0) {
         await connection.rollback();
         transactionStarted = false;
-        return res.status(409).json({ message: "Menu category already exists" });
+        return res.status(400).json({ message: "No updates provided" });
       }
-      updates.push("name = ?");
-      values.push(name);
-      nextName = name;
-    }
 
-    if (Object.prototype.hasOwnProperty.call(req.body, "display_order")) {
-      updates.push("display_order = ?");
-      values.push(
-        normalizeNumber(req.body.display_order, "display_order", { min: 0 }),
-      );
-    }
-
-    if (Object.prototype.hasOwnProperty.call(req.body, "is_active")) {
-      updates.push("is_active = ?");
-      values.push(normalizeBoolean(req.body.is_active, true) ? 1 : 0);
-    }
-
-    if (updates.length === 0) {
-      await connection.rollback();
-      transactionStarted = false;
-      return res.status(400).json({ message: "No updates provided" });
-    }
-
-    values.push(categoryId);
-    const [result] = await connection.query(
-      `UPDATE menu_categories
+      values.push(categoryId);
+      const [result] = await connection.query(
+        `UPDATE menu_categories
           SET ${updates.join(", ")}
         WHERE category_id = ?`,
-      values,
-    );
+        values,
+      );
 
-    if (nextName !== null && nextName !== previousName) {
-      await connection.query(
-        `UPDATE Menu m
+      if (nextName !== null && nextName !== previousName) {
+        await connection.query(
+          `UPDATE Menu m
          INNER JOIN products p ON p.id = m.Product_ID
          SET m.Category_Name = ?
          WHERE LOWER(TRIM(COALESCE(m.Category_Name, ''))) = LOWER(TRIM(?))
            AND LOWER(TRIM(COALESCE(p.item_type, ''))) = 'menu_item'`,
-        [nextName, previousName],
-      );
-    }
+          [nextName, previousName],
+        );
+      }
 
-    const [rows] = await connection.query(
-      `SELECT
+      const [rows] = await connection.query(
+        `SELECT
          category_id,
          name,
          system_key,
@@ -1222,27 +1374,28 @@ router.patch("/menu-categories/:id", requireAdministratorAccess, async (req, res
          updated_at
        FROM menu_categories
        WHERE category_id = ?`,
-      [categoryId],
-    );
-    await connection.commit();
-    transactionStarted = false;
-    await invalidateProductCache("menu category updated");
-    res.json(rows[0]);
-  } catch (error) {
-    if (connection && transactionStarted) await connection.rollback();
-    console.error("PATCH /api/settings/menu-categories/:id error:", error);
-    res.status(categoryErrorStatus(error)).json({
-      message: isCategoryValidationError(error)
-        ? error.message
-        : error?.code === "ER_DUP_ENTRY"
-          ? "Menu category already exists"
-        : "Failed to update menu category",
-      error: error.message,
-    });
-  } finally {
-    if (connection) connection.release();
-  }
-});
+        [categoryId],
+      );
+      await connection.commit();
+      transactionStarted = false;
+      await invalidateProductCache("menu category updated");
+      res.json(rows[0]);
+    } catch (error) {
+      if (connection && transactionStarted) await connection.rollback();
+      console.error("PATCH /api/settings/menu-categories/:id error:", error);
+      res.status(categoryErrorStatus(error)).json({
+        message: isCategoryValidationError(error)
+          ? error.message
+          : error?.code === "ER_DUP_ENTRY"
+            ? "Menu category already exists"
+            : "Failed to update menu category",
+        error: error.message,
+      });
+    } finally {
+      if (connection) connection.release();
+    }
+  },
+);
 
 router.delete("/menu-categories/:id", requireAdministratorAccess, (req, res) =>
   deleteUnusedCategory(req, res, MENU_CATEGORY_DELETION),
@@ -1270,10 +1423,7 @@ router.get("/discount-types", async (req, res) => {
 router.post("/discount-types", requireAdministratorAccess, async (req, res) => {
   try {
     const name = normalizeString(req.body?.name);
-    const percentage = normalizePercentage(
-      req.body?.percentage,
-      "percentage",
-    );
+    const percentage = normalizePercentage(req.body?.percentage, "percentage");
 
     if (!name) {
       return res.status(400).json({ message: "Discount name is required" });
@@ -1312,80 +1462,88 @@ router.post("/discount-types", requireAdministratorAccess, async (req, res) => {
   }
 });
 
-router.patch("/discount-types/:id", requireAdministratorAccess, async (req, res) => {
-  try {
-    const discountId = Number(req.params.id);
-    if (!Number.isFinite(discountId) || discountId <= 0) {
-      return res.status(400).json({ message: "Invalid discount type id" });
-    }
-
-    const updates = [];
-    const values = [];
-
-    if (Object.prototype.hasOwnProperty.call(req.body, "name")) {
-      const name = normalizeString(req.body?.name);
-      if (!name) {
-        return res.status(400).json({ message: "Discount name is required" });
+router.patch(
+  "/discount-types/:id",
+  requireAdministratorAccess,
+  async (req, res) => {
+    try {
+      const discountId = Number(req.params.id);
+      if (!Number.isFinite(discountId) || discountId <= 0) {
+        return res.status(400).json({ message: "Invalid discount type id" });
       }
-      const [existing] = await db.query(
-        `SELECT discount_id
+
+      const updates = [];
+      const values = [];
+
+      if (Object.prototype.hasOwnProperty.call(req.body, "name")) {
+        const name = normalizeString(req.body?.name);
+        if (!name) {
+          return res.status(400).json({ message: "Discount name is required" });
+        }
+        const [existing] = await db.query(
+          `SELECT discount_id
            FROM discount_types
           WHERE LOWER(name) = LOWER(?)
             AND discount_id <> ?
           LIMIT 1`,
-        [name, discountId],
-      );
-      if (existing.length > 0) {
-        return res.status(409).json({ message: "Discount type already exists" });
+          [name, discountId],
+        );
+        if (existing.length > 0) {
+          return res
+            .status(409)
+            .json({ message: "Discount type already exists" });
+        }
+        updates.push("name = ?");
+        values.push(name);
       }
-      updates.push("name = ?");
-      values.push(name);
-    }
 
-    if (Object.prototype.hasOwnProperty.call(req.body, "percentage")) {
-      updates.push("percentage = ?");
-      values.push(normalizePercentage(req.body?.percentage, "percentage"));
-    }
+      if (Object.prototype.hasOwnProperty.call(req.body, "percentage")) {
+        updates.push("percentage = ?");
+        values.push(normalizePercentage(req.body?.percentage, "percentage"));
+      }
 
-    if (Object.prototype.hasOwnProperty.call(req.body, "is_active")) {
-      updates.push("is_active = ?");
-      values.push(normalizeBoolean(req.body?.is_active, true));
-    }
+      if (Object.prototype.hasOwnProperty.call(req.body, "is_active")) {
+        updates.push("is_active = ?");
+        values.push(normalizeBoolean(req.body?.is_active, true));
+      }
 
-    if (updates.length === 0) {
-      return res.status(400).json({ message: "No valid fields to update" });
-    }
+      if (updates.length === 0) {
+        return res.status(400).json({ message: "No valid fields to update" });
+      }
 
-    values.push(discountId);
-    const [result] = await db.query(
-      `UPDATE discount_types
+      values.push(discountId);
+      const [result] = await db.query(
+        `UPDATE discount_types
           SET ${updates.join(", ")}
         WHERE discount_id = ?`,
-      values,
-    );
+        values,
+      );
 
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: "Discount type not found" });
-    }
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ message: "Discount type not found" });
+      }
 
-    const [rows] = await db.query(
-      `SELECT discount_id, name, percentage, is_active, created_at, updated_at
+      const [rows] = await db.query(
+        `SELECT discount_id, name, percentage, is_active, created_at, updated_at
          FROM discount_types
         WHERE discount_id = ?`,
-      [discountId],
-    );
-    res.json(rows[0]);
-  } catch (error) {
-    console.error("PATCH /api/settings/discount-types/:id error:", error);
-    res.status(500).json({
-      message: error.message || "Failed to update discount type",
-      error: error.message,
-    });
-  }
-});
+        [discountId],
+      );
+      res.json(rows[0]);
+    } catch (error) {
+      console.error("PATCH /api/settings/discount-types/:id error:", error);
+      res.status(500).json({
+        message: error.message || "Failed to update discount type",
+        error: error.message,
+      });
+    }
+  },
+);
 
-router.delete("/inventory-categories/:id", requireAdministratorAccess, (req, res) =>
-  deleteUnusedCategory(req, res, INVENTORY_CATEGORY_DELETION),
+router.delete(
+  "/inventory-categories/:id",
+  requireAdministratorAccess,
+  (req, res) => deleteUnusedCategory(req, res, INVENTORY_CATEGORY_DELETION),
 );
 
 router.get("/inventory-units", async (req, res) => {
@@ -1415,34 +1573,37 @@ router.get("/inventory-units", async (req, res) => {
   }
 });
 
-router.post("/inventory-units", requireAdministratorAccess, async (req, res) => {
-  try {
-    const name = normalizeName(req.body?.name, "Unit name");
-    const abbreviation = normalizeOptionalString(req.body?.abbreviation);
-    const baseUnit = normalizeOptionalString(req.body?.base_unit);
-    const conversionToBase = Object.prototype.hasOwnProperty.call(
-      req.body || {},
-      "conversion_to_base",
-    )
-      ? normalizeNumber(req.body?.conversion_to_base, "conversion_to_base", {
-          allowNull: true,
-          min: 0,
-        })
-      : null;
+router.post(
+  "/inventory-units",
+  requireAdministratorAccess,
+  async (req, res) => {
+    try {
+      const name = normalizeName(req.body?.name, "Unit name");
+      const abbreviation = normalizeOptionalString(req.body?.abbreviation);
+      const baseUnit = normalizeOptionalString(req.body?.base_unit);
+      const conversionToBase = Object.prototype.hasOwnProperty.call(
+        req.body || {},
+        "conversion_to_base",
+      )
+        ? normalizeNumber(req.body?.conversion_to_base, "conversion_to_base", {
+            allowNull: true,
+            min: 0,
+          })
+        : null;
 
-    const [existing] = await db.query(
-      `SELECT unit_id
+      const [existing] = await db.query(
+        `SELECT unit_id
        FROM inventory_units
        WHERE LOWER(name) = LOWER(?)
        LIMIT 1`,
-      [name],
-    );
-    if (existing.length > 0) {
-      return res.status(409).json({ message: "Unit already exists" });
-    }
+        [name],
+      );
+      if (existing.length > 0) {
+        return res.status(409).json({ message: "Unit already exists" });
+      }
 
-    const [result] = await db.query(
-      `INSERT INTO inventory_units (
+      const [result] = await db.query(
+        `INSERT INTO inventory_units (
          name,
          abbreviation,
          base_unit,
@@ -1450,11 +1611,11 @@ router.post("/inventory-units", requireAdministratorAccess, async (req, res) => 
          is_active
        )
        VALUES (?, ?, ?, ?, TRUE)`,
-      [name, abbreviation, baseUnit, conversionToBase],
-    );
+        [name, abbreviation, baseUnit, conversionToBase],
+      );
 
-    const [rows] = await db.query(
-      `SELECT
+      const [rows] = await db.query(
+        `SELECT
          unit_id,
          name,
          abbreviation,
@@ -1465,89 +1626,95 @@ router.post("/inventory-units", requireAdministratorAccess, async (req, res) => 
          updated_at
        FROM inventory_units
        WHERE unit_id = ?`,
-      [result.insertId],
-    );
-    res.status(201).json(rows[0]);
-  } catch (error) {
-    console.error("POST /api/settings/inventory-units error:", error);
-    res.status(error.message?.includes("required") ? 400 : 500).json({
-      message: error.message?.includes("required")
-        ? error.message
-        : "Failed to create inventory unit",
-      error: error.message,
-    });
-  }
-});
-
-router.patch("/inventory-units/:id", requireAdministratorAccess, async (req, res) => {
-  try {
-    const unitId = Number(req.params.id);
-    if (!Number.isFinite(unitId) || unitId <= 0) {
-      return res.status(400).json({ message: "Invalid unit id" });
+        [result.insertId],
+      );
+      res.status(201).json(rows[0]);
+    } catch (error) {
+      console.error("POST /api/settings/inventory-units error:", error);
+      res.status(error.message?.includes("required") ? 400 : 500).json({
+        message: error.message?.includes("required")
+          ? error.message
+          : "Failed to create inventory unit",
+        error: error.message,
+      });
     }
+  },
+);
 
-    const updates = [];
-    const values = [];
+router.patch(
+  "/inventory-units/:id",
+  requireAdministratorAccess,
+  async (req, res) => {
+    try {
+      const unitId = Number(req.params.id);
+      if (!Number.isFinite(unitId) || unitId <= 0) {
+        return res.status(400).json({ message: "Invalid unit id" });
+      }
 
-    if (Object.prototype.hasOwnProperty.call(req.body, "name")) {
-      const name = normalizeName(req.body?.name, "Unit name");
-      const [duplicate] = await db.query(
-        `SELECT unit_id
+      const updates = [];
+      const values = [];
+
+      if (Object.prototype.hasOwnProperty.call(req.body, "name")) {
+        const name = normalizeName(req.body?.name, "Unit name");
+        const [duplicate] = await db.query(
+          `SELECT unit_id
          FROM inventory_units
          WHERE LOWER(name) = LOWER(?) AND unit_id <> ?
          LIMIT 1`,
-        [name, unitId],
-      );
-      if (duplicate.length > 0) {
-        return res.status(409).json({ message: "Unit already exists" });
+          [name, unitId],
+        );
+        if (duplicate.length > 0) {
+          return res.status(409).json({ message: "Unit already exists" });
+        }
+        updates.push("name = ?");
+        values.push(name);
       }
-      updates.push("name = ?");
-      values.push(name);
-    }
 
-    if (Object.prototype.hasOwnProperty.call(req.body, "abbreviation")) {
-      updates.push("abbreviation = ?");
-      values.push(normalizeOptionalString(req.body.abbreviation));
-    }
+      if (Object.prototype.hasOwnProperty.call(req.body, "abbreviation")) {
+        updates.push("abbreviation = ?");
+        values.push(normalizeOptionalString(req.body.abbreviation));
+      }
 
-    if (Object.prototype.hasOwnProperty.call(req.body, "base_unit")) {
-      updates.push("base_unit = ?");
-      values.push(normalizeOptionalString(req.body.base_unit));
-    }
+      if (Object.prototype.hasOwnProperty.call(req.body, "base_unit")) {
+        updates.push("base_unit = ?");
+        values.push(normalizeOptionalString(req.body.base_unit));
+      }
 
-    if (Object.prototype.hasOwnProperty.call(req.body, "conversion_to_base")) {
-      updates.push("conversion_to_base = ?");
-      values.push(
-        normalizeNumber(req.body.conversion_to_base, "conversion_to_base", {
-          allowNull: true,
-          min: 0,
-        }),
-      );
-    }
+      if (
+        Object.prototype.hasOwnProperty.call(req.body, "conversion_to_base")
+      ) {
+        updates.push("conversion_to_base = ?");
+        values.push(
+          normalizeNumber(req.body.conversion_to_base, "conversion_to_base", {
+            allowNull: true,
+            min: 0,
+          }),
+        );
+      }
 
-    if (Object.prototype.hasOwnProperty.call(req.body, "is_active")) {
-      updates.push("is_active = ?");
-      values.push(normalizeBoolean(req.body.is_active, true) ? 1 : 0);
-    }
+      if (Object.prototype.hasOwnProperty.call(req.body, "is_active")) {
+        updates.push("is_active = ?");
+        values.push(normalizeBoolean(req.body.is_active, true) ? 1 : 0);
+      }
 
-    if (updates.length === 0) {
-      return res.status(400).json({ message: "No updates provided" });
-    }
+      if (updates.length === 0) {
+        return res.status(400).json({ message: "No updates provided" });
+      }
 
-    values.push(unitId);
-    const [result] = await db.query(
-      `UPDATE inventory_units
+      values.push(unitId);
+      const [result] = await db.query(
+        `UPDATE inventory_units
        SET ${updates.join(", ")}
        WHERE unit_id = ?`,
-      values,
-    );
+        values,
+      );
 
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: "Unit not found" });
-    }
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ message: "Unit not found" });
+      }
 
-    const [rows] = await db.query(
-      `SELECT
+      const [rows] = await db.query(
+        `SELECT
          unit_id,
          name,
          abbreviation,
@@ -1558,47 +1725,52 @@ router.patch("/inventory-units/:id", requireAdministratorAccess, async (req, res
          updated_at
        FROM inventory_units
        WHERE unit_id = ?`,
-      [unitId],
-    );
-    res.json(rows[0]);
-  } catch (error) {
-    console.error("PATCH /api/settings/inventory-units/:id error:", error);
-    res.status(error.message?.includes("required") ? 400 : 500).json({
-      message: error.message?.includes("required")
-        ? error.message
-        : "Failed to update inventory unit",
-      error: error.message,
-    });
-  }
-});
-
-router.delete("/inventory-units/:id", requireAdministratorAccess, async (req, res) => {
-  try {
-    const unitId = Number(req.params.id);
-    if (!Number.isFinite(unitId) || unitId <= 0) {
-      return res.status(400).json({ message: "Invalid unit id" });
+        [unitId],
+      );
+      res.json(rows[0]);
+    } catch (error) {
+      console.error("PATCH /api/settings/inventory-units/:id error:", error);
+      res.status(error.message?.includes("required") ? 400 : 500).json({
+        message: error.message?.includes("required")
+          ? error.message
+          : "Failed to update inventory unit",
+        error: error.message,
+      });
     }
+  },
+);
 
-    const [result] = await db.query(
-      `UPDATE inventory_units
+router.delete(
+  "/inventory-units/:id",
+  requireAdministratorAccess,
+  async (req, res) => {
+    try {
+      const unitId = Number(req.params.id);
+      if (!Number.isFinite(unitId) || unitId <= 0) {
+        return res.status(400).json({ message: "Invalid unit id" });
+      }
+
+      const [result] = await db.query(
+        `UPDATE inventory_units
        SET is_active = FALSE
        WHERE unit_id = ?`,
-      [unitId],
-    );
+        [unitId],
+      );
 
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: "Unit not found" });
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ message: "Unit not found" });
+      }
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("DELETE /api/settings/inventory-units/:id error:", error);
+      res.status(500).json({
+        message: "Failed to disable inventory unit",
+        error: error.message,
+      });
     }
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error("DELETE /api/settings/inventory-units/:id error:", error);
-    res.status(500).json({
-      message: "Failed to disable inventory unit",
-      error: error.message,
-    });
-  }
-});
+  },
+);
 
 module.exports = router;
 module.exports.permissionPolicy = {
