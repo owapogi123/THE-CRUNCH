@@ -30,6 +30,7 @@
     "test:mysql-integration": "node src/db/mysqlDeploymentIntegration.test.js",
     "test:payment-qr": "node src/routes/paymentQrRoutes.test.js",
     "test:delivery-links": "node src/routes/settingsDeliveryLinks.test.js",
+    "test:settings-inventory-masters": "node src/routes/settingsCategories.test.js && node src/routes/settingsCategories.profiles.test.js && node src/routes/settingsInventoryUnits.legacy.test.js && node src/routes/settingsInventoryUnits.redesigned.test.js",
     "test:payment-proofs": "node scripts/verifyProofStorage.js",
     "test:inventory-notifications": "node src/db/migrations/inventoryChangeNotificationCategory.test.js && node src/services/staffNotificationService.test.js && node src/routes/stockStatusNotifications.test.js && node src/middleware/inventoryAlertAccess.test.js",
     "test:account": "node src/routes/userRoutes.myAccount.test.js",
