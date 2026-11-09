@@ -17,6 +17,14 @@ const {
   findDirectStockQuantityFields,
   stockReceiptRequiresPurchaseOrderResponse,
 } = require("../utils/stockMutationPolicy");
+const {
+  REDESIGNED_SCHEMA_PROFILE,
+  getSchemaProfile,
+} = require("../db/schemaProfile");
+
+function isRedesignedProfile() {
+  return getSchemaProfile() === REDESIGNED_SCHEMA_PROFILE;
+}
 
 // Phase 4A canonical contract: products(id) is the authority;
 // batches.product_id is NOT NULL; unit/status retain VARCHAR
@@ -78,6 +86,14 @@ async function ensureKitchenBatchesTable() {
 function toNumber(value, fallback = 0) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function retiredWithdrawnStockResponse(res) {
+  return res.status(410).json({
+    code: "WITHDRAWN_STOCK_WORKFLOW_RETIRED",
+    message:
+      "The withdrawn-stock and default-batch workflows are not part of the redesigned inventory model.",
+  });
 }
 
 async function getKitchenBatchById(
@@ -162,6 +178,7 @@ async function reconcileDefaultBatchForStock(conn, productId) {
 
 router.get("/kitchen", requireInventoryManagerAccess, async (_req, res) => {
   try {
+    if (isRedesignedProfile()) return retiredWithdrawnStockResponse(res);
     await ensureBatchesTable();
     await ensureKitchenBatchesTable();
 
@@ -197,6 +214,7 @@ router.get(
   requireInventoryManagerAccess,
   async (_req, res) => {
     try {
+      if (isRedesignedProfile()) return retiredWithdrawnStockResponse(res);
       await ensureBatchesTable();
       await ensureKitchenBatchesTable();
 
@@ -229,6 +247,7 @@ router.get(
 );
 
 router.post("/kitchen", requireKitchenInventoryAccess, async (req, res) => {
+  if (isRedesignedProfile()) return retiredWithdrawnStockResponse(res);
   const { product_id, quantity, storage_batch_id } = req.body;
 
   const productId = toNumber(product_id);
@@ -324,6 +343,7 @@ router.patch(
   "/kitchen/:kitchen_batch_id/supplement",
   requireKitchenInventoryAccess,
   async (req, res) => {
+    if (isRedesignedProfile()) return retiredWithdrawnStockResponse(res);
     const kitchenBatchId = toNumber(req.params.kitchen_batch_id);
     const qty = toNumber(req.body.qty);
     const storageBatchId =
@@ -411,6 +431,7 @@ router.patch(
   "/kitchen/:kitchen_batch_id/return",
   requireKitchenInventoryAccess,
   async (req, res) => {
+    if (isRedesignedProfile()) return retiredWithdrawnStockResponse(res);
     const kitchenBatchId = toNumber(req.params.kitchen_batch_id);
     const requestedQty =
       req.body && req.body.qty !== undefined ? toNumber(req.body.qty) : null;
@@ -592,6 +613,7 @@ router.patch(
   "/kitchen/:kitchen_batch_id/reconcile",
   requireKitchenInventoryAccess,
   async (req, res) => {
+    if (isRedesignedProfile()) return retiredWithdrawnStockResponse(res);
     const kitchenBatchId = toNumber(req.params.kitchen_batch_id);
 
     if (!kitchenBatchId) {
@@ -671,14 +693,45 @@ router.get(
   requireInventoryManagerAccess,
   async (req, res) => {
     try {
-      await ensureBatchesTable();
-      const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
-      const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p");
-
       const productId = toNumber(req.params.product_id);
       if (!Number.isFinite(productId) || productId <= 0) {
         return res.status(400).json({ error: "Invalid product_id" });
       }
+
+      if (isRedesignedProfile()) {
+        const [rows] = await db.query(
+          `SELECT
+             batch.batch_id,
+             batch.product_id,
+             batch.delivery_batch_reference AS delivery_batch_id,
+             batch.received_quantity AS quantity,
+             batch.remaining_quantity AS remaining_qty,
+             COALESCE(NULLIF(TRIM(unit.abbreviation), ''), unit.name) AS unit,
+             batch.received_at AS received_date,
+             batch.tracking_start_at,
+             batch.expiry_at AS expiry_date,
+             batch.usable_until,
+             product.shelf_life_days,
+             batch.status,
+             batch.returned_quantity AS returned_qty,
+             batch.notes,
+             batch.created_at,
+             batch.updated_at,
+             product.name AS product_name
+           FROM inventory_batches batch
+           JOIN products product ON product.product_id = batch.product_id
+           JOIN units unit ON unit.unit_id = batch.unit_id
+           WHERE batch.product_id = ?
+             AND product.product_type = 'stock_item'
+           ORDER BY batch.received_at ASC, batch.batch_id ASC`,
+          [productId],
+        );
+        return res.json(rows);
+      }
+
+      await ensureBatchesTable();
+      const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+      const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p");
 
       const [rows] = await db.query(
         `SELECT b.*, p.name AS product_name
@@ -705,6 +758,34 @@ router.get(
   requireInventoryManagerAccess,
   async (_req, res) => {
     try {
+      if (isRedesignedProfile()) {
+        const [rows] = await db.query(
+          `SELECT
+             batch.batch_id,
+             batch.product_id,
+             batch.delivery_batch_reference AS delivery_batch_id,
+             batch.received_quantity AS quantity,
+             batch.remaining_quantity AS remaining_qty,
+             COALESCE(NULLIF(TRIM(unit.abbreviation), ''), unit.name) AS unit,
+             batch.received_at AS received_date,
+             batch.expiry_at AS expiry_date,
+             batch.usable_until,
+             batch.status,
+             batch.returned_quantity AS returned_qty,
+             batch.notes,
+             batch.updated_at,
+             product.name AS product_name
+           FROM inventory_batches batch
+           JOIN products product ON product.product_id = batch.product_id
+           JOIN units unit ON unit.unit_id = batch.unit_id
+           WHERE batch.returned_quantity > 0
+             AND DATE(batch.updated_at) = CURDATE() - INTERVAL 1 DAY
+             AND product.product_type = 'stock_item'
+           ORDER BY batch.received_at ASC, batch.batch_id ASC`,
+        );
+        return res.json(rows);
+      }
+
       await ensureBatchesTable();
       const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
       const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p");
@@ -733,6 +814,37 @@ router.get(
 // GET all active batches (FIFO source)
 router.get("/active", requireInventoryManagerAccess, async (_req, res) => {
   try {
+    if (isRedesignedProfile()) {
+      const [rows] = await db.query(
+        `SELECT
+           batch.batch_id,
+           batch.product_id,
+           product.name AS product_name,
+           batch.received_quantity AS quantity,
+           batch.remaining_quantity AS remaining_qty,
+           COALESCE(NULLIF(TRIM(unit.abbreviation), ''), unit.name) AS unit,
+           batch.received_at AS received_date,
+           batch.expiry_at AS expiry_date,
+           batch.usable_until,
+           batch.status,
+           batch.returned_quantity AS returned_qty,
+           batch.notes,
+           batch.updated_at
+         FROM inventory_batches batch
+         JOIN products product ON product.product_id = batch.product_id
+         JOIN units unit ON unit.unit_id = batch.unit_id
+         WHERE batch.remaining_quantity > 0
+           AND batch.status IN ('active', 'expired', 'quarantined')
+           AND product.product_type = 'stock_item'
+         ORDER BY
+           CASE WHEN batch.expiry_at IS NULL AND batch.usable_until IS NULL THEN 1 ELSE 0 END,
+           COALESCE(batch.expiry_at, batch.usable_until),
+           batch.received_at,
+           batch.batch_id`,
+      );
+      return res.json(rows);
+    }
+
     await ensureBatchesTable();
 
     const [rows] = await db.query(
@@ -768,6 +880,7 @@ router.get("/active", requireInventoryManagerAccess, async (_req, res) => {
 
 // POST create default batch from current stock (no stock increment)
 router.post("/default", requireInventoryManagerAccess, async (req, res) => {
+  if (isRedesignedProfile()) return retiredWithdrawnStockResponse(res);
   const productId = toNumber(req.body.product_id);
 
   if (!productId) {
@@ -876,6 +989,7 @@ router.post("/", requireInventoryManagerAccess, (_req, res) => {
 
 // POST withdraw using FIFO or FEFO
 router.post("/withdraw", requireInventoryManagerAccess, async (req, res) => {
+  if (isRedesignedProfile()) return retiredWithdrawnStockResponse(res);
   const {
     product_id,
     qty_needed,
@@ -1051,6 +1165,134 @@ router.put("/:batch_id", requireInventoryManagerAccess, async (req, res) => {
 
   let conn;
   try {
+    if (isRedesignedProfile()) {
+      conn = await db.getConnection();
+      await conn.beginTransaction();
+      const [rows] = await conn.query(
+        `SELECT
+           batch.*,
+           product.tracking_method,
+           product.unit_id AS product_unit_id,
+           unit.name AS unit_name,
+           unit.abbreviation AS unit_abbreviation
+         FROM inventory_batches batch
+         JOIN products product ON product.product_id = batch.product_id
+         JOIN units unit ON unit.unit_id = batch.unit_id
+         WHERE batch.batch_id = ?
+         FOR UPDATE`,
+        [batchId],
+      );
+      if (!rows.length) {
+        await conn.rollback();
+        conn.release();
+        conn = null;
+        return res.status(404).json({ error: "Batch not found" });
+      }
+      const current = rows[0];
+      if (
+        unit !== undefined &&
+        ![
+          String(current.product_unit_id),
+          String(current.unit_name).toLowerCase(),
+          String(current.unit_abbreviation || "").toLowerCase(),
+        ].includes(String(unit).trim().toLowerCase())
+      ) {
+        await conn.rollback();
+        conn.release();
+        conn = null;
+        return res.status(409).json({ error: "Batch unit cannot be changed" });
+      }
+
+      const updates = [];
+      const values = [];
+      if (received_date !== undefined) {
+        const receivedAt = new Date(received_date);
+        if (Number.isNaN(receivedAt.getTime())) {
+          throw Object.assign(new Error("Invalid received_date"), { statusCode: 400 });
+        }
+        updates.push("received_at = ?");
+        values.push(receivedAt);
+        const trackedEnd = current.expiry_at || current.usable_until;
+        if (trackedEnd && new Date(trackedEnd) <= receivedAt) {
+          throw Object.assign(
+            new Error("received_date must be before the batch tracking end date"),
+            { statusCode: 400 },
+          );
+        }
+      }
+      if (expiry_date !== undefined) {
+        if (String(current.tracking_method) !== "expiry") {
+          throw Object.assign(
+            new Error("expiry_date is only valid for expiry-tracked materials"),
+            { statusCode: 400 },
+          );
+        }
+        const expiryAt = new Date(expiry_date);
+        if (!expiry_date || Number.isNaN(expiryAt.getTime())) {
+          throw Object.assign(new Error("A valid expiry_date is required"), {
+            statusCode: 400,
+          });
+        }
+        const receivedAt = received_date
+          ? new Date(received_date)
+          : new Date(current.received_at);
+        if (expiryAt <= receivedAt) {
+          throw Object.assign(new Error("expiry_date must be after received_date"), {
+            statusCode: 400,
+          });
+        }
+        updates.push("expiry_at = ?");
+        values.push(expiryAt);
+      }
+      if (status !== undefined) {
+        const normalizedStatus = String(status).trim().toLowerCase();
+        if (!["active", "depleted", "returned", "expired", "quarantined"].includes(normalizedStatus)) {
+          throw Object.assign(new Error("Invalid batch status"), { statusCode: 400 });
+        }
+        const remainingQuantity = Number(current.remaining_quantity) || 0;
+        if (["depleted", "returned"].includes(normalizedStatus) && remainingQuantity > 0) {
+          throw Object.assign(
+            new Error(`${normalizedStatus} batches cannot retain stock`),
+            { statusCode: 409 },
+          );
+        }
+        if (normalizedStatus === "active" && remainingQuantity <= 0) {
+          throw Object.assign(new Error("An empty batch cannot be active"), {
+            statusCode: 409,
+          });
+        }
+        updates.push("status = ?");
+        values.push(normalizedStatus);
+      }
+      if (notes !== undefined) {
+        const normalizedNotes = notes == null ? null : String(notes).trim();
+        if (normalizedNotes && normalizedNotes.length > 500) {
+          throw Object.assign(new Error("Batch notes are too long"), { statusCode: 400 });
+        }
+        updates.push("notes = ?");
+        values.push(normalizedNotes || null);
+      }
+      if (!updates.length) {
+        await conn.rollback();
+        conn.release();
+        conn = null;
+        return res.status(400).json({ error: "No fields to update" });
+      }
+      values.push(batchId);
+      await conn.query(
+        `UPDATE inventory_batches SET ${updates.join(", ")} WHERE batch_id = ?`,
+        values,
+      );
+      const [updatedRows] = await conn.query(
+        `SELECT * FROM inventory_batches WHERE batch_id = ?`,
+        [batchId],
+      );
+      await conn.commit();
+      conn.release();
+      conn = null;
+      return res.json({ message: "Batch updated", batch: updatedRows[0] });
+    }
+
     await ensureBatchesTable();
 
     conn = await db.getConnection();
@@ -1115,7 +1357,7 @@ router.put("/:batch_id", requireInventoryManagerAccess, async (req, res) => {
   } catch (err) {
     if (conn) await conn.rollback();
     console.error("Error updating batch:", err);
-    res.status(500).json({ error: err.message });
+    res.status(err.statusCode || 500).json({ error: err.message });
   } finally {
     if (conn) conn.release();
   }
@@ -1123,6 +1365,7 @@ router.put("/:batch_id", requireInventoryManagerAccess, async (req, res) => {
 
 // POST return stock back to a batch
 router.post("/return", requireInventoryManagerAccess, async (req, res) => {
+  if (isRedesignedProfile()) return retiredWithdrawnStockResponse(res);
   const { batch_id, return_qty, recorded_by } = req.body;
 
   const batchId = toNumber(batch_id);

@@ -9,6 +9,8 @@ const calls = {
   redesignedAlerts: 0,
   reconciledItems: null,
   legacySql: [],
+  thresholdUpdates: 0,
+  alertRefreshes: 0,
 };
 
 function mockModule(request, exports) {
@@ -49,6 +51,9 @@ mockModule("../services/inventoryService", {
       criticalStockThreshold: 0,
       item_type: "stock_item",
     }];
+  },
+  async refreshRedesignedInventoryAlerts() {
+    calls.alertRefreshes += 1;
   },
 });
 
@@ -107,6 +112,33 @@ const dbMock = {
     }
     throw new Error(`Unexpected inventory route SQL: ${normalized}`);
   },
+  async getConnection() {
+    return {
+      async beginTransaction() {},
+      async commit() {},
+      async rollback() {},
+      release() {},
+      async query(sql, params = []) {
+        const normalized = String(sql).replace(/\s+/g, " ").trim();
+        if (normalized.startsWith("SELECT p.product_id")) {
+          return [[{
+            product_id: 22,
+            product_type: "stock_item",
+            on_hand: 2,
+            reorder_point: 10,
+            critical_point: 5,
+            version: 3,
+          }]];
+        }
+        if (normalized.startsWith("UPDATE inventory_balances")) {
+          calls.thresholdUpdates += 1;
+          assert.deepEqual(params, [12, 4, 22, 3]);
+          return [{ affectedRows: 1 }];
+        }
+        throw new Error(`Unexpected threshold SQL: ${normalized}`);
+      },
+    };
+  },
 };
 mockModule("../config/db", dbMock);
 
@@ -120,7 +152,10 @@ function routeHandler(path, method = "get") {
   return layer.route.stack.at(-1).handle;
 }
 
-async function invoke(path, { query = {}, user = null } = {}) {
+async function invoke(
+  path,
+  { method = "get", query = {}, params = {}, body = {}, user = null } = {},
+) {
   const result = { statusCode: 200, body: null, headers: {} };
   const res = {
     status(code) {
@@ -136,7 +171,7 @@ async function invoke(path, { query = {}, user = null } = {}) {
       return this;
     },
   };
-  await routeHandler(path)({ query, user }, res);
+  await routeHandler(path, method)({ query, params, body, user }, res);
   return result;
 }
 
@@ -158,12 +193,48 @@ async function invoke(path, { query = {}, user = null } = {}) {
   assert.equal(calls.reconciledItems[0].thresholds.low, 0);
   assert.equal(calls.reconciledItems[0].thresholds.critical, 0);
 
+  const thresholdUpdate = await invoke("/:inventory_id", {
+    method: "put",
+    params: { inventory_id: "22" },
+    body: { reorderPoint: 12, criticalPoint: 4 },
+  });
+  assert.equal(thresholdUpdate.statusCode, 200);
+  assert.equal(thresholdUpdate.body.reorderPoint, 12);
+  assert.equal(thresholdUpdate.body.criticalPoint, 4);
+  assert.equal(thresholdUpdate.body.version, 4);
+  assert.equal(calls.thresholdUpdates, 1);
+  assert.equal(calls.alertRefreshes, 1);
+
   const unsupportedDailyUsage = await invoke("/daily-usage");
   assert.equal(unsupportedDailyUsage.statusCode, 501);
   assert.equal(
     unsupportedDailyUsage.body.code,
     "DAILY_USAGE_NOT_AVAILABLE_IN_REDESIGNED_SCHEMA",
   );
+
+  const unsupportedDailyUsageWrite = await invoke("/daily-usage", {
+    method: "post",
+    body: { items: [] },
+  });
+  assert.equal(unsupportedDailyUsageWrite.statusCode, 501);
+  assert.equal(
+    unsupportedDailyUsageWrite.body.code,
+    "DAILY_USAGE_NOT_AVAILABLE_IN_REDESIGNED_SCHEMA",
+  );
+
+  const unsupportedDailyUsageFinalize = await invoke(
+    "/daily-usage/:id/finalize",
+    { method: "patch", params: { id: "1" }, body: {} },
+  );
+  assert.equal(unsupportedDailyUsageFinalize.statusCode, 501);
+
+  const retiredBatchReturn = await invoke("/batches/:batchId/return", {
+    method: "post",
+    params: { batchId: "3" },
+    body: { quantity: 1 },
+  });
+  assert.equal(retiredBatchReturn.statusCode, 410);
+  assert.equal(retiredBatchReturn.body.code, "WITHDRAWN_STOCK_WORKFLOW_RETIRED");
 
   process.env.DB_SCHEMA_PROFILE = "legacy";
   const legacyList = await invoke("/");

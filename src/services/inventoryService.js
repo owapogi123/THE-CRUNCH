@@ -15,6 +15,13 @@ const {
   MENU_FOOD_SYSTEM_KEY,
   normalizeSystemKey,
 } = require("./systemMenuCategoryService");
+const {
+  applyRedesignedInventoryMutation,
+  executeRedesignedInventoryMutation,
+} = require("./redesignedInventoryMutationService");
+const {
+  reconcileInventoryAlerts,
+} = require("./inventoryNotificationService");
 
 function normalizePaymentStatus(value) {
   const v = String(value || "").toLowerCase().trim();
@@ -49,7 +56,7 @@ async function listRedesignedInventoryRows(connection = db) {
        COALESCE(balance.reorder_point, 0) AS lowStockThreshold,
        COALESCE(balance.critical_point, 0) AS criticalStockThreshold,
        'No Supplier' AS supplier_name,
-       COALESCE(movement.dailyWithdrawn, 0) AS dailyWithdrawn,
+       0 AS dailyWithdrawn,
        COALESCE(movement.returned, 0) AS returned,
        COALESCE(movement.wasted, 0) AS wasted,
        COALESCE(movement.soldToday, 0) AS soldToday,
@@ -104,13 +111,6 @@ async function listRedesignedInventoryRows(connection = db) {
      LEFT JOIN (
        SELECT
          product_id,
-         SUM(CASE
-           WHEN occurred_at >= CURDATE()
-            AND occurred_at < CURDATE() + INTERVAL 1 DAY
-            AND signed_quantity < 0
-             THEN -signed_quantity
-           ELSE 0
-         END) AS dailyWithdrawn,
          SUM(CASE
            WHEN movement_type = 'return_in' AND signed_quantity > 0
              THEN signed_quantity
@@ -183,6 +183,36 @@ async function listRedesignedInventoryAlertRows(connection = db) {
      ORDER BY p.name ASC`,
   );
   return rows;
+}
+
+async function refreshRedesignedInventoryAlerts(database = db) {
+  const rows = await listRedesignedInventoryAlertRows(database);
+  const items = rows.map((row) => {
+    const stock = Number(row.mainStock) || 0;
+    const low = Math.max(0, Number(row.lowStockThreshold) || 0);
+    const critical = Math.min(
+      low,
+      Math.max(0, Number(row.criticalStockThreshold) || 0),
+    );
+    const severity = stock <= 0
+      ? "out"
+      : stock <= critical
+        ? "critical"
+        : stock <= low
+          ? "low"
+          : "normal";
+    return {
+      inventory_id: Number(row.inventory_id),
+      product_id: Number(row.product_id),
+      product_name: String(row.product_name || ""),
+      category: String(row.category || ""),
+      unit: String(row.unit || "piece"),
+      mainStock: stock,
+      severity,
+      thresholds: { low, critical },
+    };
+  });
+  return reconcileInventoryAlerts(database, items);
 }
 
 async function resolveRecordedByAdminId(recordedBy, connection = db) {
@@ -1258,13 +1288,16 @@ async function restoreStockForRefundedOrder(
 }
 
 module.exports = {
+  applyRedesignedInventoryMutation,
   deductStockForOrder,
   deductStockForPaidOrder,
   deductPrevalidatedStockForPaidOrder,
+  executeRedesignedInventoryMutation,
   getOrderIngredientDeductions,
   listRedesignedInventoryAlertRows,
   listRedesignedInventoryRows,
   prepareOrderItemsAndStock,
+  refreshRedesignedInventoryAlerts,
   restoreStockForRefundedOrder,
   validateStockForOrderItems,
 };

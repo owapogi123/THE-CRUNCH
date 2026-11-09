@@ -4,6 +4,7 @@ const {
   deductStockForOrder,
   listRedesignedInventoryAlertRows,
   listRedesignedInventoryRows,
+  refreshRedesignedInventoryAlerts,
 } = require("../services/inventoryService");
 const {
   fetchMenuIngredients,
@@ -142,6 +143,139 @@ function getInventoryAlertSeverity(stockValue, thresholds) {
   if (stock <= thresholds.critical) return "critical";
   if (stock <= thresholds.low) return "low";
   return "normal";
+}
+
+async function updateRedesignedInventoryThresholds(inventoryId, body, res) {
+  const hasReorderPoint =
+    body.reorderPoint !== undefined || body.lowStockThreshold !== undefined;
+  const hasCriticalPoint =
+    body.criticalPoint !== undefined || body.criticalStockThreshold !== undefined;
+  const useDefaults = normalizeBooleanFlag(body.useDefaultThresholds, false);
+
+  if (!hasReorderPoint && !hasCriticalPoint && !useDefaults) {
+    return res.status(400).json({ message: "No fields to update" });
+  }
+
+  let requestedReorder = body.reorderPoint ?? body.lowStockThreshold;
+  let requestedCritical = body.criticalPoint ?? body.criticalStockThreshold;
+  if (useDefaults) {
+    const defaults = await readStockAlertDefaults();
+    requestedReorder = defaults.low;
+    requestedCritical = defaults.critical;
+  }
+
+  let conn;
+  try {
+    conn = await db.getConnection();
+    await conn.beginTransaction();
+    const [rows] = await conn.query(
+      `SELECT
+         p.product_id,
+         p.product_type,
+         balance.on_hand,
+         balance.reorder_point,
+         balance.critical_point,
+         balance.version
+       FROM products p
+       LEFT JOIN inventory_balances balance
+         ON balance.product_id = p.product_id
+       WHERE p.product_id = ?
+       FOR UPDATE`,
+      [inventoryId],
+    );
+    if (!rows.length || String(rows[0].product_type) !== STOCK_ITEM) {
+      const error = new Error("Inventory record not found");
+      error.statusCode = 404;
+      throw error;
+    }
+    if (rows[0].on_hand === null || rows[0].on_hand === undefined) {
+      const error = new Error("Stock item has no inventory balance");
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const reorderPoint = hasReorderPoint || useDefaults
+      ? Number(requestedReorder)
+      : Number(rows[0].reorder_point);
+    const criticalPoint = hasCriticalPoint || useDefaults
+      ? Number(requestedCritical)
+      : Number(rows[0].critical_point);
+    if (!Number.isFinite(reorderPoint) || reorderPoint < 0) {
+      const error = new Error("Invalid reorderPoint value");
+      error.statusCode = 400;
+      throw error;
+    }
+    if (!Number.isFinite(criticalPoint) || criticalPoint < 0) {
+      const error = new Error("Invalid criticalPoint value");
+      error.statusCode = 400;
+      throw error;
+    }
+    if (criticalPoint > reorderPoint) {
+      const error = new Error(
+        "Critical threshold cannot be greater than warning threshold",
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const [updateResult] = await conn.query(
+      `UPDATE inventory_balances
+          SET reorder_point = ?,
+              critical_point = ?,
+              version = version + 1
+        WHERE product_id = ?
+          AND version = ?`,
+      [reorderPoint, criticalPoint, inventoryId, Number(rows[0].version)],
+    );
+    if (Number(updateResult?.affectedRows) !== 1) {
+      const error = new Error("Inventory changed concurrently; retry the update");
+      error.statusCode = 409;
+      throw error;
+    }
+    await conn.commit();
+    conn.release();
+    conn = null;
+
+    try {
+      await refreshRedesignedInventoryAlerts(db);
+    } catch (alertError) {
+      console.error("Inventory thresholds saved but alert refresh failed:", alertError);
+    }
+
+    return res.json({
+      Inventory_ID: inventoryId,
+      Product_ID: inventoryId,
+      Stock: Number(rows[0].on_hand),
+      Quantity: Number(rows[0].on_hand),
+      Reorder_Point: reorderPoint,
+      Critical_Point: criticalPoint,
+      use_default_thresholds: useDefaults ? 1 : 0,
+      low_stock_threshold: reorderPoint,
+      critical_stock_threshold: criticalPoint,
+      inventory_id: inventoryId,
+      product_id: inventoryId,
+      on_hand: Number(rows[0].on_hand),
+      mainStock: Number(rows[0].on_hand),
+      stock: Number(rows[0].on_hand),
+      quantity: Number(rows[0].on_hand),
+      reorder_point: reorderPoint,
+      critical_point: criticalPoint,
+      reorderPoint,
+      criticalPoint,
+      lowStockThreshold: reorderPoint,
+      criticalStockThreshold: criticalPoint,
+      useDefaultThresholds: useDefaults ? 1 : 0,
+      version: Number(rows[0].version) + 1,
+    });
+  } catch (error) {
+    if (conn) await conn.rollback();
+    return res.status(error.statusCode || 500).json({
+      message: error.statusCode ? error.message : "DB error",
+      error: error.message,
+    });
+  } finally {
+    if (conn) conn.release();
+  }
 }
 
 async function ensureDailyUsageTables(conn = db) {
@@ -699,6 +833,10 @@ router.put("/:inventory_id", requireInventoryManagerAccess, async (req, res) => 
         .json(directStockUpdateResponse(directStockFields));
     }
 
+    if (isRedesignedProfile()) {
+      return updateRedesignedInventoryThresholds(inventoryId, req.body, res);
+    }
+
     const {
       reorderPoint,
       criticalPoint,
@@ -889,6 +1027,13 @@ router.post("/batches", requireInventoryManagerAccess, (_req, res) => {
 router.post("/batches/:batchId/return", requireInventoryManagerAccess, async (req, res) => {
   let conn;
   try {
+    if (isRedesignedProfile()) {
+      return res.status(410).json({
+        code: "WITHDRAWN_STOCK_WORKFLOW_RETIRED",
+        message:
+          "Returning withdrawn kitchen stock is not available in the redesigned inventory model.",
+      });
+    }
     const { batchId } = req.params;
     const qtyToReturn = Number(req.body.quantity) || 0;
 
@@ -1006,6 +1151,13 @@ router.get("/daily-usage", requireCookViewAccess, async (req, res) => {
 router.post("/daily-usage", requireKitchenInventoryAccess, async (req, res) => {
   let conn;
   try {
+    if (isRedesignedProfile()) {
+      return res.status(501).json({
+        code: "DAILY_USAGE_NOT_AVAILABLE_IN_REDESIGNED_SCHEMA",
+        message:
+          "Daily usage reports are not represented in the redesigned schema.",
+      });
+    }
     const reportDate = toReportDateString(req.body.report_date);
     const createdBy =
       req.body.created_by == null ? null : Number(req.body.created_by);
@@ -1160,6 +1312,13 @@ router.post("/daily-usage", requireKitchenInventoryAccess, async (req, res) => {
 router.patch("/daily-usage/:id/finalize", requireInventoryManagerAccess, async (req, res) => {
   let conn;
   try {
+    if (isRedesignedProfile()) {
+      return res.status(501).json({
+        code: "DAILY_USAGE_NOT_AVAILABLE_IN_REDESIGNED_SCHEMA",
+        message:
+          "Daily usage reports are not represented in the redesigned schema.",
+      });
+    }
     const reportId = Number(req.params.id);
     const finalizedBy =
       req.body.finalized_by == null ? null : Number(req.body.finalized_by);
