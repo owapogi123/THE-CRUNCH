@@ -13,6 +13,10 @@ const {
   DEFAULT_RESTAURANT_SETTINGS,
   DEFAULT_ROLE_PERMISSIONS,
 } = require("../services/settingsDefaults");
+const {
+  REDESIGNED_SCHEMA_PROFILE,
+  getSchemaProfile,
+} = require("../db/schemaProfile");
 
 const VALID_PERMISSION_ROLES = Object.keys(DEFAULT_ROLE_PERMISSIONS);
 const VALID_PERMISSION_KEYS = Object.keys(
@@ -36,6 +40,10 @@ const DISCOUNT_AUTHORIZATION_KEY = "discount_authorization";
 const REFUND_AUTHORIZATION_KEY = "refund_authorization";
 const discountPasswordAttempts = new Map();
 const refundPasswordUpdateAttempts = new Map();
+
+function isRedesignedProfile() {
+  return getSchemaProfile() === REDESIGNED_SCHEMA_PROFILE;
+}
 
 function checkDiscountPasswordRateLimit(userId) {
   const now = Date.now();
@@ -337,15 +345,26 @@ async function deleteUnusedCategory(req, res, definition) {
         message: `${categoryName} is a built-in system category and cannot be deleted.`,
       });
     }
-    const [assignments] = await connection.query(
-      `SELECT m.Product_ID
-       FROM Menu m
-       INNER JOIN products p ON p.id = m.Product_ID
-       WHERE LOWER(TRIM(COALESCE(m.Category_Name, ''))) = LOWER(TRIM(?))
-         AND LOWER(TRIM(COALESCE(p.item_type, ''))) = ?
-       FOR UPDATE`,
-      [categoryName, definition.itemType],
-    );
+    let assignments;
+    if (isRedesignedProfile()) {
+      [assignments] = await connection.query(
+        `SELECT p.product_id
+           FROM products p
+          WHERE p.${definition.redesignedProductCategoryColumn} = ?
+          FOR UPDATE`,
+        [categoryId],
+      );
+    } else {
+      [assignments] = await connection.query(
+        `SELECT m.Product_ID
+           FROM Menu m
+           INNER JOIN products p ON p.id = m.Product_ID
+          WHERE LOWER(TRIM(COALESCE(m.Category_Name, ''))) = LOWER(TRIM(?))
+            AND LOWER(TRIM(COALESCE(p.item_type, ''))) = ?
+          FOR UPDATE`,
+        [categoryName, definition.itemType],
+      );
+    }
 
     if (assignments.length > 0) {
       await connection.rollback();
@@ -380,6 +399,12 @@ async function deleteUnusedCategory(req, res, definition) {
     });
   } catch (error) {
     if (connection && transactionStarted) await connection.rollback();
+    if (error?.code === "ER_ROW_IS_REFERENCED_2") {
+      return res.status(409).json({
+        code: "CATEGORY_IN_USE",
+        message: `Cannot delete this ${definition.label.toLowerCase()} because products still reference it.`,
+      });
+    }
     console.error(
       `DELETE /api/settings/${definition.routeLabel}/:id error:`,
       error,
@@ -402,6 +427,7 @@ const MENU_CATEGORY_DELETION = Object.freeze({
   pluralAssignment: "menu products are",
   pluralReassignment: "those products",
   systemKeyColumn: true,
+  redesignedProductCategoryColumn: "menu_category_id",
 });
 
 const INVENTORY_CATEGORY_DELETION = Object.freeze({
@@ -412,6 +438,7 @@ const INVENTORY_CATEGORY_DELETION = Object.freeze({
   singularAssignment: "inventory material is",
   pluralAssignment: "inventory materials are",
   pluralReassignment: "those materials",
+  redesignedProductCategoryColumn: "inventory_category_id",
 });
 
 function normalizeOptionalString(value) {
@@ -1115,7 +1142,11 @@ router.patch(
         values,
       );
 
-      if (nextName !== null && nextName !== previousName) {
+      if (
+        !isRedesignedProfile() &&
+        nextName !== null &&
+        nextName !== previousName
+      ) {
         await connection.query(
           `UPDATE Menu m
          INNER JOIN products p ON p.id = m.Product_ID
@@ -1352,7 +1383,11 @@ router.patch(
         values,
       );
 
-      if (nextName !== null && nextName !== previousName) {
+      if (
+        !isRedesignedProfile() &&
+        nextName !== null &&
+        nextName !== previousName
+      ) {
         await connection.query(
           `UPDATE Menu m
          INNER JOIN products p ON p.id = m.Product_ID

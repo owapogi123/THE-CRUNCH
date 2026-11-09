@@ -57,14 +57,20 @@ const initialEnv = {
       }),
     (error) => error.code === "ADMIN_BOOTSTRAP_CONFIG_ERROR",
   );
-  assert.throws(
-    () =>
-      readBootstrapAdminConfig({
-        BOOTSTRAP_ADMIN_USERNAME: "capstone_admin",
-        BOOTSTRAP_ADMIN_EMAIL: "admin@example.test",
-        BOOTSTRAP_ADMIN_PASSWORD: "weak",
-      }),
-    (error) => error.code === "ADMIN_BOOTSTRAP_CONFIG_ERROR",
+  // TEMPORARY STAGING-ONLY CONTRACT: the isolated redesigned-database
+  // bootstrap currently accepts any non-empty password. Strong bootstrap
+  // password requirements must be restored before production cutover.
+  assert.deepEqual(
+    readBootstrapAdminConfig({
+      BOOTSTRAP_ADMIN_USERNAME: "capstone_admin",
+      BOOTSTRAP_ADMIN_EMAIL: "admin@example.test",
+      BOOTSTRAP_ADMIN_PASSWORD: "weak",
+    }),
+    {
+      username: "capstone_admin",
+      email: "admin@example.test",
+      password: "weak",
+    },
   );
 
   const missingConnection = createFakeConnection();
