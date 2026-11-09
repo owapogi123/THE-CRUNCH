@@ -39,11 +39,20 @@ const {
     CHICKEN_FLAVORS_SYSTEM_KEY,
     normalizeSystemKey,
 } = require("../services/systemMenuCategoryService");
+const {
+    REDESIGNED_SCHEMA_PROFILE,
+    getSchemaProfile,
+} = require("../db/schemaProfile");
+const redesignedProductHandlers = require("./redesignedProductHandlers");
 
 const PRODUCT_NAME_MAX_LENGTH = 100;
 const PRODUCT_DESCRIPTION_MAX_LENGTH = 100;
 const RAW_MATERIAL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9' -]*[A-Za-z0-9]$|^[A-Za-z0-9]$/;
 const DEFAULT_INVENTORY_UNIT = "piece";
+
+function isRedesignedProfile() {
+    return getSchemaProfile() === REDESIGNED_SCHEMA_PROFILE;
+}
 
 function normalizeProductName(value, { stockOnly = false } = {}) {
     const normalized = String(value ?? "").trim();
@@ -348,7 +357,11 @@ function logProductTimings(timings, queryTiming, totalMs) {
 }
 
 // GET all products (old backend used `products` table)
-router.get("/", (req, res) => runWithDbQueryTiming(async (queryTiming) => {
+router.get("/", (req, res) => {
+    if (isRedesignedProfile()) {
+        return redesignedProductHandlers.listProducts(req, res);
+    }
+    return runWithDbQueryTiming(async (queryTiming) => {
     const startedAt = process.hrtime.bigint();
     const timings = {};
     try {
@@ -467,10 +480,14 @@ router.get("/", (req, res) => runWithDbQueryTiming(async (queryTiming) => {
         console.error(err);
         return res.status(500).json({ message: 'DB error', error: err.message });
     }
-}));
+    });
+});
 
 // ADD product
 router.post("/", requireInventoryManagerAccess, async (req, res) => {
+    if (isRedesignedProfile()) {
+        return redesignedProductHandlers.createProduct(req, res);
+    }
     let conn;
     try {
         const hasItemTypeColumn = await ensureProductSchema(db);
@@ -780,6 +797,9 @@ router.post("/", requireInventoryManagerAccess, async (req, res) => {
 
 // UPDATE product
 router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
+    if (isRedesignedProfile()) {
+        return redesignedProductHandlers.updateProduct(req, res);
+    }
     let conn;
     try {
         const productId = Number(req.params.id);
@@ -1236,6 +1256,9 @@ router.put("/:id", requireInventoryManagerAccess, async (req, res) => {
 });
 
 async function setMenuItemArchiveState(req, res, archived) {
+    if (isRedesignedProfile()) {
+        return redesignedProductHandlers.setArchiveState(req, res, archived);
+    }
     let conn;
     let transactionStarted = false;
     try {
@@ -1310,6 +1333,9 @@ router.patch("/:id/restore", requireAdministratorAccess, (req, res) =>
 
 // DELETE product
 router.delete("/:id", requireInventoryManagerAccess, async (req, res) => {
+    if (isRedesignedProfile()) {
+        return redesignedProductHandlers.deleteProduct(req, res);
+    }
     let conn;
     try {
         await ensureProductSchema(db);
