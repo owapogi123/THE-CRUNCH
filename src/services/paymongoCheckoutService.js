@@ -34,8 +34,15 @@ function getPayMongoBaseUrl() {
 
 function fingerprintItems(items) {
   const canonical = normalizeOrderItems(items)
-    .sort((left, right) => left.product_id - right.product_id)
-    .map((item) => `${item.product_id}:${item.qty}`)
+    .sort((left, right) =>
+      left.product_id - right.product_id ||
+      Number(left.selected_flavor_product_id || 0) -
+        Number(right.selected_flavor_product_id || 0),
+    )
+    .map(
+      (item) =>
+        `${item.product_id}:${item.qty}:${item.selected_flavor_product_id || 0}`,
+    )
     .join("|");
   return crypto.createHash("sha256").update(canonical).digest("hex");
 }

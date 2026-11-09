@@ -99,4 +99,49 @@ assert.equal(
   "Available",
 );
 
+assert.equal(
+  resolveProductAvailabilityStatus(
+    {
+      product_type: "selection_option",
+      lifecycle_status: "active",
+      availability_override: "auto",
+    },
+    [],
+  ),
+  "Available",
+);
+assert.equal(
+  resolveProductAvailabilityStatus(
+    {
+      product_type: "selection_option",
+      lifecycle_status: "inactive",
+      availability_override: "auto",
+    },
+    [],
+  ),
+  "Out of Stock",
+);
+assert.equal(
+  resolveProductAvailabilityStatus(
+    {
+      product_type: "selection_option",
+      lifecycle_status: "archived",
+      availability_override: "auto",
+    },
+    [],
+  ),
+  "Hidden",
+);
+assert.equal(
+  resolveProductAvailabilityStatus(
+    {
+      product_type: "menu_item",
+      lifecycle_status: "active",
+      availability_override: "unavailable",
+    },
+    sufficient,
+  ),
+  "Out of Stock",
+);
+
 console.log("menu availability tests passed");

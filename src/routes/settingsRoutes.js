@@ -13,6 +13,10 @@ const {
   DEFAULT_RESTAURANT_SETTINGS,
   DEFAULT_ROLE_PERMISSIONS,
 } = require("../services/settingsDefaults");
+const {
+  REDESIGNED_SCHEMA_PROFILE,
+  getSchemaProfile,
+} = require("../db/schemaProfile");
 
 const VALID_PERMISSION_ROLES = Object.keys(DEFAULT_ROLE_PERMISSIONS);
 const VALID_PERMISSION_KEYS = Object.keys(
@@ -36,6 +40,10 @@ const DISCOUNT_AUTHORIZATION_KEY = "discount_authorization";
 const REFUND_AUTHORIZATION_KEY = "refund_authorization";
 const discountPasswordAttempts = new Map();
 const refundPasswordUpdateAttempts = new Map();
+
+function isRedesignedProfile() {
+  return getSchemaProfile() === REDESIGNED_SCHEMA_PROFILE;
+}
 
 function checkDiscountPasswordRateLimit(userId) {
   const now = Date.now();
@@ -285,8 +293,18 @@ function isCategoryValidationError(error) {
 }
 
 function categoryErrorStatus(error) {
+  if (Number.isInteger(error?.statusCode)) return error.statusCode;
   if (error?.code === "ER_DUP_ENTRY") return 409;
   return isCategoryValidationError(error) ? 400 : 500;
+}
+
+function redesignedCategoryTrackingError() {
+  const error = new Error(
+    "Date tracking is configured per inventory material in the redesigned schema, not per inventory category.",
+  );
+  error.statusCode = 409;
+  error.code = "MATERIAL_LEVEL_DATE_TRACKING_REQUIRED";
+  return error;
 }
 
 function parseStoredSettings(rows) {
@@ -312,8 +330,10 @@ async function deleteUnusedCategory(req, res, definition) {
     await connection.beginTransaction();
     transactionStarted = true;
 
+    const includeIsSystem =
+      isRedesignedProfile() && definition.isSystemColumn;
     const [categoryRows] = await connection.query(
-      `SELECT name${definition.systemKeyColumn ? ", system_key" : ""}
+      `SELECT name${definition.systemKeyColumn ? ", system_key" : ""}${includeIsSystem ? ", is_system" : ""}
        FROM ${definition.tableName}
        WHERE category_id = ?
        FOR UPDATE`,
@@ -337,15 +357,34 @@ async function deleteUnusedCategory(req, res, definition) {
         message: `${categoryName} is a built-in system category and cannot be deleted.`,
       });
     }
-    const [assignments] = await connection.query(
-      `SELECT m.Product_ID
-       FROM Menu m
-       INNER JOIN products p ON p.id = m.Product_ID
-       WHERE LOWER(TRIM(COALESCE(m.Category_Name, ''))) = LOWER(TRIM(?))
-         AND LOWER(TRIM(COALESCE(p.item_type, ''))) = ?
-       FOR UPDATE`,
-      [categoryName, definition.itemType],
-    );
+    if (includeIsSystem && Number(categoryRows[0].is_system) === 1) {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(409).json({
+        code: "SYSTEM_CATEGORY_PROTECTED",
+        message: `${categoryName} is a built-in system category and cannot be deleted.`,
+      });
+    }
+    let assignments;
+    if (isRedesignedProfile()) {
+      [assignments] = await connection.query(
+        `SELECT p.product_id
+           FROM products p
+          WHERE p.${definition.redesignedProductCategoryColumn} = ?
+          FOR UPDATE`,
+        [categoryId],
+      );
+    } else {
+      [assignments] = await connection.query(
+        `SELECT m.Product_ID
+           FROM Menu m
+           INNER JOIN products p ON p.id = m.Product_ID
+          WHERE LOWER(TRIM(COALESCE(m.Category_Name, ''))) = LOWER(TRIM(?))
+            AND LOWER(TRIM(COALESCE(p.item_type, ''))) = ?
+          FOR UPDATE`,
+        [categoryName, definition.itemType],
+      );
+    }
 
     if (assignments.length > 0) {
       await connection.rollback();
@@ -380,6 +419,12 @@ async function deleteUnusedCategory(req, res, definition) {
     });
   } catch (error) {
     if (connection && transactionStarted) await connection.rollback();
+    if (error?.code === "ER_ROW_IS_REFERENCED_2") {
+      return res.status(409).json({
+        code: "CATEGORY_IN_USE",
+        message: `Cannot delete this ${definition.label.toLowerCase()} because products still reference it.`,
+      });
+    }
     console.error(
       `DELETE /api/settings/${definition.routeLabel}/:id error:`,
       error,
@@ -402,6 +447,7 @@ const MENU_CATEGORY_DELETION = Object.freeze({
   pluralAssignment: "menu products are",
   pluralReassignment: "those products",
   systemKeyColumn: true,
+  redesignedProductCategoryColumn: "menu_category_id",
 });
 
 const INVENTORY_CATEGORY_DELETION = Object.freeze({
@@ -412,6 +458,8 @@ const INVENTORY_CATEGORY_DELETION = Object.freeze({
   singularAssignment: "inventory material is",
   pluralAssignment: "inventory materials are",
   pluralReassignment: "those materials",
+  isSystemColumn: true,
+  redesignedProductCategoryColumn: "inventory_category_id",
 });
 
 function normalizeOptionalString(value) {
@@ -942,9 +990,71 @@ router.put("/permissions", requireAdministratorAccess, async (req, res) => {
   }
 });
 
+const REDESIGNED_INVENTORY_CATEGORY_COLUMNS = `
+  category_id,
+  name,
+  system_key,
+  is_system,
+  NULL AS type,
+  'none' AS date_tracking_type,
+  is_active,
+  created_at,
+  updated_at`;
+
+async function createRedesignedInventoryCategory(name, dateTrackingType) {
+  if (dateTrackingType !== "none") throw redesignedCategoryTrackingError();
+  const connection = await db.getConnection();
+  let transactionStarted = false;
+  try {
+    await connection.beginTransaction();
+    transactionStarted = true;
+    const [existing] = await connection.query(
+      `SELECT category_id
+         FROM inventory_categories
+        WHERE LOWER(name) = LOWER(?)
+        LIMIT 1
+        FOR UPDATE`,
+      [name],
+    );
+    if (existing.length > 0) {
+      const error = new Error("Category already exists");
+      error.statusCode = 409;
+      throw error;
+    }
+    const [result] = await connection.query(
+      `INSERT INTO inventory_categories (name, is_active)
+       VALUES (?, TRUE)`,
+      [name],
+    );
+    const [rows] = await connection.query(
+      `SELECT ${REDESIGNED_INVENTORY_CATEGORY_COLUMNS}
+         FROM inventory_categories
+        WHERE category_id = ?`,
+      [result.insertId],
+    );
+    await connection.commit();
+    transactionStarted = false;
+    return rows[0];
+  } catch (error) {
+    if (transactionStarted) await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
 router.get("/inventory-categories", async (req, res) => {
   try {
     const activeOnly = normalizeBoolean(req.query.activeOnly, false);
+    if (isRedesignedProfile()) {
+      const [rows] = await db.query(
+        `SELECT ${REDESIGNED_INVENTORY_CATEGORY_COLUMNS}
+           FROM inventory_categories
+           ${activeOnly ? "WHERE is_active = TRUE" : ""}
+          ORDER BY is_active DESC, name ASC`,
+      );
+      return res.json(rows);
+    }
     const [rows] = await db.query(
       `SELECT
          category_id,
@@ -980,6 +1090,14 @@ router.post(
         "date_tracking_type",
         "none",
       );
+
+      if (isRedesignedProfile()) {
+        const created = await createRedesignedInventoryCategory(
+          name,
+          dateTrackingType,
+        );
+        return res.status(201).json(created);
+      }
 
       const [existing] = await db.query(
         `SELECT category_id
@@ -1019,8 +1137,11 @@ router.post(
     } catch (error) {
       console.error("POST /api/settings/inventory-categories error:", error);
       res.status(categoryErrorStatus(error)).json({
+        ...(error?.code ? { code: error.code } : {}),
         message: isCategoryValidationError(error)
           ? error.message
+          : error?.statusCode
+            ? error.message
           : error?.code === "ER_DUP_ENTRY"
             ? "Category already exists"
             : "Failed to create inventory category",
@@ -1037,6 +1158,7 @@ router.patch(
     let connection;
     let transactionStarted = false;
     try {
+      const redesignedProfile = isRedesignedProfile();
       const categoryId = Number(req.params.id);
       if (!Number.isFinite(categoryId) || categoryId <= 0) {
         return res.status(400).json({ message: "Invalid category id" });
@@ -1049,7 +1171,12 @@ router.patch(
       transactionStarted = true;
 
       const [currentRows] = await connection.query(
-        `SELECT name
+        redesignedProfile
+          ? `SELECT name, system_key, is_system
+       FROM inventory_categories
+       WHERE category_id = ?
+       FOR UPDATE`
+          : `SELECT name
        FROM inventory_categories
        WHERE category_id = ?
        FOR UPDATE`,
@@ -1063,13 +1190,29 @@ router.patch(
       const previousName = currentRows[0].name;
       let nextName = null;
 
+      const isProtectedSystemCategory =
+        redesignedProfile && Number(currentRows[0].is_system) === 1;
+      if (
+        isProtectedSystemCategory &&
+        (Object.prototype.hasOwnProperty.call(req.body, "name") ||
+          (Object.prototype.hasOwnProperty.call(req.body, "is_active") &&
+            !normalizeBoolean(req.body.is_active, true)))
+      ) {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(409).json({
+          code: "SYSTEM_CATEGORY_PROTECTED",
+          message: `${previousName} is a built-in system category and cannot be renamed or disabled.`,
+        });
+      }
+
       if (Object.prototype.hasOwnProperty.call(req.body, "name")) {
         const name = normalizeCategoryName(req.body?.name, "Category name");
         const [duplicate] = await connection.query(
           `SELECT category_id
          FROM inventory_categories
          WHERE LOWER(name) = LOWER(?) AND category_id <> ?
-         LIMIT 1`,
+         LIMIT 1${redesignedProfile ? "\n         FOR UPDATE" : ""}`,
           [name, categoryId],
         );
         if (duplicate.length > 0) {
@@ -1085,15 +1228,20 @@ router.patch(
       if (
         Object.prototype.hasOwnProperty.call(req.body, "date_tracking_type")
       ) {
-        updates.push("date_tracking_type = ?");
-        values.push(
-          normalizeEnum(
-            req.body.date_tracking_type,
-            ["none", "expiry", "shelf_life"],
-            "date_tracking_type",
-            "none",
-          ),
+        const dateTrackingType = normalizeEnum(
+          req.body.date_tracking_type,
+          ["none", "expiry", "shelf_life"],
+          "date_tracking_type",
+          "none",
         );
+        if (redesignedProfile) {
+          if (dateTrackingType !== "none") {
+            throw redesignedCategoryTrackingError();
+          }
+        } else {
+          updates.push("date_tracking_type = ?");
+          values.push(dateTrackingType);
+        }
       }
 
       if (Object.prototype.hasOwnProperty.call(req.body, "is_active")) {
@@ -1102,6 +1250,20 @@ router.patch(
       }
 
       if (updates.length === 0) {
+        if (
+          redesignedProfile &&
+          Object.prototype.hasOwnProperty.call(req.body, "date_tracking_type")
+        ) {
+          const [rows] = await connection.query(
+            `SELECT ${REDESIGNED_INVENTORY_CATEGORY_COLUMNS}
+               FROM inventory_categories
+              WHERE category_id = ?`,
+            [categoryId],
+          );
+          await connection.commit();
+          transactionStarted = false;
+          return res.json(rows[0]);
+        }
         await connection.rollback();
         transactionStarted = false;
         return res.status(400).json({ message: "No updates provided" });
@@ -1115,7 +1277,11 @@ router.patch(
         values,
       );
 
-      if (nextName !== null && nextName !== previousName) {
+      if (
+        !redesignedProfile &&
+        nextName !== null &&
+        nextName !== previousName
+      ) {
         await connection.query(
           `UPDATE Menu m
          INNER JOIN products p ON p.id = m.Product_ID
@@ -1127,7 +1293,11 @@ router.patch(
       }
 
       const [rows] = await connection.query(
-        `SELECT
+        redesignedProfile
+          ? `SELECT ${REDESIGNED_INVENTORY_CATEGORY_COLUMNS}
+       FROM inventory_categories
+       WHERE category_id = ?`
+          : `SELECT
          category_id,
          name,
          type,
@@ -1150,8 +1320,11 @@ router.patch(
         error,
       );
       res.status(categoryErrorStatus(error)).json({
+        ...(error?.code ? { code: error.code } : {}),
         message: isCategoryValidationError(error)
           ? error.message
+          : error?.statusCode
+            ? error.message
           : error?.code === "ER_DUP_ENTRY"
             ? "Category already exists"
             : "Failed to update inventory category",
@@ -1352,7 +1525,11 @@ router.patch(
         values,
       );
 
-      if (nextName !== null && nextName !== previousName) {
+      if (
+        !isRedesignedProfile() &&
+        nextName !== null &&
+        nextName !== previousName
+      ) {
         await connection.query(
           `UPDATE Menu m
          INNER JOIN products p ON p.id = m.Product_ID
@@ -1546,9 +1723,135 @@ router.delete(
   (req, res) => deleteUnusedCategory(req, res, INVENTORY_CATEGORY_DELETION),
 );
 
+const REDESIGNED_INVENTORY_UNIT_COLUMNS = `
+  u.unit_id,
+  u.name,
+  u.abbreviation,
+  u.system_key,
+  u.base_unit_id,
+  base.name AS base_unit,
+  u.conversion_to_base,
+  u.is_system,
+  u.is_active,
+  u.created_at,
+  u.updated_at
+`;
+
+function unitRouteError(statusCode, code, message) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  error.code = code;
+  return error;
+}
+
+function unitErrorStatus(error) {
+  if (Number.isInteger(error?.statusCode)) return error.statusCode;
+  if (error?.code === "ER_DUP_ENTRY") return 409;
+  return /(?:required|must|invalid)/i.test(String(error?.message || ""))
+    ? 400
+    : 500;
+}
+
+function normalizeRedesignedUnitAbbreviation(value) {
+  const abbreviation = normalizeName(value, "Unit abbreviation");
+  if (abbreviation.length > 30) {
+    throw new Error("Unit abbreviation must not exceed 30 characters");
+  }
+  if (/\p{Cc}/u.test(abbreviation)) {
+    throw new Error("Unit abbreviation contains invalid characters");
+  }
+  return abbreviation;
+}
+
+function normalizeRedesignedConversion(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const conversion = normalizeNumber(value, "conversion_to_base");
+  if (conversion <= 0) {
+    throw new Error("conversion_to_base must be greater than 0");
+  }
+  return conversion;
+}
+
+async function resolveRedesignedBaseUnitId(connection, body, unitId = null) {
+  const hasBaseUnitId = Object.prototype.hasOwnProperty.call(
+    body || {},
+    "base_unit_id",
+  );
+  const hasBaseUnitName = Object.prototype.hasOwnProperty.call(
+    body || {},
+    "base_unit",
+  );
+  if (!hasBaseUnitId && !hasBaseUnitName) return undefined;
+
+  const rawValue = hasBaseUnitId ? body.base_unit_id : body.base_unit;
+  if (rawValue === null || rawValue === undefined || rawValue === "") {
+    return null;
+  }
+
+  let baseUnitId;
+  if (hasBaseUnitId) {
+    baseUnitId = Number(rawValue);
+    if (!Number.isSafeInteger(baseUnitId) || baseUnitId <= 0) {
+      throw new Error("base_unit_id must be a positive integer");
+    }
+    const [rows] = await connection.query(
+      "SELECT unit_id FROM units WHERE unit_id = ? FOR UPDATE",
+      [baseUnitId],
+    );
+    if (rows.length === 0) {
+      throw unitRouteError(400, "INVALID_BASE_UNIT", "Base unit not found");
+    }
+  } else {
+    const baseUnitName = normalizeName(rawValue, "Base unit");
+    const [rows] = await connection.query(
+      `SELECT unit_id
+         FROM units
+        WHERE LOWER(name) = LOWER(?)
+        LIMIT 1
+        FOR UPDATE`,
+      [baseUnitName],
+    );
+    if (rows.length === 0) {
+      throw unitRouteError(400, "INVALID_BASE_UNIT", "Base unit not found");
+    }
+    baseUnitId = Number(rows[0].unit_id);
+  }
+
+  if (unitId !== null && baseUnitId === unitId) {
+    throw unitRouteError(
+      400,
+      "INVALID_BASE_UNIT",
+      "A unit cannot use itself as its base unit",
+    );
+  }
+  return baseUnitId;
+}
+
+async function selectRedesignedUnit(executor, unitId) {
+  const [rows] = await executor.query(
+    `SELECT ${REDESIGNED_INVENTORY_UNIT_COLUMNS}
+       FROM units u
+       LEFT JOIN units base ON base.unit_id = u.base_unit_id
+      WHERE u.unit_id = ?`,
+    [unitId],
+  );
+  return rows[0];
+}
+
 router.get("/inventory-units", async (req, res) => {
   try {
     const activeOnly = normalizeBoolean(req.query.activeOnly, false);
+    if (isRedesignedProfile()) {
+      const [rows] = await db.query(
+        `SELECT ${REDESIGNED_INVENTORY_UNIT_COLUMNS}
+           FROM units u
+           LEFT JOIN units base ON base.unit_id = u.base_unit_id
+           ${activeOnly ? "WHERE u.is_active = TRUE" : ""}
+          ORDER BY u.is_active DESC, u.name ASC`,
+      );
+      return res.json(rows);
+    }
+
     const [rows] = await db.query(
       `SELECT
          unit_id,
@@ -1577,8 +1880,62 @@ router.post(
   "/inventory-units",
   requireAdministratorAccess,
   async (req, res) => {
+    let connection;
+    let transactionStarted = false;
     try {
-      const name = normalizeName(req.body?.name, "Unit name");
+      const redesignedProfile = isRedesignedProfile();
+      const name = redesignedProfile
+        ? normalizeCategoryName(req.body?.name, "Unit name")
+        : normalizeName(req.body?.name, "Unit name");
+      if (redesignedProfile) {
+        const abbreviation = normalizeRedesignedUnitAbbreviation(
+          req.body?.abbreviation,
+        );
+        const conversionToBase = normalizeRedesignedConversion(
+          req.body?.conversion_to_base,
+        );
+
+        connection = await db.getConnection();
+        await connection.beginTransaction();
+        transactionStarted = true;
+
+        const [existing] = await connection.query(
+          `SELECT unit_id
+             FROM units
+            WHERE LOWER(name) = LOWER(?)
+               OR LOWER(abbreviation) = LOWER(?)
+            FOR UPDATE`,
+          [name, abbreviation],
+        );
+        if (existing.length > 0) {
+          throw unitRouteError(
+            409,
+            "UNIT_ALREADY_EXISTS",
+            "Unit name or abbreviation already exists",
+          );
+        }
+
+        const baseUnitId = await resolveRedesignedBaseUnitId(
+          connection,
+          req.body,
+        );
+        const [result] = await connection.query(
+          `INSERT INTO units (
+             name,
+             abbreviation,
+             base_unit_id,
+             conversion_to_base,
+             is_active
+           ) VALUES (?, ?, ?, ?, TRUE)`,
+          [name, abbreviation, baseUnitId ?? null, conversionToBase],
+        );
+        const unit = await selectRedesignedUnit(connection, result.insertId);
+        await connection.commit();
+        transactionStarted = false;
+        await invalidateProductCache("inventory unit created");
+        return res.status(201).json(unit);
+      }
+
       const abbreviation = normalizeOptionalString(req.body?.abbreviation);
       const baseUnit = normalizeOptionalString(req.body?.base_unit);
       const conversionToBase = Object.prototype.hasOwnProperty.call(
@@ -1630,13 +1987,21 @@ router.post(
       );
       res.status(201).json(rows[0]);
     } catch (error) {
+      if (connection && transactionStarted) await connection.rollback();
       console.error("POST /api/settings/inventory-units error:", error);
-      res.status(error.message?.includes("required") ? 400 : 500).json({
-        message: error.message?.includes("required")
-          ? error.message
-          : "Failed to create inventory unit",
+      const status = isRedesignedProfile()
+        ? unitErrorStatus(error)
+        : error.message?.includes("required")
+          ? 400
+          : 500;
+      res.status(status).json({
+        ...(error?.code ? { code: error.code } : {}),
+        message:
+          status < 500 ? error.message : "Failed to create inventory unit",
         error: error.message,
       });
+    } finally {
+      if (connection) connection.release();
     }
   },
 );
@@ -1645,10 +2010,117 @@ router.patch(
   "/inventory-units/:id",
   requireAdministratorAccess,
   async (req, res) => {
+    let connection;
+    let transactionStarted = false;
     try {
       const unitId = Number(req.params.id);
       if (!Number.isFinite(unitId) || unitId <= 0) {
         return res.status(400).json({ message: "Invalid unit id" });
+      }
+
+      if (isRedesignedProfile()) {
+        connection = await db.getConnection();
+        await connection.beginTransaction();
+        transactionStarted = true;
+
+        const [currentRows] = await connection.query(
+          `SELECT unit_id, name, abbreviation, base_unit_id,
+                  conversion_to_base, is_system, is_active
+             FROM units
+            WHERE unit_id = ?
+            FOR UPDATE`,
+          [unitId],
+        );
+        if (currentRows.length === 0) {
+          await connection.rollback();
+          transactionStarted = false;
+          return res.status(404).json({ message: "Unit not found" });
+        }
+        if (Number(currentRows[0].is_system) === 1) {
+          throw unitRouteError(
+            409,
+            "SYSTEM_UNIT_PROTECTED",
+            `${currentRows[0].name} is a built-in system unit and cannot be modified.`,
+          );
+        }
+
+        const updates = [];
+        const values = [];
+        let nextName = currentRows[0].name;
+        let nextAbbreviation = currentRows[0].abbreviation;
+
+        if (Object.prototype.hasOwnProperty.call(req.body, "name")) {
+          nextName = normalizeCategoryName(req.body?.name, "Unit name");
+          updates.push("name = ?");
+          values.push(nextName);
+        }
+        if (Object.prototype.hasOwnProperty.call(req.body, "abbreviation")) {
+          nextAbbreviation = normalizeRedesignedUnitAbbreviation(
+            req.body?.abbreviation,
+          );
+          updates.push("abbreviation = ?");
+          values.push(nextAbbreviation);
+        }
+
+        if (
+          Object.prototype.hasOwnProperty.call(req.body, "name") ||
+          Object.prototype.hasOwnProperty.call(req.body, "abbreviation")
+        ) {
+          const [duplicates] = await connection.query(
+            `SELECT unit_id
+               FROM units
+              WHERE unit_id <> ?
+                AND (LOWER(name) = LOWER(?)
+                  OR LOWER(abbreviation) = LOWER(?))
+              FOR UPDATE`,
+            [unitId, nextName, nextAbbreviation],
+          );
+          if (duplicates.length > 0) {
+            throw unitRouteError(
+              409,
+              "UNIT_ALREADY_EXISTS",
+              "Unit name or abbreviation already exists",
+            );
+          }
+        }
+
+        const baseUnitId = await resolveRedesignedBaseUnitId(
+          connection,
+          req.body,
+          unitId,
+        );
+        if (baseUnitId !== undefined) {
+          updates.push("base_unit_id = ?");
+          values.push(baseUnitId);
+        }
+        if (
+          Object.prototype.hasOwnProperty.call(req.body, "conversion_to_base")
+        ) {
+          updates.push("conversion_to_base = ?");
+          values.push(
+            normalizeRedesignedConversion(req.body.conversion_to_base),
+          );
+        }
+        if (Object.prototype.hasOwnProperty.call(req.body, "is_active")) {
+          updates.push("is_active = ?");
+          values.push(normalizeBoolean(req.body.is_active, true) ? 1 : 0);
+        }
+        if (updates.length === 0) {
+          await connection.rollback();
+          transactionStarted = false;
+          return res.status(400).json({ message: "No updates provided" });
+        }
+
+        values.push(unitId);
+        await connection.query(
+          `UPDATE units SET ${updates.join(", ")} WHERE unit_id = ?`,
+          values,
+        );
+        const unit = await selectRedesignedUnit(connection, unitId);
+        await connection.commit();
+        transactionStarted = false;
+        await invalidateProductCache("inventory unit updated");
+        return res.json(unit);
       }
 
       const updates = [];
@@ -1729,13 +2201,21 @@ router.patch(
       );
       res.json(rows[0]);
     } catch (error) {
+      if (connection && transactionStarted) await connection.rollback();
       console.error("PATCH /api/settings/inventory-units/:id error:", error);
-      res.status(error.message?.includes("required") ? 400 : 500).json({
-        message: error.message?.includes("required")
-          ? error.message
-          : "Failed to update inventory unit",
+      const status = isRedesignedProfile()
+        ? unitErrorStatus(error)
+        : error.message?.includes("required")
+          ? 400
+          : 500;
+      res.status(status).json({
+        ...(error?.code ? { code: error.code } : {}),
+        message:
+          status < 500 ? error.message : "Failed to update inventory unit",
         error: error.message,
       });
+    } finally {
+      if (connection) connection.release();
     }
   },
 );
@@ -1744,10 +2224,42 @@ router.delete(
   "/inventory-units/:id",
   requireAdministratorAccess,
   async (req, res) => {
+    let connection;
+    let transactionStarted = false;
     try {
       const unitId = Number(req.params.id);
       if (!Number.isFinite(unitId) || unitId <= 0) {
         return res.status(400).json({ message: "Invalid unit id" });
+      }
+
+      if (isRedesignedProfile()) {
+        connection = await db.getConnection();
+        await connection.beginTransaction();
+        transactionStarted = true;
+        const [rows] = await connection.query(
+          "SELECT unit_id, name, is_system FROM units WHERE unit_id = ? FOR UPDATE",
+          [unitId],
+        );
+        if (rows.length === 0) {
+          await connection.rollback();
+          transactionStarted = false;
+          return res.status(404).json({ message: "Unit not found" });
+        }
+        if (Number(rows[0].is_system) === 1) {
+          throw unitRouteError(
+            409,
+            "SYSTEM_UNIT_PROTECTED",
+            `${rows[0].name} is a built-in system unit and cannot be disabled.`,
+          );
+        }
+        await connection.query(
+          "UPDATE units SET is_active = FALSE WHERE unit_id = ?",
+          [unitId],
+        );
+        await connection.commit();
+        transactionStarted = false;
+        await invalidateProductCache("inventory unit disabled");
+        return res.json({ success: true });
       }
 
       const [result] = await db.query(
@@ -1763,11 +2275,17 @@ router.delete(
 
       res.json({ success: true });
     } catch (error) {
+      if (connection && transactionStarted) await connection.rollback();
       console.error("DELETE /api/settings/inventory-units/:id error:", error);
-      res.status(500).json({
-        message: "Failed to disable inventory unit",
+      const status = isRedesignedProfile() ? unitErrorStatus(error) : 500;
+      res.status(status).json({
+        ...(error?.code ? { code: error.code } : {}),
+        message:
+          status < 500 ? error.message : "Failed to disable inventory unit",
         error: error.message,
       });
+    } finally {
+      if (connection) connection.release();
     }
   },
 );

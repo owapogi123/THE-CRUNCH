@@ -31,6 +31,9 @@ function normalizeSnapshotItems(items) {
   }
   return items.map((item) => {
     const productId = Number(item?.product_id ?? item?.productId);
+    const selectedFlavorProductId = Number(
+      item?.selected_flavor_product_id ?? item?.selectedFlavorProductId,
+    );
     const quantity = Number(item?.qty ?? item?.quantity);
     const price = money(item?.price, `Price for product ${productId}`);
     if (!Number.isSafeInteger(productId) || productId <= 0) {
@@ -46,6 +49,15 @@ function normalizeSnapshotItems(items) {
       price,
       subtotal: money(price * quantity, `Subtotal for product ${productId}`),
       note: cleanText(item?.note, 2000),
+      ...(Number.isSafeInteger(selectedFlavorProductId) && selectedFlavorProductId > 0
+        ? {
+            selected_flavor_product_id: selectedFlavorProductId,
+            selected_flavor_name: cleanText(
+              item?.selected_flavor_name ?? item?.selectedFlavorName,
+              255,
+            ),
+          }
+        : {}),
     };
   });
 }

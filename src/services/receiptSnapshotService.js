@@ -3,6 +3,10 @@ const {
   formatTransactionId,
 } = require("./orderIdentifierService");
 const { getOrderItemIdentity } = require("./orderItemService");
+const {
+  getSchemaProfile,
+  REDESIGNED_SCHEMA_PROFILE,
+} = require("../db/schemaProfile");
 
 const MAX_NOTE_LENGTH = 2000;
 
@@ -112,8 +116,11 @@ function snapshotDtoFromValues(values) {
 }
 
 async function createReceiptSnapshot(connection, values) {
+  const redesigned = getSchemaProfile() === REDESIGNED_SCHEMA_PROFILE;
   const [dateRows] = await connection.query(
-    "SELECT Order_Date AS orderDate FROM orders WHERE Order_ID = ? LIMIT 1",
+    redesigned
+      ? "SELECT created_at AS orderDate FROM orders WHERE order_id = ? LIMIT 1"
+      : "SELECT Order_Date AS orderDate FROM orders WHERE Order_ID = ? LIMIT 1",
     [values.orderId],
   );
   if (!dateRows.length) throw new Error("Cannot snapshot a missing order");
@@ -184,8 +191,11 @@ async function createReceiptSnapshot(connection, values) {
   ]);
   await connection.query(
     `INSERT INTO receipt_snapshot_items
-       (order_id, original_product_id, selected_flavor_product_id, product_name,
-        selected_flavor_name, unit_price, quantity, line_subtotal, item_note, sort_order)
+       (order_id, original_product_id,
+        ${redesigned ? "selected_option_product_id" : "selected_flavor_product_id"},
+        product_name,
+        ${redesigned ? "selected_option_name" : "selected_flavor_name"},
+        unit_price, quantity, line_subtotal, item_note, sort_order)
      VALUES ${itemPlaceholders}`,
     itemParameters,
   );
@@ -243,6 +253,7 @@ function snapshotDtoFromRows(rows) {
 }
 
 async function loadSnapshotReceipt(connection, orderId) {
+  const redesigned = getSchemaProfile() === REDESIGNED_SCHEMA_PROFILE;
   const [rows] = await connection.query(
     `SELECT
        s.order_id AS orderId,
@@ -275,18 +286,18 @@ async function loadSnapshotReceipt(connection, orderId) {
        s.merchant_phone AS merchantPhone,
        s.merchant_address AS merchantAddress,
        s.timezone,
-       o.Status AS currentStatus,
+       o.${redesigned ? "status" : "Status"} AS currentStatus,
        o.payment_status AS currentPaymentStatus,
        i.receipt_item_id AS receiptItemId,
        i.product_name AS productName,
-       i.selected_flavor_product_id AS selectedFlavorProductId,
-       i.selected_flavor_name AS selectedFlavorName,
+       i.${redesigned ? "selected_option_product_id" : "selected_flavor_product_id"} AS selectedFlavorProductId,
+       i.${redesigned ? "selected_option_name" : "selected_flavor_name"} AS selectedFlavorName,
        i.unit_price AS unitPrice,
        i.quantity,
        i.line_subtotal AS lineSubtotal,
        i.item_note AS itemNote
      FROM receipt_snapshots s
-     JOIN orders o ON o.Order_ID = s.order_id
+     JOIN orders o ON o.${redesigned ? "order_id" : "Order_ID"} = s.order_id
      LEFT JOIN receipt_snapshot_items i ON i.order_id = s.order_id
      WHERE s.order_id = ?
      ORDER BY i.sort_order, i.receipt_item_id`,
@@ -413,7 +424,10 @@ async function loadLegacyReceipt(connection, orderId) {
 
 async function loadReceiptDto(connection, orderId) {
   const snapshot = await loadSnapshotReceipt(connection, orderId);
-  return snapshot || loadLegacyReceipt(connection, orderId);
+  if (snapshot || getSchemaProfile() === REDESIGNED_SCHEMA_PROFILE) {
+    return snapshot;
+  }
+  return loadLegacyReceipt(connection, orderId);
 }
 
 module.exports = {

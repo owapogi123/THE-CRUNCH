@@ -2,9 +2,17 @@ const router = require("express").Router();
 const db = require("../config/db");
 const {
   MENU_ITEM,
+  SELECTION_OPTION,
   ensureProductsItemTypeSchema,
   getProductItemTypeExpression,
 } = require("../utils/productItemType");
+const {
+  REDESIGNED_SCHEMA_PROFILE,
+  getSchemaProfile,
+} = require("../db/schemaProfile");
+const {
+  CHICKEN_FLAVORS_SYSTEM_KEY,
+} = require("../services/systemMenuCategoryService");
 
 const DEFAULT_FLAVORS = [
   {
@@ -64,16 +72,89 @@ function isDrinkCategory(value) {
   return normalized.includes("drink") || normalized.includes("beverage");
 }
 
+function isRedesignedProfile() {
+  return getSchemaProfile() === REDESIGNED_SCHEMA_PROFILE;
+}
+
 router.get("/flavors", async (_req, res) => {
-  res.json(DEFAULT_FLAVORS);
+  if (!isRedesignedProfile()) {
+    return res.json(DEFAULT_FLAVORS);
+  }
+
+  try {
+    const [rows] = await db.query(
+      `SELECT
+          p.product_id AS id,
+          p.product_id,
+          p.name,
+          COALESCE(p.description, '') AS description,
+          COALESCE(p.image_url, '') AS image
+       FROM products p
+       INNER JOIN menu_categories category
+         ON category.category_id = p.menu_category_id
+        AND category.system_key = ?
+        AND category.is_active = 1
+       WHERE p.product_type = ?
+         AND p.lifecycle_status = 'active'
+       ORDER BY category.display_order ASC, p.name ASC`,
+      [CHICKEN_FLAVORS_SYSTEM_KEY, SELECTION_OPTION],
+    );
+    return res.json(
+      rows.map((row) => ({
+        id: Number(row.id),
+        product_id: Number(row.product_id),
+        name: String(row.name),
+        accent: "#e8501a",
+        desc: String(row.description || "").trim(),
+        description: String(row.description || "").trim(),
+        img: String(row.image || "").trim() || "/img/placeholder.jpg",
+        image: String(row.image || "").trim() || "/img/placeholder.jpg",
+      })),
+    );
+  } catch (error) {
+    console.error("GET /api/flavors error:", error);
+    return res.status(500).json({
+      message: "Failed to load chicken flavors",
+      error: error.message,
+    });
+  }
 });
 
 router.get("/menu-sections", async (_req, res) => {
   try {
-    const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
-    const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p", "m");
-    const [rows] = await db.query(
-      `SELECT
+    let rows;
+    if (isRedesignedProfile()) {
+      [rows] = await db.query(
+        `SELECT
+            p.product_id,
+            category.name AS category_name,
+            p.name AS product_name,
+            p.selling_price AS price,
+            COALESCE(p.description, '') AS description,
+            '' AS promo_label,
+            CASE
+              WHEN p.image_url LIKE 'data:image%' THEN '/img/placeholder.jpg'
+              WHEN COALESCE(TRIM(p.image_url), '') = '' THEN ''
+              ELSE p.image_url
+            END AS image,
+            CASE
+              WHEN p.availability_override = 'unavailable' THEN 'Out of Stock'
+              ELSE 'Available'
+            END AS availability_status
+         FROM products p
+         INNER JOIN menu_categories category
+           ON category.category_id = p.menu_category_id
+          AND category.is_active = 1
+         WHERE p.product_type = ?
+           AND p.lifecycle_status = 'active'
+         ORDER BY category.display_order ASC, category.name ASC, p.name ASC`,
+        [MENU_ITEM],
+      );
+    } else {
+      const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+      const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p", "m");
+      [rows] = await db.query(
+        `SELECT
           COALESCE(m.Product_ID, p.id) AS product_id,
           COALESCE(m.Category_Name, 'Menu Favorites') AS category_name,
           COALESCE(m.Product_Name, p.name, 'Unnamed Item') AS product_name,
@@ -89,9 +170,10 @@ router.get("/menu-sections", async (_req, res) => {
        FROM Menu m
        LEFT JOIN products p ON p.id = m.Product_ID
        WHERE ${itemTypeExpr} = ?
-       ORDER BY category_name ASC, product_name ASC`,
-      [MENU_ITEM],
-    );
+         ORDER BY category_name ASC, product_name ASC`,
+        [MENU_ITEM],
+      );
+    }
 
     const grouped = new Map();
     for (const row of rows) {
@@ -132,6 +214,11 @@ router.get("/menu-sections", async (_req, res) => {
 
 router.get("/promos", async (_req, res) => {
   try {
+    // The redesigned baseline intentionally has no product-promotion columns.
+    // Keep the public response shape valid without querying legacy fields.
+    if (isRedesignedProfile()) {
+      return res.json([]);
+    }
     const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
     const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p", "m");
     const [rows] = await db.query(

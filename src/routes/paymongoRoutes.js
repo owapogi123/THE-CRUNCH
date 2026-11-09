@@ -2,7 +2,17 @@ const crypto = require("crypto");
 const router = require("express").Router();
 const db = require("../config/db");
 const { isPayMongoEnabled } = require("../services/paymongoMode");
-const { loadAuthoritativeOrderItems } = require("../services/orderItemService");
+const {
+  getOrderItemIdentity,
+  loadAuthoritativeOrderItems,
+} = require("../services/orderItemService");
+const {
+  prepareRedesignedOrderItemsAndStock,
+} = require("../services/inventoryService");
+const {
+  getSchemaProfile,
+  REDESIGNED_SCHEMA_PROFILE,
+} = require("../db/schemaProfile");
 const { requireAuthenticatedUser } = require("../middleware/cookViewAccess");
 const { isSuperuserRole, normalizeRole } = require("../middleware/roleAccess");
 const {
@@ -104,9 +114,23 @@ async function createCheckoutHandler(req, res) {
     const customerEmail = String(customerRows[0].email || "").trim().toLowerCase();
 
     const notesByProduct = collectOrderItemNotes(items);
-    const authoritativeItems = (await loadAuthoritativeOrderItems(db, items)).map((item) => ({
+    const loadedItems =
+      getSchemaProfile() === REDESIGNED_SCHEMA_PROFILE
+        ? (
+            await prepareRedesignedOrderItemsAndStock(db, items, {
+              requireChickenFlavorForMenuFood: true,
+            })
+          ).authoritativeItems
+        : await loadAuthoritativeOrderItems(db, items);
+    const authoritativeItems = loadedItems.map((item) => ({
       ...item,
-      note: notesByProduct.get(item.product_id) || null,
+      note:
+        notesByProduct.get(
+          getOrderItemIdentity(
+            item.product_id,
+            item.selected_flavor_product_id ?? null,
+          ),
+        ) || null,
     }));
     const configuration = await loadCashierOrderConfiguration(db, "", null);
     const subtotal = authoritativeItems.reduce(

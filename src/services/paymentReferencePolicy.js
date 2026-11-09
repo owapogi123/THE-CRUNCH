@@ -1,6 +1,10 @@
 "use strict";
 
 const crypto = require("crypto");
+const {
+  getSchemaProfile,
+  REDESIGNED_SCHEMA_PROFILE,
+} = require("../db/schemaProfile");
 
 function canonicalizeProtectedPaymentReference(value) {
   return String(value || "").trim().toLowerCase();
@@ -19,12 +23,19 @@ function getProtectedPaymentReferenceLockName(value) {
 async function findProtectedPaymentReference(connection, value) {
   const canonicalReference = canonicalizeProtectedPaymentReference(value);
   if (!canonicalReference) return null;
+  const redesigned = getSchemaProfile() === REDESIGNED_SCHEMA_PROFILE;
   const [rows] = await connection.query(
-    `SELECT Order_ID
-       FROM orders
-      WHERE LOWER(TRIM(payment_reference)) = ?
-        AND (payment_method IS NULL OR payment_method NOT IN ('GrabFood', 'foodpanda', 'Other'))
-      LIMIT 1`,
+    redesigned
+      ? `SELECT order_id AS Order_ID
+           FROM orders
+          WHERE LOWER(TRIM(payment_reference)) = ?
+            AND (payment_method IS NULL OR payment_method NOT IN ('GrabFood', 'foodpanda', 'Other'))
+          LIMIT 1`
+      : `SELECT Order_ID
+           FROM orders
+          WHERE LOWER(TRIM(payment_reference)) = ?
+            AND (payment_method IS NULL OR payment_method NOT IN ('GrabFood', 'foodpanda', 'Other'))
+          LIMIT 1`,
     [canonicalReference],
   );
   return rows[0] || null;

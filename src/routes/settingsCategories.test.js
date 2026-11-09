@@ -5,6 +5,7 @@ const express = require("express");
 const jwt = require("jsonwebtoken");
 
 process.env.JWT_SECRET = "category-settings-test-only-secret";
+process.env.DB_SCHEMA_PROFILE = "legacy";
 
 const db = require("../config/db");
 const originalQuery = db.query;

@@ -101,6 +101,9 @@ mockModule("../services/inventoryService", {
     return true;
   },
 });
+mockModule("../services/refundAuthorizationService", {
+  async verifyRefundAuthorizationPassword() {},
+});
 mockModule("../services/orderIdentifierService", {
   async allocateOrderIdentifiers() {},
   formatOrderNumber: () => "ORD-RACE",

@@ -4,6 +4,13 @@ const {
   createSchemaCompatibilityError,
   normalizeIdentifier,
 } = require("./schemaAssertions");
+const {
+  REDESIGNED_SCHEMA_PROFILE,
+  getSchemaProfile,
+} = require("../db/schemaProfile");
+const {
+  verifyRedesignedSchemaCompatibility,
+} = require("./redesignedSchemaCompatibilityService");
 
 const EXPECTED_TABLES = [
   "admin", "batches", "cashier", "categories", "cook", "customers",
@@ -416,7 +423,15 @@ async function validateOrphans(db, foreignKeys) {
   return results;
 }
 
-async function verifySchemaCompatibility(db, expectedDatabaseName) {
+async function verifySchemaCompatibility(
+  db,
+  expectedDatabaseName,
+  { profile = getSchemaProfile() } = {},
+) {
+  if (profile === REDESIGNED_SCHEMA_PROFILE) {
+    return verifyRedesignedSchemaCompatibility(db, expectedDatabaseName);
+  }
+
   const warnings = [];
   const expectedDatabase = String(expectedDatabaseName || "").trim();
   const [[identity]] = await db.query(

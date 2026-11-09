@@ -156,9 +156,10 @@ try {
     path.join(__dirname, "..", "routes", "orderRoutes.js"),
     "utf8",
   );
-  const createRouteStart = routeSource.indexOf(
-    'router.post("/", withOrderRequestTiming, requireAuthenticatedUser',
+  const createRouteMatch = /router\.post\(\s*"\/",\s*withOrderRequestTiming,\s*requireAuthenticatedUser/.exec(
+    routeSource,
   );
+  const createRouteStart = createRouteMatch?.index ?? -1;
   const cashValidationIndex = routeSource.indexOf(
     "validateCashTender(",
     createRouteStart,

@@ -1,4 +1,13 @@
 const MAX_ORDER_ITEM_QUANTITY = 999;
+const {
+  getSchemaProfile,
+  REDESIGNED_SCHEMA_PROFILE,
+} = require("../db/schemaProfile");
+const {
+  CHICKEN_FLAVORS_SYSTEM_KEY,
+  MENU_FOOD_SYSTEM_KEY,
+  normalizeSystemKey,
+} = require("./systemMenuCategoryService");
 
 function createOrderItemError(message, statusCode = 400) {
   const error = new Error(message);
@@ -78,17 +87,44 @@ function normalizeOrderItems(items) {
 
 async function loadAuthoritativeOrderItems(connection, items) {
   const normalizedItems = normalizeOrderItems(items);
-  const productIds = normalizedItems.map((item) => item.product_id);
+  const redesigned = getSchemaProfile() === REDESIGNED_SCHEMA_PROFILE;
+  const productIds = [
+    ...new Set(
+      normalizedItems.flatMap((item) => [
+        item.product_id,
+        ...(item.selected_flavor_product_id
+          ? [item.selected_flavor_product_id]
+          : []),
+      ]),
+    ),
+  ];
   const placeholders = productIds.map(() => "?").join(", ");
   const [rows] = await connection.query(
-    `SELECT
-       p.id AS productId,
-       COALESCE(NULLIF(TRIM(m.Product_Name), ''), p.name) AS productName,
-       COALESCE(m.Price, p.price, 0) AS currentPrice,
-       p.availability_status AS availabilityStatus
-     FROM products p
-     LEFT JOIN Menu m ON m.Product_ID = p.id
-     WHERE p.id IN (${placeholders})`,
+    redesigned
+      ? `SELECT
+           p.product_id AS productId,
+           p.name AS productName,
+           p.selling_price AS currentPrice,
+           p.product_type AS productType,
+           p.lifecycle_status AS lifecycleStatus,
+           p.availability_override AS availabilityOverride,
+           category.system_key AS categorySystemKey
+         FROM products p
+         LEFT JOIN menu_categories category
+           ON category.category_id = p.menu_category_id
+         WHERE p.product_id IN (${placeholders})`
+      : `SELECT
+           p.id AS productId,
+           COALESCE(NULLIF(TRIM(m.Product_Name), ''), p.name) AS productName,
+           COALESCE(m.Price, p.price, 0) AS currentPrice,
+           p.availability_status AS availabilityStatus,
+           p.item_type AS productType,
+           category.system_key AS categorySystemKey
+         FROM products p
+         LEFT JOIN Menu m ON m.Product_ID = p.id
+         LEFT JOIN menu_categories category
+           ON LOWER(TRIM(category.name)) = LOWER(TRIM(m.Category_Name))
+         WHERE p.id IN (${placeholders})`,
     productIds,
   );
   const productsById = new Map(
@@ -100,14 +136,54 @@ async function loadAuthoritativeOrderItems(connection, items) {
     if (!product) {
       throw createOrderItemError(`Unknown product_id ${item.product_id}`);
     }
-    if (
-      String(product.availabilityStatus || "")
-        .trim()
-        .toLowerCase() === "hidden"
-    ) {
+    const archived = redesigned
+      ? String(product.lifecycleStatus).toLowerCase() !== "active"
+      : String(product.availabilityStatus || "").trim().toLowerCase() === "hidden";
+    if (archived) {
       throw createOrderItemError(
         `Product ${item.product_id} is archived and cannot be ordered`,
         409,
+      );
+    }
+    if (
+      redesigned &&
+      String(product.productType).toLowerCase() !== "menu_item"
+    ) {
+      throw createOrderItemError(
+        `Order item ${item.product_id} must be menu_item`,
+        400,
+      );
+    }
+    if (
+      redesigned &&
+      String(product.availabilityOverride).toLowerCase() === "unavailable"
+    ) {
+      throw createOrderItemError(
+        `Product ${item.product_id} is unavailable`,
+        409,
+      );
+    }
+    const categorySystemKey = normalizeSystemKey(product.categorySystemKey);
+    let flavor = null;
+    if (item.selected_flavor_product_id) {
+      flavor = productsById.get(item.selected_flavor_product_id);
+      const flavorType = String(flavor?.productType || "").toLowerCase();
+      if (
+        !flavor ||
+        normalizeSystemKey(flavor.categorySystemKey) !==
+          CHICKEN_FLAVORS_SYSTEM_KEY ||
+        (redesigned && flavorType !== "selection_option") ||
+        (redesigned && String(flavor.lifecycleStatus).toLowerCase() !== "active")
+      ) {
+        throw createOrderItemError(
+          `Product ${item.selected_flavor_product_id} is not an eligible chicken flavor`,
+          409,
+        );
+      }
+    } else if (categorySystemKey === MENU_FOOD_SYSTEM_KEY) {
+      throw createOrderItemError(
+        `Choose one chicken flavor for "${product.productName}" before checkout.`,
+        400,
       );
     }
     const price = Number(product.currentPrice);
@@ -122,6 +198,12 @@ async function loadAuthoritativeOrderItems(connection, items) {
       name: String(product.productName || `Product #${item.product_id}`),
       price,
       subtotal: price * item.qty,
+      ...(flavor
+        ? {
+            selected_flavor_product_id: Number(flavor.productId),
+            selected_flavor_name: String(flavor.productName),
+          }
+        : {}),
     };
   });
 }

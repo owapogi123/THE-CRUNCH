@@ -4,8 +4,13 @@ const db = require("../config/db");
 const { sendCustomerOrderReceiptEmail } = require("./emailService");
 const {
   deductPrevalidatedStockForPaidOrder,
+  prepareRedesignedOrderItemsAndStock,
   prepareOrderItemsAndStock,
 } = require("./inventoryService");
+const {
+  getSchemaProfile,
+  REDESIGNED_SCHEMA_PROFILE,
+} = require("../db/schemaProfile");
 const { publishOrderMutation } = require("./applicationEvents");
 const {
   allocateOrderIdentifiers,
@@ -15,7 +20,10 @@ const {
   calculateBillingTotals,
   loadCashierOrderConfiguration,
 } = require("./orderConfigurationService");
-const { normalizeOrderItems } = require("./orderItemService");
+const {
+  getOrderItemIdentity,
+  normalizeOrderItems,
+} = require("./orderItemService");
 const {
   getCheckoutIntent,
 } = require("./paymongoCheckoutIntentService");
@@ -56,8 +64,15 @@ function cleanErrorMessage(error) {
 
 function itemFingerprint(items) {
   return normalizeOrderItems(items)
-    .sort((left, right) => left.product_id - right.product_id)
-    .map((item) => `${item.product_id}:${item.qty}`)
+    .sort((left, right) =>
+      left.product_id - right.product_id ||
+      Number(left.selected_flavor_product_id || 0) -
+        Number(right.selected_flavor_product_id || 0),
+    )
+    .map(
+      (item) =>
+        `${item.product_id}:${item.qty}:${item.selected_flavor_product_id || 0}`,
+    )
     .join("|");
 }
 
@@ -97,12 +112,13 @@ function validateIntentBinding(intent, {
 }
 
 async function loadFinalizedOrder(connection, intent, loadReceipt = loadReceiptDto) {
+  const redesigned = getSchemaProfile() === REDESIGNED_SCHEMA_PROFILE;
   const [rows] = await connection.query(
-    `SELECT Order_ID AS orderId, transaction_id AS transactionId,
+    `SELECT ${redesigned ? "order_id" : "Order_ID"} AS orderId, transaction_id AS transactionId,
             order_number AS orderNumberValue, business_date AS businessDate,
-            Status AS trackingStatus
+            ${redesigned ? "status" : "Status"} AS trackingStatus
        FROM orders
-      WHERE Order_ID = ?
+      WHERE ${redesigned ? "order_id" : "Order_ID"} = ?
       LIMIT 1`,
     [intent.finalizedOrderId],
   );
@@ -206,6 +222,7 @@ async function recordReconciliation(pool, intentId, error) {
 }
 
 async function createPaidOrder(pool, intent, proof, dependencies) {
+  const redesigned = getSchemaProfile() === REDESIGNED_SCHEMA_PROFILE;
   const connection = await pool.getConnection();
   let transactionStarted = false;
   let paymentReferenceLockName = null;
@@ -262,7 +279,7 @@ async function createPaidOrder(pool, intent, proof, dependencies) {
     if (existingReference) {
       const [existingRows] = await connection.query(
         `SELECT customer_user_id AS customerUserId, payment_status AS paymentStatus
-           FROM orders WHERE Order_ID = ? LIMIT 1`,
+           FROM orders WHERE ${redesigned ? "order_id" : "Order_ID"} = ? LIMIT 1`,
         [existingReference.Order_ID],
       );
       const existingOrder = existingRows[0];
@@ -345,33 +362,108 @@ async function createPaidOrder(pool, intent, proof, dependencies) {
     const configuration = await dependencies.loadCashierOrderConfiguration(connection, "", null);
     const identifiers = await dependencies.allocateOrderIdentifiers(connection, "take-out");
     const [orderResult] = await connection.query(
-      `INSERT INTO orders
-         (Total_Amount, Customer_ID, Cashier_ID, Order_Type, Status,
-          customer_user_id, payment_reference, payment_status, payment_method,
-          proof_image_url, verified_by, verified_at, transaction_id,
-          order_number, business_date)
-       VALUES (?, NULL, NULL, 'take-out', 'Awaiting Cashier Review', ?, ?,
-               'Paid', 'GCash', NULL, NULL, NOW(), ?, ?, ?)`,
-      [
-        locked.totalAmount,
-        locked.customerUserId,
-        proof.paymentReference,
-        identifiers.transactionId,
-        identifiers.orderNumberValue,
-        identifiers.businessDate,
-      ],
+      redesigned
+        ? `INSERT INTO orders
+             (transaction_id, business_date, order_number, customer_user_id,
+              customer_name_snapshot, order_type, status, subtotal, tax_rate,
+              tax_amount, service_charge_rate, service_charge_amount,
+              total_amount, currency, customer_type, order_note,
+              payment_reference, payment_status, payment_method, verified_at)
+           VALUES (?, ?, ?, ?, ?, 'take-out', 'Awaiting Cashier Review', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Paid', 'GCash', NOW())`
+        : `INSERT INTO orders
+             (Total_Amount, Customer_ID, Cashier_ID, Order_Type, Status,
+              customer_user_id, payment_reference, payment_status, payment_method,
+              proof_image_url, verified_by, verified_at, transaction_id,
+              order_number, business_date)
+           VALUES (?, NULL, NULL, 'take-out', 'Awaiting Cashier Review', ?, ?,
+                   'Paid', 'GCash', NULL, NULL, NOW(), ?, ?, ?)`,
+      redesigned
+        ? [
+            identifiers.transactionId,
+            identifiers.businessDate,
+            identifiers.orderNumberValue,
+            locked.customerUserId,
+            String(customer.username || "").trim() || null,
+            storedTotals.subtotal,
+            locked.taxRate,
+            locked.taxAmount,
+            locked.serviceChargeRate,
+            locked.serviceChargeAmount,
+            locked.totalAmount,
+            locked.currency,
+            locked.customerType,
+            locked.orderNote,
+            proof.paymentReference,
+          ]
+        : [
+            locked.totalAmount,
+            locked.customerUserId,
+            proof.paymentReference,
+            identifiers.transactionId,
+            identifiers.orderNumberValue,
+            identifiers.businessDate,
+          ],
     );
     const orderId = Number(orderResult.insertId);
-    const itemPlaceholders = locked.items.map(() => "(?, ?, ?, ?)").join(", ");
+    const storedItemsByIdentity = new Map(
+      locked.items.map((item) => [
+        getOrderItemIdentity(
+          item.product_id,
+          item.selected_flavor_product_id ?? null,
+        ),
+        item,
+      ]),
+    );
+    const finalItems = stockPlan.authoritativeItems.map((item) => ({
+      ...item,
+      note:
+        storedItemsByIdentity.get(
+          getOrderItemIdentity(
+            item.product_id,
+            item.selected_flavor_product_id ?? null,
+          ),
+        )?.note || null,
+    }));
+    const itemPlaceholders = finalItems
+      .map(() => redesigned ? "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)" : "(?, ?, ?, ?)")
+      .join(", ");
     await connection.query(
-      `INSERT INTO order_item (Order_ID, Product_ID, Quantity, Subtotal)
-       VALUES ${itemPlaceholders}`,
-      locked.items.flatMap((item) => [orderId, item.product_id, item.qty, item.subtotal]),
+      redesigned
+        ? `INSERT INTO order_items
+             (order_id, product_id, product_name_snapshot, unit_price, quantity,
+              line_subtotal, selected_option_product_id,
+              selected_option_name_snapshot, item_note, sort_order)
+           VALUES ${itemPlaceholders}`
+        : `INSERT INTO order_item (Order_ID, Product_ID, Quantity, Subtotal)
+           VALUES ${itemPlaceholders}`,
+      finalItems.flatMap((item, index) =>
+        redesigned
+          ? [
+              orderId,
+              item.product_id,
+              item.name,
+              item.price,
+              item.qty,
+              item.subtotal,
+              item.selected_flavor_product_id ?? null,
+              item.selected_flavor_name ?? null,
+              item.note || null,
+              index,
+            ]
+          : [orderId, item.product_id, item.qty, item.subtotal],
+      ),
     );
     await connection.query(
-      `INSERT INTO payments (Order_ID, Payment_Type, Payment_Status, ProcessBy)
-       VALUES (?, 'GCash', 'Completed', NULL)`,
-      [orderId],
+      redesigned
+        ? `INSERT INTO payments
+             (order_id, payment_method, payment_status, amount,
+              external_reference, processed_by_user_id, paid_at)
+           VALUES (?, 'GCash', 'Completed', ?, ?, NULL, NOW())`
+        : `INSERT INTO payments (Order_ID, Payment_Type, Payment_Status, ProcessBy)
+           VALUES (?, 'GCash', 'Completed', NULL)`,
+      redesigned
+        ? [orderId, locked.totalAmount, proof.paymentReference]
+        : [orderId],
     );
     const receipt = await dependencies.createReceiptSnapshot(connection, {
       orderId,
@@ -405,15 +497,17 @@ async function createPaidOrder(pool, intent, proof, dependencies) {
       merchantPhone: configuration.receiptSettings.phone,
       merchantAddress: configuration.receiptSettings.address,
       timezone: configuration.receiptSettings.timezone,
-      items: locked.items,
+      items: finalItems,
     });
-    await dependencies.deductPrevalidatedStockForPaidOrder(
-      orderId,
-      "Paid",
-      stockPlan.deductions,
-      null,
-      connection,
-    );
+    if (!redesigned) {
+      await dependencies.deductPrevalidatedStockForPaidOrder(
+        orderId,
+        "Paid",
+        stockPlan.deductions,
+        null,
+        connection,
+      );
+    }
     const [intentUpdate] = await connection.query(
       `UPDATE paymongo_checkout_intents
           SET status = ?, finalized_order_id = ?, finalized_at = NOW(),
@@ -464,7 +558,10 @@ async function finalizePayMongoCheckoutIntent(options, overrides = {}) {
     verifyPayMongoCheckoutSession:
       overrides.verifyPayMongoCheckoutSession || verifyPayMongoCheckoutSession,
     prepareOrderItemsAndStock:
-      overrides.prepareOrderItemsAndStock || prepareOrderItemsAndStock,
+      overrides.prepareOrderItemsAndStock ||
+      (getSchemaProfile() === REDESIGNED_SCHEMA_PROFILE
+        ? prepareRedesignedOrderItemsAndStock
+        : prepareOrderItemsAndStock),
     deductPrevalidatedStockForPaidOrder:
       overrides.deductPrevalidatedStockForPaidOrder || deductPrevalidatedStockForPaidOrder,
     allocateOrderIdentifiers:
@@ -556,7 +653,7 @@ async function finalizePayMongoCheckoutIntent(options, overrides = {}) {
       reason: "order.created",
       customerUserId: intent.customerUserId,
       paymentChanged: true,
-      inventoryChanged: true,
+      inventoryChanged: getSchemaProfile() !== REDESIGNED_SCHEMA_PROFILE,
     });
     const email = String(result.customer?.email || "").trim().toLowerCase();
     if (email) {

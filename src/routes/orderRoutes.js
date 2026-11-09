@@ -9,11 +9,19 @@ const {
 } = require("../middleware/cookViewAccess");
 const { sendCustomerOrderReceiptEmail } = require("../services/emailService");
 const {
+  deductRedesignedStockForCompletedPaidOrder,
   deductPrevalidatedStockForPaidOrder,
   deductStockForPaidOrder,
+  prepareRedesignedOrderItemsAndStock,
   prepareOrderItemsAndStock,
   restoreStockForRefundedOrder,
 } = require("../services/inventoryService");
+const {
+  getSchemaProfile,
+  REDESIGNED_SCHEMA_PROFILE,
+} = require("../db/schemaProfile");
+const redesignedOrderReads = require("./redesignedOrderReadHandlers");
+const redesignedOrderMutations = require("./redesignedOrderMutationHandlers");
 const {
   getOrderItemIdentity,
   normalizeOrderItems,
@@ -80,6 +88,32 @@ const requirePaymentProofUploadAccess = requireRoleAccess(
   ["cashier"],
   "Cashier or Administrator access required",
 );
+function isRedesignedProfile() {
+  return getSchemaProfile() === REDESIGNED_SCHEMA_PROFILE;
+}
+
+async function getRedesignedStaffContext(connection, userId) {
+  const numericUserId = Number(userId);
+  if (!Number.isSafeInteger(numericUserId) || numericUserId <= 0) {
+    return { cashierId: null, recordedByAdminId: null, cashierName: null };
+  }
+  const [rows] = await connection.query(
+    `SELECT id, username
+       FROM users
+      WHERE id = ?
+        AND role IN ('administrator','cashier','inventory_manager')
+      LIMIT 1`,
+    [numericUserId],
+  );
+  if (!rows.length) {
+    return { cashierId: null, recordedByAdminId: null, cashierName: null };
+  }
+  return {
+    cashierId: numericUserId,
+    recordedByAdminId: numericUserId,
+    cashierName: String(rows[0].username || "").trim() || null,
+  };
+}
 function withOrderRequestTiming(req, _res, next) {
   if (!isDevelopmentTimingEnabled()) return next();
   return runWithDbQueryTiming((queryTiming) => {
@@ -471,6 +505,7 @@ router.get(
   requireCookViewAccess,
   requireSalesReportAccess,
   async (req, res) => {
+    if (isRedesignedProfile()) return redesignedOrderReads.listOrders(req, res);
     try {
       const [orders] = await db.query(
         `SELECT
@@ -537,6 +572,7 @@ router.get(
 
 // GET /orders/queue — kitchen/order queue view
 router.get("/queue", requireCookViewAccess, async (req, res) => {
+  if (isRedesignedProfile()) return redesignedOrderReads.listQueue(req, res);
   try {
     const [rows] = await db.query(
       `SELECT
@@ -688,6 +724,7 @@ router.get("/queue", requireCookViewAccess, async (req, res) => {
 // ⚠️  MUST be defined before router.patch("/:id") so Express doesn't treat
 //     "new-online" as an :id parameter.
 router.get("/new-online", requireCookViewAccess, async (req, res) => {
+  if (isRedesignedProfile()) return redesignedOrderReads.listNewOnline(req, res);
   try {
     const [rows] = await db.query(
       `SELECT
@@ -760,6 +797,7 @@ router.get("/new-online", requireCookViewAccess, async (req, res) => {
 
 // GET /orders/ready-pickup — cashier pickup confirmation list for online pickup orders
 router.get("/ready-pickup", requireCookViewAccess, async (req, res) => {
+  if (isRedesignedProfile()) return redesignedOrderReads.listReadyPickup(req, res);
   try {
     const [rows] = await db.query(
       `SELECT
@@ -841,6 +879,7 @@ router.get("/ready-pickup", requireCookViewAccess, async (req, res) => {
 
 // GET /orders/delivery-handover — cashier handover list for POS delivery orders
 router.get("/delivery-handover", requireCookViewAccess, async (req, res) => {
+  if (isRedesignedProfile()) return redesignedOrderReads.listDeliveryHandover(req, res);
   try {
     const [rows] = await db.query(
       `SELECT
@@ -924,6 +963,9 @@ router.get(
   "/customer/:customerUserId",
   requireAuthenticatedUser,
   async (req, res) => {
+    if (isRedesignedProfile()) {
+      return redesignedOrderReads.listCustomerOrders(req, res);
+    }
     try {
       const customerUserId = Number(req.params.customerUserId);
       if (!Number.isFinite(customerUserId) || customerUserId <= 0) {
@@ -1042,6 +1084,7 @@ router.get(
 // New payment-proof uploads use the validated multipart /api/upload-proof route.
 // GET /orders/shift — today's transactions for the authenticated cashier.
 router.get("/shift", requireCookViewAccess, async (req, res) => {
+  if (isRedesignedProfile()) return redesignedOrderReads.listShift(req, res);
   try {
     const requesterId = Number(req.user?.userId);
     const requesterRole = normalizeRole(req.user?.role);
@@ -1746,9 +1789,11 @@ router.post(
         req,
         "load items and lock stock",
         () =>
-          prepareOrderItemsAndStock(conn, validatedItems, {
-            requireChickenFlavorForMenuFood: isStaffOrderActor,
-          }),
+          (isRedesignedProfile()
+            ? prepareRedesignedOrderItemsAndStock
+            : prepareOrderItemsAndStock)(conn, validatedItems, {
+              requireChickenFlavorForMenuFood: isStaffOrderActor,
+            }),
       );
       authoritativeItems = stockPlan.authoritativeItems.map((item) => ({
         ...item,
@@ -1835,7 +1880,9 @@ router.post(
         snapshotChange = cashSettlement.change;
       }
       const cashierContext = await runOrderStage(req, "resolve cashier", () =>
-        ensureLegacyCashierContext(conn, resolvedCashierId),
+        isRedesignedProfile()
+          ? getRedesignedStaffContext(conn, resolvedCashierId)
+          : ensureLegacyCashierContext(conn, resolvedCashierId),
       );
       const persistedCashierId = cashierContext.cashierId;
 
@@ -1851,48 +1898,118 @@ router.post(
 
       // Insert the order header
       const [orderResult] = await runOrderStage(req, "insert order", () =>
-        conn.query(
-          `INSERT INTO orders
-           (Total_Amount, Customer_ID, Cashier_ID, Order_Type, Status, customer_user_id, payment_reference, payment_status, payment_method, proof_image_url, verified_by, verified_at, transaction_id, order_number, business_date)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            billingTotals.grandTotal,
-            customerId || null,
-            persistedCashierId,
-            finalOrderType,
-            initialStatus,
-            resolvedCustomerUserId,
-            effectivePaymentReference,
-            effectivePaymentStatus,
-            storedPaymentMethod,
-            effectiveProofImageUrl,
-            verifiedBy,
-            verifiedAt,
-            identifiers.transactionId,
-            identifiers.orderNumberValue,
-            identifiers.businessDate,
-          ],
-        ),
+        isRedesignedProfile()
+          ? conn.query(
+              `INSERT INTO orders
+                 (transaction_id, business_date, order_number,
+                  customer_user_id, cashier_user_id, customer_name_snapshot,
+                  cashier_name_snapshot, order_type, status, subtotal,
+                  discount_name_snapshot, discount_rate, discount_amount,
+                  tax_rate, tax_amount, service_charge_rate,
+                  service_charge_amount, total_amount, currency, customer_type,
+                  table_number, order_note, payment_reference, payment_status,
+                  payment_method, proof_image_url, verified_by_user_id, verified_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                identifiers.transactionId,
+                identifiers.businessDate,
+                identifiers.orderNumberValue,
+                resolvedCustomerUserId,
+                persistedCashierId,
+                isOnlineCustomerActor
+                  ? String(onlineCustomerProfile?.username || "").trim() || null
+                  : submittedCustomerName,
+                cashierContext.cashierName,
+                finalOrderType,
+                initialStatus,
+                billingTotals.subtotal,
+                appliedDiscount.discountName || null,
+                appliedDiscount.discountRate,
+                billingTotals.discountAmount,
+                billingSettings.taxRate,
+                billingTotals.taxAmount,
+                billingSettings.serviceCharge,
+                billingTotals.serviceChargeAmount,
+                billingTotals.grandTotal,
+                configuration.receiptSettings.currency || "PHP",
+                submittedCustomerType,
+                finalOrderType === "dine-in" ? submittedTableNumber : null,
+                submittedOrderNote,
+                effectivePaymentReference,
+                effectivePaymentStatus,
+                storedPaymentMethod,
+                effectiveProofImageUrl,
+                verifiedBy,
+                verifiedAt,
+              ],
+            )
+          : conn.query(
+              `INSERT INTO orders
+               (Total_Amount, Customer_ID, Cashier_ID, Order_Type, Status, customer_user_id, payment_reference, payment_status, payment_method, proof_image_url, verified_by, verified_at, transaction_id, order_number, business_date)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                billingTotals.grandTotal,
+                customerId || null,
+                persistedCashierId,
+                finalOrderType,
+                initialStatus,
+                resolvedCustomerUserId,
+                effectivePaymentReference,
+                effectivePaymentStatus,
+                storedPaymentMethod,
+                effectiveProofImageUrl,
+                verifiedBy,
+                verifiedAt,
+                identifiers.transactionId,
+                identifiers.orderNumberValue,
+                identifiers.businessDate,
+              ],
+            ),
       );
       const orderId = orderResult.insertId;
 
       const itemValuesSql = authoritativeItems
-        .map(() => "(?, ?, ?, ?, ?, ?)")
+        .map(() =>
+          isRedesignedProfile()
+            ? "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            : "(?, ?, ?, ?, ?, ?)",
+        )
         .join(", ");
-      const itemValues = authoritativeItems.flatMap((item) => [
-        orderId,
-        item.product_id,
-        item.qty,
-        item.subtotal,
-        item.selected_flavor_product_id ?? null,
-        item.selected_flavor_name ?? null,
-      ]);
+      const itemValues = authoritativeItems.flatMap((item, index) =>
+        isRedesignedProfile()
+          ? [
+              orderId,
+              item.product_id,
+              item.name,
+              item.price,
+              item.qty,
+              item.subtotal,
+              item.selected_flavor_product_id ?? null,
+              item.selected_flavor_name ?? null,
+              item.note || null,
+              index,
+            ]
+          : [
+              orderId,
+              item.product_id,
+              item.qty,
+              item.subtotal,
+              item.selected_flavor_product_id ?? null,
+              item.selected_flavor_name ?? null,
+            ],
+      );
       await runOrderStage(req, "insert order items", () =>
         conn.query(
-          `INSERT INTO order_item
-         (Order_ID, Product_ID, Quantity, Subtotal,
-          selected_flavor_product_id, selected_flavor_name)
-       VALUES ${itemValuesSql}`,
+          isRedesignedProfile()
+            ? `INSERT INTO order_items
+                 (order_id, product_id, product_name_snapshot, unit_price,
+                  quantity, line_subtotal, selected_option_product_id,
+                  selected_option_name_snapshot, item_note, sort_order)
+               VALUES ${itemValuesSql}`
+            : `INSERT INTO order_item
+                 (Order_ID, Product_ID, Quantity, Subtotal,
+                  selected_flavor_product_id, selected_flavor_name)
+               VALUES ${itemValuesSql}`,
           itemValues,
         ),
       );
@@ -1900,17 +2017,34 @@ router.post(
       // Insert payment record
       await runOrderStage(req, "insert payment", () =>
         conn.query(
-          `INSERT INTO payments
-         (Order_ID, Payment_Type, Payment_Status, ProcessBy)
-       VALUES (?, ?, ?, ?)`,
-          [
-            orderId,
-            storedPaymentMethod,
-            isPaidPaymentStatus(effectivePaymentStatus)
-              ? "Completed"
-              : "Pending",
-            persistedCashierId,
-          ],
+          isRedesignedProfile()
+            ? `INSERT INTO payments
+                 (order_id, payment_method, payment_status, amount,
+                  external_reference, processed_by_user_id, paid_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)`
+            : `INSERT INTO payments
+                 (Order_ID, Payment_Type, Payment_Status, ProcessBy)
+               VALUES (?, ?, ?, ?)`,
+          isRedesignedProfile()
+            ? [
+                orderId,
+                storedPaymentMethod,
+                isPaidPaymentStatus(effectivePaymentStatus)
+                  ? "Completed"
+                  : "Pending",
+                billingTotals.grandTotal,
+                isThirdPartyDelivery ? null : effectivePaymentReference,
+                persistedCashierId,
+                isPaidPaymentStatus(effectivePaymentStatus) ? new Date() : null,
+              ]
+            : [
+                orderId,
+                storedPaymentMethod,
+                isPaidPaymentStatus(effectivePaymentStatus)
+                  ? "Completed"
+                  : "Pending",
+                persistedCashierId,
+              ],
         ),
       );
 
@@ -1959,9 +2093,8 @@ router.post(
         }),
       );
 
-      const deductedStockAtCreation = isPaidPaymentStatus(
-        effectivePaymentStatus,
-      );
+      const deductedStockAtCreation =
+        !isRedesignedProfile() && isPaidPaymentStatus(effectivePaymentStatus);
       if (deductedStockAtCreation) {
         await runOrderStage(req, "deduct stock", () =>
           deductPrevalidatedStockForPaidOrder(
@@ -2093,6 +2226,9 @@ router.patch(
   withOrderRequestTiming,
   requireCookViewAccess,
   async (req, res) => {
+    if (isRedesignedProfile()) {
+      return redesignedOrderMutations.updateOrder(req, res);
+    }
     let conn;
     let txStarted = false;
     try {

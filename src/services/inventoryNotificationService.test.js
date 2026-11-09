@@ -3,6 +3,9 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+
+process.env.DB_SCHEMA_PROFILE = "legacy";
+
 const {
   getVisibleInventoryAlertSeverities,
   listInventoryNotifications,

@@ -1,10 +1,50 @@
 const {
+  MENU_ITEM,
+  SELECTION_OPTION,
+  STOCK_ITEM,
   ensureProductsItemTypeSchema,
   getProductItemTypeExpression,
 } = require("./productItemType");
+const { assertTableColumns } = require("../services/schemaAssertions");
+const {
+  REDESIGNED_SCHEMA_PROFILE,
+  getSchemaProfile,
+} = require("../db/schemaProfile");
 
-let availabilitySchemaReady = false;
-let availabilitySchemaPromise = null;
+const availabilitySchemaReady = new Set();
+const availabilitySchemaPromises = new Map();
+
+const REDESIGNED_AVAILABILITY_SCHEMA_CONTRACT = {
+  products: [
+    "product_id", "product_type", "unit_id", "lifecycle_status",
+    "availability_override", "tracking_method",
+  ],
+  product_recipes: [
+    "parent_product_id", "ingredient_product_id", "quantity_required", "unit_id",
+  ],
+  inventory_balances: ["product_id", "on_hand"],
+  units: ["unit_id", "name", "abbreviation"],
+  inventory_batches: [
+    "batch_id", "product_id", "remaining_quantity", "expiry_at",
+    "usable_until", "status",
+  ],
+};
+
+function isRedesignedProfile(profile = getSchemaProfile()) {
+  return profile === REDESIGNED_SCHEMA_PROFILE;
+}
+
+function getRowItemType(row = {}) {
+  return String(
+    row.product_type ??
+      row.productType ??
+      row.item_type ??
+      row.itemType ??
+      MENU_ITEM,
+  )
+    .trim()
+    .toLowerCase();
+}
 
 async function hasColumn(db, tableName, columnName) {
   const [rows] = await db.query(`SHOW COLUMNS FROM ${tableName} LIKE ?`, [
@@ -21,6 +61,14 @@ function normalizeManualStatus(value) {
 }
 
 function isManualOverrideEnabled(row = {}) {
+  if (
+    String(row.availability_override ?? row.availabilityOverride ?? "")
+      .trim()
+      .toLowerCase() === "unavailable"
+  ) {
+    return true;
+  }
+
   const overrideEnabled =
     Number(row.manual_override ?? row.manualOverride ?? 0) === 1;
   const status = normalizeManualStatus(
@@ -53,9 +101,7 @@ function computeAvailableServings(ingredients) {
 }
 
 function isAutoMenuMissingIngredients(row = {}, ingredients = []) {
-  const itemType = String(row.item_type ?? row.itemType ?? "menu_item")
-    .trim()
-    .toLowerCase();
+  const itemType = getRowItemType(row);
   return (
     itemType === "menu_item" &&
     !isManualOverrideEnabled(row) &&
@@ -64,6 +110,14 @@ function isAutoMenuMissingIngredients(row = {}, ingredients = []) {
 }
 
 function resolveProductAvailabilityStatus(row = {}, ingredients = []) {
+  const lifecycleStatus = String(
+    row.lifecycle_status ?? row.lifecycleStatus ?? "active",
+  )
+    .trim()
+    .toLowerCase();
+  if (lifecycleStatus === "archived") return "Hidden";
+  if (lifecycleStatus === "inactive") return "Out of Stock";
+
   const storedAvailability = String(
     row.availability_status ?? row.availabilityStatus ?? "Available",
   )
@@ -77,10 +131,8 @@ function resolveProductAvailabilityStatus(row = {}, ingredients = []) {
     return "Out of Stock";
   }
 
-  const itemType = String(row.item_type ?? row.itemType ?? "menu_item")
-    .trim()
-    .toLowerCase();
-  if (itemType === "menu_item") {
+  const itemType = getRowItemType(row);
+  if (itemType === MENU_ITEM) {
     if (isAutoMenuMissingIngredients(row, ingredients)) {
       return "Out of Stock";
     }
@@ -90,7 +142,13 @@ function resolveProductAvailabilityStatus(row = {}, ingredients = []) {
       : "Out of Stock";
   }
 
-  return Number(row.remainingStock ?? row.stock ?? 0) > 0
+  // Selection options are labels chosen with a sellable menu item. They do
+  // not carry stock or a separately sellable price.
+  if (itemType === SELECTION_OPTION) return "Available";
+
+  return Number(
+    row.on_hand ?? row.onHand ?? row.remainingStock ?? row.stock ?? 0,
+  ) > 0
     ? "Available"
     : "Out of Stock";
 }
@@ -100,7 +158,8 @@ function deriveManualOverrideState(payload = {}) {
     payload.override_mode !== undefined ||
     payload.manual_override !== undefined ||
     payload.manual_status !== undefined ||
-    payload.availability_status !== undefined;
+    payload.availability_status !== undefined ||
+    payload.availability_override !== undefined;
 
   if (!hasExplicitOverride) {
     return null;
@@ -117,6 +176,23 @@ function deriveManualOverrideState(payload = {}) {
   }
   if (overrideMode === "force out of stock") {
     return { manualOverride: 1, manualStatus: "Out of Stock" };
+  }
+
+  if (payload.availability_override !== undefined) {
+    const availabilityOverride = String(payload.availability_override)
+      .trim()
+      .toLowerCase();
+    if (availabilityOverride === "auto") {
+      return { manualOverride: 0, manualStatus: "Available" };
+    }
+    if (availabilityOverride === "unavailable") {
+      return { manualOverride: 1, manualStatus: "Out of Stock" };
+    }
+    if (availabilityOverride === "available") {
+      throw new Error(
+        'Force Available is no longer supported. Use "auto" or "unavailable".',
+      );
+    }
   }
 
   if (payload.manual_override !== undefined || payload.manual_status !== undefined) {
@@ -196,10 +272,23 @@ function normalizeMenuIngredients(ingredients) {
 }
 
 async function ensureMenuAvailabilitySchema(db) {
-  if (availabilitySchemaReady) return;
-  if (availabilitySchemaPromise) return availabilitySchemaPromise;
+  const profile = getSchemaProfile();
+  if (availabilitySchemaReady.has(profile)) return;
+  if (availabilitySchemaPromises.has(profile)) {
+    return availabilitySchemaPromises.get(profile);
+  }
 
-  availabilitySchemaPromise = (async () => {
+  const schemaPromise = (async () => {
+    if (isRedesignedProfile(profile)) {
+      await assertTableColumns(
+        db,
+        REDESIGNED_AVAILABILITY_SCHEMA_CONTRACT,
+        "Menu availability schema",
+      );
+      availabilitySchemaReady.add(profile);
+      return;
+    }
+
     if (!(await hasColumn(db, "Menu", "manual_override"))) {
       await db.query(
         "ALTER TABLE Menu ADD COLUMN manual_override TINYINT(1) NOT NULL DEFAULT 0",
@@ -240,18 +329,111 @@ async function ensureMenuAvailabilitySchema(db) {
        WHERE manual_status IS NULL OR TRIM(manual_status) = ''`,
     );
 
-    availabilitySchemaReady = true;
+    availabilitySchemaReady.add(profile);
   })();
+  availabilitySchemaPromises.set(profile, schemaPromise);
 
   try {
-    await availabilitySchemaPromise;
+    await schemaPromise;
   } catch (error) {
-    availabilitySchemaPromise = null;
+    availabilitySchemaPromises.delete(profile);
     throw error;
   }
 }
 
 async function replaceMenuIngredients(db, menuProductId, ingredients) {
+  if (isRedesignedProfile()) {
+    let resolvedIngredients = ingredients ?? [];
+    const normalizedProductId = Number(menuProductId);
+    if (!Number.isSafeInteger(normalizedProductId) || normalizedProductId <= 0) {
+      throw new Error("A valid menu product ID is required");
+    }
+
+    const [parentRows] = await db.query(
+      `SELECT product_type
+       FROM products
+       WHERE product_id = ?
+       LIMIT 1`,
+      [normalizedProductId],
+    );
+    if (!parentRows.length) {
+      throw new Error(`Menu product ${normalizedProductId} was not found`);
+    }
+
+    const parentType = String(parentRows[0].product_type || "")
+      .trim()
+      .toLowerCase();
+    if (parentType === SELECTION_OPTION && resolvedIngredients.length) {
+      throw new Error(
+        "Chicken Flavor selection options cannot have ingredient mappings",
+      );
+    }
+    if (parentType !== MENU_ITEM && parentType !== SELECTION_OPTION) {
+      throw new Error("Only menu items can have ingredient mappings");
+    }
+
+    if (resolvedIngredients.length) {
+      const ingredientIds = resolvedIngredients.map(
+        (ingredient) => ingredient.productId,
+      );
+      const [ingredientRows] = await db.query(
+        `SELECT product_id, product_type, unit_id
+         FROM products
+         WHERE product_id IN (?)`,
+        [ingredientIds],
+      );
+      const ingredientsById = new Map(
+        ingredientRows.map((row) => [Number(row.product_id), row]),
+      );
+      for (const ingredient of resolvedIngredients) {
+        const row = ingredientsById.get(Number(ingredient.productId));
+        if (!row) {
+          throw new Error(
+            `Ingredient product ${ingredient.productId} was not found`,
+          );
+        }
+        if (String(row.product_type).trim().toLowerCase() !== STOCK_ITEM) {
+          throw new Error(
+            `Ingredient product ${ingredient.productId} must be stock_item`,
+          );
+        }
+        if (
+          !Number.isSafeInteger(Number(row.unit_id)) ||
+          Number(row.unit_id) <= 0
+        ) {
+          throw new Error(
+            `Ingredient product ${ingredient.productId} has no valid unit`,
+          );
+        }
+      }
+      resolvedIngredients = resolvedIngredients.map((ingredient) => ({
+        ...ingredient,
+        unitId: Number(
+          ingredientsById.get(Number(ingredient.productId)).unit_id,
+        ),
+      }));
+    }
+
+    await db.query(
+      "DELETE FROM product_recipes WHERE parent_product_id = ?",
+      [normalizedProductId],
+    );
+    for (const ingredient of resolvedIngredients) {
+      await db.query(
+        `INSERT INTO product_recipes
+          (parent_product_id, ingredient_product_id, quantity_required, unit_id)
+         VALUES (?,?,?,?)`,
+        [
+          normalizedProductId,
+          ingredient.productId,
+          ingredient.quantityRequired,
+          ingredient.unitId,
+        ],
+      );
+    }
+    return;
+  }
+
   await db.query(
     "DELETE FROM menu_item_ingredients WHERE menu_product_id = ?",
     [menuProductId],
@@ -285,6 +467,91 @@ async function fetchMenuIngredients(db, menuIds) {
   }
 
   const hasItemTypeColumn = await ensureProductsItemTypeSchema(db);
+  if (isRedesignedProfile()) {
+    const [rows] = await db.query(
+      `SELECT
+         recipe.parent_product_id AS menu_product_id,
+         recipe.ingredient_product_id AS product_id,
+         recipe.quantity_required,
+         ingredient.name AS product_name,
+         ingredient.product_type AS item_type,
+         COALESCE(NULLIF(TRIM(unit.abbreviation), ''), unit.name) AS unit,
+         CASE
+           WHEN ingredient.tracking_method = 'none'
+             THEN COALESCE(balance.on_hand, 0)
+           WHEN ingredient.tracking_method = 'expiry'
+             THEN LEAST(
+               COALESCE(balance.on_hand, 0),
+               COALESCE(batch_stock.expiry_usable_stock, 0)
+             )
+           WHEN ingredient.tracking_method = 'shelf_life'
+             THEN LEAST(
+               COALESCE(balance.on_hand, 0),
+               COALESCE(batch_stock.shelf_life_usable_stock, 0)
+             )
+           ELSE 0
+         END AS daily_withdrawn,
+         CASE
+           WHEN ingredient.tracking_method = 'none'
+             THEN COALESCE(balance.on_hand, 0)
+           WHEN ingredient.tracking_method = 'expiry'
+             THEN LEAST(
+               COALESCE(balance.on_hand, 0),
+               COALESCE(batch_stock.expiry_usable_stock, 0)
+             )
+           WHEN ingredient.tracking_method = 'shelf_life'
+             THEN LEAST(
+               COALESCE(balance.on_hand, 0),
+               COALESCE(batch_stock.shelf_life_usable_stock, 0)
+             )
+           ELSE 0
+         END AS stock,
+         CASE
+           WHEN ingredient.tracking_method = 'expiry'
+             THEN COALESCE(batch_stock.expiry_usable_stock, 0)
+           WHEN ingredient.tracking_method = 'shelf_life'
+             THEN COALESCE(batch_stock.shelf_life_usable_stock, 0)
+           ELSE COALESCE(balance.on_hand, 0)
+         END AS usable_batch_stock
+       FROM product_recipes recipe
+       INNER JOIN products parent
+         ON parent.product_id = recipe.parent_product_id
+        AND parent.product_type = '${MENU_ITEM}'
+       INNER JOIN products ingredient
+         ON ingredient.product_id = recipe.ingredient_product_id
+        AND ingredient.product_type = '${STOCK_ITEM}'
+       INNER JOIN units unit ON unit.unit_id = recipe.unit_id
+       LEFT JOIN inventory_balances balance
+         ON balance.product_id = recipe.ingredient_product_id
+       LEFT JOIN (
+         SELECT
+           product_id,
+           SUM(CASE
+             WHEN status = 'active'
+              AND remaining_quantity > 0
+              AND expiry_at IS NOT NULL
+              AND expiry_at > NOW()
+             THEN remaining_quantity
+             ELSE 0
+           END) AS expiry_usable_stock,
+           SUM(CASE
+             WHEN status = 'active'
+              AND remaining_quantity > 0
+              AND usable_until IS NOT NULL
+              AND usable_until > NOW()
+             THEN remaining_quantity
+             ELSE 0
+           END) AS shelf_life_usable_stock
+         FROM inventory_batches
+         GROUP BY product_id
+       ) batch_stock ON batch_stock.product_id = recipe.ingredient_product_id
+       WHERE recipe.parent_product_id IN (?)
+       ORDER BY recipe.parent_product_id ASC, product_name ASC`,
+      [normalizedIds],
+    );
+    return groupIngredientRows(rows);
+  }
+
   const itemTypeExpr = getProductItemTypeExpression(hasItemTypeColumn, "p", "m");
   const [rows] = await db.query(
     `SELECT
@@ -310,6 +577,10 @@ async function fetchMenuIngredients(db, menuIds) {
     [normalizedIds],
   );
 
+  return groupIngredientRows(rows);
+}
+
+function groupIngredientRows(rows) {
   const grouped = new Map();
   for (const row of rows) {
     const menuProductId = Number(row.menu_product_id);
@@ -322,6 +593,7 @@ async function fetchMenuIngredients(db, menuIds) {
       unit: String(row.unit ?? "piece"),
       daily_withdrawn: Number(row.daily_withdrawn ?? 0),
       stock: Number(row.stock ?? 0),
+      usable_batch_stock: Number(row.usable_batch_stock ?? 0),
     });
     grouped.set(menuProductId, current);
   }
@@ -339,4 +611,5 @@ module.exports = {
   normalizeMenuIngredients,
   replaceMenuIngredients,
   resolveProductAvailabilityStatus,
+  REDESIGNED_AVAILABILITY_SCHEMA_CONTRACT,
 };

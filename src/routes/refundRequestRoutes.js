@@ -23,8 +23,21 @@ const {
   createStaffNotification,
   updateStaffNotificationStatus,
 } = require("../services/staffNotificationService");
+const {
+  getSchemaProfile,
+  REDESIGNED_SCHEMA_PROFILE,
+} = require("../db/schemaProfile");
 
 const REQUEST_STATUSES = new Set(["Pending", "Ignored", "Actioned"]);
+
+function isRedesignedProfile() {
+  return getSchemaProfile() === REDESIGNED_SCHEMA_PROFILE;
+}
+
+function publicRequestStatus(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized ? normalized[0].toUpperCase() + normalized.slice(1) : "Pending";
+}
 
 function requireCashier(req, res, next) {
   return requireAuthenticatedUser(req, res, () => {
@@ -91,7 +104,7 @@ function mapRequestRows(rows) {
         },
         requestedAt: row.requestedAt,
         reason: row.reasonSnapshot || "Cashier requested a refund review.",
-        status: row.requestStatus,
+        status: publicRequestStatus(row.requestStatus),
         reviewedAt: row.reviewedAt || null,
         order: {
           orderType: row.orderType || null,
@@ -119,11 +132,12 @@ function mapRequestRows(rows) {
 }
 
 async function loadRequests({ status = null, requestId = null } = {}) {
+  const redesigned = isRedesignedProfile();
   const conditions = [];
   const values = [];
   if (status) {
     conditions.push("rr.status = ?");
-    values.push(status);
+    values.push(redesigned ? status.toLowerCase() : status);
   }
   if (requestId) {
     conditions.push("rr.refund_request_id = ?");
@@ -132,7 +146,45 @@ async function loadRequests({ status = null, requestId = null } = {}) {
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
   const [rows] = await db.query(
-    `SELECT
+    redesigned
+      ? `SELECT
+       rr.refund_request_id AS requestId,
+       rr.order_id AS orderId,
+       rr.order_number_snapshot AS orderNumberSnapshot,
+       rr.requester_user_id AS requesterUserId,
+       rr.reason_snapshot AS reasonSnapshot,
+       rr.status AS requestStatus,
+       rr.requested_at AS requestedAt,
+       rr.reviewed_at AS reviewedAt,
+       COALESCE(requester.username, rr.requester_name_snapshot) AS requesterName,
+       COALESCE(requester.role, rr.requester_role_snapshot) AS requesterRole,
+       o.order_number AS orderNumberValue,
+       o.order_type AS orderType,
+       o.total_amount AS total,
+       o.status AS orderStatus,
+       o.prep_started_at AS prepStartedAt,
+       o.prep_started_at AS startedAt,
+       o.ready_at AS readyAt,
+       COALESCE(o.payment_status, payment.payment_status) AS paymentStatus,
+       COALESCE(snapshot.payment_method, o.payment_method, payment.payment_method) AS paymentMethod,
+       COALESCE(snapshot_item.receipt_item_id, order_item.order_item_id) AS itemId,
+       COALESCE(snapshot_item.product_name, order_item.product_name_snapshot) AS productName,
+       COALESCE(snapshot_item.quantity, order_item.quantity) AS quantity,
+       COALESCE(snapshot_item.unit_price, order_item.unit_price, 0) AS price
+     FROM refund_requests rr
+     INNER JOIN orders o ON o.order_id = rr.order_id
+     LEFT JOIN users requester ON requester.id = rr.requester_user_id
+     LEFT JOIN receipt_snapshots snapshot ON snapshot.order_id = o.order_id
+     LEFT JOIN receipt_snapshot_items snapshot_item ON snapshot_item.order_id = snapshot.order_id
+     LEFT JOIN order_items order_item
+       ON order_item.order_id = o.order_id
+      AND snapshot.order_id IS NULL
+     LEFT JOIN payments payment ON payment.payment_id = (
+       SELECT MAX(latest.payment_id) FROM payments latest WHERE latest.order_id = o.order_id
+     )
+     ${where}
+     ORDER BY rr.requested_at DESC, itemId ASC`
+      : `SELECT
        rr.refund_request_id AS requestId,
        rr.order_id AS orderId,
        rr.order_number_snapshot AS orderNumberSnapshot,
@@ -208,7 +260,30 @@ router.post("/", requireCashier, async (req, res) => {
     transactionStarted = true;
 
     const [orders] = await connection.query(
-      `SELECT
+      isRedesignedProfile()
+        ? `SELECT
+         o.order_id AS id,
+         o.cashier_user_id AS cashierId,
+         o.status,
+         o.prep_started_at AS prepStartedAt,
+         o.prep_started_at AS startedAt,
+         o.ready_at AS readyAt,
+         o.order_number AS orderNumberValue,
+         requester.username AS requesterName,
+         requester.role AS requesterRole,
+         COALESCE(o.payment_status, (
+           SELECT payment.payment_status
+           FROM payments payment
+           WHERE payment.order_id = o.order_id
+           ORDER BY payment.payment_id DESC
+           LIMIT 1
+         )) AS paymentStatus
+       FROM orders o
+       INNER JOIN users requester ON requester.id = ?
+       WHERE o.order_id = ?
+       LIMIT 1
+       FOR UPDATE`
+        : `SELECT
          o.Order_ID AS id,
          o.Cashier_ID AS cashierId,
          o.Status AS status,
@@ -257,7 +332,7 @@ router.post("/", requireCashier, async (req, res) => {
       [orderId],
     );
     if (existing.length) {
-      const message = existing[0].status === "Pending"
+      const message = String(existing[0].status).toLowerCase() === "pending"
         ? "A refund request for this order is already pending."
         : "The refund request for this order has already been reviewed.";
       return res.status(409).json({ message, requestId: Number(existing[0].id), status: existing[0].status });
@@ -268,7 +343,7 @@ router.post("/", requireCashier, async (req, res) => {
       `INSERT INTO refund_requests
          (order_id, order_number_snapshot, requester_user_id,
           requester_name_snapshot, requester_role_snapshot, reason_snapshot, status)
-       VALUES (?, ?, ?, ?, ?, ?, 'Pending')`,
+       VALUES (?, ?, ?, ?, ?, ?, '${isRedesignedProfile() ? "pending" : "Pending"}')`,
       [
         orderId,
         orderNumber,
@@ -372,12 +447,12 @@ router.patch("/:id/ignore", requireAdministrator, async (req, res) => {
       [requestId],
     );
     if (!rows.length) return res.status(404).json({ message: "Refund request not found" });
-    if (rows[0].status !== "Pending") {
+    if (String(rows[0].status).toLowerCase() !== "pending") {
       return res.status(409).json({ message: `Refund request is already ${rows[0].status.toLowerCase()}` });
     }
     await connection.query(
       `UPDATE refund_requests
-       SET status = 'Ignored', reviewed_by_user_id = ?, reviewed_at = CURRENT_TIMESTAMP
+       SET status = '${isRedesignedProfile() ? "ignored" : "Ignored"}', reviewed_by_user_id = ?, reviewed_at = CURRENT_TIMESTAMP
        WHERE refund_request_id = ?`,
       [reviewerUserId, requestId],
     );

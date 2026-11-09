@@ -17,6 +17,10 @@ const {
   seedInitialSystemSettings,
 } = require("../services/initialDataService");
 const { applyMigrations } = require("./migrate");
+const {
+  REDESIGNED_SCHEMA_PROFILE,
+  getSchemaProfile,
+} = require("./schemaProfile");
 
 async function ensureColumn(connection, tableName, columnName, definitionSql) {
   const [rows] = await connection.query(
@@ -76,6 +80,14 @@ async function setup(options = {}) {
   let connection;
   const dbConfig = getDatabaseConfig();
   try {
+    if (getSchemaProfile() === REDESIGNED_SCHEMA_PROFILE) {
+      const error = new Error(
+        "db:setup is reserved for the legacy schema. " +
+          "Use db:migrate to initialize the redesigned schema.",
+      );
+      error.code = "DB_CONFIG_ERROR";
+      throw error;
+    }
     logDatabaseDiagnostics(log, dbConfig);
     validateDatabaseConfig(dbConfig, { requireExplicit: true });
     await logDatabaseDnsDiagnostics(log, dbConfig);

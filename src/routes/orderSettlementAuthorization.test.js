@@ -108,6 +108,9 @@ mockModule("../services/inventoryService", {
     return true;
   },
 });
+mockModule("../services/refundAuthorizationService", {
+  async verifyRefundAuthorizationPassword() {},
+});
 mockModule("../services/orderIdentifierService", {
   async allocateOrderIdentifiers() {},
   formatOrderNumber: () => "ORD-TEST",
@@ -390,10 +393,14 @@ function paymentUpdate() {
       role: "administrator",
     },
   });
-  assert.equal(cashierRefund.statusCode, 403);
-  assert.equal(state.connectionCount, 0);
-  assert.equal(state.writes.length, 0);
-  assert.equal(state.restoreActors.length, 0);
+  assert.equal(cashierRefund.statusCode, 200);
+  assert.equal(state.connectionCount, 1);
+  assert.equal(state.restoreActors.length, 1);
+  assert.equal(
+    state.restoreActors[0],
+    10,
+    "authorized cashier refund must use the authenticated JWT actor",
+  );
 
   resetState({ paymentStatus: "Pending Payment", paymentRecordStatus: "Pending", stockDeducted: 0 });
   const stockManagerVoid = await invokePatch({
@@ -553,7 +560,6 @@ function paymentUpdate() {
   assert.deepEqual(state.restoreActors, [30], "inventory restoration must run exactly once");
 
   for (const [role, userId] of [
-    ["cashier", 10],
     ["cook", 40],
     ["customer", 50],
   ]) {

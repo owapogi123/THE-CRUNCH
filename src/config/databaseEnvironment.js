@@ -286,8 +286,11 @@ function getSafeDatabaseErrorDetails(error, config = getDatabaseConfig()) {
   const safeErrorCodes = [
     "DB_CONFIG_ERROR",
     "DB_MIGRATION_LOCK_TIMEOUT",
+    "DB_MIGRATION_CHECKSUM_MISMATCH",
     "DB_MIGRATION_REVIEW_REQUIRED",
     "DB_SCHEMA_INCOMPATIBLE",
+    "DB_SCHEMA_PROFILE_MISMATCH",
+    "ADMIN_BOOTSTRAP_CONFIG_ERROR",
     "UNSAFE_STARTUP_OPTION",
   ];
 
