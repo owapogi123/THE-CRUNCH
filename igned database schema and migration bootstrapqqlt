@@ -1,0 +1,17 @@
+ .env.example                                       |   9 [32m+[m
+ package.json                                       |   2 [32m+[m
+ src/config/databaseEnvironment.js                  |   3 [32m+[m
+ src/db/migrate.js                                  | 202 [32m+++++[m[31m-[m
+ .../migrations/2026-11-08_redesigned-baseline.js   | 762 [32m+++++++++++++++++++++[m
+ src/db/redesignedMigration.test.js                 | 143 [32m++++[m
+ src/db/redesignedSchema.mysql.test.js              | 242 [32m+++++++[m
+ src/db/schemaProfile.js                            |  32 [32m+[m
+ src/db/setup.js                                    |  12 [32m+[m
+ src/services/administratorBootstrapService.js      | 130 [32m++++[m
+ src/services/administratorBootstrapService.test.js | 123 [32m++++[m
+ .../redesignedSchemaCompatibilityService.js        | 487 [32m+++++++++++++[m
+ .../redesignedSchemaCompatibilityService.test.js   | 155 [32m+++++[m
+ src/services/redesignedSystemSeed.js               | 134 [32m++++[m
+ src/services/redesignedSystemSeed.test.js          |  88 [32m+++[m
+ src/services/schemaCompatibilityService.js         |  17 [32m+[m[31m-[m
+ 16 files changed, 2518 insertions(+), 23 deletions(-)
