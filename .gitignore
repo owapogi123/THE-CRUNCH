@@ -141,4 +141,8 @@ dist
 # SvelteKit build / generate output
 .svelte-kit
 
+# Accidental terminal files
+/tatus --short
+/igned database schema and migration bootstrap*
+
 # End of https://www.toptal.com/developers/gitignore/api/node
