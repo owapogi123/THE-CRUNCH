@@ -183,7 +183,7 @@ async function lockProductAndBalance(connection, movement) {
        p.shelf_life_days,
        unit.name AS unit_name,
        unit.abbreviation AS unit_abbreviation,
-       unit.active AS unit_active
+       unit.is_active AS unit_active
      FROM products p
      JOIN units unit ON unit.unit_id = p.unit_id
      WHERE p.product_id = ?

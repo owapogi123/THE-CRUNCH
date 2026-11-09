@@ -40,6 +40,8 @@ function createHarness(overrides = {}) {
     rollbacks: 0,
     failMovementNumber: overrides.failMovementNumber || null,
     failVersionUpdate: Boolean(overrides.failVersionUpdate),
+    failProductLock: Boolean(overrides.failProductLock),
+    productLockSql: null,
   };
 
   let snapshot = null;
@@ -72,6 +74,18 @@ function createHarness(overrides = {}) {
     async query(sql, params = []) {
       const query = String(sql).replace(/\s+/g, " ").trim();
       if (query.startsWith("SELECT p.product_id") && query.includes("FROM products p")) {
+        state.productLockSql = query;
+        if (/\bunit\.active\b/i.test(query)) {
+          const error = new Error("Unknown column 'unit.active' in 'field list'");
+          error.code = "ER_BAD_FIELD_ERROR";
+          throw error;
+        }
+        assert.match(query, /\bunit\.is_active AS unit_active\b/i);
+        if (state.failProductLock) {
+          const error = new Error("simulated product lock failure");
+          error.code = "ER_BAD_FIELD_ERROR";
+          throw error;
+        }
         return [[{ ...state.product }]];
       }
       if (query.startsWith("SELECT product_id, on_hand")) {
@@ -187,6 +201,46 @@ function createHarness(overrides = {}) {
 }
 
 (async () => {
+  const stagingAdjustmentHarness = createHarness({
+    product: { product_id: 3 },
+    balance: { product_id: 3 },
+  });
+  const stagingAdjustment = await executeRedesignedInventoryMutation(
+    stagingAdjustmentHarness.database,
+    {
+      product_id: 3,
+      movement_type: "adjustment",
+      quantity: 5,
+      idempotency_key: "staging-adjustment-product-3-unique",
+    },
+  );
+  assert.equal(stagingAdjustment.onHand, 5);
+  assert.equal(stagingAdjustmentHarness.state.balance.on_hand, 5);
+  assert.equal(stagingAdjustmentHarness.state.movements.length, 1);
+  assert.match(
+    stagingAdjustmentHarness.state.productLockSql,
+    /unit\.is_active AS unit_active/i,
+  );
+  assert.equal(stagingAdjustmentHarness.state.commits, 1);
+  assert.equal(stagingAdjustmentHarness.state.rollbacks, 0);
+
+  const productLockFailureHarness = createHarness({ failProductLock: true });
+  await assert.rejects(
+    executeRedesignedInventoryMutation(productLockFailureHarness.database, {
+      product_id: 7,
+      movement_type: "adjustment",
+      quantity: 5,
+      idempotency_key: "failed-product-lock",
+    }),
+    (error) =>
+      error.code === "ER_BAD_FIELD_ERROR" &&
+      error.message === "simulated product lock failure",
+  );
+  assert.equal(productLockFailureHarness.state.rollbacks, 1);
+  assert.equal(productLockFailureHarness.state.balance.on_hand, 0);
+  assert.equal(productLockFailureHarness.state.batches.length, 0);
+  assert.equal(productLockFailureHarness.state.movements.length, 0);
+
   const expiryHarness = createHarness({
     product: { tracking_method: "expiry" },
   });
