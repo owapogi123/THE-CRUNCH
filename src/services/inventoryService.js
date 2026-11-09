@@ -29,6 +29,162 @@ function isPaidPaymentStatus(value) {
   return normalizePaymentStatus(value) === "Paid";
 }
 
+// Read-only redesigned inventory projection. Stock mutations intentionally
+// remain on the existing legacy path until Phase 2B.2.
+async function listRedesignedInventoryRows(connection = db) {
+  const [rows] = await connection.query(
+    `SELECT
+       p.product_id AS inventory_id,
+       p.product_id AS product_id,
+       p.name AS product_name,
+       COALESCE(category.name, 'Uncategorized') AS category,
+       COALESCE(NULLIF(TRIM(unit.abbreviation), ''), unit.name, 'piece') AS unit,
+       COALESCE(balance.on_hand, 0) AS mainStock,
+       COALESCE(balance.on_hand, 0) AS quantity,
+       p.name AS item_purchased,
+       COALESCE(balance.updated_at, p.updated_at) AS last_update,
+       COALESCE(balance.reorder_point, 0) AS reorderPoint,
+       COALESCE(balance.critical_point, 0) AS criticalPoint,
+       0 AS useDefaultThresholds,
+       COALESCE(balance.reorder_point, 0) AS lowStockThreshold,
+       COALESCE(balance.critical_point, 0) AS criticalStockThreshold,
+       'No Supplier' AS supplier_name,
+       COALESCE(movement.dailyWithdrawn, 0) AS dailyWithdrawn,
+       COALESCE(movement.returned, 0) AS returned,
+       COALESCE(movement.wasted, 0) AS wasted,
+       COALESCE(movement.soldToday, 0) AS soldToday,
+       batch.nearestExpiry AS expiryDate,
+       batch.nearestUsableUntil AS usableUntil,
+       p.shelf_life_days AS shelfLifeDays,
+       NULL AS shelfLifeMonths,
+       NULL AS shelfLifeHours,
+       p.product_id AS id,
+       p.name AS name,
+       COALESCE(balance.on_hand, 0) AS stock,
+       '0' AS price,
+       p.product_type AS item_type,
+       p.product_type AS product_type,
+       COALESCE(p.description, '') AS description,
+       '' AS promo,
+       CASE WHEN category.system_key = 'raw_materials' THEN 1 ELSE 0 END AS isRawMaterial,
+       CASE
+         WHEN p.image_url LIKE 'data:image%' THEN '/img/placeholder.jpg'
+         WHEN COALESCE(TRIM(p.image_url), '') = '' THEN '/img/placeholder.jpg'
+         ELSE p.image_url
+       END AS image,
+       CONCAT('M-', LPAD(p.product_id, 3, '0')) AS menu_code,
+       CASE
+         WHEN p.lifecycle_status = 'archived' THEN 'Hidden'
+         WHEN p.lifecycle_status = 'inactive'
+           OR p.availability_override = 'unavailable'
+           OR COALESCE(balance.on_hand, 0) <= 0
+           THEN 'Out of Stock'
+         ELSE 'Available'
+       END AS availability_status,
+       0 AS is_promotional,
+       NULL AS promo_price,
+       '' AS promo_label,
+       CASE WHEN p.availability_override = 'unavailable' THEN 1 ELSE 0 END AS manual_override,
+       CASE
+         WHEN p.availability_override = 'unavailable' THEN 'Out of Stock'
+         ELSE 'Available'
+       END AS manual_status,
+       NULL AS available_servings,
+       0 AS ingredient_count,
+       p.tracking_method,
+       p.lifecycle_status,
+       p.availability_override,
+       COALESCE(batch.activeBatchStock, 0) AS activeBatchStock
+     FROM products p
+     LEFT JOIN inventory_balances balance
+       ON balance.product_id = p.product_id
+     LEFT JOIN inventory_categories category
+       ON category.category_id = p.inventory_category_id
+     LEFT JOIN units unit ON unit.unit_id = p.unit_id
+     LEFT JOIN (
+       SELECT
+         product_id,
+         SUM(CASE
+           WHEN occurred_at >= CURDATE()
+            AND occurred_at < CURDATE() + INTERVAL 1 DAY
+            AND signed_quantity < 0
+             THEN -signed_quantity
+           ELSE 0
+         END) AS dailyWithdrawn,
+         SUM(CASE
+           WHEN movement_type = 'return_in' AND signed_quantity > 0
+             THEN signed_quantity
+           ELSE 0
+         END) AS returned,
+         SUM(CASE
+           WHEN movement_type = 'spoilage' AND signed_quantity < 0
+             THEN -signed_quantity
+           ELSE 0
+         END) AS wasted,
+         SUM(CASE
+           WHEN movement_type = 'sale'
+            AND occurred_at >= CURDATE()
+            AND occurred_at < CURDATE() + INTERVAL 1 DAY
+            AND signed_quantity < 0
+             THEN -signed_quantity
+           ELSE 0
+         END) AS soldToday
+       FROM stock_movements
+       GROUP BY product_id
+     ) movement ON movement.product_id = p.product_id
+     LEFT JOIN (
+       SELECT
+         product_id,
+         MIN(CASE
+           WHEN status = 'active' AND remaining_quantity > 0
+             THEN expiry_at
+           ELSE NULL
+         END) AS nearestExpiry,
+         MIN(CASE
+           WHEN status = 'active' AND remaining_quantity > 0
+             THEN usable_until
+           ELSE NULL
+         END) AS nearestUsableUntil,
+         SUM(CASE
+           WHEN status = 'active' AND remaining_quantity > 0
+             THEN remaining_quantity
+           ELSE 0
+         END) AS activeBatchStock
+       FROM inventory_batches
+       GROUP BY product_id
+     ) batch ON batch.product_id = p.product_id
+     WHERE p.product_type = 'stock_item'
+     ORDER BY p.product_id ASC`,
+  );
+  return rows;
+}
+
+async function listRedesignedInventoryAlertRows(connection = db) {
+  const [rows] = await connection.query(
+    `SELECT
+       p.product_id AS inventory_id,
+       p.product_id AS product_id,
+       p.name AS product_name,
+       COALESCE(category.name, 'Uncategorized') AS category,
+       COALESCE(NULLIF(TRIM(unit.abbreviation), ''), unit.name, 'piece') AS unit,
+       COALESCE(balance.on_hand, 0) AS mainStock,
+       0 AS useDefaultThresholds,
+       COALESCE(balance.reorder_point, 0) AS lowStockThreshold,
+       COALESCE(balance.critical_point, 0) AS criticalStockThreshold,
+       p.product_type AS item_type
+     FROM products p
+     LEFT JOIN inventory_balances balance
+       ON balance.product_id = p.product_id
+     LEFT JOIN inventory_categories category
+       ON category.category_id = p.inventory_category_id
+     LEFT JOIN units unit ON unit.unit_id = p.unit_id
+     WHERE p.product_type = 'stock_item'
+       AND p.lifecycle_status <> 'archived'
+     ORDER BY p.name ASC`,
+  );
+  return rows;
+}
+
 async function resolveRecordedByAdminId(recordedBy, connection = db) {
   const numericRecordedBy = Number(recordedBy);
   if (!Number.isInteger(numericRecordedBy) || numericRecordedBy <= 0) {
@@ -1106,6 +1262,8 @@ module.exports = {
   deductStockForPaidOrder,
   deductPrevalidatedStockForPaidOrder,
   getOrderIngredientDeductions,
+  listRedesignedInventoryAlertRows,
+  listRedesignedInventoryRows,
   prepareOrderItemsAndStock,
   restoreStockForRefundedOrder,
   validateStockForOrderItems,

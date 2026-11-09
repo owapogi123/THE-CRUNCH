@@ -1,6 +1,10 @@
 const router = require("express").Router();
 const db = require("../config/db");
-const { deductStockForOrder } = require("../services/inventoryService");
+const {
+  deductStockForOrder,
+  listRedesignedInventoryAlertRows,
+  listRedesignedInventoryRows,
+} = require("../services/inventoryService");
 const {
   fetchMenuIngredients,
 } = require("../utils/menuAvailability");
@@ -32,6 +36,14 @@ const {
   findDirectStockQuantityFields,
   stockReceiptRequiresPurchaseOrderResponse,
 } = require("../utils/stockMutationPolicy");
+const {
+  REDESIGNED_SCHEMA_PROFILE,
+  getSchemaProfile,
+} = require("../db/schemaProfile");
+
+function isRedesignedProfile() {
+  return getSchemaProfile() === REDESIGNED_SCHEMA_PROFILE;
+}
 
 function normalizeBooleanFlag(value, fallback = true) {
   if (value === undefined || value === null || value === "") return fallback;
@@ -94,15 +106,28 @@ function getAppliedInventoryAlertThresholds(row, defaults) {
     row?.useDefaultThresholds,
     true,
   );
+  const hasConfiguredCritical =
+    row?.criticalStockThreshold !== null &&
+    row?.criticalStockThreshold !== undefined &&
+    row?.criticalStockThreshold !== "";
+  const hasConfiguredLow =
+    row?.lowStockThreshold !== null &&
+    row?.lowStockThreshold !== undefined &&
+    row?.lowStockThreshold !== "";
+  const configuredCritical = Number(row?.criticalStockThreshold);
+  const configuredLow = Number(row?.lowStockThreshold);
   const critical = useDefaultThresholds
     ? defaults.critical
-    : Math.max(
-        0,
-        Number(row?.criticalStockThreshold) || defaults.critical,
-      );
+    : hasConfiguredCritical &&
+        Number.isFinite(configuredCritical) &&
+        configuredCritical >= 0
+      ? configuredCritical
+      : defaults.critical;
   const low = useDefaultThresholds
     ? defaults.low
-    : Math.max(critical, Number(row?.lowStockThreshold) || defaults.low);
+    : hasConfiguredLow && Number.isFinite(configuredLow) && configuredLow >= 0
+      ? Math.max(critical, configuredLow)
+      : defaults.low;
 
   return {
     useDefaultThresholds,
@@ -327,6 +352,16 @@ async function buildDailyUsagePayload({
 // GET /api/inventory
 router.get("/", requireCookViewAccess, async (req, res) => {
   try {
+    if (isRedesignedProfile()) {
+      const rows = await listRedesignedInventoryRows(db);
+      return res.json(
+        rows.map((row) => ({
+          ...row,
+          ingredients: [],
+        })),
+      );
+    }
+
     const hasItemTypeColumn = true;
     const productItemTypeExpr = getProductItemTypeExpression(
       hasItemTypeColumn,
@@ -504,9 +539,9 @@ router.get("/alerts", requireInventoryAlertAccess, async (req, res) => {
       "m",
     );
 
-    const [defaults, [rows]] = await Promise.all([
-      readStockAlertDefaults(),
-      db.query(
+    const inventoryRowsPromise = isRedesignedProfile()
+      ? listRedesignedInventoryAlertRows(db)
+      : db.query(
         `SELECT
          i.Inventory_ID AS inventory_id,
          i.Product_ID AS product_id,
@@ -529,7 +564,10 @@ router.get("/alerts", requireInventoryAlertAccess, async (req, res) => {
        WHERE ${productItemTypeExpr} = ?
        ORDER BY product_name ASC`,
         [STOCK_ITEM],
-      ),
+      ).then(([legacyRows]) => legacyRows);
+    const [defaults, rows] = await Promise.all([
+      readStockAlertDefaults(),
+      inventoryRowsPromise,
     ]);
 
     const items = rows.map((row) => {
@@ -938,6 +976,13 @@ router.post("/batches/:batchId/return", requireInventoryManagerAccess, async (re
 
 router.get("/daily-usage", requireCookViewAccess, async (req, res) => {
   try {
+    if (isRedesignedProfile()) {
+      return res.status(501).json({
+        code: "DAILY_USAGE_NOT_AVAILABLE_IN_REDESIGNED_SCHEMA",
+        message:
+          "Daily usage reports are not represented in the redesigned schema. Use stock movement reporting after that workflow is migrated.",
+      });
+    }
     const requestedDate = toReportDateString(req.query.date);
     const requestedStatus = String(req.query.status || "").trim().toLowerCase();
     let effectiveDate = requestedDate;

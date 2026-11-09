@@ -1,10 +1,18 @@
 "use strict";
 
 const { normalizeRole } = require("../middleware/roleAccess");
+const {
+  REDESIGNED_SCHEMA_PROFILE,
+  getSchemaProfile,
+} = require("../db/schemaProfile");
 
 const ACTIVE_ALERT_SEVERITIES = Object.freeze(["low", "critical", "out"]);
 const ADMIN_ALERT_SEVERITIES = Object.freeze(["low", "critical", "out"]);
 const INVENTORY_MANAGER_ALERT_SEVERITIES = Object.freeze(["low", "critical", "out"]);
+
+function isRedesignedProfile() {
+  return getSchemaProfile() === REDESIGNED_SCHEMA_PROFILE;
+}
 
 function getVisibleInventoryAlertSeverities(role) {
   const normalizedRole = normalizeRole(role);
@@ -98,11 +106,17 @@ async function reconcileInventoryAlerts(database, observedItems, options = {}) {
       await connection.beginTransaction();
       transactionStarted = true;
     }
+    const redesignedProfile = isRedesignedProfile();
     const [activeAlerts] = await connection.query(
-      `SELECT alert_id, inventory_id, severity
-         FROM inventory_alerts
-        WHERE active_episode = 1
-        FOR UPDATE`,
+      redesignedProfile
+        ? `SELECT alert_id, product_id AS inventory_id, severity
+             FROM inventory_alerts
+            WHERE active_episode = 1
+            FOR UPDATE`
+        : `SELECT alert_id, inventory_id, severity
+             FROM inventory_alerts
+            WHERE active_episode = 1
+            FOR UPDATE`,
     );
     const plan = planInventoryAlertReconciliation(activeAlerts, observedItems);
 
@@ -119,62 +133,113 @@ async function reconcileInventoryAlerts(database, observedItems, options = {}) {
     }
 
     for (const item of plan.create) {
-      await connection.query(
-        `INSERT INTO inventory_alerts
-           (inventory_id, product_id, product_name, category, unit,
-            stock_value, severity, low_threshold, critical_threshold,
-            active_episode, created_at, last_observed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-         ON DUPLICATE KEY UPDATE
-           product_id = VALUES(product_id),
-           product_name = VALUES(product_name),
-           category = VALUES(category),
-           unit = VALUES(unit),
-           stock_value = VALUES(stock_value),
-           low_threshold = VALUES(low_threshold),
-           critical_threshold = VALUES(critical_threshold),
-           last_observed_at = VALUES(last_observed_at)`,
-        [
-          item.inventoryId,
-          item.productId,
-          item.productName,
-          item.category,
-          item.unit,
-          item.stockValue,
-          item.severity,
-          item.lowThreshold,
-          item.criticalThreshold,
-          observedAt,
-          observedAt,
-        ],
-      );
+      if (redesignedProfile) {
+        await connection.query(
+          `INSERT INTO inventory_alerts
+             (product_id, product_name_snapshot, unit_name_snapshot,
+              stock_value, severity, low_threshold, critical_threshold,
+              active_episode, created_at, last_observed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             product_name_snapshot = VALUES(product_name_snapshot),
+             unit_name_snapshot = VALUES(unit_name_snapshot),
+             stock_value = VALUES(stock_value),
+             low_threshold = VALUES(low_threshold),
+             critical_threshold = VALUES(critical_threshold),
+             last_observed_at = VALUES(last_observed_at)`,
+          [
+            item.productId,
+            item.productName,
+            item.unit,
+            item.stockValue,
+            item.severity,
+            item.lowThreshold,
+            item.criticalThreshold,
+            observedAt,
+            observedAt,
+          ],
+        );
+      } else {
+        await connection.query(
+          `INSERT INTO inventory_alerts
+             (inventory_id, product_id, product_name, category, unit,
+              stock_value, severity, low_threshold, critical_threshold,
+              active_episode, created_at, last_observed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             product_id = VALUES(product_id),
+             product_name = VALUES(product_name),
+             category = VALUES(category),
+             unit = VALUES(unit),
+             stock_value = VALUES(stock_value),
+             low_threshold = VALUES(low_threshold),
+             critical_threshold = VALUES(critical_threshold),
+             last_observed_at = VALUES(last_observed_at)`,
+          [
+            item.inventoryId,
+            item.productId,
+            item.productName,
+            item.category,
+            item.unit,
+            item.stockValue,
+            item.severity,
+            item.lowThreshold,
+            item.criticalThreshold,
+            observedAt,
+            observedAt,
+          ],
+        );
+      }
     }
 
     for (const item of plan.refresh) {
-      await connection.query(
-        `UPDATE inventory_alerts
-            SET product_id = ?,
-                product_name = ?,
-                category = ?,
-                unit = ?,
-                stock_value = ?,
-                low_threshold = ?,
-                critical_threshold = ?,
-                last_observed_at = ?
-          WHERE alert_id = ?
-            AND active_episode = 1`,
-        [
-          item.productId,
-          item.productName,
-          item.category,
-          item.unit,
-          item.stockValue,
-          item.lowThreshold,
-          item.criticalThreshold,
-          observedAt,
-          item.alertId,
-        ],
-      );
+      if (redesignedProfile) {
+        await connection.query(
+          `UPDATE inventory_alerts
+              SET product_name_snapshot = ?,
+                  unit_name_snapshot = ?,
+                  stock_value = ?,
+                  low_threshold = ?,
+                  critical_threshold = ?,
+                  last_observed_at = ?
+            WHERE alert_id = ?
+              AND active_episode = 1`,
+          [
+            item.productName,
+            item.unit,
+            item.stockValue,
+            item.lowThreshold,
+            item.criticalThreshold,
+            observedAt,
+            item.alertId,
+          ],
+        );
+      } else {
+        await connection.query(
+          `UPDATE inventory_alerts
+              SET product_id = ?,
+                  product_name = ?,
+                  category = ?,
+                  unit = ?,
+                  stock_value = ?,
+                  low_threshold = ?,
+                  critical_threshold = ?,
+                  last_observed_at = ?
+            WHERE alert_id = ?
+              AND active_episode = 1`,
+          [
+            item.productId,
+            item.productName,
+            item.category,
+            item.unit,
+            item.stockValue,
+            item.lowThreshold,
+            item.criticalThreshold,
+            observedAt,
+            item.alertId,
+          ],
+        );
+      }
     }
 
     if (transactionStarted) {
@@ -233,7 +298,31 @@ async function listInventoryNotifications(database, { userId, role, limit = 200 
   const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 500);
   const placeholders = severities.map(() => "?").join(", ");
   const [rows] = await database.query(
-    `SELECT
+    isRedesignedProfile()
+      ? `SELECT
+       alert.alert_id,
+       alert.product_id AS inventory_id,
+       alert.product_id,
+       alert.product_name_snapshot AS product_name,
+       '' AS category,
+       alert.unit_name_snapshot AS unit,
+       alert.stock_value,
+       alert.severity,
+       alert.low_threshold,
+       alert.critical_threshold,
+       alert.created_at,
+       alert.last_observed_at,
+       alert.resolved_at,
+       alert.resolution_reason,
+       alert_read.read_at
+     FROM inventory_alerts alert
+     LEFT JOIN inventory_alert_reads alert_read
+       ON alert_read.alert_id = alert.alert_id
+      AND alert_read.user_id = ?
+     WHERE alert.severity IN (${placeholders})
+     ORDER BY alert.created_at DESC, alert.alert_id DESC
+     LIMIT ?`
+      : `SELECT
        alert.alert_id,
        alert.inventory_id,
        alert.product_id,
