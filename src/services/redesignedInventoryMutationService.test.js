@@ -321,6 +321,34 @@ function createHarness(overrides = {}) {
     [-5, -2],
   );
 
+  const saleHarness = createHarness({
+    balance: { on_hand: 4 },
+    batches: [{
+      batch_id: 3,
+      product_id: 7,
+      received_quantity: 4,
+      remaining_quantity: 4,
+      returned_quantity: 0,
+      unit_id: 2,
+      status: "active",
+    }],
+  });
+  const sale = await executeRedesignedInventoryMutation(
+    saleHarness.database,
+    {
+      productId: 7,
+      movementType: "sale",
+      quantity: 1.5,
+      idempotencyKey: "order:77:product:7",
+      sourceType: "order",
+      sourceId: "77",
+    },
+  );
+  assert.equal(sale.onHand, 2.5);
+  assert.equal(saleHarness.state.batches[0].remaining_quantity, 2.5);
+  assert.equal(saleHarness.state.movements[0].movement_type, "sale");
+  assert.equal(saleHarness.state.movements[0].signed_quantity, -1.5);
+
   const supplierReturnHarness = createHarness({
     balance: { on_hand: 10 },
     batches: [{

@@ -2,6 +2,7 @@
 
 const ALLOWED_MOVEMENT_TYPES = new Set([
   "receive",
+  "sale",
   "return_in",
   "return_to_supplier",
   "spoilage",
@@ -108,7 +109,7 @@ function normalizeMovement(input) {
     }
   } else {
     const quantity = requiredPositiveQuantity(input.quantity);
-    signedQuantity = ["spoilage", "return_to_supplier"].includes(movementType)
+    signedQuantity = ["sale", "spoilage", "return_to_supplier"].includes(movementType)
       ? -quantity
       : quantity;
   }

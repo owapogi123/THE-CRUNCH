@@ -2,6 +2,10 @@ const BUSINESS_TIME_ZONE = "Asia/Manila";
 const GLOBAL_ORDER_SCOPE = "GLOBAL";
 const FIRST_ORDER_NUMBER = 1000;
 const MAX_TRANSACTION_SEQUENCE = 999;
+const {
+  getSchemaProfile,
+  REDESIGNED_SCHEMA_PROFILE,
+} = require("../db/schemaProfile");
 
 const ORDER_TYPE_CODES = Object.freeze({
   delivery: "001",
@@ -48,6 +52,26 @@ function getBusinessDateParts(value = new Date()) {
 }
 
 async function allocateCounter(connection, businessDate, scope, firstValue) {
+  if (getSchemaProfile() === REDESIGNED_SCHEMA_PROFILE) {
+    await connection.query(
+      `INSERT INTO business_counters
+         (counter_type, scope_date, counter_value)
+       VALUES (?, ?, LAST_INSERT_ID(?))
+       ON DUPLICATE KEY UPDATE
+         counter_value = LAST_INSERT_ID(counter_value + 1)`,
+      [`order:${scope}`, businessDate, firstValue],
+    );
+    const [rows] = await connection.query(
+      "SELECT LAST_INSERT_ID() AS allocatedValue",
+    );
+    const allocatedValue = Number(rows[0]?.allocatedValue);
+    if (!Number.isSafeInteger(allocatedValue) || allocatedValue < firstValue) {
+      const error = new Error(`Failed to allocate the daily ${scope} order counter`);
+      error.statusCode = 500;
+      throw error;
+    }
+    return allocatedValue;
+  }
   await connection.query(
     `INSERT INTO order_daily_counters
        (business_date, counter_scope, counter_value)

@@ -17,6 +17,8 @@
     "test:order-identifiers": "node scripts/testOrderIdentifiers.js",
     "test:receipt-snapshots": "node src/services/receiptSnapshotService.test.js && node scripts/testReceiptSnapshots.js",
     "test:financial": "node src/services/financialStatus.test.js",
+    "test:orders-redesigned": "node src/services/orderIdentifierService.profiles.test.js && node src/services/orderItemService.redesigned.test.js && node src/services/inventoryService.redesignedOrder.test.js && node src/services/receiptSnapshotService.redesigned.test.js && node src/services/paymongoOrderFinalizationService.redesigned.test.js && node src/routes/orderRoutes.redesigned.test.js && node src/routes/refundRequestRoutes.redesigned.test.js",
+    "test:orders-redesigned:mysql": "node src/db/redesignedOrderLifecycle.mysql.test.js",
     "test:refund-policy": "node src/services/refundEligibility.test.js && node src/routes/orderSettlementAuthorization.test.js && node src/routes/orderRefundConcurrency.test.js && node src/routes/refundRequestRoutes.test.js",
     "test:purchase-orders": "node src/services/purchaseOrderPolicy.test.js && node src/routes/purchaseOrders.test.js && node src/middleware/productCacheInvalidation.test.js",
     "test:suppliers": "node src/routes/suppliersRoutes.test.js",

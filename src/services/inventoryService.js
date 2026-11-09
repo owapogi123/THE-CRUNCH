@@ -23,6 +23,363 @@ const {
   reconcileInventoryAlerts,
 } = require("./inventoryNotificationService");
 
+function redesignedOrderError(message, statusCode = 409, code = null) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  if (code) error.code = code;
+  return error;
+}
+
+async function prepareRedesignedOrderItemsAndStock(
+  connection,
+  items,
+  { requireChickenFlavorForMenuFood = false } = {},
+) {
+  const requestedItems = normalizeOrderItems(items);
+  const productIds = [
+    ...new Set(
+      requestedItems.flatMap((item) => [
+        item.product_id,
+        ...(item.selected_flavor_product_id
+          ? [item.selected_flavor_product_id]
+          : []),
+      ]),
+    ),
+  ].sort((left, right) => left - right);
+
+  const [rows] = await connection.query(
+    `SELECT
+       parent.product_id AS productId,
+       parent.name AS productName,
+       parent.product_type AS productType,
+       parent.selling_price AS sellingPrice,
+       parent.lifecycle_status AS lifecycleStatus,
+       parent.availability_override AS availabilityOverride,
+       category.system_key AS categorySystemKey,
+       recipe.ingredient_product_id AS ingredientProductId,
+       recipe.quantity_required AS quantityRequired,
+       ingredient.name AS ingredientName,
+       ingredient.product_type AS ingredientProductType,
+       ingredient.lifecycle_status AS ingredientLifecycleStatus,
+       balance.on_hand AS availableStock
+     FROM products parent
+     LEFT JOIN menu_categories category
+       ON category.category_id = parent.menu_category_id
+     LEFT JOIN product_recipes recipe
+       ON recipe.parent_product_id = parent.product_id
+     LEFT JOIN products ingredient
+       ON ingredient.product_id = recipe.ingredient_product_id
+     LEFT JOIN inventory_balances balance
+       ON balance.product_id = recipe.ingredient_product_id
+     WHERE parent.product_id IN (?)
+     ORDER BY parent.product_id, recipe.ingredient_product_id
+     FOR UPDATE`,
+    [productIds],
+  );
+
+  const rowsByProduct = new Map();
+  for (const row of rows) {
+    const productId = Number(row.productId);
+    const current = rowsByProduct.get(productId) || [];
+    current.push(row);
+    rowsByProduct.set(productId, current);
+  }
+
+  const deductions = new Map();
+  const authoritativeItems = requestedItems.map((item) => {
+    const productRows = rowsByProduct.get(item.product_id) || [];
+    if (productRows.length === 0) {
+      throw redesignedOrderError(
+        `Unknown product_id ${item.product_id}`,
+        400,
+        "ORDER_PRODUCT_NOT_FOUND",
+      );
+    }
+    const product = productRows[0];
+    if (String(product.productType).toLowerCase() !== "menu_item") {
+      throw redesignedOrderError(
+        `Order item ${item.product_id} must be menu_item.`,
+        400,
+        "ORDER_PRODUCT_TYPE_INVALID",
+      );
+    }
+    if (String(product.lifecycleStatus).toLowerCase() !== "active") {
+      throw redesignedOrderError(
+        `"${product.productName}" is inactive and cannot be ordered.`,
+        409,
+        "ORDER_PRODUCT_INACTIVE",
+      );
+    }
+    if (String(product.availabilityOverride).toLowerCase() === "unavailable") {
+      throw redesignedOrderError(
+        `"${product.productName}" is unavailable.`,
+        409,
+        "ORDER_PRODUCT_UNAVAILABLE",
+      );
+    }
+
+    const categorySystemKey = normalizeSystemKey(product.categorySystemKey);
+    let flavor = null;
+    if (item.selected_flavor_product_id) {
+      const flavorRows = rowsByProduct.get(item.selected_flavor_product_id) || [];
+      flavor = flavorRows[0] || null;
+      if (
+        !flavor ||
+        String(flavor.productType).toLowerCase() !== "selection_option" ||
+        normalizeSystemKey(flavor.categorySystemKey) !==
+          CHICKEN_FLAVORS_SYSTEM_KEY ||
+        String(flavor.lifecycleStatus).toLowerCase() !== "active"
+      ) {
+        throw redesignedOrderError(
+          `Product ${item.selected_flavor_product_id} is not an eligible chicken flavor.`,
+          409,
+          "CHICKEN_FLAVOR_INVALID",
+        );
+      }
+    } else if (
+      requireChickenFlavorForMenuFood &&
+      categorySystemKey === MENU_FOOD_SYSTEM_KEY
+    ) {
+      throw redesignedOrderError(
+        `Choose one chicken flavor for "${product.productName}" before checkout.`,
+        400,
+        "CHICKEN_FLAVOR_REQUIRED",
+      );
+    }
+
+    const price = Number(product.sellingPrice);
+    if (!Number.isFinite(price) || price < 0) {
+      throw redesignedOrderError(
+        `Product ${item.product_id} does not have a valid price.`,
+        409,
+        "ORDER_PRODUCT_PRICE_INVALID",
+      );
+    }
+
+    const ingredientRows = productRows.filter(
+      (row) => Number(row.ingredientProductId) > 0,
+    );
+    if (ingredientRows.length === 0) {
+      throw redesignedOrderError(
+        `"${product.productName}" is unavailable because no ingredients are configured.`,
+        409,
+        "ORDER_RECIPE_MISSING",
+      );
+    }
+    for (const ingredientRow of ingredientRows) {
+      const ingredientId = Number(ingredientRow.ingredientProductId);
+      const quantityRequired = Number(ingredientRow.quantityRequired);
+      if (
+        !Number.isSafeInteger(ingredientId) ||
+        ingredientId <= 0 ||
+        !Number.isFinite(quantityRequired) ||
+        quantityRequired <= 0 ||
+        String(ingredientRow.ingredientProductType).toLowerCase() !==
+          "stock_item" ||
+        String(ingredientRow.ingredientLifecycleStatus).toLowerCase() !==
+          "active"
+      ) {
+        throw redesignedOrderError(
+          `Invalid ingredient configuration for menu product ${item.product_id}.`,
+          409,
+          "ORDER_RECIPE_INVALID",
+        );
+      }
+      const existing = deductions.get(ingredientId) || {
+        requiredQty: 0,
+        availableQty: Number(ingredientRow.availableStock || 0),
+        name: String(
+          ingredientRow.ingredientName || `Product #${ingredientId}`,
+        ),
+      };
+      existing.requiredQty = Math.round(
+        (existing.requiredQty + item.qty * quantityRequired + Number.EPSILON) *
+          10000,
+      ) / 10000;
+      deductions.set(ingredientId, existing);
+    }
+
+    return {
+      product_id: item.product_id,
+      qty: item.qty,
+      name: String(product.productName),
+      price,
+      subtotal: price * item.qty,
+      ...(flavor
+        ? {
+            selected_flavor_product_id: Number(flavor.productId),
+            selected_flavor_name: String(flavor.productName),
+          }
+        : {}),
+    };
+  });
+
+  for (const requirement of deductions.values()) {
+    if (requirement.availableQty + 0.0001 < requirement.requiredQty) {
+      throw redesignedOrderError(
+        `Insufficient stock for "${requirement.name}". Required ${requirement.requiredQty}, available ${requirement.availableQty}.`,
+        409,
+        "INSUFFICIENT_STOCK",
+      );
+    }
+  }
+  return { authoritativeItems, deductions };
+}
+
+async function deductRedesignedStockForCompletedPaidOrder(
+  orderId,
+  actorUserId,
+  connection,
+) {
+  const numericOrderId = Number(orderId);
+  if (!Number.isSafeInteger(numericOrderId) || numericOrderId <= 0) {
+    throw redesignedOrderError("Invalid order ID for stock deduction", 400);
+  }
+  const [orderRows] = await connection.query(
+    `SELECT order_id, status, payment_status, stock_deducted
+       FROM orders
+      WHERE order_id = ?
+      LIMIT 1
+      FOR UPDATE`,
+    [numericOrderId],
+  );
+  if (!orderRows.length) {
+    throw redesignedOrderError("Order not found for stock deduction", 404);
+  }
+  const order = orderRows[0];
+  if (String(order.status).trim().toLowerCase() !== "completed") {
+    throw redesignedOrderError(
+      "Inventory deduction requires a completed order",
+      409,
+      "ORDER_NOT_COMPLETED",
+    );
+  }
+  if (!isPaidPaymentStatus(order.payment_status)) {
+    throw redesignedOrderError(
+      "Inventory deduction requires a paid order",
+      409,
+      "ORDER_NOT_PAID",
+    );
+  }
+  if (Number(order.stock_deducted) === 1) return false;
+
+  const [recipeRows] = await connection.query(
+    `SELECT
+       item.product_id AS menuProductId,
+       item.quantity AS orderQuantity,
+       recipe.ingredient_product_id AS ingredientProductId,
+       recipe.quantity_required AS quantityRequired,
+       ingredient.product_type AS ingredientProductType
+     FROM order_items item
+     LEFT JOIN product_recipes recipe
+       ON recipe.parent_product_id = item.product_id
+     LEFT JOIN products ingredient
+       ON ingredient.product_id = recipe.ingredient_product_id
+     WHERE item.order_id = ?
+     ORDER BY recipe.ingredient_product_id, item.order_item_id
+     FOR UPDATE`,
+    [numericOrderId],
+  );
+  if (!recipeRows.length) {
+    throw redesignedOrderError(
+      "Order does not contain items that can be deducted",
+      409,
+      "ORDER_RECIPE_MISSING",
+    );
+  }
+
+  const menuProductsWithRecipes = new Set();
+  const menuProducts = new Set();
+  const deductions = new Map();
+  for (const row of recipeRows) {
+    const menuProductId = Number(row.menuProductId);
+    menuProducts.add(menuProductId);
+    const ingredientId = Number(row.ingredientProductId);
+    if (!Number.isSafeInteger(ingredientId) || ingredientId <= 0) continue;
+    menuProductsWithRecipes.add(menuProductId);
+    const required = Number(row.orderQuantity) * Number(row.quantityRequired);
+    if (
+      !Number.isFinite(required) ||
+      required <= 0 ||
+      String(row.ingredientProductType).toLowerCase() !== "stock_item"
+    ) {
+      throw redesignedOrderError(
+        `Invalid ingredient configuration for menu product ${menuProductId}.`,
+        409,
+        "ORDER_RECIPE_INVALID",
+      );
+    }
+    deductions.set(
+      ingredientId,
+      Math.round(
+        ((deductions.get(ingredientId) || 0) + required + Number.EPSILON) *
+          10000,
+      ) / 10000,
+    );
+  }
+  if (
+    [...menuProducts].some(
+      (productId) => !menuProductsWithRecipes.has(productId),
+    )
+  ) {
+    throw redesignedOrderError(
+      "One or more ordered menu items have no ingredient recipe.",
+      409,
+      "ORDER_RECIPE_MISSING",
+    );
+  }
+
+  const entries = [...deductions.entries()].sort(
+    ([left], [right]) => left - right,
+  );
+  for (const [productId, quantity] of entries) {
+    await applyRedesignedInventoryMutation(connection, {
+      productId,
+      movementType: "sale",
+      quantity,
+      idempotencyKey: `order:${numericOrderId}:product:${productId}`,
+      sourceType: "order",
+      sourceId: String(numericOrderId),
+      actorUserId:
+        Number.isSafeInteger(Number(actorUserId)) && Number(actorUserId) > 0
+          ? Number(actorUserId)
+          : null,
+      note: `Completed paid order #${numericOrderId}`,
+    });
+  }
+
+  if (entries.length === 0) {
+    throw redesignedOrderError(
+      "Order does not have a valid inventory deduction plan",
+      409,
+      "ORDER_RECIPE_MISSING",
+    );
+  }
+  await connection.query(
+    `INSERT INTO order_inventory_deductions (order_id, product_id, quantity)
+     VALUES ${entries.map(() => "(?, ?, ?)").join(", ")}`,
+    entries.flatMap(([productId, quantity]) => [
+      numericOrderId,
+      productId,
+      quantity,
+    ]),
+  );
+  const [updated] = await connection.query(
+    `UPDATE orders
+        SET stock_deducted = 1
+      WHERE order_id = ? AND stock_deducted = 0`,
+    [numericOrderId],
+  );
+  if (Number(updated?.affectedRows) !== 1) {
+    throw redesignedOrderError(
+      "Order stock was already deducted",
+      409,
+      "ORDER_ALREADY_DEDUCTED",
+    );
+  }
+  return true;
+}
+
 function normalizePaymentStatus(value) {
   const v = String(value || "").toLowerCase().trim();
   if (v === "paid" || v === "completed") return "Paid";
@@ -1289,6 +1646,7 @@ async function restoreStockForRefundedOrder(
 
 module.exports = {
   applyRedesignedInventoryMutation,
+  deductRedesignedStockForCompletedPaidOrder,
   deductStockForOrder,
   deductStockForPaidOrder,
   deductPrevalidatedStockForPaidOrder,
@@ -1297,6 +1655,7 @@ module.exports = {
   listRedesignedInventoryAlertRows,
   listRedesignedInventoryRows,
   prepareOrderItemsAndStock,
+  prepareRedesignedOrderItemsAndStock,
   refreshRedesignedInventoryAlerts,
   restoreStockForRefundedOrder,
   validateStockForOrderItems,
