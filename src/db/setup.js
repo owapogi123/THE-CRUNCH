@@ -13,14 +13,8 @@ const {
 const {
   initializeStockManagerSchema,
 } = require("../services/stockManagerSchemaService");
-const {
-  seedInitialSystemSettings,
-} = require("../services/initialDataService");
+const { seedInitialSystemSettings } = require("../services/initialDataService");
 const { applyMigrations } = require("./migrate");
-const {
-  REDESIGNED_SCHEMA_PROFILE,
-  getSchemaProfile,
-} = require("./schemaProfile");
 
 async function ensureColumn(connection, tableName, columnName, definitionSql) {
   const [rows] = await connection.query(
@@ -80,10 +74,16 @@ async function setup(options = {}) {
   let connection;
   const dbConfig = getDatabaseConfig();
   try {
-    if (getSchemaProfile() === REDESIGNED_SCHEMA_PROFILE) {
+    // Safety: never run legacy setup unless the legacy profile was explicitly chosen.
+    // An unset DB_SCHEMA_PROFILE must NOT default to legacy for this script.
+    const explicitProfile = String(process.env.DB_SCHEMA_PROFILE || "")
+      .trim()
+      .toLowerCase();
+
+    if (explicitProfile !== "legacy") {
       const error = new Error(
-        "db:setup is reserved for the legacy schema. " +
-          "Use db:migrate to initialize the redesigned schema.",
+        "Legacy db:setup requires DB_SCHEMA_PROFILE=legacy explicitly. " +
+          "Database V2 must use the approved db:migrate process instead.",
       );
       error.code = "DB_CONFIG_ERROR";
       throw error;
@@ -1375,7 +1375,12 @@ END
       ["sold_to_name", "`sold_to_name` VARCHAR(150) NULL"],
       ["cashier_name", "`cashier_name` VARCHAR(150) NULL"],
     ]) {
-      await ensureColumn(connection, "receipt_snapshots", columnName, definition);
+      await ensureColumn(
+        connection,
+        "receipt_snapshots",
+        columnName,
+        definition,
+      );
     }
 
     await ensureColumn(
