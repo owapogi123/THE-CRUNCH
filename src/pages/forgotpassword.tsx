@@ -31,7 +31,7 @@ function getReturnDestination(location: ReturnType<typeof useLocation>): string 
     "/stockmanager",
     "/users",
   ];
-  const isAllowed = allowedPrefixes.some((prefix) => raw === prefix || raw.startsWith(prefix + "/") || raw.startsWith(prefix + "?"));
+  const isAllowed = raw === "/" || allowedPrefixes.some((prefix) => raw === prefix || raw.startsWith(prefix + "/") || raw.startsWith(prefix + "?"));
   return isAllowed ? raw : null;
 }
 

@@ -3,6 +3,7 @@ import {
   useRef,
   useState,
   type ButtonHTMLAttributes,
+  type CSSProperties,
 } from 'react'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import { MapPin, Star, X, MessageSquare, Send, CheckCircle, Clock } from 'lucide-react'
@@ -139,6 +140,46 @@ const CSS = `
 .crunch-page .crunch-hero__copy {
   position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center;
   width: 100%; min-width: 0; text-align: center;
+}
+.crunch-hero__atmosphere { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.crunch-hero__smoke {
+  --cycle: 15s; --first: -4s; --second: -11.5s;
+  position: absolute; bottom: -3%; left: 2%; width: clamp(95px, 22%, 345px); height: 73%;
+}
+.crunch-hero__smoke--right {
+  --cycle: 19s; --first: -13s; --second: -3.5s;
+  left: auto; right: 1%; height: 66%; transform: scaleX(-1);
+}
+.crunch-hero__smoke::before, .crunch-hero__smoke::after {
+  content: ''; position: absolute; inset: 0;
+  background: url('/img/hero-smoke.svg') center / 100% 100% no-repeat;
+  transform-origin: 36% 95%; opacity: 0;
+  animation: crunch-smoke-rise var(--cycle) ease-in-out var(--first) infinite;
+}
+.crunch-hero__smoke::after {
+  inset: 12% -5% 0 19%; scale: -1 1; animation-delay: var(--second);
+}
+.crunch-hero__ember {
+  position: absolute; left: var(--origin); bottom: 1%; width: 2px; height: 4px; border-radius: 60%;
+  background: #ffc581; box-shadow: 0 0 5px #c16b35; opacity: 0;
+  animation: crunch-ember-rise var(--duration) linear var(--delay) infinite;
+}
+@keyframes crunch-smoke-rise {
+  0% { transform: translate(0, 9%) scale(.74, .79); opacity: 0; }
+  28% { opacity: .31; }
+  52% { transform: translate(3%, -3%) skewX(-3deg) scale(.98, .98); opacity: .25; }
+  100% { transform: translate(8%, -20%) skewX(3deg) scale(1.25, 1.09); opacity: 0; }
+}
+@keyframes crunch-ember-rise {
+  0%, 76%, 100% { opacity: 0; }
+  8% { opacity: .85; }
+  43% { opacity: .45; transform: translate(calc(var(--drift) * -.3), -12svh) rotate(18deg) scale(.85); }
+  76%, 100% { transform: translate(var(--drift), -26svh) rotate(-16deg) scale(.4); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .crunch-hero__smoke::before { animation: none; opacity: .24; }
+  .crunch-hero__smoke::after { display: none; }
+  .crunch-hero__ember { display: none; }
 }
 .crunch-page .crunch-hero__eyebrow {
   display: flex; align-items: center; justify-content: center; gap: clamp(0.7rem, 1.8vw, 1.7rem); width: 100%;
@@ -300,6 +341,15 @@ function HeroSection() {
   const reduceMotion = useReducedMotion()
   return (
     <section className="crunch-hero" data-crunch-section="hero" aria-labelledby="crunch-hero-title">
+      <div className="crunch-hero__atmosphere" aria-hidden="true">
+        <span className="crunch-hero__smoke" />
+        <span className="crunch-hero__smoke crunch-hero__smoke--right" />
+        {[[6, 7, -3, 14], [17, 9, -7, -19], [29, 8, -2, 24], [68, 10, -6, -18], [82, 7, -5, 21], [94, 11, -9, -14]].map(([origin, duration, delay, drift]) => (
+          <i key={origin} className="crunch-hero__ember" style={{
+            '--origin': origin + '%', '--duration': duration + 's', '--delay': delay + 's', '--drift': drift + 'px',
+          } as CSSProperties} />
+        ))}
+      </div>
       <div className="crunch-hero__copy">
         <motion.div className="crunch-hero__eyebrow" initial={reduceMotion ? false : { opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7, ease: easeOut }}>THE CRUNCH</motion.div>
         <motion.h1 id="crunch-hero-title" className="crunch-hero__title" initial={reduceMotion ? false : { opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7, delay: reduceMotion ? 0 : 0.08, ease: easeOut }}>

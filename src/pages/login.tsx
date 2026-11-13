@@ -23,7 +23,7 @@ const ROLE_REDIRECT_PATHS: Record<string, string> = {
   administrator: "/dashboard",
   cashier: "/orders",
   inventory_manager: "/inventory",
-  customer: "/products",
+  customer: "/",
 };
 
 // Helper to get return destination from URL params or navigation state
@@ -51,7 +51,7 @@ function getReturnDestination(location: ReturnType<typeof useLocation>): string 
     "/stockmanager",
     "/users",
   ];
-  const isAllowed = allowedPrefixes.some((prefix) => raw === prefix || raw.startsWith(prefix + "/") || raw.startsWith(prefix + "?"));
+  const isAllowed = raw === "/" || allowedPrefixes.some((prefix) => raw === prefix || raw.startsWith(prefix + "/") || raw.startsWith(prefix + "?"));
   return isAllowed ? raw : null;
 }
 

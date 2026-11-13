@@ -9,7 +9,7 @@ export const ROLE_HOME_PATHS: Record<Exclude<RootRouteRole, null>, string> = {
   administrator: "/dashboard",
   cashier: "/menu",
   inventory_manager: "/inventory",
-  customer: "/products",
+  customer: "/",
 };
 
 export type RootRouteDecision =
@@ -27,9 +27,6 @@ export function resolveRootRoute({
   staffHomePath: string;
 }): RootRouteDecision {
   if (!isInitialized) return { kind: "pending" };
-  if (!role) return { kind: "public" };
-  if (role === "customer") {
-    return { kind: "redirect", to: ROLE_HOME_PATHS.customer };
-  }
+  if (!role || role === "customer") return { kind: "public" };
   return { kind: "redirect", to: staffHomePath };
 }

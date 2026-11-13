@@ -265,7 +265,7 @@ function FooterNav({ reducedMotion }: FooterNavProps) {
     {
       title: "Explore",
       links: [
-        { label: "Home", path: "/products" },
+        { label: "Home", path: "/" },
         { label: "About", path: "/aboutthecrunch" },
         { label: "Menu", path: "/usersmenu" },
       ],

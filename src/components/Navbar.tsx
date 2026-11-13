@@ -19,7 +19,7 @@ interface NavLinkItem {
 }
 
 export const CUSTOMER_NAV_LINKS: NavLinkItem[] = [
-  { label: "Home", path: "/products", exact: true },
+  { label: "Home", path: "/", exact: true },
   { label: "About", path: "/aboutthecrunch", exact: true },
   { label: "Menu", path: "/usersmenu", exact: true },
 ];
@@ -335,6 +335,7 @@ export function Navbar({
 
   // Active link detection
   const isActive = (path: string, exact = false) => {
+    if (path === "/" && location.pathname === "/products") return true;
     if (exact) return location.pathname === path;
     return location.pathname.startsWith(path);
   };
@@ -344,7 +345,7 @@ export function Navbar({
     if (path === "/usersmenu") {
       navigate("/usersmenu?showOrderModal=true");
     } else if (path === "/login" || path === "/login?tab=signup") {
-      const returnTo = location.pathname === "/" ? "/products" : location.pathname;
+      const returnTo = location.pathname;
       const separator = path.includes("?") ? "&" : "?";
       navigate(`${path}${separator}returnTo=${encodeURIComponent(returnTo)}`);
     } else {

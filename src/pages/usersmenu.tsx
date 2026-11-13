@@ -259,8 +259,7 @@ const EMPTY_DELIVERY_LINKS: DeliveryPlatformLinks = {
   foodpandaUrl: null,
 };
 
-// "Home" goes to the customer storefront (/products), not "/" (which redirects to the About page).
-const HOME_PATH = "/products";
+const HOME_PATH = "/";
 const NAV_LINKS = [
   { label: "Home", path: HOME_PATH },
   { label: "About", path: "/aboutthecrunch" },

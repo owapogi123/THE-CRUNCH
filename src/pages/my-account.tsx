@@ -21,7 +21,7 @@ const HOME_BY_ROLE: Record<string, string> = {
   administrator: "/dashboard",
   cashier: "/menu",
   inventory_manager: "/inventory",
-  customer: "/products",
+  customer: "/",
 };
 
 function roleLabel(value: string) {
@@ -184,7 +184,7 @@ export default function MyAccount() {
 
   const goHome = () => {
     const role = normalizeRole(account?.role || user?.role);
-    navigate(HOME_BY_ROLE[role || ""] || "/products");
+    navigate(HOME_BY_ROLE[role || ""] || "/");
   };
 
   return (

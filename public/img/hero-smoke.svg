@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 480" preserveAspectRatio="none">
+  <defs>
+    <linearGradient id="vapor" x1="0" y1="1" x2="0" y2="0" gradientUnits="objectBoundingBox">
+      <stop stop-color="#c98852" stop-opacity="0"/>
+      <stop offset=".18" stop-color="#bea38d" stop-opacity=".45"/>
+      <stop offset=".54" stop-color="#d7ccc2" stop-opacity=".65"/>
+      <stop offset="1" stop-color="#d7ccc2" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="diffuse" x="-40%" y="-15%" width="180%" height="130%">
+      <feTurbulence type="fractalNoise" baseFrequency=".015 .009" numOctaves="3" seed="8" result="eddy"/>
+      <feDisplacementMap in="SourceGraphic" in2="eddy" scale="38"/>
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+  </defs>
+  <g fill="url(#vapor)" filter="url(#diffuse)">
+    <path d="M63 479C132 382 8 355 66 276S200 205 108 114Q61 63 124 0C27 68 83 113 116 159S117 221 67 260C-10 330 110 401 63 479Z"/>
+    <path opacity=".58" d="M83 425C100 352 52 321 111 263S177 176 130 128Q98 91 119 58C76 111 163 146 150 198S46 281 68 350Z"/>
+  </g>
+</svg>

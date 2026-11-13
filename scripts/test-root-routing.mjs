@@ -38,8 +38,7 @@ assert.deepEqual(decide("inventory_manager", "/inventory"), {
   to: "/inventory",
 });
 assert.deepEqual(decide("customer", "/ignored"), {
-  kind: "redirect",
-  to: "/products",
+  kind: "public",
 });
 assert.deepEqual(decide(null, "/login"), { kind: "public" });
 assert.deepEqual(decide(null, "/login"), { kind: "public" }, "expired sessions are public");
@@ -136,7 +135,7 @@ assert.equal(expiredSession.values.size, 0, "expired auth storage must be cleare
 
 for (const relativePath of [
   "src/components/Sidebar.tsx",
-  "src/pages/aboutthecrunch.tsx",
+  "src/components/Navbar.tsx",
   "src/pages/usersmenu.tsx",
 ]) {
   const source = fs.readFileSync(path.join(root, relativePath), "utf8");
@@ -146,14 +145,6 @@ for (const relativePath of [
     `${relativePath} logout must return to the public root`,
   );
 }
-const productsSource = fs.readFileSync(
-  path.join(root, "src/pages/products.tsx"),
-  "utf8",
-);
-assert.match(
-  productsSource,
-  /const logout = useCallback\(\(\) => \{ onLogout\?\.\(\); navigate\('\/'\) \}/,
-  "products logout must clear auth and return to the public root",
-);
+assert.match(appSource, /const rootElement =[\s\S]*?<Products isAuthenticated=\{isAuth\} \/>/);
 
 console.log("Authenticated root-route and logout regression tests passed");

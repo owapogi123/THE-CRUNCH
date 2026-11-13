@@ -223,7 +223,7 @@ export default function AboutTheCrunch() {
   const goMenu = () => navigate('/usersmenu?showOrderModal=true');
   const goProducts = () => {
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
-    navigate('/products');
+    navigate('/');
   };
 
   return (

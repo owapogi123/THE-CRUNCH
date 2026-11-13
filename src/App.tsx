@@ -266,7 +266,7 @@ export default function App() {
     rootRoute.kind === "redirect" ? (
       <Navigate to={rootRoute.to} replace />
     ) : (
-      <AboutTheCrunch />
+      <Products isAuthenticated={isAuth} />
     );
 
   return (
