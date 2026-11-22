@@ -637,7 +637,7 @@ const Empty = ({
 function DeliveryFulfillmentForm({ order, onSaved }: { order: OnlineOrder; onSaved: () => Promise<void> }) {
   const q = order.delivery!;
   const { user } = useAuth();
-  const isAdmin = normalizeRole(user?.role) === 'administrator';
+  const canConfirmDelivery = ['cashier', 'administrator'].includes(normalizeRole(user?.role) || '');
   const [details, setDetails] = useState({courierService: q.preferredCourier || 'Grab', riderName: order.riderName || '', riderContact: q.riderContact || '', bookingReference: q.bookingReference || ''});
   const [source, setSource] = useState('');
   const [reference, setReference] = useState('');
@@ -672,11 +672,11 @@ function DeliveryFulfillmentForm({ order, onSaved }: { order: OnlineOrder; onSav
     {!order.handoverTimestamp && ['ready','ready for pickup'].includes(norm(order.trackingStatus)) && <button className={ACT.green} disabled={busy || !bookingReady} onClick={() => void save('pickup')}>Confirm Rider Pickup</button>}
     {!bookingReady && <p className="text-xs text-neutral-600">Save the actual courier, rider name, rider contact and booking reference before confirming pickup.</p>}
     </>}
-    {order.handoverTimestamp && <p role="status" className="text-sm font-medium text-neutral-700">{q.confirmationOverdue ? 'Confirmation Overdue - Follow up with the customer. No verified delivery proof is available for automatic completion.' : 'Out for Delivery - Waiting for Customer Confirmation'}</p>}
-    {order.handoverTimestamp && isAdmin && <details className="grid gap-3"><summary className="cursor-pointer text-xs font-semibold">Admin exception: confirm verified receipt</summary><p className="my-2 text-xs text-neutral-600">Use only when the customer cannot confirm through their account. Record actual confirmation and supporting details.</p>
+    {order.handoverTimestamp && <p role="status" className="text-sm font-medium text-neutral-700">{q.confirmationOverdue ? 'Delivery confirmation pending - automatic completion is being processed.' : 'Out for Delivery - Waiting for Customer Confirmation'}</p>}
+    {order.handoverTimestamp && canConfirmDelivery && isPaid(order.paymentStatus) && !q.deliveredAt && ['ready', 'ready for pickup'].includes(norm(order.trackingStatus)) && <details className="grid gap-3"><summary className="cursor-pointer text-xs font-semibold">Manual verification: confirm delivered</summary><p className="my-2 text-xs text-neutral-600">Use only when the customer cannot confirm through their account. Record actual confirmation and supporting details.</p>
       <label>Delivery confirmation source<select className="pos-delivery-input" value={source} onChange={e => setSource(e.target.value)}><option value="">Select actual confirmation</option><option value="customer">Customer confirmation</option><option value="courier">Courier confirmation</option><option value="verified_proof">Verified delivery proof</option></select></label>
       <label>Confirmation reference / details<input className="pos-delivery-input" maxLength={1000} value={reference} onChange={e => setReference(e.target.value)} /></label>
-      <button className={ACT.green} disabled={busy || !source || !reference.trim()} onClick={() => void save('delivered')}>Confirm Delivered (Admin exception)</button>
+      <button className={ACT.green} disabled={busy || !source || !reference.trim()} onClick={() => void save('delivered')}>Confirm Delivered (Manual Verification)</button>
     </details>}{error && <p role="alert">{error}</p>}
   </div>;
 }
