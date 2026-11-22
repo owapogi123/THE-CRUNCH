@@ -644,10 +644,17 @@ function DeliveryFulfillmentForm({ order, onSaved }: { order: OnlineOrder; onSav
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const submitting = useRef(false);
-  const bookingReady = Boolean(q.processedAt && q.courierService === (q.preferredCourier || 'Grab') && order.riderName?.trim() && q.bookingReference?.trim());
+  const bookingReady = Boolean(q.processedAt && q.courierService === (q.preferredCourier || 'Grab') && order.riderName?.trim() && q.riderContact?.trim() && q.bookingReference?.trim());
   const save = async (action: string) => {
-    if (submitting.current) return; submitting.current = true; setBusy(true); setError('');
-    try { await api.patch(`/orders/${order.id}/delivery-fulfillment`, {action, ...details, confirmationSource: source, confirmationReference: reference}); await onSaved(); }
+    if (submitting.current) return;
+    const courierDetails = {...details, riderName: details.riderName.trim(), riderContact: details.riderContact.trim(), bookingReference: details.bookingReference.trim()};
+    if (action === 'booking') {
+      for (const [key, label] of [['riderName', 'Rider name'], ['riderContact', 'Rider contact'], ['bookingReference', 'Booking / transaction reference']] as const) {
+        if (!courierDetails[key]) { setError(`${label} is required.`); return; }
+      }
+    }
+    submitting.current = true; setBusy(true); setError('');
+    try { await api.patch(`/orders/${order.id}/delivery-fulfillment`, {action, ...courierDetails, confirmationSource: source, confirmationReference: reference}); await onSaved(); }
     catch (e) {setError(e instanceof Error ? e.message : 'Delivery update failed');} finally {submitting.current = false; setBusy(false);}
   };
   if (norm(order.trackingStatus) === 'awaiting cashier review') return <div className="pos-delivery-form grid gap-3 text-sm">
@@ -659,11 +666,11 @@ function DeliveryFulfillmentForm({ order, onSaved }: { order: OnlineOrder; onSav
     {!order.handoverTimestamp && <>
     <div className="pos-courier-fields">
     <p className="pos-courier-reference">Actual courier: {q.courierService || 'Not recorded'}</p>
-    {([['riderName','Rider name (required for pickup)'],['riderContact','Rider contact (optional)'],['bookingReference','Booking / transaction reference (required for pickup)']] as const).map(([key,label]) => <label key={key} className={key === 'bookingReference' ? 'pos-courier-reference' : 'pos-courier-field'}>{label}<input className="pos-delivery-input" type="text" maxLength={key === 'riderContact' ? 40 : 255} value={details[key]} onChange={e => setDetails({...details,[key]:e.target.value})} /></label>)}
+    {([['riderName','Rider name'],['riderContact','Rider contact'],['bookingReference','Booking / transaction reference']] as const).map(([key,label]) => <label key={key} className={key === 'bookingReference' ? 'pos-courier-reference' : 'pos-courier-field'}>{label}<input className="pos-delivery-input" type="text" required maxLength={key === 'riderContact' ? 40 : 255} value={details[key]} onChange={e => setDetails({...details,[key]:e.target.value})} /></label>)}
     </div>
     <button className={ACT.dark} disabled={busy} onClick={() => void save('booking')}>Save courier details</button>
     {!order.handoverTimestamp && ['ready','ready for pickup'].includes(norm(order.trackingStatus)) && <button className={ACT.green} disabled={busy || !bookingReady} onClick={() => void save('pickup')}>Confirm Rider Pickup</button>}
-    {!bookingReady && <p className="text-xs text-neutral-600">Save the actual courier, rider name and booking reference before confirming pickup.</p>}
+    {!bookingReady && <p className="text-xs text-neutral-600">Save the actual courier, rider name, rider contact and booking reference before confirming pickup.</p>}
     </>}
     {order.handoverTimestamp && <p role="status" className="text-sm font-medium text-neutral-700">{q.confirmationOverdue ? 'Confirmation Overdue - Follow up with the customer. No verified delivery proof is available for automatic completion.' : 'Out for Delivery - Waiting for Customer Confirmation'}</p>}
     {order.handoverTimestamp && isAdmin && <details className="grid gap-3"><summary className="cursor-pointer text-xs font-semibold">Admin exception: confirm verified receipt</summary><p className="my-2 text-xs text-neutral-600">Use only when the customer cannot confirm through their account. Record actual confirmation and supporting details.</p>
