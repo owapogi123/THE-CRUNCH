@@ -1517,6 +1517,17 @@
 .pos-courier-fields { display:grid; gap:12px; min-width:0; }
 .pos-courier-reference { grid-column:1 / -1; }
 
+/* Keep native included-selection options readable under the global dark scheme. */
+.pos-included-selections select {
+  color-scheme: light;
+}
+
+.pos-included-selections select,
+.pos-included-selections option {
+  background-color: #fff;
+  color: #171717;
+}
+
 /* Reserve the fixed profile pill's top band on the desktop cashier cart. */
 @media (min-width: 1100px) {
   .pos-cart--cashier { padding-top: 88px; }

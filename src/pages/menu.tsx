@@ -3933,7 +3933,7 @@ export default function CashierView() {
         </aside>
       </div>
 
-      {includedTarget && <IncludedSelectionModal name={includedTarget.item.name} config={includedTarget.item.customizations}
+      {includedTarget && <div className="pos-included-selections"><IncludedSelectionModal name={includedTarget.item.name} config={includedTarget.item.customizations}
         requireFlavor={includedTarget.item.requiresSauce} flavors={chickenFlavors}
         options={products.filter((product) => product.id !== includedTarget.item.id).map((product) => ({ categoryKey: product.includedCategoryKey, kind: product.includedKind, id: product.id, name: product.name, stock: product.categorySystemKey === 'chicken_flavors' ? 999 : Math.floor(Math.max(0, product.remainingStock - cart.filter((entry) => entry.cartKey !== includedTarget.editingCartKey).reduce((sum, entry) => sum + entry.quantity * ((entry.id === product.id ? 1 : 0) + (entry.includedSelections || []).filter((choice) => choice.product_id === product.id).reduce((count, choice) => count + choice.qty, 0)), 0)) / (cart.find((entry) => entry.cartKey === includedTarget.editingCartKey)?.quantity || 1)), available: !isUnavailable(product.availabilityStatus) }))}
         onCancel={() => setIncludedTarget(null)} onConfirm={(choices, flavorId) => {
@@ -3952,7 +3952,7 @@ export default function CashierView() {
             return collision ? next.map((entry) => entry.cartKey === key ? { ...entry, quantity: entry.quantity + old.quantity } : entry) : [...next, { ...selected, quantity: old.quantity, note: old.note }];
           });
           setIncludedTarget(null);
-        }} />}
+        }} /></div>}
       <ChickenFlavorModal
         item={flavorTarget?.item ?? null}
         flavors={chickenFlavors}
